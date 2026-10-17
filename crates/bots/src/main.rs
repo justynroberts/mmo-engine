@@ -153,6 +153,8 @@ struct Totals {
     chat_sent: u64,
     chat_rx: u64,
     chat_bad: u64,
+    inventories: u64,
+    grounds: u64,
 }
 
 /// Handshake state for bot `i`. With `--persist` its identity is fixed by the seed, so a
@@ -348,9 +350,27 @@ fn main() {
                                     }
                                     continue;
                                 }
-                                if inner.first() != Some(&kind::SNAPSHOT) {
-                                    tot.decode_err += 1;
-                                    continue;
+                                // Bag and nearby-item updates: bots never pick anything up, so only check they decode.
+                                match inner.first() {
+                                    Some(&kind::INVENTORY) => {
+                                        match wire::decode_inventory(inner) {
+                                            Some(_) => tot.inventories += 1,
+                                            None => tot.decode_err += 1,
+                                        }
+                                        continue;
+                                    }
+                                    Some(&kind::GROUND) => {
+                                        match wire::decode_ground(inner) {
+                                            Some(_) => tot.grounds += 1,
+                                            None => tot.decode_err += 1,
+                                        }
+                                        continue;
+                                    }
+                                    Some(&kind::SNAPSHOT) => {}
+                                    _ => {
+                                        tot.decode_err += 1;
+                                        continue;
+                                    }
                                 }
                                 match decode_snapshot(inner, &defs, &mut b.view) {
                                     Ok(info) if !info.stale => {
@@ -569,6 +589,7 @@ fn main() {
         pct(&rtts, 0.999) as f64 / 1000.0,
         *rtts.last().unwrap_or(&0) as f64 / 1000.0
     );
+    println!("items: {} inventory and {} ground updates decoded", tot.inventories, tot.grounds);
     println!(
         "integrity: decode errors {}, missing baseline {}, stale {}, own entity missing from snapshot {}, failed decryption {}",
         tot.decode_err, tot.missing_baseline, tot.stale, tot.self_missing, tot.auth_fail
