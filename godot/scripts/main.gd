@@ -17,6 +17,12 @@ const EDGE_CHUNKS := 2       # scenery chunks drawn past the world's edge
 const HudScript := preload("res://scripts/hud.gd")
 const DUNGEON := "res://assets/dungeon/"
 const FOREST := "res://assets/forest/"
+## KayKit rocks for crags and mountains: [file, width, height, how far below its origin it reaches] at scale 1.
+const SPIRES := [["Rock_1_O_Color1", 2.11, 4.58, 0.0], ["Rock_1_N_Color1", 2.3, 4.5, 0.0], ["Rock_1_P_Color1", 2.21, 4.01, 0.0], ["Rock_1_Q_Color1", 2.8, 4.28, 0.0]]
+const BOULDERS := [["Rock_1_K_Color1", 3.69, 3.65, 0.0], ["Rock_1_M_Color1", 3.91, 3.52, 0.0], ["Rock_1_L_Color1", 3.29, 3.4, 0.0],
+	["Rock_2_G_Color1", 3.73, 3.2, 0.0], ["Rock_2_E_Color1", 3.31, 2.86, 0.0], ["Rock_3_Q_Color1", 4.65, 3.72, -1.62],
+	["Rock_3_R_Color1", 5.16, 3.85, -1.71], ["Rock_3_M_Color1", 3.43, 3.6, -1.64]]
+const ROCK_TINT := Color(0.72, 0.69, 0.64)
 ## Scattered scenery per 128 unit chunk: [file, how many, smallest scale, largest scale].
 const PROPS := [
 	["Tree_1_A_Color1", 3, 1.4, 1.9], ["Tree_1_B_Color1", 2, 1.4, 1.9], ["Tree_2_A_Color1", 3, 1.3, 1.8],
@@ -40,9 +46,9 @@ var walls := {}     # box index -> Node3D
 var props := {}     # chunk key -> Node3D
 var terrain := {}   # chunk key -> MeshInstance3D
 var terrain_mat: ShaderMaterial
-var hills := FastNoiseLite.new()
-var bumps := FastNoiseLite.new()
-var box_base: Array[float] = [] # ground height each building stands on
+const TerrainScript := preload("res://scripts/terrain.gd")
+var land: TerrainScript = TerrainScript.new() # hills, rivers, lakes and crags, from the seed and the walls
+var water_mat: ShaderMaterial
 var boxes: Array = []
 var box_grid := {}  # chunk key -> box indices overlapping it, to keep scenery out of buildings
 var meshes := {}    # path -> Mesh, pulled out of the glTF pieces once
@@ -215,7 +221,7 @@ func _build_scene() -> void:
 	e.ssao_radius = 1.6
 	e.ssao_intensity = 1.8
 	e.volumetric_fog_enabled = true # a light haze that the sun shafts through
-	e.volumetric_fog_density = 0.006
+	e.volumetric_fog_density = 0.0035
 	e.volumetric_fog_albedo = Color("dfe8ee")
 	e.volumetric_fog_anisotropy = 0.35
 	e.volumetric_fog_length = 140.0
@@ -238,20 +244,27 @@ func _build_scene() -> void:
 	var sh := Shader.new()
 	sh.code = """shader_type spatial;
 render_mode specular_disabled;
+uniform float rocky = 0.0; // 1 on crags: rock except in the flattest hollows
 varying vec3 wp;
+varying vec3 wn;
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 float n(vec2 p) {
 	vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
 	return mix(mix(h(i), h(i + vec2(1, 0)), u.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), u.x), u.y);
 }
 float fbm(vec2 p) { float v = 0.0; float a = 0.5; for (int k = 0; k < 4; k++) { v += a * n(p); p *= 2.03; a *= 0.5; } return v; }
-void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; wn = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz); }
 void fragment() {
 	vec2 q = wp.xz;
 	vec3 c = mix(vec3(0.36, 0.56, 0.20), vec3(0.50, 0.66, 0.25), smoothstep(0.3, 0.7, fbm(q / 14.0)));
 	c = mix(c, vec3(0.46, 0.43, 0.24), smoothstep(0.55, 0.75, fbm(q / 90.0)) * 0.5);
 	c = mix(c, vec3(0.44, 0.36, 0.23), smoothstep(0.62, 0.78, fbm(q / 18.0 + 7.0)) * 0.45);
 	c *= 0.94 + 0.12 * fbm(q * 0.6);
+	// Steep ground is bare rock, high ground carries snow, and anything below a river's banks is wet silt.
+	float slope = 1.0 - clamp(wn.y, 0.0, 1.0);
+	vec3 rock = vec3(0.47, 0.45, 0.42) * (0.8 + 0.4 * fbm(q * 0.25 + wp.y * 0.1));
+	c = mix(c, rock, max(smoothstep(0.28, 0.5, slope), rocky * smoothstep(0.04, 0.12, slope + 0.05 * n(q * 0.3))));
+	c = mix(c, vec3(0.93, 0.95, 0.98), smoothstep(30.0, 42.0, wp.y + 6.0 * n(q * 0.05)) * (1.0 - smoothstep(0.55, 0.8, slope)));
 	ALBEDO = pow(c, vec3(2.2)); // the colours above are sRGB; albedo is linear
 	ROUGHNESS = 1.0;
 }"""
@@ -280,15 +293,9 @@ func _update_ground_mesh() -> void:
 	var size := float(info.get("world_size", 1024))
 	(ground_mesh.mesh as PlaneMesh).size = Vector2(size + 4096.0, size + 4096.0)
 	ground_mesh.position = Vector3(size / 2.0, -10.0, size / 2.0)
-	var seed := int(info.get("seed", 1))
-	hills.seed = seed
-	hills.frequency = 1.0 / 170.0
-	hills.fractal_octaves = 3
-	bumps.seed = seed + 1
-	bumps.frequency = 1.0 / 35.0
-	box_base.clear()
-	for b in boxes:
-		box_base.append(_raw_height((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0))
+	land.setup(int(info.get("seed", 1)), size, boxes)
+	for r in land.rivers:
+		add_child(_river_mesh(r))
 
 func _entity_node(id: int, mine: bool) -> Node3D:
 	var scene := "res://assets/characters/%s.tscn" % ("player" if mine else "mob")
@@ -450,6 +457,261 @@ func _gem_node(color: String) -> Node3D:
 	n.add_child(l)
 	return n
 
+## A crag: rock rising from cliffs at the wall line to a peak, so the box you cannot walk into is a mountain.
+## Drawn with the ground's material, so its steep faces come out as rock and a tall one gets a snowy top.
+func _build_crag(b: Array, idx: int) -> Node3D:
+	var x0: float = b[0]
+	var y0: float = b[1]
+	var x1: float = b[2]
+	var y1: float = b[3]
+	var w := x1 - x0
+	var d := y1 - y0
+	var r := minf(w, d) / 2.0
+	var peak := clampf(minf(w, d) * 1.4, 14.0, 56.0)
+	var mound := peak * 0.5 # the rock pile makes the silhouette; the mound under it fills the gaps
+	var ground: float = land.base[idx]
+	var nx := maxi(2, int(ceil(w / 2.0)))
+	var ny := maxi(2, int(ceil(d / 2.0)))
+	var hs := PackedFloat32Array()
+	hs.resize((nx + 1) * (ny + 1))
+	for j in ny + 1:
+		for i in nx + 1:
+			var x := x0 + w * i / nx
+			var y := y0 + d * j / ny
+			var inside := minf(minf(x - x0, x1 - x), minf(y - y0, y1 - y))
+			var hgt := ground - 1.0 # the rim sinks into the ground, so the cliff meets it cleanly
+			if inside > 0.01:
+				var cliff := smoothstep(0.0, 3.0, inside)
+				var body := smoothstep(0.0, r, inside)
+				var crags := 0.7 + 0.6 * land.peaks.get_noise_2d(x * 4.0, y * 4.0) + 0.25 * land.bumps.get_noise_2d(x * 9.0, y * 9.0)
+				hgt = ground + mound * (0.35 * cliff + 0.65 * pow(body, 0.8)) * crags
+			hs[j * (nx + 1) + i] = hgt
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var idxs := PackedInt32Array()
+	var sx := w / nx
+	var sy := d / ny
+	for j in ny + 1:
+		for i in nx + 1:
+			var at := j * (nx + 1) + i
+			verts.append(Vector3(x0 + sx * i, hs[at], y0 + sy * j))
+			var l := hs[at - 1] if i > 0 else hs[at]
+			var rr := hs[at + 1] if i < nx else hs[at]
+			var u := hs[at - (nx + 1)] if j > 0 else hs[at]
+			var dn := hs[at + (nx + 1)] if j < ny else hs[at]
+			norms.append(Vector3((l - rr) / (2.0 * sx), 1.0, (u - dn) / (2.0 * sy)).normalized())
+	for j in ny:
+		for i in nx:
+			var a := j * (nx + 1) + i
+			idxs.append_array([a, a + 1, a + nx + 1, a + 1, a + nx + 2, a + nx + 1])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = norms
+	arr[Mesh.ARRAY_INDEX] = idxs
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var node := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = _crag_mat()
+	node.add_child(mi)
+	node.add_child(_crag_rocks(b, ground, peak, r))
+	node.add_child(_rim_rocks(b, ground, 9.0))
+	return node
+
+## The crag itself: KayKit spires towards the middle and boulders round the flanks, sized to the height the
+## crag should reach at each spot and kept inside the box.
+func _crag_rocks(b: Array, ground: float, peak: float, r: float) -> Node3D:
+	var x0: float = b[0]
+	var y0: float = b[1]
+	var x1: float = b[2]
+	var y1: float = b[3]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = (int(x0) * 83492791) ^ (int(y0) * 19349663)
+	var g := clampf(minf(x1 - x0, y1 - y0) / 5.0, 3.0, 9.0)
+	var gx := maxi(1, int((x1 - x0) / g))
+	var gy := maxi(1, int((y1 - y0) / g))
+	var per := {}
+	for j in gy:
+		for i in gx:
+			var x := x0 + (i + 0.5 + rng.randf_range(-0.35, 0.35)) * (x1 - x0) / gx
+			var y := y0 + (j + 0.5 + rng.randf_range(-0.35, 0.35)) * (y1 - y0) / gy
+			var inside := minf(minf(x - x0, x1 - x), minf(y - y0, y1 - y))
+			if inside < 1.0:
+				continue
+			var body := smoothstep(0.0, r, inside)
+			var target := peak * (0.3 + 0.7 * body) * rng.randf_range(0.7, 1.05)
+			var pick: Array = SPIRES[rng.randi() % SPIRES.size()] if body > 0.55 else BOULDERS[rng.randi() % BOULDERS.size()]
+			var s: float = minf(target / float(pick[2]), 2.0 * (inside + 1.0) / float(pick[1]))
+			if s < 0.6:
+				continue
+			_add_rock(per, pick, s, Vector3(x, ground - 0.4, y), rng.randf() * TAU)
+	return _rock_node(per)
+
+func _add_rock(per: Dictionary, pick: Array, s: float, at: Vector3, turn: float) -> void:
+	var name: String = pick[0]
+	if not per.has(name):
+		per[name] = []
+	at.y -= float(pick[3]) * s # sit the rock's own base on the ground
+	per[name].append(Transform3D(Basis(Vector3.UP, turn).scaled(Vector3.ONE * s), at))
+
+func _rock_node(per: Dictionary) -> Node3D:
+	var node := Node3D.new()
+	for name in per:
+		var m := _mesh(FOREST + String(name) + ".gltf")
+		if m:
+			node.add_child(_multi(m, per[name], ROCK_TINT))
+	return node
+
+## The ground's material with rock everywhere but the lowest gentle hollows, for crags.
+var _crag: ShaderMaterial
+func _crag_mat() -> ShaderMaterial:
+	if _crag == null:
+		_crag = terrain_mat.duplicate() as ShaderMaterial
+		_crag.set_shader_parameter("rocky", 1.0)
+	return _crag
+
+## A lake: deep water filling the box (the server will not let you in), its bed sunk into the ground, and a
+## broken line of rocks along the shore so it does not read as a rectangle.
+func _build_lake(b: Array, idx: int) -> Node3D:
+	var node := Node3D.new()
+	var water := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(b[2] - b[0] + 1.0, b[3] - b[1] + 1.0)
+	pm.subdivide_width = 8
+	pm.subdivide_depth = 8
+	water.mesh = pm
+	water.material_override = _water()
+	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	water.position = Vector3((b[0] + b[2]) / 2.0, land.lake_level(idx), (b[1] + b[3]) / 2.0)
+	node.add_child(water)
+	node.add_child(_rim_rocks(b, land.base[idx], 5.0))
+	return node
+
+## Rocks along a box's edge, every `gap` units or so, from the box's corner so every client agrees.
+func _rim_rocks(b: Array, ground: float, gap: float) -> Node3D:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = (int(b[0]) * 73856093) ^ (int(b[1]) * 19349663)
+	var picks := ["Rock_1_A_Color1", "Rock_1_J_Color1", "Rock_2_A_Color1", "Rock_3_E_Color1"]
+	var per := {}
+	var sides := [[Vector2(b[0], b[1]), Vector2(b[2], b[1])], [Vector2(b[2], b[1]), Vector2(b[2], b[3])],
+		[Vector2(b[2], b[3]), Vector2(b[0], b[3])], [Vector2(b[0], b[3]), Vector2(b[0], b[1])]]
+	for sd in sides:
+		var a: Vector2 = sd[0]
+		var c: Vector2 = sd[1]
+		var n := maxi(1, int(a.distance_to(c) / gap))
+		for k in n + 1:
+			var p := a.lerp(c, (k + rng.randf() * 0.6) / (n + 1))
+			var pick: String = picks[rng.randi() % picks.size()]
+			if not per.has(pick):
+				per[pick] = []
+			var s := rng.randf_range(1.6, 3.2)
+			per[pick].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, ground - 0.3, p.y)))
+	var node := Node3D.new()
+	for pick in per:
+		var m := _mesh(FOREST + String(pick) + ".gltf")
+		if m:
+			node.add_child(_multi(m, per[pick], Color(0.72, 0.69, 0.64)))
+	return node
+
+## A river's water: a ribbon along its course at its level, a little wider than the channel so the banks hide the edge.
+func _river_mesh(r: Dictionary) -> Node3D:
+	var pts: PackedVector2Array = r["pts"]
+	var lvl: PackedFloat32Array = r["lvl"]
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var idxs := PackedInt32Array()
+	var half: float = land.RIVER_HALF + 0.8
+	for k in pts.size():
+		var a := pts[maxi(0, k - 1)]
+		var c := pts[mini(pts.size() - 1, k + 1)]
+		var dir := (c - a).normalized()
+		var side := Vector2(-dir.y, dir.x) * half
+		var y: float = lvl[k] - land.RIVER_DEPTH + 1.0
+		verts.append(Vector3(pts[k].x + side.x, y, pts[k].y + side.y))
+		verts.append(Vector3(pts[k].x - side.x, y, pts[k].y - side.y))
+		norms.append(Vector3.UP)
+		norms.append(Vector3.UP)
+		if k > 0:
+			var i := k * 2
+			idxs.append_array([i - 2, i - 1, i, i - 1, i + 1, i])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = norms
+	arr[Mesh.ARRAY_INDEX] = idxs
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = _water()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# KayKit rocks and bushes along the banks, every dozen units or so, either side in turn.
+	var node := Node3D.new()
+	node.add_child(mi)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(pts[0].x) * 7919 + int(pts[0].y)
+	var rocks := {}
+	var bushes: Array = []
+	for k in range(1, pts.size() - 1, 1):
+		if rng.randf() > 0.8:
+			continue
+		var dir := (pts[k + 1] - pts[k - 1]).normalized()
+		var side := Vector2(-dir.y, dir.x) * (1.0 if rng.randf() < 0.5 else -1.0)
+		var p := pts[k] + side * (land.RIVER_HALF + rng.randf_range(0.6, 2.6))
+		if rng.randf() < 0.55:
+			var small := [["Rock_1_A_Color1", 0.61, 0.54, 0.0], ["Rock_3_E_Color1", 1.18, 1.29, -0.59], ["Rock_1_J_Color1", 3.76, 3.36, 0.0]]
+			var pick: Array = small[rng.randi() % small.size()]
+			_add_rock(rocks, pick, rng.randf_range(1.0, 2.6) / float(pick[1]) * 1.5, Vector3(p.x, land.height(p.x, p.y), p.y), rng.randf() * TAU)
+		else:
+			bushes.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(2.2, 3.4)), Vector3(p.x, land.height(p.x, p.y), p.y)))
+	node.add_child(_rock_node(rocks))
+	var bm := _mesh(FOREST + "Bush_2_A_Color1.gltf")
+	if bm and not bushes.is_empty():
+		node.add_child(_multi(bm, bushes))
+	return node
+
+## Water: clear and turquoise where shallow, deep blue where deep (read from the depth buffer), foam at the
+## shoreline, and two drifting ripple layers. Forward+ only, like the rest of the effects.
+func _water() -> ShaderMaterial:
+	if water_mat:
+		return water_mat
+	var sh := Shader.new()
+	sh.code = """shader_type spatial;
+render_mode cull_disabled, depth_draw_always;
+uniform sampler2D depth_tex : hint_depth_texture, filter_linear;
+varying vec3 wp;
+float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float n(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h(i), h(i + vec2(1, 0)), u.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), u.x), u.y);
+}
+float waves(vec2 q, float t) { return n(q * 0.35 + vec2(t, t * 0.7)) + 0.5 * n(q * 0.9 - vec2(t * 1.3, t * 0.4)); }
+void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	float t = TIME * 0.5;
+	vec2 q = wp.xz;
+	float e = 0.2;
+	float a = waves(q, t);
+	vec3 wn = normalize(vec3((a - waves(q + vec2(e, 0.0), t)) / e * 0.3, 1.0, (a - waves(q + vec2(0.0, e), t)) / e * 0.3));
+	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+	float depth = texture(depth_tex, SCREEN_UV).r;
+	vec4 v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, depth, 1.0);
+	v.xyz /= v.w;
+	float thick = clamp(VERTEX.z - v.z, 0.0, 20.0);
+	float k = smoothstep(0.0, 3.0, thick);
+	vec3 c = mix(vec3(0.14, 0.44, 0.47), vec3(0.03, 0.14, 0.24), k);
+	float foam = (1.0 - smoothstep(0.0, 0.45, thick)) * (0.6 + 0.4 * n(q * 2.0 + t * 2.0));
+	ALBEDO = mix(c, vec3(0.92, 0.95, 0.95), foam * 0.8);
+	ALPHA = clamp(0.55 + k * 0.4 + foam * 0.4, 0.0, 0.96);
+	ROUGHNESS = 0.06;
+	SPECULAR = 0.7;
+}"""
+	water_mat = ShaderMaterial.new()
+	water_mat.shader = sh
+	return water_mat
+
 func _chunk_key(cx: int, cy: int) -> int:
 	return cx * 100003 + cy
 
@@ -468,6 +730,10 @@ func _index_boxes() -> void:
 ## whole number fits), stone pillars at the corners and every other joint, a roof, and a banner or a torch on
 ## long sides. Everything stays inside the box, so what you see is exactly what you collide with.
 func _build_box(b: Array, idx: int) -> Node3D:
+	if land.kinds[idx] == land.CRAG:
+		return _build_crag(b, idx)
+	if land.kinds[idx] == land.LAKE:
+		return _build_lake(b, idx)
 	var x0: float = b[0]
 	var y0: float = b[1]
 	var x1: float = b[2]
@@ -476,7 +742,7 @@ func _build_box(b: Array, idx: int) -> Node3D:
 	var layers := 1 + hsh % 2
 	var height := 4.0 * layers
 	var node := Node3D.new()
-	node.position.y = box_base[idx] if idx < box_base.size() else 0.0
+	node.position.y = land.base[idx]
 	var pieces := {"wall.gltf": [], "wall_cracked.gltf": [], "wall_window_closed.gltf": [], "pillar.gltf": [],
 		"banner_red.gltf": [], "banner_blue.gltf": [], "torch_mounted.gltf": []}
 	# Sides as start, direction, length and outward normal (server x is world x, server y is world z).
@@ -603,6 +869,19 @@ func _build_props(cx: int, cy: int, seed: int, size: float) -> Node3D:
 	rng.seed = (seed * 73856093) ^ (cx * 19349663) ^ (cy * 83492791)
 	var node := Node3D.new()
 	var near: Array = box_grid.get(_chunk_key(cx, cy), [])
+	# Past the playable edge, where the ground rises into mountains, KayKit spires and boulders crown the slopes.
+	var outside_chunk := cx < 0 or cy < 0 or cx * PROP_CHUNK >= size or cy * PROP_CHUNK >= size
+	if outside_chunk:
+		var per := {}
+		for k in 22:
+			var x := (cx + rng.randf()) * PROP_CHUNK
+			var y := (cy + rng.randf()) * PROP_CHUNK
+			var out := maxf(maxf(-x, x - size), maxf(-y, y - size))
+			if out < 25.0:
+				continue
+			var pick: Array = SPIRES[rng.randi() % SPIRES.size()] if out > 70.0 else BOULDERS[rng.randi() % BOULDERS.size()]
+			_add_rock(per, pick, rng.randf_range(2.5, 6.0), Vector3(x, _height(x, y) - 0.5, y), rng.randf() * TAU)
+		node.add_child(_rock_node(per))
 	for p in PROPS:
 		var xf: Array = []
 		var tree := String(p[0]).begins_with("Tree")
@@ -618,7 +897,7 @@ func _build_props(cx: int, cy: int, seed: int, size: float) -> Node3D:
 			var outside := x < 0.0 or y < 0.0 or x > size or y > size
 			if tree and count > int(p[1]) and not outside and minf(minf(x, y), minf(size - x, size - y)) > 12.0:
 				continue # the extra trees only grow in the last few units inside the edge and beyond it
-			if _near_box(near, x, y, pad):
+			if _near_box(near, x, y, pad) or land.wet(x, y):
 				continue
 			xf.append(Transform3D(Basis(Vector3.UP, turn).scaled(Vector3.ONE * s), Vector3(x, _height(x, y) - 0.15, y)))
 		var m := _mesh(FOREST + String(p[0]) + ".gltf")
@@ -826,25 +1105,9 @@ func _beside_nearest_building() -> String:
 
 # ---------------------------------------------------------------- terrain
 
-## Rolling ground from the world seed, the same on every client. Purely visual: the server's world is flat, so
-## height never changes where anyone can walk or what they can reach.
-func _raw_height(x: float, y: float) -> float:
-	return hills.get_noise_2d(x, y) * 15.0 + bumps.get_noise_2d(x, y) * 0.9
-
-## Ground height, levelled around buildings so their walls stand on flat ground.
+## Ground height: see terrain.gd (hills, river channels, lake beds, level ground round buildings).
 func _height(x: float, y: float) -> float:
-	var h := _raw_height(x, y)
-	var best := 0.0
-	var base := h
-	for i in box_grid.get(_chunk_key(int(floor(x / PROP_CHUNK)), int(floor(y / PROP_CHUNK))), []):
-		var b: Array = boxes[i]
-		var dx := maxf(maxf(b[0] - x, x - b[2]), 0.0)
-		var dy := maxf(maxf(b[1] - y, y - b[3]), 0.0)
-		var w := 1.0 - smoothstep(0.0, FLAT_PAD, sqrt(dx * dx + dy * dy))
-		if w > best:
-			best = w
-			base = box_base[i]
-	return lerpf(h, base, best)
+	return land.height(x, y)
 
 func _sync_terrain(center: Vector2) -> void:
 	var size := float(info.get("world_size", 1024))
