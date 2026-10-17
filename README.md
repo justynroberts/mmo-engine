@@ -164,3 +164,11 @@ The end-to-end tests include forged, bit-flipped and replayed packets, wrong-add
 - Linux and IPv4 only (`recvmmsg`, `sendmmsg`, `sched_setaffinity`)
 - Line of sight is not checked for actions
 - Moodboard phase of the UI design was skipped; the look is an instrument-panel direction chosen from the brief
+
+3D view: the 2D/3D switch over the map shows the world as a green wireframe
+(three.js, loaded on demand). Drag to orbit, scroll to zoom, click an entity to
+select it (same selection as the 2D map), and Follow tracks the selected one.
+Bots are octahedra, players are white cones, walls and places are wireframes,
+and digits fall in the background (static if you prefer reduced motion). It
+reads the same `/api/state` feed as the 2D map and falls back to a message
+when WebGL is unavailable.

@@ -52,7 +52,7 @@ try:
     check("server has players from encrypted bots", st["clients"] >= 50, f"clients={st['clients']}")
 
     with sync_playwright() as pw:
-        br = pw.chromium.launch(args=["--no-sandbox"])
+        br = pw.chromium.launch(args=["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
         TABS = ["Bots", "Builder", "Attributes", "Actions", "Entity", "Chat", "Connect", "JSON"]
         for theme in ("dark", "light"):
             ctx = br.new_context(viewport={"width": 1440, "height": 900}, color_scheme=theme)
@@ -243,6 +243,22 @@ try:
         ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
         pg.get_by_role("tab", name="Bots", exact=True).focus(); pg.keyboard.press("ArrowRight"); pg.wait_for_timeout(300)
         check("arrow keys switch tabs", pg.get_by_role("tab", name="Builder", exact=True).get_attribute("data-state") == "active")
+        ctx.close()
+
+        # 3D wireframe view: renders, lists entities, selects on click, switches back.
+        ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page()
+        errs3 = []; pg.on("pageerror", lambda e: errs3.append(str(e)))
+        pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
+        pg.get_by_role("button", name="3D", exact=True).click(); pg.wait_for_timeout(2500)
+        status = pg.locator("[role=status]").last.inner_text()
+        check("3D view shows entities", "entities" in status and not status.startswith("0 "), status)
+        check("3D view has a labelled canvas", pg.get_by_role("img", name="3D wireframe view").count() == 1)
+        lit = pg.evaluate("() => { const c = document.querySelector('canvas[aria-label^=\"3D\"]'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; return c.width > 0 }")
+        check("3D canvas has a size", lit)
+        check("3D view raised no page errors", not errs3, str(errs3))
+        if SHOTS: pg.screenshot(path=str(SHOTS / "3d.png"))
+        pg.get_by_role("button", name="2D", exact=True).click(); pg.wait_for_timeout(300)
+        check("switching back to 2D restores the map", pg.get_by_role("img", name="Top-down map").count() == 1)
         ctx.close()
 
         # Phone width: no horizontal scroll.

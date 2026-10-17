@@ -1,6 +1,6 @@
 import * as Tabs from '@radix-ui/react-tabs'
 import { motion, useReducedMotion } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type GameFile, type Info, type PutResult, type State, type WorldGeom } from './api'
 import { Builder, initialBuilder, type BuilderState } from './components/Builder'
 import { ChatPanel } from './components/Chat'
@@ -8,6 +8,7 @@ import { ActionsEditor, AttrsEditor, BotsEditor } from './components/Editors'
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
+const Scene3D = lazy(() => import('./components/Scene3D'))
 import { needsReset, newPlace, newRoute } from './gameEdit'
 
 const TABS: readonly (readonly [string, string])[] = [
@@ -127,6 +128,7 @@ export default function App() {
   const [selected, setSelected] = useState<number | null>(null)
   const [possessed, setPossessed] = useState<number | null>(null)
   const [follow, setFollow] = useState(false)
+  const [view3d, setView3d] = useState(false)
   const [applying, setApplying] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [b, setB] = useState<BuilderState>(initialBuilder)
@@ -258,41 +260,69 @@ export default function App() {
     <div className="min-h-full lg:h-screen flex flex-col">
       <StatusBar s={stats} online={online} dark={dark} onTheme={toggle} />
       <main className="flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_34rem] grid-rows-[min(60vh,420px)_auto] lg:grid-rows-1">
-        <WorldView
-          edit={
-            tab === 'builder' && draft
-              ? {
-                  places: draft.places,
-                  routes: draft.routes,
-                  home: draft.archetypes[b.arch]?.home ?? null,
-                  sel: b.sel,
-                  tool: b.tool,
-                  draft: b.draft,
-                  onPick: (sel) => setB((cur) => ({ ...cur, sel })),
-                  onClick: onMapClick,
-                  onMovePlace: (i, x, y) => setGame({ ...draft, places: draft.places.map((p, k) => (k === i ? { ...p, x, y } : p)) }),
-                  onMovePoint: (r, k, x, y) =>
-                    setGame({
-                      ...draft,
-                      routes: draft.routes.map((rt, ri) => (ri === r ? { ...rt, points: rt.points.map((pt, j) => (j === k ? [x, y] : pt)) } : rt)),
-                    }),
-                }
-              : null
-          }
-          world={world}
-          stateRef={stateRef}
-          colors={live?.archetypes.map((a) => a.color) ?? []}
-          selected={selected}
-          onSelect={(id) => {
-            setSelected(id)
-            if (id !== null) setTab('entity')
-          }}
-          follow={follow}
-          interest={live?.interest_radius ?? 128}
-          healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
-          healthMax={healthDef?.max ?? 100}
-          themeKey={dark ? 'dark' : 'light'}
-        />
+        <div className="relative min-h-0">
+  {!view3d ? (
+          <WorldView
+            edit={
+              tab === 'builder' && draft
+                ? {
+                    places: draft.places,
+                    routes: draft.routes,
+                    home: draft.archetypes[b.arch]?.home ?? null,
+                    sel: b.sel,
+                    tool: b.tool,
+                    draft: b.draft,
+                    onPick: (sel) => setB((cur) => ({ ...cur, sel })),
+                    onClick: onMapClick,
+                    onMovePlace: (i, x, y) => setGame({ ...draft, places: draft.places.map((p, k) => (k === i ? { ...p, x, y } : p)) }),
+                    onMovePoint: (r, k, x, y) =>
+                      setGame({
+                        ...draft,
+                        routes: draft.routes.map((rt, ri) => (ri === r ? { ...rt, points: rt.points.map((pt, j) => (j === k ? [x, y] : pt)) } : rt)),
+                      }),
+                  }
+                : null
+            }
+            world={world}
+            stateRef={stateRef}
+            colors={live?.archetypes.map((a) => a.color) ?? []}
+            selected={selected}
+            onSelect={(id) => {
+              setSelected(id)
+              if (id !== null) setTab('entity')
+            }}
+            follow={follow}
+            interest={live?.interest_radius ?? 128}
+            healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
+            healthMax={healthDef?.max ?? 100}
+            themeKey={dark ? 'dark' : 'light'}
+          />
+          ) : (
+            <Suspense fallback={<div className="h-full bg-black" />}>
+              <Scene3D
+                world={world}
+                places={live?.places ?? []}
+                routes={live?.routes ?? []}
+                stateRef={stateRef}
+                selected={selected}
+                onSelect={(id) => {
+                  setSelected(id)
+                  if (id !== null) setTab('entity')
+                }}
+                follow={follow}
+                interest={live?.interest_radius ?? 128}
+              />
+            </Suspense>
+          )}
+          <div role="group" aria-label="Map view" className="absolute top-2 right-2 flex border border-line bg-bg">
+            {([['2D', false], ['3D', true]] as const).map(([l, v]) => (
+              <button key={l} type="button" aria-pressed={view3d === v} onClick={() => setView3d(v)}
+                className={`lbl h-7 px-3 cursor-pointer border-0 ${view3d === v ? 'bg-accent text-accent-ink' : 'bg-transparent'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
         <aside className="flex flex-col lg:min-h-0 border-t lg:border-t-0 lg:border-l border-line">
           <Tabs.Root
             value={tab}
