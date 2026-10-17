@@ -41,6 +41,18 @@ pub enum Cmd {
     Give(GiveReq),
     PutItems(PutItemsReq),
     Inventory { id: u32 },
+    God(GodReq),
+}
+
+#[derive(Deserialize)]
+pub struct GodReq {
+    pub id: u32,
+    #[serde(default = "yes")]
+    pub on: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -346,6 +358,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
         ("POST", "/api/ground") => serde_json::from_slice(&req.body).ok().map(Cmd::PutItems),
         ("GET", "/api/inventory") => req.query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(|v| v.parse().ok()).map(|id| Cmd::Inventory { id }),
         ("POST", "/api/events/fire") => serde_json::from_slice(&req.body).ok().map(Cmd::FireEvent),
+        ("POST", "/api/god") => serde_json::from_slice(&req.body).ok().map(Cmd::God),
         _ => None,
     };
     if let Some(cmd) = cmd {
@@ -361,7 +374,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -590,6 +603,11 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
         Cmd::Inventory { id } => {
             let Some(s) = c.sim.ents.resolve(id) else { return err(404, "no such entity") };
             (200, json!({ "id": id, "bag": c.sim.inv_names(s).into_iter().map(|(n, k)| json!({"item": n, "count": k})).collect::<Vec<_>>() }).to_string())
+        }
+        Cmd::God(r) => {
+            let Some(s) = c.sim.ents.resolve(r.id) else { return err(404, "no such entity") };
+            c.sim.ents.god[s] = r.on;
+            (200, json!({ "ok": true, "id": r.id, "god": r.on }).to_string())
         }
         Cmd::Release { id } => {
             let Some(s) = c.sim.ents.resolve(id) else { return err(404, "no such entity") };

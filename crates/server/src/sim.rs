@@ -36,6 +36,8 @@ pub struct Entities {
     pub wp_fwd: Vec<bool>,
     /// Tick before which this bot will not speak again.
     pub say_at: Vec<u32>,
+    /// God mode (admin only): attributes held at their maximum every tick, so it cannot die or run dry.
+    pub god: Vec<bool>,
     /// One array per attribute, indexed by slot (structure of arrays).
     pub attrs: Vec<Vec<f32>>,
     free: Vec<u32>,
@@ -54,6 +56,7 @@ impl Entities {
             dir_x: vec![0; cap],
             dir_y: vec![0; cap],
             cooldown_until: vec![0; cap],
+            god: vec![false; cap],
             owner: vec![NONE; cap],
             arch: vec![NO_ARCH; cap],
             speed: vec![0.0; cap],
@@ -327,6 +330,7 @@ impl Sim {
         e.dir_x[slot] = 0;
         e.dir_y[slot] = 0;
         e.cooldown_until[slot] = 0;
+        e.god[slot] = false;
         e.owner[slot] = owner;
         e.arch[slot] = arch;
         e.speed[slot] = speed;
@@ -826,6 +830,14 @@ impl Sim {
     /// Data-driven rules: an attribute that hits its minimum can trigger a
     /// respawn. This is where "death" lives, and it is just a rule on health.
     fn system_rules(&mut self) {
+        // God mode first, so whatever this tick took is restored before the respawn rule can see a zero.
+        for s in 0..self.ents.high {
+            if self.ents.alive[s] && self.ents.god[s] {
+                for (a, def) in self.defs.attrs.iter().enumerate() {
+                    self.ents.attrs[a][s] = def.max;
+                }
+            }
+        }
         for a in 0..self.defs.attrs.len() {
             if self.defs.attrs[a].on_zero != OnZero::Respawn {
                 continue;
@@ -890,6 +902,26 @@ mod tests {
         s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
         assert_eq!(s.stats.rejected_actions, 1);
+    }
+
+    #[test]
+    fn god_mode_keeps_attributes_full_and_never_respawns() {
+        let mut s = sim();
+        let a = s.spawn(0).unwrap();
+        let b = s.spawn(1).unwrap();
+        place(&mut s, a, 100.0, 100.0);
+        place(&mut s, b, 105.0, 100.0);
+        s.ents.god[b] = true;
+        s.ents.attrs[ATTR_HEALTH as usize][b] = 5.0; // one zap from death
+        let tid = s.ents.id_of(b);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 100.0);
+        assert_eq!((s.ents.x[b], s.ents.y[b]), (105.0, 100.0), "a god is not respawned");
+        assert_eq!(s.stats.respawns, 0);
+        // A reused slot starts mortal.
+        s.ents.despawn(b);
+        let c = s.spawn(1).unwrap();
+        assert!(!s.ents.god[c]);
     }
 
     #[test]
