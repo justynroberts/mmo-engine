@@ -357,7 +357,7 @@ fn on_connect(
             entity: sim.ents.id_of(slot),
             tick: sim.tick,
             tick_hz: sim.tick_hz as u8,
-            world_size: sim.world.size as u16,
+            world_size: sim.world.size as u32,
             world_seed: sim.world.seed,
         },
     );
@@ -908,12 +908,17 @@ mod tests {
     use std::os::fd::AsRawFd;
 
     /// Handshake `n` fake clients in-process (no network) so lanes can be timed in isolation.
-    fn fixture(n: usize, world: u16) -> (Sim, Clients, Vec<Session>, std::net::UdpSocket, std::net::UdpSocket) {
+    fn fixture(n: usize, world: u32) -> (Sim, Clients, Vec<Session>, std::net::UdpSocket, std::net::UdpSocket) {
         let game = GameFile::default_game().build().unwrap();
         let hash = game.defs.content_hash();
         let mut sim = Sim::new(game, World::generate(world, 1), n + 64, 20, 1);
         let (keys, _) = ServerKeys::generate();
         let sink = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        // Bigger snapshots (32 bit positions) overflow the default receive buffer with 200 clients at once.
+        let big: libc::c_int = 8 << 20;
+        unsafe {
+            libc::setsockopt(sink.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUF, &big as *const _ as *const libc::c_void, std::mem::size_of::<libc::c_int>() as u32);
+        }
         let out = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let dest = match sink.local_addr().unwrap() {
             std::net::SocketAddr::V4(a) => a,
@@ -1047,7 +1052,7 @@ mod tests {
     #[ignore]
     fn lane_scaling() {
         let n: usize = std::env::var("LANE_CLIENTS").ok().and_then(|v| v.parse().ok()).unwrap_or(2000);
-        let world: u16 = std::env::var("LANE_WORLD").ok().and_then(|v| v.parse().ok()).unwrap_or(512);
+        let world: u32 = std::env::var("LANE_WORLD").ok().and_then(|v| v.parse().ok()).unwrap_or(512);
         let (sim, mut clients, _peers, _sink, out) = fixture(n, world);
         for lanes_n in [1usize, 2] {
             let mut lanes: Vec<Worker> = (0..lanes_n).map(|_| Worker::new(out.as_raw_fd())).collect();

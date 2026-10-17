@@ -547,7 +547,7 @@ fn sample_drops(name: &str) -> Vec<DropDef> {
 
 impl GameFile {
     /// The world this file describes: its own walls, or the ones generated from `seed`.
-    pub fn world(&self, size: u16, seed: u64) -> Result<crate::world::World, String> {
+    pub fn world(&self, size: u32, seed: u64) -> Result<crate::world::World, String> {
         let Some(walls) = &self.walls else { return Ok(crate::world::World::generate(size, seed)) };
         if walls.len() > MAX_WALLS {
             return Err(format!("at most {MAX_WALLS} walls"));
@@ -734,7 +734,7 @@ impl GameFile {
             return Err(format!("at most {MAX_REPL} attributes can be replicated"));
         }
         let wire: usize = replicated.iter().map(|&i| if attrs[i].bits <= 8 { 1 } else { 2 }).sum();
-        let worst = HEADER_LEN + self.max_visible as usize * (8 + wire);
+        let worst = HEADER_LEN + self.max_visible as usize * (12 + wire);
         if worst > SNAPSHOT_BUDGET {
             return Err(format!(
                 "max_visible {} with these replicated attributes could make a {worst} byte snapshot (limit {SNAPSHOT_BUDGET}); lower max_visible",

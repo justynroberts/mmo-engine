@@ -1,7 +1,7 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 6;
+pub const PROTO_VERSION: u16 = 7;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 
@@ -19,7 +19,7 @@ pub mod kind {
     pub const REDIRECT: u8 = 0x87;
     /// Inner: your bag, `n u8 | n x (item+1 u8, count u8)` (item+1 of 0 is an empty slot).
     pub const INVENTORY: u8 = 0x88;
-    /// Inner: items lying near you, `n u8 | n x (id u32, x u16, y u16, item u8, count u8)`.
+    /// Inner: items lying near you, `n u8 | n x (id u32, x u32, y u32, item u8, count u8)`.
     pub const GROUND: u8 = 0x89;
 }
 
@@ -156,7 +156,7 @@ pub struct Welcome {
     pub entity: u32,
     pub tick: u32,
     pub tick_hz: u8,
-    pub world_size: u16,
+    pub world_size: u32,
     pub world_seed: u64,
 }
 
@@ -166,7 +166,7 @@ pub fn encode_welcome(out: &mut Vec<u8>, w: &Welcome) {
     put_u32(out, w.entity);
     put_u32(out, w.tick);
     put_u8(out, w.tick_hz);
-    put_u16(out, w.world_size);
+    put_u32(out, w.world_size);
     put_u64(out, w.world_seed);
 }
 
@@ -197,8 +197,8 @@ pub fn decode_redirect(buf: &[u8]) -> Option<Redirect> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundEntry {
     pub id: u32,
-    pub x: u16,
-    pub y: u16,
+    pub x: u32,
+    pub y: u32,
     pub item: u8,
     pub count: u8,
 }
@@ -228,21 +228,27 @@ pub fn encode_ground(out: &mut Vec<u8>, items: &[GroundEntry]) {
     put_u8(out, items.len().min(MAX_GROUND_SENT) as u8);
     for g in items.iter().take(MAX_GROUND_SENT) {
         put_u32(out, g.id);
-        put_u16(out, g.x);
-        put_u16(out, g.y);
+        put_u32(out, g.x);
+        put_u32(out, g.y);
         put_u8(out, g.item);
         put_u8(out, g.count);
     }
 }
 
 pub fn decode_ground(buf: &[u8]) -> Option<Vec<GroundEntry>> {
-    if buf.len() < 2 || buf[0] != kind::GROUND || buf.len() != 2 + buf[1] as usize * 10 {
+    if buf.len() < 2 || buf[0] != kind::GROUND || buf.len() != 2 + buf[1] as usize * 14 {
         return None;
     }
     Some(
         buf[2..]
-            .chunks_exact(10)
-            .map(|c| GroundEntry { id: u32::from_le_bytes([c[0], c[1], c[2], c[3]]), x: u16::from_le_bytes([c[4], c[5]]), y: u16::from_le_bytes([c[6], c[7]]), item: c[8], count: c[9] })
+            .chunks_exact(14)
+            .map(|c| GroundEntry {
+                id: u32::from_le_bytes([c[0], c[1], c[2], c[3]]),
+                x: u32::from_le_bytes([c[4], c[5], c[6], c[7]]),
+                y: u32::from_le_bytes([c[8], c[9], c[10], c[11]]),
+                item: c[12],
+                count: c[13],
+            })
             .collect(),
     )
 }
@@ -262,7 +268,7 @@ pub fn decode_server(buf: &[u8]) -> Option<ServerMsg> {
             entity: r.u32()?,
             tick: r.u32()?,
             tick_hz: r.u8()?,
-            world_size: r.u16()?,
+            world_size: r.u32()?,
             world_seed: r.u64()?,
         })),
         kind::REJECT => Some(ServerMsg::Reject { reason: r.u8()? }),
@@ -280,7 +286,7 @@ mod tests {
         encode_inventory(&mut b, &[(1, 3), (0, 0), (2, 99)]);
         assert_eq!(decode_inventory(&b), Some(vec![(1, 3), (0, 0), (2, 99)]));
         assert_eq!(decode_inventory(&b[..b.len() - 1]), None);
-        let g = [GroundEntry { id: 70000, x: 123, y: 65535, item: 2, count: 5 }, GroundEntry { id: 1, x: 0, y: 1, item: 0, count: 1 }];
+        let g = [GroundEntry { id: 70000, x: 123, y: 4_000_000_000, item: 2, count: 5 }, GroundEntry { id: 1, x: 0, y: 1, item: 0, count: 1 }];
         encode_ground(&mut b, &g);
         assert_eq!(decode_ground(&b), Some(g.to_vec()));
         encode_ground(&mut b, &[]);

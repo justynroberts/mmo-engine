@@ -7,17 +7,21 @@
 
 use crate::rng::Rng;
 
-/// Wire position resolution: 1/16 unit, so a u16 covers 0..4096.
+/// Wire position resolution: 1/16 unit in a u32, so the wire itself could carry 268 million units.
 pub const POS_SCALE: f32 = 16.0;
-pub const MAX_WORLD_SIZE: u16 = 4095;
+/// The largest world edge the server will run. Well inside the wire's range, and small enough that f32 positions
+/// keep a resolution finer than the wire's (a 1/16 unit step needs the edge under 2^19).
+pub const MAX_WORLD_SIZE: u32 = 65_536;
+/// Generated walls stop getting more numerous past this, so a huge world is not a huge file for every browser.
+pub const MAX_GENERATED_WALLS: usize = 4000;
 
 #[inline]
-pub fn qpos(v: f32) -> u16 {
-    (v * POS_SCALE).round().clamp(0.0, 65535.0) as u16
+pub fn qpos(v: f32) -> u32 {
+    (v * POS_SCALE).round().clamp(0.0, MAX_WORLD_SIZE as f32 * POS_SCALE) as u32
 }
 
 #[inline]
-pub fn dpos(q: u16) -> f32 {
+pub fn dpos(q: u32) -> f32 {
     q as f32 / POS_SCALE
 }
 
@@ -39,11 +43,11 @@ pub struct World {
 }
 
 impl World {
-    pub fn generate(size: u16, seed: u64) -> World {
-        assert!(size >= 64 && size <= MAX_WORLD_SIZE, "world size must be 64..=4095");
+    pub fn generate(size: u32, seed: u64) -> World {
+        assert!((64..=MAX_WORLD_SIZE).contains(&size), "world size must be 64..={MAX_WORLD_SIZE}");
         let sf = size as f32;
         let mut rng = Rng::new(seed ^ 0xA11CE);
-        let n = ((sf * sf) / 40_000.0) as usize;
+        let n = (((sf * sf) / 40_000.0) as usize).min(MAX_GENERATED_WALLS);
         let mut boxes = Vec::with_capacity(n);
         for _ in 0..n {
             let w = rng.range(8.0, 48.0);
@@ -56,7 +60,8 @@ impl World {
     }
 
     pub fn from_boxes(size: f32, seed: u64, boxes: Vec<Aabb>) -> World {
-        let cell = 64.0;
+        // Finer cells than 64 units buy nothing; a huge world gets coarser ones so the bucket table stays small.
+        let cell = (size / 1024.0).max(64.0);
         let gw = (size / cell).ceil() as usize + 1;
         let mut buckets = vec![Vec::new(); gw * gw];
         for (i, b) in boxes.iter().enumerate() {

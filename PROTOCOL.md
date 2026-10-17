@@ -1,4 +1,4 @@
-# Wire protocol, version 6
+# Wire protocol, version 7
 
 Everything is UDP, little-endian, byte aligned. The reference implementations are
 `crates/proto` (Rust) and `ui/src/play/protocol.ts` (TypeScript, cross-checked against Rust).
@@ -42,7 +42,7 @@ k_s2c  = derive("mmo-engine 1 session s2c", parts)
 Mixing `dh3` is what proves the identity: a client that only claims someone else's identity cannot derive the keys.
 Reject any all-zero X25519 output.
 
-Welcome (inside ACCEPT): `0x81 | entity id u32 | tick u32 | tick_hz u8 | world_size u16 | world_seed u64`.
+Welcome (inside ACCEPT): `0x81 | entity id u32 | tick u32 | tick_hz u8 | world_size u32 | world_seed u64`.
 
 ## 2. DATA packets
 
@@ -64,7 +64,7 @@ Inner messages:
 | `0x86` CHAT_BATCH | S->C | `ack_cseq u32 | n u8 | n x (seq u32 | from u32 | channel u8 | len u8 | text)` |
 | `0x87` REDIRECT | S->C | `zone u8 | ip [4] | port u16`: reconnect there (section 5) |
 | `0x88` INVENTORY | S->C | `n u8 | n x (item+1 u8, count u8)`: your bag, sent when it changes and every second (item+1 of 0 is an empty slot) |
-| `0x89` GROUND | S->C | `n u8 | n x (id u32, x u16, y u16, item u8, count u8)`: up to 40 items lying nearest you, every half second; positions quantised like entities |
+| `0x89` GROUND | S->C | `n u8 | n x (id u32, x u32, y u32, item u8, count u8)`: up to 40 items lying nearest you, every half second; positions quantised like entities |
 
 Send INPUT at the server's tick rate (20 Hz). `dir_x`/`dir_y` are -127..127 intent, never speed. `seq` increases;
 the server applies the newest. `ack_tick` is the newest snapshot tick you hold. `action` is an action id (0 = none) with a
@@ -76,7 +76,7 @@ the server applies the newest. `ack_tick` is the newest snapshot tick you hold. 
 ```
 0x82 | tick u32 | baseline_tick u32 | last_input_seq u32 | n_changed u16 | n_removed u16
      | n_changed x entry | n_removed x entity id u32
-entry = id u32 | x u16 | y u16 | one value per replicated attribute (u8 if bits <= 8 else u16)
+entry = id u32 | x u32 | y u32 | one value per replicated attribute (u8 if bits <= 8 else u16)
 ```
 
 - Entries are sorted by id. `baseline_tick = 0` means a full snapshot. Otherwise it is a delta against the snapshot of that
@@ -118,3 +118,11 @@ fetches them from `/play/info`. There is no new client message: item actions rid
 below 200. `200 + n` uses bag slot n (0 to 7), `216 + n` drops slot n onto the ground, and `250` picks up the nearest item
 within 3 units. All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
 nothing else; a client that ignores them still plays.
+
+## World size (version 7)
+
+Positions are 32 bit (`world units * 16`), so the wire can describe a world of 268 million units on a side. Version 7 widened
+`x` and `y` in snapshot entries and GROUND, and `world_size` in WELCOME, from 16 to 32 bits (version 6 topped out at 4,095
+units). The server itself runs worlds from 64 to 65,536 units (`--world-size`), a limit chosen so that 32 bit floats keep a finer
+resolution than the wire does. A snapshot entry is now 12 bytes plus attributes, so fewer entries fit in one datagram: the
+server refuses a game file whose `max_visible` could overflow it.

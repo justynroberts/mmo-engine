@@ -134,6 +134,9 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(world_size: f32, cell: f32, cap: usize) -> Self {
+        // A cell only has to be at least the interest radius; a huge world with a small radius would otherwise
+        // want hundreds of millions of cells, so cells grow to keep the table near a million.
+        let cell = cell.max(world_size / 1024.0);
         let gw = (world_size / cell).ceil() as usize + 1;
         Grid {
             cell,

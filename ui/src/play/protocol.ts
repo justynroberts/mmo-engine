@@ -7,7 +7,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-export const PROTO_VERSION = 6
+export const PROTO_VERSION = 7
 export const HELLO_LEN = 96
 export const CHALLENGE_LEN = 53
 export const CONNECT_LEN = 55 + 8 + 32 + 16
@@ -257,9 +257,9 @@ export interface Welcome {
 }
 
 export function decodeWelcome(b: Uint8Array): Welcome | null {
-  if (b.length < 20 || b[0] !== kind.WELCOME) return null
+  if (b.length < 22 || b[0] !== kind.WELCOME) return null
   const v = new DataView(b.buffer, b.byteOffset, b.length)
-  return { entity: v.getUint32(1, true), tick: v.getUint32(5, true), hz: v.getUint8(9), worldSize: v.getUint16(10, true), seed: v.getBigUint64(12, true) }
+  return { entity: v.getUint32(1, true), tick: v.getUint32(5, true), hz: v.getUint8(9), worldSize: v.getUint32(10, true), seed: v.getBigUint64(14, true) }
 }
 
 export interface Redirect {
@@ -297,12 +297,12 @@ export interface GroundItem {
 }
 
 export function decodeGround(b: Uint8Array): GroundItem[] | null {
-  if (b.length < 2 || b[0] !== kind.GROUND || b.length !== 2 + b[1]! * 10) return null
+  if (b.length < 2 || b[0] !== kind.GROUND || b.length !== 2 + b[1]! * 14) return null
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
   const out: GroundItem[] = []
   for (let i = 0; i < b[1]!; i++) {
-    const o = 2 + i * 10
-    out.push({ id: dv.getUint32(o, true), x: dpos(dv.getUint16(o + 4, true)), y: dpos(dv.getUint16(o + 6, true)), item: b[o + 8]!, count: b[o + 9]! })
+    const o = 2 + i * 14
+    out.push({ id: dv.getUint32(o, true), x: dpos(dv.getUint32(o + 4, true)), y: dpos(dv.getUint32(o + 8, true)), item: b[o + 12]!, count: b[o + 13]! })
   }
   return out
 }
@@ -388,9 +388,9 @@ export function decodeSnapshot(buf: Uint8Array, defs: Defs, view: ClientView): {
   let p = 17
   const changed: Entry[] = []
   for (let i = 0; i < nChanged; i++) {
-    if (p + 8 > buf.length) return { error: 'truncated' }
-    const e: Entry = { id: v.getUint32(p, true), x: v.getUint16(p + 4, true), y: v.getUint16(p + 6, true), attrs: [] }
-    p += 8
+    if (p + 12 > buf.length) return { error: 'truncated' }
+    const e: Entry = { id: v.getUint32(p, true), x: v.getUint32(p + 4, true), y: v.getUint32(p + 8, true), attrs: [] }
+    p += 12
     for (const a of defs.replicated) {
       if (a.bits <= 8) {
         if (p + 1 > buf.length) return { error: 'truncated' }

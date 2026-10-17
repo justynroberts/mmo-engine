@@ -141,7 +141,7 @@ pub struct LiveStats {
 /// Fixed facts about this run.
 pub struct Params {
     pub cap: usize,
-    pub world_size: u16,
+    pub world_size: u32,
     pub seed: u64,
     pub hz: u32,
     pub port: u16,

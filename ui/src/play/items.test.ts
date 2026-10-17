@@ -17,14 +17,15 @@ describe('item messages', () => {
   })
 
   it('reads ground items little-endian with positions in world units', () => {
-    // id 70000 = 0x00011170, x q=1280 (0x0500), y q=65535, item 2, count 5; POS_SCALE comes from the shared constants.
-    const b = Uint8Array.of(kind.GROUND, 1, 0x70, 0x11, 0x01, 0x00, 0x00, 0x05, 0xff, 0xff, 2, 5)
+    // id 70000 = 0x00011170, x q=1280 (0x0500), y q=4_000_000_000 (past what 16 bits could say), item 2, count 5.
+    const b = Uint8Array.of(kind.GROUND, 1, 0x70, 0x11, 0x01, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x28, 0x6b, 0xee, 2, 5)
     const g = decodeGround(b)!
     expect(g).toHaveLength(1)
     expect(g[0]).toMatchObject({ id: 70000, item: 2, count: 5 })
     expect(g[0]!.x).toBeGreaterThan(0)
     expect(g[0]!.y).toBeGreaterThan(g[0]!.x)
     expect(decodeGround(Uint8Array.of(kind.GROUND, 0))).toEqual([])
-    expect(decodeGround(b.slice(0, 11))).toBeNull()
+    expect(g[0]!.y).toBeGreaterThan(200_000_000)
+    expect(decodeGround(b.slice(0, 15))).toBeNull()
   })
 })

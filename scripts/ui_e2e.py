@@ -346,17 +346,29 @@ try:
         pg.wait_for_selector('button[aria-label^="medkit ×2"]', timeout=6000)
         check("a given item shows in the bag", True)
         if SHOTS: pg.screenshot(path=str(SHOTS / "play-bag.png"))
-        pg.keyboard.press("Shift+Digit1"); time.sleep(0.6)
+        pg.keyboard.press("Shift+Digit1")
+        try:
+            pg.wait_for_selector('button[aria-label^="medkit ×1"]', timeout=4000)
+        except Exception:
+            pass
         check("Shift+1 uses the item and one is used up", pg.locator('button[aria-label^="medkit ×1"]').count() == 1)
         api(base, "/api/ground", "POST", {"item": "battery", "count": 1, "x": srvpos[1], "y": srvpos[2]})
         pg.wait_for_selector('button[aria-label^="Pick up 1 battery"]', timeout=6000)
         check("an item at your feet offers a pick-up prompt", True)
         if SHOTS: pg.screenshot(path=str(SHOTS / "play-pickup.png"))
-        pg.keyboard.press("e"); time.sleep(0.8)
+        pg.keyboard.press("e")
+        try:
+            pg.wait_for_selector('button[aria-label^="battery"]', timeout=4000)
+        except Exception:
+            pass
         check("E picks it up", pg.locator('button[aria-label^="battery"]').count() == 1)
         inv = api(base, "/api/inventory?id=%d" % mid)[1]["bag"]
         check("the server agrees about the bag", {b["item"]: b["count"] for b in inv} == {"medkit": 1, "battery": 1}, str(inv))
-        pg.keyboard.press("g"); pg.keyboard.press("Digit1"); time.sleep(0.8)
+        pg.keyboard.press("g"); pg.keyboard.press("Digit1")
+        try:
+            pg.wait_for_selector('button[aria-label^="Pick up 1 medkit"]', timeout=4000)
+        except Exception:
+            pass
         check("G then 1 drops the first slot", pg.locator('button[aria-label^="medkit"]').count() == 0 and pg.locator('button[aria-label^="Pick up 1 medkit"]').count() == 1)
         # Targeting and acting: an idle sentry next to the player.
         game = api(base, "/api/game")[1]

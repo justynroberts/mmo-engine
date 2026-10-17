@@ -26,7 +26,7 @@ use sim::{PendingAction, Sim, NONE};
 struct Config {
     port: u16,
     hz: u32,
-    world_size: u16,
+    world_size: u32,
     seed: u64,
     max_clients: usize,
     npcs: usize,
@@ -158,7 +158,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)

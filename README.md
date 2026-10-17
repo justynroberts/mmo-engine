@@ -197,6 +197,12 @@ spot, the web play page's `/play/info` and the C client library get the new wall
 survive a restart. Connected players may see a small correction near a changed wall until they reconnect, because
 their prediction used the old walls. Every zone of a scaled-out world must run the same game file.
 
+## How big can the world be
+
+`--world-size` takes 64 to 65,536 units on a side (default 2,048). At the default move speed of 20 units a second that is about 55 minutes edge to edge at the top end. Positions are 32 bit on the wire (protocol 7), which could describe far more; the server stops at 65,536 so that its own 32 bit floats keep a finer resolution than the wire does. Generated walls are capped at 4,000 however large the world, and the neighbour grid and wall index coarsen themselves so memory stays small: an idle 65,536 unit world with 300 bots measured 35 MB and a 4 ms average tick.
+
+Size is not the same as players. A client only receives what is within its interest radius, and a snapshot has to fit in one 1,200 byte datagram, which caps `max_visible` at 255 and in practice at about 80 with a couple of replicated attributes. Zones (below) add CPU and players, not area: every zone runs the same geometry and owns a vertical strip of it.
+
 ## Scale out (zones)
 
 One process is one core's worth of sim. To go past that, cut the world into

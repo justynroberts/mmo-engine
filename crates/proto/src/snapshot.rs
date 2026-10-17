@@ -3,7 +3,7 @@
 //!
 //! Layout:
 //! `kind u8 | tick u32 | baseline_tick u32 | last_input_seq u32 | n_changed u16 | n_removed u16`
-//! then `n_changed` entries (`id u32, x u16, y u16, replicated attrs...`), then
+//! then `n_changed` entries (`id u32, x u32, y u32, replicated attrs...`), then
 //! `n_removed` entity ids. Entry lists are sorted by id, so both encode and
 //! decode are linear merges with no hashing and no allocation.
 //!
@@ -24,8 +24,8 @@ pub const HEADER_LEN: usize = 17;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Entry {
     pub id: u32,
-    pub x: u16,
-    pub y: u16,
+    pub x: u32,
+    pub y: u32,
     /// Quantised replicated attributes, in `Defs::replicated` order.
     pub attrs: [u16; MAX_REPL],
 }
@@ -52,8 +52,8 @@ pub struct SnapshotInfo {
 
 fn write_entry(out: &mut Vec<u8>, defs: &Defs, e: &Entry) {
     put_u32(out, e.id);
-    put_u16(out, e.x);
-    put_u16(out, e.y);
+    put_u32(out, e.x);
+    put_u32(out, e.y);
     for (k, &attr) in defs.replicated.iter().enumerate() {
         if defs.attr_wire_bytes(attr) == 1 {
             put_u8(out, e.attrs[k] as u8);
@@ -64,7 +64,7 @@ fn write_entry(out: &mut Vec<u8>, defs: &Defs, e: &Entry) {
 }
 
 fn read_entry(r: &mut Reader, defs: &Defs) -> Option<Entry> {
-    let mut e = Entry { id: r.u32()?, x: r.u16()?, y: r.u16()?, attrs: [0; MAX_REPL] };
+    let mut e = Entry { id: r.u32()?, x: r.u32()?, y: r.u32()?, attrs: [0; MAX_REPL] };
     for (k, &attr) in defs.replicated.iter().enumerate() {
         e.attrs[k] = if defs.attr_wire_bytes(attr) == 1 { r.u8()? as u16 } else { r.u16()? };
     }
@@ -267,8 +267,8 @@ mod tests {
         ids.into_iter()
             .map(|id| Entry {
                 id,
-                x: rng.below(65536) as u16,
-                y: rng.below(65536) as u16,
+                x: rng.below(65536) as u32 * 61,
+                y: rng.below(65536) as u32 * 61,
                 attrs: [rng.below(256) as u16, 0, 0, 0],
             })
             .collect()
@@ -282,7 +282,7 @@ mod tests {
             }
             let mut e = *e;
             if rng.below(3) == 0 {
-                e.x = e.x.wrapping_add(rng.below(50) as u16);
+                e.x = e.x.wrapping_add(rng.below(50) as u32);
             }
             if rng.below(8) == 0 {
                 e.attrs[0] = rng.below(256) as u16;

@@ -61,16 +61,16 @@ describe('messages', () => {
   })
 
   it('decodes a welcome', () => {
-    const b = new Uint8Array(20)
+    const b = new Uint8Array(22)
     const v = new DataView(b.buffer)
     b[0] = kind.WELCOME
     v.setUint32(1, 9, true)
     v.setUint32(5, 5, true)
     b[9] = 20
-    v.setUint16(10, 2048, true)
-    v.setBigUint64(12, 77n, true)
-    expect(decodeWelcome(b)).toEqual({ entity: 9, tick: 5, hz: 20, worldSize: 2048, seed: 77n })
-    expect(decodeWelcome(b.slice(0, 19))).toBeNull()
+    v.setUint32(10, 200_000, true)
+    v.setBigUint64(14, 77n, true)
+    expect(decodeWelcome(b)).toEqual({ entity: 9, tick: 5, hz: 20, worldSize: 200_000, seed: 77n })
+    expect(decodeWelcome(b.slice(0, 21))).toBeNull()
   })
 
   const snap = (tick: number, base: number, changed: [number, number, number, number][], removed: number[]) => {
@@ -83,12 +83,12 @@ describe('messages', () => {
     v.setUint16(13, changed.length, true)
     v.setUint16(15, removed.length, true)
     for (const [id, x, y, hp] of changed) {
-      const e = new Uint8Array(9)
+      const e = new Uint8Array(13)
       const ev = new DataView(e.buffer)
       ev.setUint32(0, id, true)
-      ev.setUint16(4, x, true)
-      ev.setUint16(6, y, true)
-      e[8] = hp
+      ev.setUint32(4, x, true)
+      ev.setUint32(8, y, true)
+      e[12] = hp
       parts.push(e)
     }
     for (const id of removed) {

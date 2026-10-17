@@ -1852,3 +1852,41 @@ fn items_are_given_used_dropped_picked_up_and_kept_across_a_reconnect() {
 fn wire_use(slot: u8) -> u8 {
     proto::game::ACT_USE + slot
 }
+
+#[test]
+fn a_world_far_bigger_than_sixteen_bit_positions_could_describe_works_end_to_end() {
+    let srv = start(&["--world-size", "20000"]);
+    let (_, info) = json(&srv, "GET", "/api/info", "");
+    assert_eq!(info["world_size"].as_f64(), Some(20000.0));
+    // Guests spawn anywhere in the world; of eight, some land beyond 4,096 on at least one axis.
+    let mut clients: Vec<Client> = (0..8).map(|_| connect(&srv)).collect();
+    // Keep every one alive (the test server drops the silent after 2 s) while snapshots arrive.
+    for _ in 0..8 {
+        for c in clients.iter_mut() {
+            c.send_input(0, 0);
+            c.pump(60);
+        }
+    }
+    wait_for_clients(&srv, 8);
+    let st = state(&srv);
+    let mut far = 0;
+    for c in &clients {
+        let (x, y) = c.pos();
+        assert!(x > 0.0 && y > 0.0 && x < 20000.0 && y < 20000.0, "{x},{y}");
+        // What the client decoded is where the server says the entity is, to the wire's resolution.
+        let row = st["e"].as_array().unwrap().iter().find(|r| r[0].as_u64() == Some(c.entity as u64)).expect("server row");
+        assert!((row[1].as_f64().unwrap() - x as f64).abs() < 0.1 && (row[2].as_f64().unwrap() - y as f64).abs() < 0.1, "client {x},{y} server {row:?}");
+        if x > 4096.0 || y > 4096.0 {
+            far += 1;
+        }
+    }
+    assert!(far > 0, "no player landed beyond 4,096 in a 20,000 unit world");
+    // Items lie far out too, and are told to someone standing there.
+    let (x, y) = clients[0].pos();
+    let (s, _) = http(&srv, "POST", "/api/ground", &format!(r#"{{"item":"scrap","count":1,"x":{x},"y":{y}}}"#));
+    assert_eq!(s, 200);
+    clients[0].pump(1200);
+    assert_eq!(clients[0].ground.len(), 1, "{:?}", clients[0].ground);
+    let g = clients[0].ground[0];
+    assert!((proto::world::dpos(g.x) - x).abs() < 3.0 && (proto::world::dpos(g.y) - y).abs() < 3.0, "{g:?} vs {x},{y}");
+}
