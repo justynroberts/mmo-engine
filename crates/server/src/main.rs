@@ -3,6 +3,7 @@
 //! One pinned thread owns the zone: drain inputs, step the simulation at a fixed
 //! rate, build interest-filtered delta snapshots, send them in batches.
 
+mod botdir;
 mod ctl;
 mod io;
 mod net;
@@ -52,6 +53,7 @@ struct Config {
     zone_public: Vec<String>,
     zone_web: Vec<String>,
     zone_secret: Option<String>,
+    bots_dir: Option<PathBuf>,
 }
 
 fn parse_args() -> Config {
@@ -87,6 +89,7 @@ fn parse_args() -> Config {
         zone_public: Vec::new(),
         zone_web: Vec::new(),
         zone_secret: None,
+        bots_dir: Some(PathBuf::from("bots.d")),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -137,6 +140,8 @@ fn parse_args() -> Config {
             "--zone-public" => c.zone_public = val(a).split(',').map(|s| s.trim().to_string()).collect(),
             "--zone-web" => c.zone_web = val(a).split(',').map(|s| s.trim().to_string()).collect(),
             "--zone-secret" => c.zone_secret = Some(val(a)),
+            "--bots-dir" => c.bots_dir = Some(PathBuf::from(val(a))),
+            "--no-bots-dir" => c.bots_dir = None,
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -151,7 +156,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
@@ -211,6 +216,7 @@ fn main() {
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
+    let mut botdir = cfg.bots_dir.as_deref().map(botdir::BotDir::open);
     let mut zone: Option<zone::Zone> = cfg.zone.map(|(index, count)| {
         let secret = cfg.zone_secret.clone().or_else(|| std::env::var("MMO_ZONE_SECRET").ok()).unwrap_or_default();
         if secret.len() < 16 {
@@ -380,8 +386,31 @@ fn main() {
                 net: &nstats,
                 live: &live,
                 params: &params,
+                bot_dir: botdir.as_ref().map(|b| &b.status),
             };
             ctl::service(rx, &mut c);
+        }
+        // Bot types dropped into the bots directory join the running world.
+        if let Some(bd) = botdir.as_mut() {
+            if let Some(f) = bd.poll(&game_file) {
+                let text = f.to_json();
+                let mut c = ctl::Ctl {
+                    sim: &mut sim,
+                    clients: &mut clients,
+                    hs: &mut hs,
+                    game: &mut game_file,
+                    net: &nstats,
+                    live: &live,
+                    params: &params,
+                    bot_dir: None,
+                };
+                let (status, body) = ctl::apply_game(&text, &mut c);
+                if status != 200 {
+                    eprintln!("bots dir: not applied: {body}");
+                    bd.status.error = Some(body);
+                    bd.status.applied -= 1;
+                }
+            }
         }
         let t1 = Instant::now();
 

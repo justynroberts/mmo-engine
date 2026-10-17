@@ -1654,3 +1654,58 @@ fn ghosts_disappear_when_the_neighbour_goes_away() {
     }
     assert!(state(&zs.z[0])["e"].as_array().unwrap().iter().all(|r| r[4] != 3));
 }
+
+fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+    let t = Instant::now();
+    while !f() {
+        assert!(t.elapsed() < Duration::from_secs(10), "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn a_json_file_dropped_in_the_bots_directory_adds_a_bot_live_and_a_broken_one_changes_nothing() {
+    let srv = start(&[]);
+    assert!(srv.dir.join("bots.d/_example.json").exists(), "the template is created on first start");
+    let _player = connect(&srv);
+    wait_for_clients(&srv, 1);
+    let before = json(&srv, "GET", "/api/game", "").1["archetypes"].as_array().unwrap().len();
+
+    std::fs::write(
+        srv.dir.join("bots.d/ghoul.json"),
+        r##"{"name":"ghoul","color":"#33ff99","count":3,"behaviour":"chase","speed_mult":0.7,"attack":"zap"}"##,
+    )
+    .unwrap();
+    wait_until("the new bot type to appear", || {
+        json(&srv, "GET", "/api/game", "").1["archetypes"].as_array().unwrap().iter().any(|a| a["name"] == "ghoul")
+    });
+    let g = json(&srv, "GET", "/api/game", "").1;
+    let idx = g["archetypes"].as_array().unwrap().iter().position(|a| a["name"] == "ghoul").unwrap();
+    assert_eq!(g["archetypes"].as_array().unwrap().len(), before + 1);
+    wait_until("three ghouls in the world", || bots_of(&srv, idx as i64) == 3);
+    let st = state(&srv);
+    assert_eq!(st["clients"], 1, "the player stayed connected");
+    assert_eq!(st["bot_dir"]["bots"][0], "ghoul");
+    assert!(st["bot_dir"]["error"].is_null(), "{}", st["bot_dir"]);
+
+    // Edit it: the count changes live.
+    std::fs::write(
+        srv.dir.join("bots.d/ghoul.json"),
+        r##"{"name":"ghoul","color":"#33ff99","count":5,"behaviour":"chase","speed_mult":0.7,"attack":"zap"}"##,
+    )
+    .unwrap();
+    wait_until("five ghouls", || bots_of(&srv, idx as i64) == 5);
+
+    // A typo is reported and nothing else moves.
+    std::fs::write(srv.dir.join("bots.d/typo.json"), r##"{"name":"oops","colour":"#fff"}"##).unwrap();
+    wait_until("the error to be reported", || !state(&srv)["bot_dir"]["error"].is_null());
+    let e = state(&srv)["bot_dir"]["error"].as_str().unwrap().to_string();
+    assert!(e.contains("typo.json") && e.contains("colour"), "{e}");
+    let g2 = json(&srv, "GET", "/api/game", "").1;
+    assert!(!g2["archetypes"].as_array().unwrap().iter().any(|a| a["name"] == "oops"));
+    assert_eq!(bots_of(&srv, idx as i64), 5);
+
+    // The bot is in the game file now, so it survives without the directory.
+    let saved = std::fs::read_to_string(srv.dir.join("game.json")).unwrap();
+    assert!(saved.contains("ghoul"));
+}

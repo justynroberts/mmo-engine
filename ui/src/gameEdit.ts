@@ -367,3 +367,113 @@ export function setWallEdge(g: GameFile, i: number, edge: 0 | 1 | 2 | 3, v: numb
   w[edge] = Math.min(hi, Math.max(lo, Math.round(v)))
   return { ...g, walls: (g.walls ?? []).map((x, k) => (k === i ? w : x)) }
 }
+
+// ---------------------------------------------------------------- starting a bot type quickly
+
+export interface BotTemplate {
+  id: string
+  label: string
+  make: (g: GameFile) => Archetype
+}
+
+function base(g: GameFile, name: string, color: string, p: Partial<Archetype>): Archetype {
+  return { ...newArchetype(g), name: uniqueName(name, g.archetypes.map((a) => a.name)), color, count: 3, ...p }
+}
+
+/** Ready-made starting points. Each only names things that exist in the current game (the first action, the
+ * first route), so a template never produces a file the server would refuse. */
+export const BOT_TEMPLATES: readonly BotTemplate[] = [
+  { id: 'wanderer', label: 'Wanderer: drifts about', make: (g) => base(g, 'wanderer', '#4aa3a0', { behaviour: 'wander', speed_mult: 0.8 }) },
+  {
+    id: 'guard',
+    label: 'Guard: stands still, fights what comes near',
+    make: (g) =>
+      base(g, 'guard', '#ff3df0', {
+        behaviour: 'idle',
+        sight: 50,
+        attack: g.actions[0]?.name ?? null,
+        rules: g.actions[0] ? [{ when: { kind: 'sees', who: 'player', within: 30 }, then: { kind: 'attack' } }] : [],
+      }),
+  },
+  {
+    id: 'hunter',
+    label: 'Hunter: chases and attacks',
+    make: (g) => base(g, 'hunter', '#e0457b', { behaviour: 'chase', speed_mult: 1.1, sight: 70, attack: g.actions[0]?.name ?? null }),
+  },
+  {
+    id: 'coward',
+    label: 'Coward: runs from anything it sees',
+    make: (g) =>
+      base(g, 'coward', '#e8c547', {
+        behaviour: 'wander',
+        speed_mult: 1.2,
+        sight: 50,
+        rules: [{ when: { kind: 'sees', who: 'any', within: 35 }, then: { kind: 'flee' } }],
+      }),
+  },
+  {
+    id: 'patroller',
+    label: 'Patroller: walks the first route',
+    make: (g) =>
+      base(g, 'patroller', '#7ac2ff', {
+        behaviour: 'wander',
+        rules: g.routes[0] ? [{ when: { kind: 'always' }, then: { kind: 'patrol', route: g.routes[0].name } }] : [],
+      }),
+  },
+  {
+    id: 'greeter',
+    label: 'Greeter: says hello to players',
+    make: (g) =>
+      base(g, 'greeter', '#b5e853', {
+        behaviour: 'wander',
+        speed_mult: 0.5,
+        rules: [{ when: { kind: 'sees', who: 'player', within: 25 }, then: { kind: 'say', text: 'Hello there.', shout: false } }],
+      }),
+  },
+]
+
+export function addFromTemplate(g: GameFile, id: string): GameFile {
+  const t = BOT_TEMPLATES.find((x) => x.id === id)
+  return t ? { ...g, archetypes: [...g.archetypes, t.make(g)] } : g
+}
+
+/** The JSON for one bot type, exactly what the server's bots folder accepts. */
+export function exportArchetype(a: Archetype): string {
+  return JSON.stringify(a, null, 2)
+}
+
+/** Add bot types from pasted JSON (one object or an array). A bot with the name of an existing one replaces it,
+ * which matches how files in the server's bots folder behave. Nothing is changed if anything is wrong. */
+export function importArchetypes(g: GameFile, text: string): { game: GameFile; names: string[] } | { error: string } {
+  let v: unknown
+  try {
+    v = JSON.parse(text)
+  } catch (e) {
+    return { error: `That is not valid JSON: ${(e as Error).message}` }
+  }
+  const items = Array.isArray(v) ? v : [v]
+  if (items.length === 0) return { error: 'There is nothing in that to import.' }
+  const out: Archetype[] = []
+  for (const raw of items) {
+    if (typeof raw !== 'object' || raw === null || typeof (raw as { name?: unknown }).name !== 'string' || !(raw as { name: string }).name.trim()) {
+      return { error: 'Each bot type needs a name.' }
+    }
+    const r = raw as Partial<Archetype> & { name: string }
+    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules'])
+    const stray = Object.keys(r).find((k) => !known.has(k))
+    if (stray) return { error: `${r.name}: “${stray}” is not a bot field. Check the spelling.` }
+    const a: Archetype = { ...newArchetype(g), ...r, name: r.name.trim() }
+    if (!['idle', 'wander', 'chase', 'flee'].includes(a.behaviour)) return { error: `${a.name}: behaviour must be idle, wander, chase or flee.` }
+    if (a.attack && !g.actions.some((x) => x.name === a.attack)) return { error: `${a.name}: there is no action called “${a.attack}” in this game.` }
+    if (a.home && !g.places.some((p) => p.name === a.home)) return { error: `${a.name}: there is no place called “${a.home}”.` }
+    const badAttr = Object.keys(a.attrs).find((k) => !g.attrs.some((x) => x.name === k))
+    if (badAttr) return { error: `${a.name}: there is no attribute called “${badAttr}”.` }
+    out.push(a)
+  }
+  let archetypes = g.archetypes
+  for (const a of out) {
+    const at = archetypes.findIndex((x) => x.name === a.name)
+    archetypes = at >= 0 ? archetypes.map((x, k) => (k === at ? a : x)) : [...archetypes, a]
+  }
+  return { game: { ...g, archetypes }, names: out.map((a) => a.name) }
+}

@@ -1,7 +1,12 @@
 import { Footprints, Pause, PersonSimpleRun, Target } from '@phosphor-icons/react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Copy, Plus, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import type { ActionFile, Archetype, AttrFile, Behaviour, GameFile } from '../api'
 import {
+  addFromTemplate,
+  BOT_TEMPLATES,
+  exportArchetype,
+  importArchetypes,
   newAction,
   newArchetype,
   newAttr,
@@ -342,6 +347,10 @@ export function BotsEditor({
               <button type="button" className="btn" onClick={() => onSpawn(a.name, 10)}>
                 Spawn 10
               </button>
+              <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(exportArchetype(a))} aria-label={`Copy ${a.name} as JSON`}>
+                <Copy size={16} strokeWidth={1.5} aria-hidden />
+                Copy JSON
+              </button>
             </div>
           </Strip>
         )
@@ -353,6 +362,74 @@ export function BotsEditor({
           Remove all live bots
         </button>
       </div>
+      <QuickAdd game={game} setGame={setGame} />
+    </div>
+  )
+}
+
+/** The fast ways to get a new bot: a template, pasted JSON, or a file in the server's bots folder. */
+function QuickAdd({ game, setGame }: Edit) {
+  const [text, setText] = useState('')
+  const [note, setNote] = useState<string | null>(null)
+  return (
+    <div className="pt-4 grid gap-2 max-w-[40rem]">
+      <label className="block">
+        <span className="lbl">Start from a template</span>
+        <select
+          className="field cursor-pointer"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) setGame(addFromTemplate(game, e.target.value))
+          }}
+        >
+          <option value="" className="bg-bg">
+            choose one…
+          </option>
+          {BOT_TEMPLATES.map((t) => (
+            <option key={t.id} value={t.id} className="bg-bg text-fg">
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block">
+        <span className="lbl">Or paste a bot type as JSON</span>
+        <textarea
+          className="field !h-24 py-1 font-mono"
+          spellCheck={false}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value)
+            setNote(null)
+          }}
+          placeholder='{"name": "warden", "behaviour": "wander", "count": 4}'
+        />
+      </label>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className="btn"
+          disabled={!text.trim()}
+          onClick={() => {
+            const r = importArchetypes(game, text)
+            if ('error' in r) return setNote(r.error)
+            setGame(r.game)
+            setText('')
+            setNote(`Added ${r.names.join(', ')}. Press Apply to start them.`)
+          }}
+        >
+          Add from JSON
+        </button>
+        {note && (
+          <span role="status" className="text-fg-3">
+            {note}
+          </span>
+        )}
+      </div>
+      <p className="m-0 text-label text-fg-3">
+        No console needed either: drop a <code>.json</code> file in the server's <code>bots.d</code> folder and the bot joins the running world within two
+        seconds, with nobody disconnected. “Copy JSON” on any bot above gives you the file's contents.
+      </p>
     </div>
   )
 }

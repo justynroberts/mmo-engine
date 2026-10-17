@@ -141,6 +141,7 @@ pub struct Ctl<'a> {
     pub net: &'a NetStats,
     pub live: &'a LiveStats,
     pub params: &'a Params,
+    pub bot_dir: Option<&'a crate::botdir::BotDirStatus>,
 }
 
 pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>) -> std::io::Result<Receiver<Request>> {
@@ -394,7 +395,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             (200, json!({ "size": c.sim.world.size, "boxes": boxes }).to_string())
         }
         Cmd::GetGame => (200, c.game.to_json()),
-        Cmd::PutGame(text) => put_game(&text, c),
+        Cmd::PutGame(text) => apply_game(&text, c),
         Cmd::State { limit } => (200, state_json(c, limit)),
         Cmd::Spawn(r) => {
             let Some(a) = c.sim.archs.iter().position(|a| a.name == r.archetype) else {
@@ -489,7 +490,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
     }
 }
 
-fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
+pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
     let file = match GameFile::from_json(text) {
         Ok(f) => f,
         Err(e) => return err(400, e),
@@ -587,6 +588,9 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     if let Some(z) = &c.hs.zone {
         use std::sync::atomic::Ordering::Relaxed;
         let _ = write!(o, r#""zone":{{"index":{},"count":{},"lo":{},"hi":{},"out":{},"in":{},"failed":{},"rejected":{},"ghosts":{},"feeds_out":{},"feeds_in":{}}},"#, z.index, z.count, z.lo, z.hi, z.stats.handoffs_out.load(Relaxed), z.stats.handoffs_in.load(Relaxed), z.stats.failed.load(Relaxed), z.stats.rejected.load(Relaxed), z.stats.ghosts.load(Relaxed), z.stats.feeds_out.load(Relaxed), z.stats.feeds_in.load(Relaxed));
+    }
+    if let Some(b) = c.bot_dir {
+        let _ = write!(o, r#""bot_dir":{},"#, json!({"dir": b.dir, "files": b.files, "bots": b.bots, "error": b.error, "applied": b.applied}));
     }
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(

@@ -3,6 +3,8 @@ import {
   ChatClient, ClientHs, ClientView, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
   kind, reject, type ChatMsg, type Defs, type Session,
 } from './protocol'
+import { Interpolator } from './interp'
+import { Predictor, World, type Box } from './sim'
 
 export interface PlayInfo {
   server_key: string
@@ -42,6 +44,14 @@ export interface Ent {
   attrs: Record<string, number>
 }
 
+/** What to draw this frame: everyone interpolated, you predicted. */
+export interface Frame {
+  /** Everyone else, drawn slightly in the past. */
+  others: Ent[]
+  /** Your own character, at its predicted position (null until the first snapshot). */
+  self: Ent | null
+}
+
 export interface Handlers {
   onStatus: (s: Status, detail?: string) => void
   onChat: (m: ChatMsg) => void
@@ -79,6 +89,14 @@ export class GameClient {
   private timers: ReturnType<typeof setInterval>[] = []
   private stopped = false
   private defs: Defs
+  private world: World
+  private pred: Predictor | null = null
+  private interp: Interpolator<Ent>
+  private visual: { x: number; y: number } | null = null
+  private lastFrameAt = 0
+  private selfAttrs: Record<string, number> = {}
+  /** The most recent frame computed, for readouts that do not drive the render loop. */
+  last: Frame = { others: [], self: null }
 
   constructor(
     private info: PlayInfo,
@@ -87,6 +105,14 @@ export class GameClient {
     private h: Handlers,
   ) {
     this.defs = defsOf(info)
+    this.world = new World(info.world_size, info.boxes)
+    this.interp = new Interpolator<Ent>(info.hz)
+  }
+
+  /** The map editor can change walls while people are playing; adopt them so prediction stays right. */
+  setBoxes(boxes: Box[]) {
+    this.info = { ...this.info, boxes: boxes.map((b) => [...b] as [number, number, number, number]) }
+    this.world = new World(this.info.world_size, boxes)
   }
 
   start() {
@@ -125,6 +151,9 @@ export class GameClient {
     this.teardown()
     this.hs = new ClientHs(fromHex(this.info.server_key), BigInt('0x' + this.info.content_hash), this.identity)
     this.view = new ClientView()
+    this.pred = null
+    this.visual = null
+    this.interp.reset()
     this.set('connecting')
     let ws: WebSocket
     try {
@@ -185,6 +214,9 @@ export class GameClient {
         this.session = r.session
         this.entity = w.entity
         this.view = new ClientView()
+        this.pred = null
+        this.visual = null
+        this.interp.reset()
         this.set('playing')
         this.timers.push(setInterval(() => this.tick(), 1000 / this.info.hz))
         this.timers.push(setInterval(() => this.watchdog(), 500))
@@ -221,6 +253,7 @@ export class GameClient {
         } else if (inner[0] === kind.SNAPSHOT) {
           const r = decodeSnapshot(inner, this.defs, this.view)
           if ('info' in r && !r.info.stale) {
+            this.onWorld(r.info.lastInputSeq)
             const t = this.sent.get(r.info.lastInputSeq)
             if (t !== undefined) {
               this.rtt = performance.now() - t
@@ -245,6 +278,7 @@ export class GameClient {
     const chat = this.chat.outgoing()
     if (chat) ws.send(bin(s.seal(chat)))
     this.seq++
+    this.pred?.applyInput(this.world, this.seq, this.dir[0], this.dir[1])
     this.sent.set(this.seq, performance.now())
     if (this.sent.size > 128) this.sent.delete(this.sent.keys().next().value as number)
     ws.send(
@@ -258,9 +292,49 @@ export class GameClient {
     this.target = 0
   }
 
-  /** Movement intent, each axis -1, 0 or 1. */
+  /** Movement intent, each axis -1 to 1 (a stick gives fractions, a key gives whole numbers). */
   setMove(dx: number, dy: number) {
-    this.dir = [Math.sign(dx) * 127, Math.sign(dy) * 127]
+    const q = (v: number) => Math.round(Math.max(-1, Math.min(1, v || 0)) * 127)
+    this.dir = [q(dx), q(dy)]
+  }
+
+  /** A new snapshot arrived: feed the interpolator and correct the prediction against the server. */
+  private onWorld(lastInputSeq: number) {
+    const all = this.entities()
+    this.interp.push(this.view.lastTick, all, performance.now())
+    const me = all.find((e) => e.id === this.entity)
+    if (!me) return
+    this.selfAttrs = me.attrs
+    if (!this.pred) {
+      this.pred = new Predictor(me.x, me.y, this.info.move_speed, this.info.hz, this.info.entity_radius)
+      this.visual = { x: me.x, y: me.y }
+      return
+    }
+    const err = this.pred.reconcile(this.world, me.x, me.y, lastInputSeq)
+    // A big correction is the server doing something we could not know about (respawn, zone handoff): jump.
+    if (err > 8 && this.visual) this.visual = { x: this.pred.x, y: this.pred.y }
+  }
+
+  /** The picture for this instant. Call once per rendered frame. */
+  frame(now = performance.now()): Frame {
+    const dt = this.lastFrameAt ? Math.min(0.1, (now - this.lastFrameAt) / 1000) : 0
+    this.lastFrameAt = now
+    const others = this.interp.sample(now).filter((e) => e.id !== this.entity)
+    let self: Ent | null = null
+    if (this.pred && this.visual) {
+      // The predicted position is exact but steps 20 times a second; ease the drawn one toward it.
+      const k = 1 - Math.exp(-dt * 25)
+      this.visual.x += (this.pred.x - this.visual.x) * k
+      this.visual.y += (this.pred.y - this.visual.y) * k
+      self = { id: this.entity, x: this.visual.x, y: this.visual.y, attrs: this.selfAttrs }
+    }
+    this.last = { others, self }
+    return this.last
+  }
+
+  /** Inputs sent that the server has not confirmed yet. */
+  get unacked(): number {
+    return this.pred?.unacked ?? 0
   }
 
   act(actionId: number, target: number) {

@@ -73,6 +73,26 @@ One JSON document, validated before it is applied. Attributes, actions and
 effects become the `Defs` that clients share and that the handshake hashes.
 Bot types ("archetypes") are server-side only.
 
+### Adding bots without a rebuild
+
+Bot types are data, never code. Three ways in, all live, none drop players:
+
+| Way | How |
+|---|---|
+| Drop a file | Put a `.json` file in `bots.d/` (next to `game.json`; in Docker, `./data/bots.d/`). It is picked up within two seconds. One bot type (an object) or several (an array), in the same shape the Builder writes. Editing the file updates the bot; a typo is reported in the console state (`bot_dir.error`) and changes nothing |
+| Console | Bots tab: start from a template (wanderer, guard, hunter, coward, patroller, greeter), or paste JSON, or press Copy JSON on a bot to get a file you can reuse |
+| API | `PUT /api/game` as before |
+
+`bots.d/_example.json` is created on first start as a template; files starting with `_` or `.` are ignored. A bot from a file is merged into the game file by name (the file wins) and saved to `game.json`, so deleting the file does not remove the bot; remove it in the console. `--bots-dir DIR` moves the folder, `--no-bots-dir` turns it off.
+
+Smallest useful file:
+
+```json
+{ "name": "warden", "color": "#ff3df0", "count": 4, "behaviour": "wander",
+  "attack": "zap",
+  "rules": [ { "when": { "kind": "sees", "who": "player", "within": 40 }, "then": { "kind": "attack" } } ] }
+```
+
 - **Attributes**: range, start value, bit width, replicated or not, regen per second, rule at minimum (nothing or respawn). At most 16, at most 4 replicated.
 - **Actions**: id, cooldown, range, requirement on an own attribute, effects on self or target.
 - **Bot types**: colour, spawn count, fallback behaviour (idle, wander, chase, flee), speed multiplier, sight, attack action, starting attribute overrides, an optional home place and an ordered rule stack.
