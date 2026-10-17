@@ -1,0 +1,8 @@
+[package]
+name = "bots"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+proto = { path = "../proto" }
+libc = "0.2"

@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/proto", "crates/server", "crates/bots"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 1
