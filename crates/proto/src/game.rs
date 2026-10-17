@@ -291,6 +291,12 @@ pub const INV_SLOTS: usize = 8;
 pub const ACT_USE: u8 = 200;
 pub const ACT_DROP: u8 = 216;
 pub const ACT_PICKUP: u8 = 250;
+/// Jump: airborne for JUMP_SECS, and while airborne no action can target you (a dodge). Ignored mid-air.
+pub const ACT_JUMP: u8 = 251;
+pub const JUMP_SECS: f32 = 0.6;
+/// If the game file has an attribute of this name, the server keeps it at the share of the current jump still to
+/// come (its max at take-off, falling to its min on landing). Make it replicated and every client can draw the arc.
+pub const AIRBORNE_ATTR: &str = "airborne";
 /// How close you must be to pick something up, in world units.
 pub const PICKUP_RANGE: f32 = 3.0;
 
@@ -642,6 +648,7 @@ impl GameFile {
             attrs: vec![
                 attr("health", true, 0.0, OnZeroFile::Respawn),
                 attr("energy", false, 5.0, OnZeroFile::None),
+                AttrFile { default: 0.0, ..attr(AIRBORNE_ATTR, true, 0.0, OnZeroFile::None) },
             ],
             actions: vec![ActionFile {
                 id: 1,

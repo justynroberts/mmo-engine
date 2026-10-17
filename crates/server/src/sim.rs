@@ -38,6 +38,8 @@ pub struct Entities {
     pub say_at: Vec<u32>,
     /// God mode (admin only): attributes held at their maximum every tick, so it cannot die or run dry.
     pub god: Vec<bool>,
+    /// Ticks of the current jump still to come (0 = on the ground).
+    pub air: Vec<u16>,
     /// One array per attribute, indexed by slot (structure of arrays).
     pub attrs: Vec<Vec<f32>>,
     free: Vec<u32>,
@@ -57,6 +59,7 @@ impl Entities {
             dir_y: vec![0; cap],
             cooldown_until: vec![0; cap],
             god: vec![false; cap],
+            air: vec![0; cap],
             owner: vec![NONE; cap],
             arch: vec![NO_ARCH; cap],
             speed: vec![0.0; cap],
@@ -212,6 +215,9 @@ pub struct SimStats {
     pub zaps: u64,
     pub respawns: u64,
     pub rejected_actions: u64,
+    pub jumps: u64,
+    /// Actions that missed because the target was in the air.
+    pub dodges: u64,
 }
 
 pub struct Sim {
@@ -331,6 +337,7 @@ impl Sim {
         e.dir_y[slot] = 0;
         e.cooldown_until[slot] = 0;
         e.god[slot] = false;
+        e.air[slot] = 0;
         e.owner[slot] = owner;
         e.arch[slot] = arch;
         e.speed[slot] = speed;
@@ -501,6 +508,7 @@ impl Sim {
         self.npc_actions = npc;
         let adm = std::mem::take(&mut self.admin_actions);
         self.system_actions(&adm);
+        self.system_air();
         self.system_rules();
         if self.tick % self.tick_hz.max(1) == 0 {
             self.expire_ground();
@@ -778,6 +786,15 @@ impl Sim {
             if !self.ents.alive[p.slot] {
                 continue;
             }
+            if p.action == proto::game::ACT_JUMP {
+                if self.ents.air[p.slot] == 0 {
+                    self.ents.air[p.slot] = self.jump_ticks();
+                    self.stats.jumps += 1;
+                } else {
+                    self.stats.rejected_actions += 1; // no jumping in mid-air
+                }
+                continue;
+            }
             if p.action >= proto::game::ACT_USE {
                 if !self.item_action(p.slot, p.action) {
                     self.stats.rejected_actions += 1;
@@ -807,6 +824,10 @@ impl Sim {
                 self.stats.rejected_actions += 1;
                 continue;
             }
+            if e.air[t] > 0 {
+                self.stats.dodges += 1; // it jumped clear; the cooldown is not spent
+                continue;
+            }
             let dx = e.x[t] - e.x[p.slot];
             let dy = e.y[t] - e.y[p.slot];
             if dx * dx + dy * dy > def.range * def.range {
@@ -829,12 +850,36 @@ impl Sim {
 
     /// Data-driven rules: an attribute that hits its minimum can trigger a
     /// respawn. This is where "death" lives, and it is just a rule on health.
+    fn jump_ticks(&self) -> u16 {
+        ((proto::game::JUMP_SECS * self.tick_hz as f32).round() as u16).max(1)
+    }
+
+    /// Jumps count down, and the `airborne` attribute (when the game has one) mirrors how much of each is left.
+    fn system_air(&mut self) {
+        let total = self.jump_ticks() as f32;
+        let attr = self.defs.attrs.iter().position(|a| a.name == proto::game::AIRBORNE_ATTR);
+        for s in 0..self.ents.high {
+            if !self.ents.alive[s] {
+                continue;
+            }
+            if self.ents.air[s] > 0 {
+                self.ents.air[s] -= 1;
+            }
+            if let Some(a) = attr {
+                let d = &self.defs.attrs[a];
+                self.ents.attrs[a][s] = d.min + (d.max - d.min) * self.ents.air[s] as f32 / total;
+            }
+        }
+    }
+
     fn system_rules(&mut self) {
         // God mode first, so whatever this tick took is restored before the respawn rule can see a zero.
         for s in 0..self.ents.high {
             if self.ents.alive[s] && self.ents.god[s] {
                 for (a, def) in self.defs.attrs.iter().enumerate() {
-                    self.ents.attrs[a][s] = def.max;
+                    if def.name != proto::game::AIRBORNE_ATTR {
+                        self.ents.attrs[a][s] = def.max;
+                    }
                 }
             }
         }
@@ -852,6 +897,7 @@ impl Sim {
                     self.ents.x[s] = x;
                     self.ents.y[s] = y;
                     self.reset_attrs(s);
+                    self.ents.air[s] = 0;
                     self.stats.respawns += 1;
                 }
             }
@@ -902,6 +948,36 @@ mod tests {
         s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
         assert_eq!(s.stats.rejected_actions, 1);
+    }
+
+    #[test]
+    fn jumping_dodges_attacks_lands_and_shows_in_the_airborne_attribute() {
+        let mut s = sim();
+        let air = s.defs.attrs.iter().position(|a| a.name == proto::game::AIRBORNE_ATTR).expect("default game has airborne");
+        let a = s.spawn(0).unwrap();
+        let b = s.spawn(1).unwrap();
+        place(&mut s, a, 100.0, 100.0);
+        place(&mut s, b, 105.0, 100.0);
+        let tid = s.ents.id_of(b);
+        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0 }]);
+        assert!(s.ents.air[b] > 0);
+        assert!(s.ents.attrs[air][b] > 80.0, "just took off: {}", s.ents.attrs[air][b]);
+        // A zap at a jumping target misses, and the attacker keeps its cooldown and energy.
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 100.0);
+        assert_eq!(s.stats.dodges, 1);
+        assert_eq!(s.ents.cooldown_until[a], 0);
+        // No second jump in mid-air.
+        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0 }]);
+        assert_eq!(s.stats.jumps, 1);
+        for _ in 0..20 {
+            s.step(&[]);
+        }
+        assert_eq!(s.ents.air[b], 0);
+        assert_eq!(s.ents.attrs[air][b], 0.0);
+        // Landed: the zap connects.
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
     }
 
     #[test]

@@ -617,7 +617,7 @@ pub unsafe extern "C" fn mmo_bag_len(c: *const Client) -> usize {
 }
 
 /// Slot `i`: the 1-based item index (0 = empty) and how many. Use an item with `mmo_act(c, 200 + slot, 0)`,
-/// drop it with `216 + slot`, pick up the nearest thing within 3 units with 250.
+/// drop it with `216 + slot`, pick up the nearest thing within 3 units with 250. `mmo_act(c, 251, 0)` jumps.
 #[no_mangle]
 pub unsafe extern "C" fn mmo_bag_slot(c: *const Client, i: usize, item: *mut u8, count: *mut u8) -> i32 {
     let Some(c) = c.as_ref() else { return 0 };

@@ -741,8 +741,8 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(
         o,
-        r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{},"ground_items":{}}},"attrs":["#,
-        s.stats.zaps, s.stats.respawns, s.stats.rejected_actions, s.ground.len()
+        r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{},"jumps":{},"dodges":{},"ground_items":{}}},"attrs":["#,
+        s.stats.zaps, s.stats.respawns, s.stats.rejected_actions, s.stats.jumps, s.stats.dodges, s.ground.len()
     );
     for (i, a) in s.defs.attrs.iter().enumerate() {
         if i > 0 {

@@ -119,6 +119,14 @@ below 200. `200 + n` uses bag slot n (0 to 7), `216 + n` drops slot n onto the g
 within 3 units. All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
 nothing else; a client that ignores them still plays.
 
+## Jump
+
+`251` in the INPUT action byte jumps (target ignored): the character is in the air for 0.6 s, a jump in mid-air is
+ignored, and while airborne no action can target it, so attacks miss (counted as dodges, and the attacker's cooldown is
+not spent). Nothing new goes on the wire. If the game file has an attribute named `airborne`, the server keeps it at the
+share of the current jump still to come, from its max at take-off to its min on landing; make it replicated and clients
+draw the arc from it as a parabola, `4h * p * (1 - p)` with `p = 1 - share`. The default game has one (0 to 100, 8 bits).
+
 ## World size (version 7)
 
 Positions are 32 bit (`world units * 16`), so the wire can describe a world of 268 million units on a side. Version 7 widened
