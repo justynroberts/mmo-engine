@@ -67,6 +67,19 @@ guests are unaffected. Counted as `identity_limited` in stats.
 | `--ui-dir DIR` | Built UI to serve (default `ui/dist` if present) |
 | `--port --hz --world-size --seed --max-clients --npcs --pin --timeout --duration --quiet` | As before |
 
+## Browser client
+
+The play page (`--web ADDR`, then open the address) is a full client, not a demo. It is the only client that needs no install.
+
+| What | How it works |
+|---|---|
+| Responsive movement | Predicts your own character with the same movement step the server runs (`ui/src/play/sim.ts`, a port of `proto::world`), then corrects against each snapshot and replays unacknowledged input. Analogue input from the touch stick is sent as fractions |
+| Smooth everyone else | Draws other characters two ticks in the past, blended between snapshots (`interp.ts`); holds the newest on a stall, never extrapolates, does not glide across a teleport |
+| Targeting | Click or tap a character, `T` to cycle, `Esc` to release; otherwise the nearest is the target. Range shown live; digits pick among several actions |
+| Feedback | Floating damage numbers, hit flash, low-health colouring, "signal lost" overlay while down, reconnect banner, minimap, optional synthesised sound (off by default) |
+| Live walls | The page re-reads the world every 15 s, so wall edits made in the map editor reach players without a reload |
+| Look | One CSS block (`.play-skin` in `ui/src/index.css`) holds every colour of the play page, in a dark and a light version, and the 3D scene reads it. The current skin is cyberpunk; changing the look is changing those values |
+
 ## The game file
 
 One JSON document, validated before it is applied. Attributes, actions and
@@ -224,7 +237,7 @@ For comparison, before encryption the same machine did 2,000 normal-density clie
 ```sh
 cargo test --release                 # 59 proto + 27 server unit tests, 26 end-to-end tests (real server, real UDP and HTTP)
 (cd ui && npm test)                  # 40 unit and accessibility tests
-scripts/ui_e2e.py [--shots DIR]      # 54 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
+scripts/ui_e2e.py [--shots DIR]      # 84 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
 ```
 

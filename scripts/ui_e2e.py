@@ -297,10 +297,54 @@ try:
         pg.keyboard.down("d"); time.sleep(1.2); pg.keyboard.up("d"); time.sleep(0.5)
         now = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if e[0] == mine[0][0]]
         check("holding D walks the player east", bool(now) and now[0][1] - x0 > 5, f"{x0} -> {now[0][1] if now else None}")
+        time.sleep(0.4)
+        hud = pg.get_by_test_id("hud")
+        sx, sy = float(hud.get_attribute("data-self-x")), float(hud.get_attribute("data-self-y"))
+        srvpos = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if e[0] == mine[0][0]][0]
+        check("the predicted position agrees with the server after stopping", abs(sx - srvpos[1]) < 2 and abs(sy - srvpos[2]) < 2, f"client {sx},{sy} server {srvpos[1]},{srvpos[2]}")
+        check("the minimap is on screen", pg.get_by_role("img", name="Minimap of your surroundings").count() == 1)
+        # Targeting and acting: an idle sentry next to the player.
+        game = api(base, "/api/game")[1]
+        names = [a["name"] for a in game["archetypes"]]
+        st0 = api(base, "/api/state?limit=6000")[1]
+        hp_i = 5 + st0["attrs"].index("health")
+        known = {e[0] for e in st0["e"]}
+        api(base, "/api/spawn", "POST", {"archetype": "sentry", "count": 1, "x": srvpos[1] + 5, "y": srvpos[2]})
+        time.sleep(0.5)
+        sent = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if e[0] not in known and e[3] == names.index("sentry")]
+        check("a sentry was spawned next to the player", len(sent) == 1)
+        pg.get_by_role("group", name="Target").wait_for(timeout=4000)
+        check("the nearest character is shown as the target", "nearest" in pg.get_by_role("group", name="Target").inner_text())
+        pg.keyboard.press("t"); time.sleep(0.3)
+        check("T locks the target", "locked" in pg.get_by_role("group", name="Target").inner_text())
+        pg.keyboard.press("Escape"); time.sleep(0.3)
+        check("Escape releases it", "nearest" in pg.get_by_role("group", name="Target").inner_text())
+        pg.keyboard.press("t"); time.sleep(0.2)
+        for _ in range(4):
+            pg.keyboard.press(" "); time.sleep(0.35)
+            if SHOTS and _ == 1: pg.screenshot(path=str(SHOTS / "play-action.png"))
+        after = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if sent and e[0] == sent[0][0]]
+        check("pressing space hurts the target", bool(after) and after[0][hp_i] < sent[0][hp_i], f"{sent[0][hp_i] if sent else None} -> {after[0][hp_i] if after else 'gone'}")
+        pg.get_by_role("button", name="Controls help").click()
+        check("the help panel lists the controls", pg.get_by_role("region", name="Controls").inner_text().count("\n") >= 4)
+        pg.get_by_role("button", name="Controls help").click()
+        snd = pg.get_by_role("button", name="Sound effects"); snd.click()
+        check("the sound toggle is a pressed button", snd.get_attribute("aria-pressed") == "true"); snd.click()
         pg.keyboard.press("Enter"); pg.get_by_label("Chat message").fill("hello from the browser"); pg.keyboard.press("Enter"); time.sleep(0.8)
         lines = api(base, "/api/chat")[1]["lines"]
         check("a chat line typed in the browser reaches the server", any(l[3] == "hello from the browser" for l in lines))
         check("the HUD shows the player's own line back", pg.get_by_text("hello from the browser").count() >= 1)
+        skin = lambda: pg.evaluate("getComputedStyle(document.querySelector('.play-skin')).getPropertyValue('--hud-bg').trim()")
+        was_dark = pg.evaluate("document.documentElement.classList.contains('dark')")
+        bg1 = skin()
+        pg.get_by_role("button", name="Switch to light theme" if was_dark else "Switch to dark theme").click(); time.sleep(0.8)
+        bg2 = skin()
+        check("the theme button swaps the play skin", bg1 != bg2 and pg.evaluate("document.documentElement.classList.contains('dark')") != was_dark, f"{bg1} -> {bg2}")
+        res = pg.evaluate("axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21aa','best-practice']}).then(r=>r.violations.map(v=>({id:v.id,n:v.nodes.length,t:v.nodes.slice(0,2).map(n=>n.target.join(' '))})))")
+        check("play page in game, other theme: no axe violations", not res, json.dumps(res)[:600])
+        if SHOTS: pg.screenshot(path=str(SHOTS / ("play-light.png" if was_dark else "play-dark.png")))
+        pg.get_by_role("button", name="Switch to dark theme" if was_dark else "Switch to light theme").click(); time.sleep(0.8)
+        check("the game keeps running after a theme switch", pg.get_by_test_id("hud").count() == 1 and pg.get_by_text("LIVE").count() >= 1)
         pg.get_by_role("button", name="Recovery code").click(); time.sleep(0.3)
         import re
         code = pg.locator("code").first.inner_text()
