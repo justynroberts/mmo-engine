@@ -357,12 +357,15 @@ not which archetype an entity is, and the touch controls are basic arrows.
 
 ## Godot client (vertical slice)
 
-`godot/` is a Godot 4.6 project that plays the world through the `mmo_godot` extension: sign in as a guest, camera-relative WASD, orbit and zoom, tab or click targeting, attack, an 8 slot bag, loot on the ground, chat. It draws primitives so it runs with no art; put `player.tscn` and `mob.tscn` under `godot/assets/characters/` (for example KayKit or Quaternius characters) and they are used instead.
+`godot/` is a Godot 4.6 project that plays the world through the `mmo_godot` extension: sign in as a guest, camera-relative WASD, orbit and zoom, tab or click targeting, attack, an 8 slot bag, loot on the ground, chat.
+
+It ships with KayKit art (CC0, licences next to the files in `godot/assets/`): you are a Knight, everyone else is a Skeleton Warrior (snapshots do not say which archetype an entity is). `assets/characters/character.gd` drives each one from the snapshots: idle, walk or run by ground speed, facing the way it moves, an attack when you act, a flinch and a floating number when health drops, a health bar once hurt. The protocol has no death event and the server respawns in the same tick, so a death is inferred: a recently hit, nearly dead character that jumps across the map or vanishes leaves a body that plays the death animation (and a game whose health can rest at 0 shows it directly). When something hits you, the nearest character in reach swings. Wall boxes become small keeps of dungeon wall pieces, pillars, banners and torches, tiled to each box. Loot is a chest tinted with the item's colour. The ground rolls (hills from the world seed, levelled around buildings, purely visual since the server's world is flat), with trees, rocks and bushes scattered from the seed so every client sees the same scene, and a forest past the edge of the playable area. Delete `player.tscn` or `mob.tscn` and the client falls back to primitives.
 
 ```
 scripts/build_godot.sh                     # builds the extension into godot/bin
 godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
 scripts/godot_e2e.sh                       # headless scripted session against a real server (GODOT=/path/to/godot)
+godot --path godot -- ... --walk near --zoom 40 --shot out.png --shot_after 10   # screenshot beside the nearest building
 ```
 
 The extension is built against the Godot 4.6 API and refuses to load in older editors. It now exposes `bag()`, `ground()`, `use_slot()`, `drop_slot()` and `pickup()` (the C SDK has `mmo_bag_*`, `mmo_ground*` and `mmo_item_*` to match). Worlds that stream their walls are loaded whole by the slice (`/play/walls?all=1`), which is fine to a few thousand boxes; streaming by area in GDScript is the next step. Weather and the item `usable` flag are not exposed yet.
