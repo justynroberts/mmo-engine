@@ -1318,3 +1318,145 @@ fn the_handoff_link_refuses_forged_and_replayed_frames() {
     assert_eq!(z["in"], 1);
     assert_eq!(z["rejected"], 4);
 }
+
+// ---------------------------------------------------------------- C ABI client library
+
+fn play_info(web: SocketAddr) -> String {
+    let mut s = std::net::TcpStream::connect(web).unwrap();
+    s.write_all(b"GET /play/info HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    out.split("\r\n\r\n").nth(1).unwrap().to_string()
+}
+
+mod ffi {
+    use mmo_client::*;
+    use std::ffi::CString;
+    pub struct C(pub *mut Client);
+    impl Drop for C {
+        fn drop(&mut self) {
+            unsafe { mmo_free(self.0) }
+        }
+    }
+    pub fn connect(port: u16, info: &str, identity: Option<&str>) -> C {
+        let (h, i) = (CString::new("127.0.0.1").unwrap(), CString::new(info).unwrap());
+        let id = identity.map(|s| CString::new(s).unwrap());
+        let p = unsafe { mmo_connect(h.as_ptr(), port, i.as_ptr(), id.as_ref().map_or(std::ptr::null(), |s| s.as_ptr())) };
+        assert!(!p.is_null(), "{:?}", unsafe { std::ffi::CStr::from_ptr(mmo_last_error()) });
+        C(p)
+    }
+    pub fn me(c: &C) -> Option<MmoEntity> {
+        let id = unsafe { mmo_self_id(c.0) };
+        (0..unsafe { mmo_entity_count(c.0) }).find_map(|i| {
+            let mut e = MmoEntity::default();
+            (unsafe { mmo_entity(c.0, i, &mut e) } == 1 && e.id == id).then_some(e)
+        })
+    }
+}
+
+/// Poll the library like an engine would, once per frame, until `done` or the time is up.
+fn frames(c: &ffi::C, secs: u64, mut done: impl FnMut(&ffi::C) -> bool) -> bool {
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(secs) {
+        unsafe { mmo_client::mmo_poll(c.0) };
+        if done(c) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    false
+}
+
+#[test]
+fn the_c_client_library_plays_moves_hears_chat_and_refuses_a_wrong_key() {
+    let (srv, web) = start_web(&[]);
+    let info = play_info(web);
+    let mut id = [0 as std::ffi::c_char; 65];
+    unsafe { mmo_client::mmo_new_identity(id.as_mut_ptr()) };
+    let id = unsafe { std::ffi::CStr::from_ptr(id.as_ptr()) }.to_str().unwrap().to_string();
+
+    let c = ffi::connect(srv.udp.port(), &info, Some(&id));
+    assert!(frames(&c, 5, |c| unsafe { mmo_client::mmo_status(c.0) } == mmo_client::MMO_PLAYING && ffi::me(c).is_some()), "never in the world");
+    assert!(unsafe { mmo_client::mmo_attr_count(c.0) } >= 1);
+    let name = unsafe { std::ffi::CStr::from_ptr(mmo_client::mmo_attr_name(c.0, 0)) }.to_str().unwrap().to_string();
+    assert_eq!(name, "health");
+    let start = ffi::me(&c).unwrap();
+    assert!(start.attrs[0] > 0.0);
+
+    // Movement: the server decides the speed, the library just sends intent.
+    let sx = start.x;
+    let mut best = 0.0f32;
+    unsafe { mmo_client::mmo_set_move(c.0, 1, 1) };
+    frames(&c, 4, |c| {
+        let e = ffi::me(c).unwrap();
+        best = best.max((e.x - sx).abs() + (e.y - start.y).abs());
+        best > 8.0
+    });
+    assert!(best > 8.0, "did not move ({best})");
+    unsafe { mmo_client::mmo_set_move(c.0, 0, 0) };
+
+    // Chat out and back: a shout is heard by the speaker too.
+    let line = std::ffi::CString::new("hello from C").unwrap();
+    unsafe { mmo_client::mmo_say(c.0, 1, line.as_ptr()) };
+    let mut heard = String::new();
+    frames(&c, 4, |c| {
+        let mut m = mmo_client::MmoChat { from: 0, channel: 0, text: [0; 256] };
+        if unsafe { mmo_client::mmo_next_chat(c.0, &mut m) } == 1 {
+            heard = String::from_utf8_lossy(&m.text[..m.text.iter().position(|&b| b == 0).unwrap()]).to_string();
+        }
+        !heard.is_empty()
+    });
+    assert_eq!(heard, "hello from C");
+    assert!(unsafe { mmo_client::mmo_rtt_ms(c.0) } >= 0.0);
+
+    // A pinned key that is not the server's is refused, not trusted.
+    let mut bad: serde_json::Value = serde_json::from_str(&info).unwrap();
+    bad["server_key"] = "ab".repeat(32).into();
+    let b = ffi::connect(srv.udp.port(), &bad.to_string(), None);
+    assert!(frames(&b, 4, |b| unsafe { mmo_client::mmo_status(b.0) } == mmo_client::MMO_REJECTED));
+    // Bad input is an error, not a crash.
+    let junk = std::ffi::CString::new("{").unwrap();
+    let host = std::ffi::CString::new("127.0.0.1").unwrap();
+    assert!(unsafe { mmo_client::mmo_connect(host.as_ptr(), 1, junk.as_ptr(), std::ptr::null()) }.is_null());
+}
+
+#[test]
+fn the_c_client_library_follows_a_zone_handoff_by_itself() {
+    let zs = start_zones();
+    // Zones have no web gateway here, so build the info the gateway would serve from the admin API.
+    let (_, ai) = json(&zs.z[0], "GET", "/api/info", "");
+    let (_, g) = json(&zs.z[0], "GET", "/api/game", "");
+    let attrs: Vec<_> = g["attrs"].as_array().unwrap().iter().map(|a| serde_json::json!({"name": a["name"], "min": a["min"], "max": a["max"], "bits": a["bits"], "replicated": a["replicated"]})).collect();
+    let replicated: Vec<usize> = attrs.iter().enumerate().filter(|(_, a)| a["replicated"] == true).map(|(i, _)| i).collect();
+    let info = serde_json::json!({
+        "server_key": ai["server_key"], "content_hash": ai["content_hash"], "proto": ai["proto"], "hz": 20,
+        "move_speed": g["move_speed"], "entity_radius": g["entity_radius"], "interest_radius": g["interest_radius"],
+        "attrs": attrs, "replicated": replicated,
+    })
+    .to_string();
+    let mut id = [0 as std::ffi::c_char; 65];
+    unsafe { mmo_client::mmo_new_identity(id.as_mut_ptr()) };
+    let id = unsafe { std::ffi::CStr::from_ptr(id.as_ptr()) }.to_str().unwrap().to_string();
+    let c = ffi::connect(zs.z[0].udp.port(), &info, Some(&id));
+    assert!(frames(&c, 5, |c| ffi::me(c).is_some()));
+    let first = unsafe { mmo_client::mmo_self_id(c.0) };
+    // Walk east, sidestepping walls, until we are playing in zone 1 (x past the border and a new session).
+    let mut last = ffi::me(&c).unwrap();
+    let mut detour = 0;
+    let mut n = 0;
+    unsafe { mmo_client::mmo_set_move(c.0, 1, 0) };
+    let ok = frames(&c, 45, |c| {
+        n += 1;
+        if n % 60 == 0 {
+            let e = ffi::me(c).unwrap_or(last);
+            detour = if (e.x - last.x).abs() < 2.0 { if detour >= 0 { -1 } else { 1 } } else { 0 };
+            last = e;
+            unsafe { mmo_client::mmo_set_move(c.0, 1, detour) };
+        }
+        state(&zs.z[1])["zone"]["in"] == 1 && state(&zs.z[1])["clients"].as_u64() == Some(1) && ffi::me(c).is_some_and(|e| e.x > 256.0)
+    });
+    assert!(ok, "never arrived in zone 1");
+    assert_eq!(unsafe { mmo_client::mmo_status(c.0) }, mmo_client::MMO_PLAYING);
+    let _ = first; // the entity id is allowed to change across zones
+    assert_eq!(state(&zs.z[1])["net"]["restored"], 1);
+}

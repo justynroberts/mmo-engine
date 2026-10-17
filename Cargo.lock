@@ -440,6 +440,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mmo-client"
+version = "0.1.0"
+dependencies = [
+ "proto",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -660,6 +668,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "libc",
+ "mmo-client",
  "proto",
  "rusqlite",
  "serde",

@@ -1,0 +1,12 @@
+[package]
+name = "mmo-client"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "mmo_client"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+proto = { path = "../proto" }
+serde_json = "1"
