@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/proto", "crates/server", "crates/bots", "crates/client-ffi"]
+members = ["crates/proto", "crates/server", "crates/bots", "crates/client-ffi", "crates/godot-ext"]
 
 [workspace.package]
 edition = "2021"

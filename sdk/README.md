@@ -19,12 +19,18 @@ suite (play, move, chat, a wrong pinned key refused, zone handoff followed autom
 
 ## Godot 4
 
-Not built or run here (no Godot in this environment), so treat this as the intended shape rather than a tested plugin.
-Godot loads native code through GDExtension. Write a small extension (godot-cpp or the `godot` Rust crate) that links
-`libmmo_client` and exposes a node, say `MmoClient`, with `connect_to(host, port, info_json, identity)`, a `_process`
-that calls `mmo_poll`, `set_move(Vector2)`, `say(text)`, and a `entities()` method returning an `Array` of
-`Dictionary` (`id`, `position`, attribute names as keys). Map world units to your scene with one scale factor; the world is
-a flat plane, x east and y south. Use `HTTPRequest` for `/play/info`. Ship the library next to the `.gdextension` file.
+`crates/godot-ext` is a GDExtension (Rust, `godot` crate) that adds an `MmoClient` node. It compiles
+(`cargo build --release -p mmo-godot` gives `libmmo_godot.so`), but it has **not been loaded in Godot** here, because
+there is no Godot in this environment. Expect to fix small API mismatches on first load.
+
+1. Copy `target/release/libmmo_godot.so` to `res://bin/` and `sdk/godot/mmo.gdextension` next to it.
+2. Attach `sdk/godot/Game.gd` to a Node2D. It fetches `/play/info`, creates and stores an identity, connects, sends
+   WASD/arrow intent and draws every entity as a square, gliding between snapshots.
+
+Node API: `connect_to(host, port, info_json, identity) -> String` (empty on success), `set_move(Vector2)`,
+`act(action, target)`, `say(text, shout)`, `entities() -> Array[Dictionary]` (`id`, `position`, one key per replicated
+attribute), `get_self_id()`, `get_status()`, `get_status_text()`, `get_rtt_ms()`, signals `status_changed` and
+`chat_heard`, and static `new_identity()` / `identity_from_passphrase(account, passphrase)`.
 
 ## Unreal 5
 

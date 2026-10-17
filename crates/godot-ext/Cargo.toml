@@ -1,0 +1,12 @@
+[package]
+name = "mmo-godot"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "mmo_godot"
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = "0.5.5"
+mmo-client = { path = "../client-ffi" }

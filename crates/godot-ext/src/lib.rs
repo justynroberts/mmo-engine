@@ -1,0 +1,178 @@
+//! Godot 4 extension: an `MmoClient` node wrapping the mmo-client library.
+//!
+//! Add the node to a scene, call `connect_to` with the server's `/play/info` JSON, and read
+//! `entities()` each frame. The node polls the network itself in `_process`.
+
+use godot::classes::{INode, Node};
+use godot::prelude::*;
+use mmo_client as m;
+use std::ffi::{CStr, CString};
+
+struct MmoExt;
+
+#[gdextension]
+unsafe impl ExtensionLibrary for MmoExt {}
+
+#[derive(GodotClass)]
+#[class(base = Node)]
+struct MmoClient {
+    base: Base<Node>,
+    c: *mut m::Client,
+}
+
+#[godot_api]
+impl INode for MmoClient {
+    fn init(base: Base<Node>) -> Self {
+        Self { base, c: std::ptr::null_mut() }
+    }
+
+    fn process(&mut self, _delta: f64) {
+        if self.c.is_null() {
+            return;
+        }
+        let before = unsafe { m::mmo_status(self.c) };
+        let now = unsafe { m::mmo_poll(self.c) };
+        if now != before {
+            self.base_mut().emit_signal("status_changed", &[Variant::from(now as i64)]);
+        }
+        loop {
+            let mut line = m::MmoChat { from: 0, channel: 0, text: [0; 256] };
+            if unsafe { m::mmo_next_chat(self.c, &mut line) } == 0 {
+                break;
+            }
+            let end = line.text.iter().position(|&b| b == 0).unwrap_or(0);
+            let text = String::from_utf8_lossy(&line.text[..end]).to_string();
+            self.base_mut().emit_signal("chat_heard", &[Variant::from(line.from as i64), Variant::from(line.channel as i64), Variant::from(GString::from(&text))]);
+        }
+    }
+}
+
+impl Drop for MmoClient {
+    fn drop(&mut self) {
+        unsafe { m::mmo_free(self.c) };
+    }
+}
+
+#[godot_api]
+impl MmoClient {
+    /// 0 connecting, 1 playing, 2 rejected, 3 closed.
+    #[signal]
+    fn status_changed(status: i64);
+    /// A chat line: speaker entity id, channel (0 say, 1 shout), text.
+    #[signal]
+    fn chat_heard(from: i64, channel: i64, text: GString);
+
+    /// Start connecting. `info_json` is the body of GET /play/info; `identity` is 64 hex characters or "" for a guest.
+    /// Returns "" on success or an error message.
+    #[func]
+    fn connect_to(&mut self, host: GString, port: i64, info_json: GString, identity: GString) -> GString {
+        unsafe { m::mmo_free(self.c) };
+        self.c = std::ptr::null_mut();
+        let (Ok(h), Ok(i)) = (CString::new(host.to_string()), CString::new(info_json.to_string())) else {
+            return GString::from("strings must not contain NUL");
+        };
+        let id = identity.to_string();
+        let id = (!id.is_empty()).then(|| CString::new(id).unwrap_or_default());
+        let p = unsafe { m::mmo_connect(h.as_ptr(), port.clamp(0, 65535) as u16, i.as_ptr(), id.as_ref().map_or(std::ptr::null(), |s| s.as_ptr())) };
+        if p.is_null() {
+            return GString::from(&unsafe { CStr::from_ptr(m::mmo_last_error()) }.to_string_lossy().to_string());
+        }
+        self.c = p;
+        GString::new()
+    }
+
+    #[func]
+    fn disconnect_from_server(&mut self) {
+        unsafe { m::mmo_free(self.c) };
+        self.c = std::ptr::null_mut();
+    }
+
+    #[func]
+    fn get_status(&self) -> i64 {
+        unsafe { m::mmo_status(self.c) as i64 }
+    }
+
+    /// Why the connection was rejected or closed.
+    #[func]
+    fn get_status_text(&self) -> GString {
+        let mut buf = [0 as std::ffi::c_char; 160];
+        unsafe { m::mmo_status_text(self.c, buf.as_mut_ptr(), buf.len()) };
+        GString::from(&unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().to_string())
+    }
+
+    /// Movement intent, each axis -1, 0 or 1. The server decides the speed.
+    #[func]
+    fn set_move(&mut self, direction: Vector2) {
+        unsafe { m::mmo_set_move(self.c, direction.x.round() as i32, direction.y.round() as i32) };
+    }
+
+    /// Use an action (ids are in /play/info) on a target entity id (0 for none).
+    #[func]
+    fn act(&mut self, action: i64, target: i64) {
+        unsafe { m::mmo_act(self.c, action.clamp(0, 255) as u8, target.max(0) as u32) };
+    }
+
+    /// Say (shout = false, heard nearby) or shout (heard by everyone).
+    #[func]
+    fn say(&mut self, text: GString, shout: bool) {
+        if let Ok(t) = CString::new(text.to_string()) {
+            unsafe { m::mmo_say(self.c, shout as u8, t.as_ptr()) };
+        }
+    }
+
+    #[func]
+    fn get_self_id(&self) -> i64 {
+        unsafe { m::mmo_self_id(self.c) as i64 }
+    }
+
+    #[func]
+    fn get_rtt_ms(&self) -> f64 {
+        unsafe { m::mmo_rtt_ms(self.c) as f64 }
+    }
+
+    /// Everything in view as of the newest snapshot: dictionaries with `id`, `position` (Vector2, world
+    /// units, x east and y south) and one key per replicated attribute (for example `health`).
+    #[func]
+    fn entities(&self) -> Array<VarDictionary> {
+        let mut out = Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        let names: Vec<String> = (0..unsafe { m::mmo_attr_count(self.c) })
+            .map(|i| unsafe { CStr::from_ptr(m::mmo_attr_name(self.c, i)) }.to_string_lossy().to_string())
+            .collect();
+        for i in 0..unsafe { m::mmo_entity_count(self.c) } {
+            let mut e = m::MmoEntity::default();
+            if unsafe { m::mmo_entity(self.c, i, &mut e) } == 0 {
+                continue;
+            }
+            let mut d = VarDictionary::new();
+            d.set("id", e.id as i64);
+            d.set("position", Vector2::new(e.x, e.y));
+            for (k, n) in names.iter().enumerate() {
+                d.set(n.as_str(), e.attrs[k] as f64);
+            }
+            out.push(&d);
+        }
+        out
+    }
+
+    /// A fresh random identity (64 hex characters). Store it: it is the player's account.
+    #[func]
+    fn new_identity() -> GString {
+        let mut b = [0 as std::ffi::c_char; 65];
+        unsafe { m::mmo_new_identity(b.as_mut_ptr()) };
+        GString::from(&unsafe { CStr::from_ptr(b.as_ptr()) }.to_string_lossy().to_string())
+    }
+
+    /// The identity for an account name and passphrase, so the player can log in from any device.
+    #[func]
+    fn identity_from_passphrase(account: GString, passphrase: GString) -> GString {
+        let (Ok(a), Ok(p)) = (CString::new(account.to_string()), CString::new(passphrase.to_string())) else { return GString::new() };
+        let mut b = [0 as std::ffi::c_char; 65];
+        if unsafe { m::mmo_identity_from_passphrase(a.as_ptr(), p.as_ptr(), b.as_mut_ptr()) } != 0 {
+            return GString::new();
+        }
+        GString::from(&unsafe { CStr::from_ptr(b.as_ptr()) }.to_string_lossy().to_string())
+    }
+}
