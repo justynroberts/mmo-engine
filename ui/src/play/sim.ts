@@ -12,19 +12,25 @@ export class World {
   readonly size: number
   private boxes: Box[]
   private gw: number
-  private buckets: number[][]
+  private buckets: Map<number, number[]>
 
   constructor(size: number, boxes: readonly Box[]) {
     this.size = f(size)
     this.boxes = boxes.map((b) => [f(b[0]), f(b[1]), f(b[2]), f(b[3])] as const)
     this.gw = Math.ceil(this.size / CELL) + 1
-    this.buckets = Array.from({ length: this.gw * this.gw }, () => [])
+    // Sparse: a 65,536 unit world has a million cells and only a few hold walls.
+    this.buckets = new Map()
     this.boxes.forEach((b, i) => {
       const cx0 = Math.max(0, Math.floor(b[0] / CELL))
       const cx1 = Math.min(this.gw - 1, Math.floor(b[2] / CELL))
       const cy0 = Math.max(0, Math.floor(b[1] / CELL))
       const cy1 = Math.min(this.gw - 1, Math.floor(b[3] / CELL))
-      for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) this.buckets[cy * this.gw + cx]!.push(i)
+      for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+        const k = cy * this.gw + cx
+        const l = this.buckets.get(k)
+        if (l) l.push(i)
+        else this.buckets.set(k, [i])
+      }
     })
   }
 
@@ -38,7 +44,7 @@ export class World {
     const cy1 = Math.min(Math.floor(f(y + r) / CELL), this.gw - 1)
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
-        for (const bi of this.buckets[cy * this.gw + cx]!) {
+        for (const bi of this.buckets.get(cy * this.gw + cx) ?? []) {
           const b = this.boxes[bi]!
           if (f(x + r) > b[0] && f(x - r) < b[2] && f(y + r) > b[1] && f(y - r) < b[3]) return true
         }

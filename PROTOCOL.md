@@ -126,3 +126,7 @@ Positions are 32 bit (`world units * 16`), so the wire can describe a world of 2
 units). The server itself runs worlds from 64 to 65,536 units (`--world-size`), a limit chosen so that 32 bit floats keep a finer
 resolution than the wire does. A snapshot entry is now 12 bytes plus attributes, so fewer entries fit in one datagram: the
 server refuses a game file whose `max_visible` could overflow it.
+
+## Walls over HTTP
+
+`/play/info` carries `walls: {ver, chunk, count, inline}`. When `inline` is true the boxes are in `boxes`. When false (more than 600 walls) `boxes` is empty and walls come from `GET /play/walls?c=cx,cy;...` (up to 64 chunks, chunk edge `chunk` units), answered with `{ver, chunk, chunks: {"cx,cy": [[id,x0,y0,x1,y1],...]}}`; a box touching several chunks appears in each with the same id. `?all=1` returns `{chunks: {all: [...]}}`. `ver` changes whenever any wall changes; a client holding another version discards what it has.

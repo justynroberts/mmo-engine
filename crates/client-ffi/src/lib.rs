@@ -202,6 +202,9 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         .as_array()
         .map(|a| a.iter().filter_map(|b| Some(proto::Aabb { x0: b[0].as_f64()? as f32, y0: b[1].as_f64()? as f32, x1: b[2].as_f64()? as f32, y1: b[3].as_f64()? as f32 })).collect())
         .unwrap_or_default();
+    if v["walls"]["inline"] == false && boxes.is_empty() {
+        return fail("info_json: this world streams its walls; fetch /play/walls?all=1 and put its \"all\" array in \"boxes\" before connecting");
+    }
     if size == 0 {
         return fail("info_json: no world_size");
     }

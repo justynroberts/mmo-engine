@@ -4,7 +4,8 @@ import {
   kind, reject, decodeGround, decodeInventory, type BagSlot, type ChatMsg, type Defs, type GroundItem, type Session,
 } from './protocol'
 import { Interpolator } from './interp'
-import { Predictor, World, type Box } from './sim'
+import { Predictor, World } from './sim'
+import { WallStore, type WallsMeta } from './walls'
 
 export interface PlayInfo {
   server_key: string
@@ -20,6 +21,8 @@ export interface PlayInfo {
   replicated: number[]
   actions: { id: number; name: string; range: number }[]
   boxes: [number, number, number, number][]
+  /** How the walls travel: inline in `boxes`, or fetched by area from /play/walls. */
+  walls?: WallsMeta
   /** Set when the server is one zone of several: its index, and each zone's web base URL (null if unknown). */
   zone?: number | null
   zones?: (string | null)[] | null
@@ -103,6 +106,9 @@ export class GameClient {
   last: Frame = { others: [], self: null }
   /** Your bag (8 slots) and what lies near you, as the server last said. */
   bag: BagSlot[] = []
+  /** The walls near you (all of them in a small world). */
+  readonly walls: WallStore
+  private worldRev = -1
   ground: GroundItem[] = []
 
   constructor(
@@ -112,14 +118,22 @@ export class GameClient {
     private h: Handlers,
   ) {
     this.defs = defsOf(info)
-    this.world = new World(info.world_size, info.boxes)
+    this.walls = new WallStore(info.world_size, info.walls, info.boxes)
+    this.world = new World(info.world_size, this.walls.list())
+    this.worldRev = this.walls.rev
     this.interp = new Interpolator<Ent>(info.hz)
   }
 
   /** The map editor can change walls while people are playing; adopt them so prediction stays right. */
-  setBoxes(boxes: Box[]) {
-    this.info = { ...this.info, boxes: boxes.map((b) => [...b] as [number, number, number, number]) }
-    this.world = new World(this.info.world_size, boxes)
+  setWalls(fresh: Pick<PlayInfo, 'boxes' | 'walls'>) {
+    this.walls.adopt(fresh.walls, fresh.boxes)
+  }
+
+  /** Rebuild the collision world if the walls we hold changed. Cheap when they did not. */
+  private syncWorld() {
+    if (this.worldRev === this.walls.rev) return
+    this.worldRev = this.walls.rev
+    this.world = new World(this.info.world_size, this.walls.list())
   }
 
   start() {
@@ -291,6 +305,7 @@ export class GameClient {
     const chat = this.chat.outgoing()
     if (chat) ws.send(bin(s.seal(chat)))
     this.seq++
+    this.syncWorld()
     this.pred?.applyInput(this.world, this.seq, this.dir[0], this.dir[1])
     this.sent.set(this.seq, performance.now())
     if (this.sent.size > 128) this.sent.delete(this.sent.keys().next().value as number)
@@ -321,8 +336,11 @@ export class GameClient {
     if (!this.pred) {
       this.pred = new Predictor(me.x, me.y, this.info.move_speed, this.info.hz, this.info.entity_radius)
       this.visual = { x: me.x, y: me.y }
+      this.walls.update(me.x, me.y)
       return
     }
+    this.walls.update(me.x, me.y)
+    this.syncWorld()
     const err = this.pred.reconcile(this.world, me.x, me.y, lastInputSeq)
     // A big correction is the server doing something we could not know about (respawn, zone handoff): jump.
     if (err > 8 && this.visual) this.visual = { x: this.pred.x, y: this.pred.y }

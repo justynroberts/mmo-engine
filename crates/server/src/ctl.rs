@@ -152,7 +152,11 @@ pub struct Params {
 /// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
 /// Everything here is public by nature (a UDP client learns the same from the handshake).
 pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
-    let boxes: Vec<[f32; 4]> = sim.world.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect();
+    let all: Vec<[f32; 4]> = sim.world.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect();
+    let ver = hs.gateway.as_ref().map_or(0, |g| g.set_walls(&all));
+    // Small worlds ship their walls inline; big ones are fetched by area from /play/walls.
+    let inline = all.len() <= crate::web::WALLS_INLINE_MAX;
+    let boxes = if inline { all.clone() } else { Vec::new() };
     json!({
         "server_key": to_hex(&hs.keys.public),
         // A string: a u64 does not fit a JavaScript number.
@@ -168,6 +172,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
         "boxes": boxes,
+        "walls": { "ver": format!("{ver:016x}"), "chunk": crate::web::WALL_CHUNK, "count": all.len(), "inline": inline },
         "items": sim.items.iter().map(|i| json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty()})).collect::<Vec<_>>(),
         "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
         "zone": hs.zone.as_ref().map(|z| z.index),

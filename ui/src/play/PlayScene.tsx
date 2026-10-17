@@ -123,29 +123,52 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     disposables.push(winTex)
     const plain = new THREE.MeshBasicMaterial({ color: dark ? 0x0d0b1e : 0xc3badb })
     disposables.push(plain)
-    info.boxes.forEach(([x0, y0, x1, y1], i) => {
-      const w = x1 - x0
-      const d = y1 - y0
-      const h = 7 + ((i * 7919) % 9)
-      const face = (across: number) => {
-        const t = winTex.clone()
-        t.needsUpdate = true
-        t.repeat.set(Math.max(1, Math.round(across / 5)), Math.max(1, Math.round(h / 4)))
-        const m = new THREE.MeshBasicMaterial({ map: t, color: dark ? 0xffffff : 0xdcd4ee })
-        disposables.push(t, m)
-        return m
+    // Buildings come and go with the wall store: all of them in a small world, the ones near you in a big one.
+    type Building = { mesh: THREE.Mesh; edges: THREE.LineSegments; own: { dispose(): void }[] }
+    const buildings = new Map<string, Building>()
+    let wallRev = -1
+    const syncBuildings = () => {
+      const wanted = client.walls.list()
+      wallRev = client.walls.rev
+      const keep = new Set<string>()
+      for (const [x0, y0, x1, y1] of wanted) {
+        const key = `${x0},${y0},${x1},${y1}`
+        keep.add(key)
+        if (buildings.has(key)) continue
+        // Height from position, so a wall keeps its look whichever chunk delivered it.
+        const h = 7 + (Math.abs(Math.floor(x0 * 7 + y0 * 13)) % 9)
+        const w = x1 - x0
+        const d = y1 - y0
+        const own: { dispose(): void }[] = []
+        const face = (across: number) => {
+          const t = winTex.clone()
+          t.needsUpdate = true
+          t.repeat.set(Math.max(1, Math.round(across / 5)), Math.max(1, Math.round(h / 4)))
+          const m = new THREE.MeshBasicMaterial({ map: t, color: dark ? 0xffffff : 0xdcd4ee })
+          own.push(t, m)
+          return m
+        }
+        const sideX = face(d)
+        const sideZ = face(w)
+        const g = new THREE.BoxGeometry(w, h, d)
+        const mesh = new THREE.Mesh(g, [sideX, sideX, plain, plain, sideZ, sideZ])
+        mesh.position.set((x0 + x1) / 2 - half, h / 2, (y0 + y1) / 2 - half)
+        scene.add(mesh)
+        const eg = new THREE.EdgesGeometry(g)
+        eg.translate(mesh.position.x, mesh.position.y, mesh.position.z)
+        const edges = new THREE.LineSegments(eg, wallMat)
+        scene.add(edges)
+        own.push(g, eg)
+        buildings.set(key, { mesh, edges, own })
       }
-      const sideX = face(d)
-      const sideZ = face(w)
-      const g = new THREE.BoxGeometry(w, h, d)
-      const mesh = new THREE.Mesh(g, [sideX, sideX, plain, plain, sideZ, sideZ])
-      mesh.position.set((x0 + x1) / 2 - half, h / 2, (y0 + y1) / 2 - half)
-      scene.add(mesh)
-      const eg = new THREE.EdgesGeometry(g)
-      eg.translate(mesh.position.x, mesh.position.y, mesh.position.z)
-      geoms.push(g, eg)
-      scene.add(new THREE.LineSegments(eg, wallMat))
-    })
+      for (const [key, bd] of buildings) {
+        if (keep.has(key)) continue
+        scene.remove(bd.mesh, bd.edges)
+        for (const o of bd.own) o.dispose()
+        buildings.delete(key)
+      }
+    }
+    syncBuildings()
 
     // Everyone else: instanced octahedra, tinted toward the warning colour as they get hurt.
     const others = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.9), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true }), CAP)
@@ -366,6 +389,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       const dt = Math.min(0.1, (now - last) / 1000)
       last = now
       frames++
+      if (wallRev !== client.walls.rev) syncBuildings()
       const { client: c, info: inf, shared: sh } = ref.current
       const s = sh.current
       if (now - fpsAt >= 1000) {
@@ -675,6 +699,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       for (const f of floaters) drop(f)
       for (const t of textures.values()) t.dispose()
       for (const g of geoms) g.dispose()
+      for (const bd of buildings.values()) for (const o of bd.own) o.dispose()
       for (const d of disposables) d.dispose()
       for (const w of waves) (w.mesh.material as THREE.Material).dispose()
       sparks.dispose()

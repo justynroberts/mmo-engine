@@ -41,8 +41,7 @@ export default function Minimap({ client, info, shared, dark }: { client: GameCl
       g.lineWidth = 1
       g.strokeRect(sx(0), sy(0), info.world_size * k, info.world_size * k)
       g.fillStyle = css(pal.dim)
-      for (const [x0, y0, x1, y1] of info.boxes) {
-        if (x1 < self.x - RADIUS || x0 > self.x + RADIUS || y1 < self.y - RADIUS || y0 > self.y + RADIUS) continue
+      for (const [x0, y0, x1, y1] of client.walls.near(self.x, self.y, RADIUS)) {
         g.fillRect(sx(x0), sy(y0), (x1 - x0) * k, (y1 - y0) * k)
       }
       g.fillStyle = css(pal.line)

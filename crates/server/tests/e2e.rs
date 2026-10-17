@@ -1890,3 +1890,60 @@ fn a_world_far_bigger_than_sixteen_bit_positions_could_describe_works_end_to_end
     let g = clients[0].ground[0];
     assert!((proto::world::dpos(g.x) - x).abs() < 3.0 && (proto::world::dpos(g.y) - y).abs() < 3.0, "{g:?} vs {x},{y}");
 }
+
+fn web_get(web: SocketAddr, path: &str) -> (u16, String) {
+    let mut s = std::net::TcpStream::connect(web).unwrap();
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    let status = out.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    (status, out.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+}
+
+#[test]
+fn a_big_world_streams_its_walls_by_area_instead_of_sending_them_all() {
+    let (srv, web) = start_web(&["--world-size", "8000"]);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let walls = &info["walls"];
+    assert_eq!(walls["inline"], false);
+    let count = walls["count"].as_u64().unwrap();
+    assert!(count > 600, "{count}");
+    assert_eq!(info["boxes"].as_array().unwrap().len(), 0, "walls must not ride along with the join info");
+    let ver = walls["ver"].as_str().unwrap().to_string();
+
+    // Two neighbouring chunks, together a few boxes; each box carries its id and appears in each chunk it touches.
+    let (st, body) = web_get(web, "/play/walls?c=0,0;1,0;2,3");
+    assert_eq!(st, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["ver"].as_str().unwrap(), ver);
+    let chunks = v["chunks"].as_object().unwrap();
+    assert_eq!(chunks.len(), 3);
+    for (k, list) in chunks {
+        let (cx, cy): (f64, f64) = { let mut p = k.split(','); (p.next().unwrap().parse().unwrap(), p.next().unwrap().parse().unwrap()) };
+        for b in list.as_array().unwrap() {
+            let (x0, y0, x1, y1) = (b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap(), b[4].as_f64().unwrap());
+            assert!(x1 >= cx * 256.0 && x0 < (cx + 1.0) * 256.0 && y1 >= cy * 256.0 && y0 < (cy + 1.0) * 256.0, "{k}: {b}");
+        }
+    }
+    // All chunks together hold every wall exactly as the full dump does.
+    let (_, all) = web_get(web, "/play/walls?all=1");
+    let all: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(all["chunks"]["all"].as_array().unwrap().len() as u64, count);
+    // The console's view agrees with what the browsers get.
+    let (_, g) = json(&srv, "GET", "/api/world", "");
+    assert_eq!(g["boxes"].as_array().unwrap().len() as u64, count);
+
+    // Asking for the whole world a chunk at a time is refused.
+    let many: Vec<String> = (0..65).map(|i| format!("{i},0")).collect();
+    assert_eq!(web_get(web, &format!("/play/walls?c={}", many.join(";"))).0, 400);
+
+    // Editing the walls changes the version, so open pages know to start over.
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["walls"] = serde_json::json!([[10.0, 10.0, 30.0, 30.0]]);
+    let (s, b) = http(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{b}");
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    assert_ne!(info["walls"]["ver"].as_str().unwrap(), ver);
+    assert_eq!(info["walls"]["inline"], true, "one wall is small enough to send inline");
+    assert_eq!(info["boxes"].as_array().unwrap().len(), 1);
+}

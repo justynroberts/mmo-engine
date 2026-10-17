@@ -62,7 +62,7 @@ export default function Play() {
   // Pick up wall edits and weather changes made in the console.
   useEffect(() => {
     if (!client) return
-    let lastBoxes = JSON.stringify(info?.boxes)
+    let lastWalls = wallsKey(info)
     let lastWeather = ''
     const t = setInterval(() => {
       fetch('/play/info')
@@ -75,11 +75,10 @@ export default function Play() {
             lastWeather = w
             shared.current.weather = fresh.weather ?? null
           }
-          const key = JSON.stringify(fresh.boxes)
-          if (key === lastBoxes) return
-          lastBoxes = key
-          client.setBoxes(fresh.boxes)
-          setInfo((p) => (p ? { ...p, boxes: fresh.boxes } : p))
+          const key = wallsKey(fresh)
+          if (key === lastWalls) return
+          lastWalls = key
+          client.setWalls(fresh)
         })
         .catch(() => undefined)
     }, WORLD_CHECK_MS)
@@ -104,4 +103,10 @@ export default function Play() {
       {playing && info && client && <Hud client={client} info={info} shared={shared} status={status} lines={lines} recovery={recovery} dark={dark} onToggleTheme={toggle} />}
     </div>
   )
+}
+
+/** Changes when the walls do: the version for streamed worlds, the boxes themselves for small ones. */
+function wallsKey(i: Pick<PlayInfo, 'boxes' | 'walls'> | null | undefined) {
+  if (!i) return ''
+  return i.walls && !i.walls.inline ? `v${i.walls.ver}` : JSON.stringify(i.boxes)
 }

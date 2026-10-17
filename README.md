@@ -201,6 +201,8 @@ their prediction used the old walls. Every zone of a scaled-out world must run t
 
 `--world-size` takes 64 to 65,536 units on a side (default 2,048). At the default move speed of 20 units a second that is about 55 minutes edge to edge at the top end. Positions are 32 bit on the wire (protocol 7), which could describe far more; the server stops at 65,536 so that its own 32 bit floats keep a finer resolution than the wire does. Generated walls are capped at 4,000 however large the world, and the neighbour grid and wall index coarsen themselves so memory stays small: an idle 65,536 unit world with 300 bots measured 35 MB and a 4 ms average tick.
 
+The browser does not download the whole map. Worlds with up to 600 walls send them with the join info as before. Bigger ones send only a version, and the page fetches `GET /play/walls?c=cx,cy;cx,cy` (256 unit chunks, at most 64 per request) for the 5x5 window around you, drops chunks more than three away, and builds and removes buildings to match. Editing walls in the console changes the version and open pages start over on their next 5 second poll. Native clients that cannot stream yet get a clear error from `mmo_connect`; fetch `/play/walls?all=1` once and put its `all` array into `boxes` in the info JSON.
+
 Size is not the same as players. A client only receives what is within its interest radius, and a snapshot has to fit in one 1,200 byte datagram, which caps `max_visible` at 255 and in practice at about 80 with a couple of replicated attributes. Zones (below) add CPU and players, not area: every zone runs the same geometry and owns a vertical strip of it.
 
 ## Scale out (zones)

@@ -53,7 +53,105 @@ pub struct Gateway {
     ports: Mutex<HashMap<u16, [u8; 4]>>,
     per_ip: Mutex<HashMap<[u8; 4], u32>>,
     info: RwLock<String>,
+    walls: RwLock<Walls>,
     pub stats: GwStats,
+}
+
+/// Edge of a wall chunk. Clients ask for walls by chunk, so a huge world is never sent whole.
+pub const WALL_CHUNK: f32 = 256.0;
+/// More walls than this and `/play/info` stops carrying them inline.
+pub const WALLS_INLINE_MAX: usize = 600;
+const MAX_CHUNKS_PER_REQUEST: usize = 64;
+
+/// The world's walls, indexed by chunk for `/play/walls`. `ver` changes whenever the walls do.
+#[derive(Default)]
+pub struct Walls {
+    pub ver: u64,
+    boxes: Vec<[f32; 4]>,
+    chunks: HashMap<(u32, u32), Vec<u32>>,
+}
+
+impl Walls {
+    pub fn build(boxes: &[[f32; 4]]) -> Walls {
+        // FNV-1a over the bit patterns: cheap, and any change to any wall changes it.
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in boxes {
+            for v in b {
+                for byte in v.to_bits().to_le_bytes() {
+                    h = (h ^ byte as u64).wrapping_mul(0x100000001b3);
+                }
+            }
+        }
+        h ^= boxes.len() as u64;
+        let mut chunks: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+        for (i, b) in boxes.iter().enumerate() {
+            let (x0, x1) = ((b[0].max(0.0) / WALL_CHUNK) as u32, (b[2].max(0.0) / WALL_CHUNK) as u32);
+            let (y0, y1) = ((b[1].max(0.0) / WALL_CHUNK) as u32, (b[3].max(0.0) / WALL_CHUNK) as u32);
+            for cy in y0..=y1 {
+                for cx in x0..=x1 {
+                    chunks.entry((cx, cy)).or_default().push(i as u32);
+                }
+            }
+        }
+        Walls { ver: h, boxes: boxes.to_vec(), chunks }
+    }
+
+    fn entry(&self, i: u32) -> String {
+        let b = self.boxes[i as usize];
+        format!("[{},{},{},{},{}]", i, b[0], b[1], b[2], b[3])
+    }
+
+    /// `c=cx,cy;cx,cy` for chunks, `all=1` for everything. A box on a chunk border is in each chunk it touches.
+    fn body(&self, query: &str) -> Option<String> {
+        let mut out = format!("{{\"ver\":\"{:016x}\",\"chunk\":{},\"chunks\":{{", self.ver, WALL_CHUNK);
+        let mut first = true;
+        for kv in query.split('&') {
+            match kv.split_once('=') {
+                Some(("all", "1")) => {
+                    out.push_str("\"all\":[");
+                    for i in 0..self.boxes.len() as u32 {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        out.push_str(&self.entry(i));
+                    }
+                    out.push(']');
+                    first = false;
+                }
+                Some(("c", list)) => {
+                    let wanted: Vec<(u32, u32)> = list
+                        .split(';')
+                        .filter_map(|t| {
+                            let (a, b) = t.split_once(',')?;
+                            Some((a.parse().ok()?, b.parse().ok()?))
+                        })
+                        .collect();
+                    if wanted.len() > MAX_CHUNKS_PER_REQUEST {
+                        return None;
+                    }
+                    for (cx, cy) in wanted {
+                        if !first {
+                            out.push(',');
+                        }
+                        first = false;
+                        out.push_str(&format!("\"{cx},{cy}\":["));
+                        if let Some(ids) = self.chunks.get(&(cx, cy)) {
+                            for (n, i) in ids.iter().enumerate() {
+                                if n > 0 {
+                                    out.push(',');
+                                }
+                                out.push_str(&self.entry(*i));
+                            }
+                        }
+                        out.push(']');
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push_str("}}");
+        Some(out)
+    }
 }
 
 pub struct WebCfg {
@@ -67,7 +165,22 @@ pub struct WebCfg {
 
 impl Gateway {
     pub fn new() -> Arc<Gateway> {
-        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), stats: GwStats::default() })
+        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), walls: RwLock::new(Walls::default()), stats: GwStats::default() })
+    }
+
+    /// Publish the walls. Returns the version the clients will see.
+    pub fn set_walls(&self, boxes: &[[f32; 4]]) -> u64 {
+        if let Ok(r) = self.walls.read() {
+            if r.boxes.len() == boxes.len() && r.boxes.as_slice() == boxes {
+                return r.ver;
+            }
+        }
+        let w = Walls::build(boxes);
+        let ver = w.ver;
+        if let Ok(mut g) = self.walls.write() {
+            *g = w;
+        }
+        ver
     }
 
     pub fn set_info(&self, json: String) {
@@ -134,6 +247,7 @@ struct Head {
     host: Option<String>,
     origin: Option<String>,
     forwarded: Option<String>,
+    query: String,
 }
 
 /// Read the request head without consuming it, so a WebSocket upgrade can be handed to
@@ -153,8 +267,10 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
             if first.next()? != "GET" {
                 return None;
             }
-            let path = first.next()?.split('?').next()?.to_string();
-            let mut h = Head { path, websocket: false, host: None, origin: None, forwarded: None };
+            let target = first.next()?;
+            let (path, query) = target.split_once('?').unwrap_or((target, ""));
+            let (path, query) = (path.to_string(), query.to_string());
+            let mut h = Head { path, websocket: false, host: None, origin: None, forwarded: None, query };
             for l in lines {
                 let Some((k, v)) = l.split_once(':') else { continue };
                 let v = v.trim();
@@ -178,6 +294,7 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
 fn respond(conn: &mut TcpStream, status: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
+        400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
         429 => "Too Many Requests",
@@ -211,6 +328,13 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
         "/play/info" => {
             let body = gw.info.read().map(|s| s.clone()).unwrap_or_default();
             respond(&mut conn, 200, "application/json", body.as_bytes())
+        }
+        "/play/walls" => {
+            let body = gw.walls.read().ok().and_then(|w| w.body(&head.query));
+            match body {
+                Some(b) => respond(&mut conn, 200, "application/json", b.as_bytes()),
+                None => respond(&mut conn, 400, "text/plain", b"too many chunks"),
+            }
         }
         p => static_file(&mut conn, cfg.ui_dir.as_deref(), p),
     }
