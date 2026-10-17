@@ -498,6 +498,9 @@ impl Sim {
         let adm = std::mem::take(&mut self.admin_actions);
         self.system_actions(&adm);
         self.system_rules();
+        if self.tick % self.tick_hz.max(1) == 0 {
+            self.expire_ground();
+        }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
             if self.ents.alive[slot] {
