@@ -16,7 +16,6 @@ use std::time::Duration;
 
 use proto::game::GameFile;
 use proto::secure::to_hex;
-use proto::world::World;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -499,8 +498,13 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
         Ok(g) => g,
         Err(e) => return err(400, e),
     };
+    let world = match file.world(c.params.world_size, c.params.seed) {
+        Ok(w) => w,
+        Err(e) => return err(400, e),
+    };
     let hash = game.defs.content_hash();
     let mut dropped = 0;
+    let mut moved = 0;
     let reset = hash != c.hs.defs_hash;
     if reset {
         // Different wire schema: every connected client would misparse. Start a
@@ -509,7 +513,6 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
         dropped = c.clients.count;
         // Characters survive a world restart: save them from the world they are in, before it is replaced.
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
-        let world = World::generate(c.params.world_size, c.params.seed);
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
         // The saved bots belong to the old definitions; the new world starts from its own counts.
         if let Some(st) = &c.hs.store {
@@ -527,6 +530,9 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.archs = game.archs;
         c.sim.places = game.places;
         c.sim.routes = game.routes;
+        if world.boxes != c.sim.world.boxes {
+            moved = c.sim.replace_world(world);
+        }
     }
     c.sim.populate_bots();
     *c.game = file;
@@ -545,7 +551,7 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
     };
     (
         200,
-        json!({ "ok": true, "reset": reset, "dropped_clients": dropped, "content_hash": format!("{hash:016x}"), "saved": saved })
+        json!({ "ok": true, "reset": reset, "dropped_clients": dropped, "moved_entities": moved, "content_hash": format!("{hash:016x}"), "saved": saved })
             .to_string(),
     )
 }

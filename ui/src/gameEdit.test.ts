@@ -1,6 +1,13 @@
 import { fixture } from './test/fixture'
 import {
+  addWall,
+  generatedWalls,
+  MAX_WALLS,
   needsReset,
+  normWall,
+  removeWall,
+  setWallEdge,
+  takeOverWalls,
   newAction,
   newArchetype,
   newAttr,
@@ -92,5 +99,42 @@ describe('parseNum', () => {
     expect(parseNum('-3')).toBe(-3)
     expect(parseNum('1e2')).toBe(100)
     for (const bad of ['', ' ', '-', '.', 'abc', '1,5', 'NaN', 'Infinity']) expect(parseNum(bad)).toBeNull()
+  })
+})
+
+describe('walls', () => {
+  it('turns a dragged rectangle into a sorted, rounded, in-world wall and ignores accidental clicks', () => {
+    expect(normWall(50.4, 90, 10, 20.6, 512)).toEqual([10, 21, 50, 90])
+    expect(normWall(-20, -5, 600, 30, 512)).toEqual([0, 0, 512, 30])
+    expect(normWall(10, 10, 11, 80, 512)).toBeNull()
+    expect(normWall(10, 10, 80, 12, 512)).toBeNull()
+  })
+
+  it('takes over the generated walls as a copy, edits them, and can hand them back', () => {
+    const base = { ...fixture() }
+    const cur: [number, number, number, number][] = [[1, 2, 30, 40]]
+    let g = takeOverWalls(base, cur)
+    cur[0]![0] = 99
+    expect(g.walls).toEqual([[1, 2, 30, 40]])
+    g = addWall(g, [100, 100, 120, 160])
+    expect(g.walls).toHaveLength(2)
+    g = setWallEdge(g, 0, 2, 25, 512)
+    expect(g.walls![0]).toEqual([1, 2, 25, 40])
+    // An edge cannot cross the opposite one or leave the world.
+    expect(setWallEdge(g, 0, 0, 500, 512).walls![0]![0]).toBe(24)
+    expect(setWallEdge(g, 0, 3, 9999, 512).walls![0]![3]).toBe(512)
+    g = removeWall(g, 0)
+    expect(g.walls).toEqual([[100, 100, 120, 160]])
+    expect('walls' in generatedWalls(g)).toBe(false)
+  })
+
+  it('does not count a wall change as a schema change (nobody is disconnected)', () => {
+    const live = fixture()
+    expect(needsReset(live, takeOverWalls(live, [[1, 2, 30, 40]]))).toBe(false)
+  })
+
+  it('stops adding at the limit', () => {
+    const g = { ...fixture(), walls: Array.from({ length: MAX_WALLS }, () => [0, 0, 5, 5] as [number, number, number, number]) }
+    expect(addWall(g, [1, 1, 9, 9]).walls).toHaveLength(MAX_WALLS)
   })
 })

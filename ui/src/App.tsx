@@ -9,7 +9,7 @@ import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
 const Scene3D = lazy(() => import('./components/Scene3D'))
-import { needsReset, newPlace, newRoute } from './gameEdit'
+import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
 
 const TABS: readonly (readonly [string, string])[] = [
   ['bots', 'Bots'],
@@ -184,12 +184,12 @@ export default function App() {
           ok: true,
           text: r.body.reset
             ? `Applied. World restarted under new definitions; ${r.body.dropped_clients ?? 0} client(s) dropped.`
-            : 'Applied live. Connected players were not affected.',
+            : `Applied live. Connected players were not affected${r.body.moved_entities ? `; ${r.body.moved_entities} moved out of new walls` : ''}.`,
         })
         setPossessed(null)
         setSelected(null)
         await loadGame()
-        if (r.body.reset) await loadStatic()
+        await loadStatic()
       } else {
         setResult({ ok: false, text: r.body.error ?? `server said ${r.status}` })
       }
@@ -272,6 +272,14 @@ export default function App() {
                     sel: b.sel,
                     tool: b.tool,
                     draft: b.draft,
+                    walls: draft.walls ?? null,
+                    onAddWall: (x0, y0, x1, y1) => {
+                      const w = normWall(x0, y0, x1, y1, world?.size ?? 2048)
+                      if (!w) return
+                      const base = draft.walls ? draft : { ...draft, walls: (world?.boxes ?? []).map((q) => [...q] as [number, number, number, number]) }
+                      setGame(addWall(base, w))
+                      setB((cur) => ({ ...cur, sel: { kind: 'wall', index: (base.walls?.length ?? 0) } }))
+                    },
                     onPick: (sel) => setB((cur) => ({ ...cur, sel })),
                     onClick: onMapClick,
                     onMovePlace: (i, x, y) => setGame({ ...draft, places: draft.places.map((p, k) => (k === i ? { ...p, x, y } : p)) }),
@@ -354,7 +362,7 @@ export default function App() {
               <Tabs.Content value="builder" tabIndex={-1}>
                 {body(
                   draft ? (
-                    <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} />
+                    <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} worldBoxes={world?.boxes ?? []} worldSize={world?.size ?? 2048} />
                   ) : (
                     <p className="text-fg-3 py-4">Loading game file…</p>
                   ),

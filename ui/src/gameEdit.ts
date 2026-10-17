@@ -325,3 +325,45 @@ export function removeRoute(g: GameFile, index: number): GameFile {
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
+
+/** Walls smaller than this (in world units) on either side are treated as an accidental click. */
+export const MIN_WALL = 3
+export const MAX_WALLS = 2000
+
+/** A dragged rectangle as a wall: corners sorted, rounded, kept inside the world. `null` if it is too small. */
+export function normWall(ax: number, ay: number, bx: number, by: number, size: number): [number, number, number, number] | null {
+  const c = (v: number) => Math.min(size, Math.max(0, Math.round(v)))
+  const [x0, x1] = [c(Math.min(ax, bx)), c(Math.max(ax, bx))]
+  const [y0, y1] = [c(Math.min(ay, by)), c(Math.max(ay, by))]
+  return x1 - x0 >= MIN_WALL && y1 - y0 >= MIN_WALL ? [x0, y0, x1, y1] : null
+}
+
+/** Turn hand editing on, starting from the walls the world has now. */
+export function takeOverWalls(g: GameFile, current: [number, number, number, number][]): GameFile {
+  return { ...g, walls: current.map((w) => [...w] as [number, number, number, number]) }
+}
+
+/** Back to the walls generated from the seed. */
+export function generatedWalls(g: GameFile): GameFile {
+  const { walls: _drop, ...rest } = g
+  void _drop
+  return rest
+}
+
+export function addWall(g: GameFile, w: [number, number, number, number]): GameFile {
+  const walls = g.walls ?? []
+  return walls.length >= MAX_WALLS ? g : { ...g, walls: [...walls, w] }
+}
+
+export function removeWall(g: GameFile, i: number): GameFile {
+  return { ...g, walls: (g.walls ?? []).filter((_, k) => k !== i) }
+}
+
+/** Set one edge value of a wall, keeping it a valid rectangle inside the world. */
+export function setWallEdge(g: GameFile, i: number, edge: 0 | 1 | 2 | 3, v: number, size: number): GameFile {
+  const w = [...(g.walls?.[i] ?? [0, 0, 0, 0])] as [number, number, number, number]
+  const lo = edge < 2 ? 0 : w[edge - 2]! + 1
+  const hi = edge < 2 ? w[edge + 2]! - 1 : size
+  w[edge] = Math.min(hi, Math.max(lo, Math.round(v)))
+  return { ...g, walls: (g.walls ?? []).map((x, k) => (k === i ? w : x)) }
+}

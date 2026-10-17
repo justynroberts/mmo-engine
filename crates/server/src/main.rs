@@ -16,7 +16,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use proto::game::GameFile;
 use proto::secure::{from_hex32, to_hex, ServerKeys};
-use proto::world::World;
 
 use net::{Clients, Handshake, NetStats, SnapStats, Worker};
 use sim::{PendingAction, Sim, NONE};
@@ -204,7 +203,10 @@ fn main() {
     let mut game_file = load_game(&cfg.game);
     let game = game_file.build().expect("validated by load_game");
     let defs_hash = game.defs.content_hash();
-    let world = World::generate(cfg.world_size, cfg.seed);
+    let world = game_file.world(cfg.world_size, cfg.seed).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", cfg.game.display());
+        std::process::exit(1);
+    });
     let n_boxes = world.boxes.len();
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;

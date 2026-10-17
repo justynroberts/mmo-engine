@@ -333,6 +333,23 @@ impl Sim {
         }
     }
 
+    /// Swap in a new set of walls without disconnecting anyone. Anything that is now inside a wall
+    /// (or outside the world) is moved to a free spot. Returns how many entities were moved.
+    pub fn replace_world(&mut self, world: World) -> usize {
+        self.world = world;
+        let r = self.defs.entity_radius;
+        let mut moved = 0;
+        for s in 0..self.ents.high {
+            if self.ents.alive[s] && self.world.blocked(self.ents.x[s], self.ents.y[s], r) {
+                let (x, y) = self.world.random_spawn(&mut self.rng, r);
+                self.ents.x[s] = x;
+                self.ents.y[s] = y;
+                moved += 1;
+            }
+        }
+        moved
+    }
+
     /// A free point inside the home place if there is one, else anywhere free.
     fn spawn_point(&mut self, home: Option<usize>, r: f32) -> (f32, f32) {
         if let Some(p) = home.and_then(|h| self.places.get(h)).cloned() {

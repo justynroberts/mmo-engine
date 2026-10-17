@@ -312,7 +312,7 @@ fn main() {
                                             b.view = ClientView::new();
                                             b.pred = None;
                                             if world.is_none() {
-                                                world = Some(Rc::new(World::generate(w.world_size, w.world_seed)));
+                                                world = Some(Rc::new(game.world(w.world_size, w.world_seed).unwrap_or_else(|_| World::generate(w.world_size, w.world_seed))));
                                             }
                                             tot.welcomes += 1;
                                         }

@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Cursor, DotsSixVertical, MapPinArea, Path, Robot } from '@phosphor-icons/react'
+import { ArrowDown, ArrowUp, Cursor, DotsSixVertical, MapPinArea, Path, Robot, Wall } from '@phosphor-icons/react'
 import * as Slider from '@radix-ui/react-slider'
 import { Reorder } from 'framer-motion'
 import { Plus, Trash2 } from 'lucide-react'
@@ -7,6 +7,10 @@ import type { Act, Archetype, Behaviour, Cond, GameFile, Rule, Seek } from '../a
 import {
   ACT_KINDS,
   addRule,
+  generatedWalls,
+  removeWall,
+  setWallEdge,
+  takeOverWalls,
   clamp,
   COND_KINDS,
   defaultAct,
@@ -24,8 +28,8 @@ import {
 } from '../gameEdit'
 import { Empty, LF, NumField, SelectField, Strip, TextField, Toggle } from './Fields'
 
-export type Tool = 'select' | 'place' | 'route' | 'spawn'
-export type Sel = { kind: 'place' | 'route'; index: number } | null
+export type Tool = 'select' | 'place' | 'route' | 'wall' | 'spawn'
+export type Sel = { kind: 'place' | 'route' | 'wall'; index: number } | null
 
 export interface BuilderState {
   arch: number
@@ -37,7 +41,7 @@ export interface BuilderState {
 export const initialBuilder: BuilderState = { arch: 0, tool: 'select', sel: null, draft: [] }
 
 type Edit = { game: GameFile; setGame: (g: GameFile) => void }
-type Props = Edit & { b: BuilderState; setB: (b: BuilderState) => void; finishRoute: () => void; note: string | null }
+type Props = Edit & { b: BuilderState; setB: (b: BuilderState) => void; finishRoute: () => void; note: string | null; worldBoxes: [number, number, number, number][]; worldSize: number }
 
 const ICON = { size: 16, weight: 'regular' as const }
 
@@ -396,6 +400,7 @@ const TOOLS: readonly { tool: Tool; label: string; icon: ReactNode; hint: string
   { tool: 'select', label: 'Select and move', icon: <Cursor {...ICON} aria-hidden />, hint: 'Click a place or route point to select it. Drag to move it. Drag empty ground to pan.' },
   { tool: 'place', label: 'Add place', icon: <MapPinArea {...ICON} aria-hidden />, hint: 'Click the map to drop a place.' },
   { tool: 'route', label: 'Draw route', icon: <Path {...ICON} aria-hidden />, hint: 'Click the map to add points, then finish the route.' },
+  { tool: 'wall', label: 'Draw wall', icon: <Wall {...ICON} aria-hidden />, hint: 'Drag a rectangle on the map to place a wall. This switches the world from generated walls to hand-placed ones.' },
   { tool: 'spawn', label: 'Drop test bot', icon: <Robot {...ICON} aria-hidden />, hint: 'Click the map to spawn one of the selected bot type there. Apply your changes first.' },
 ]
 
@@ -430,6 +435,57 @@ function Toolbar({ b, setB, finishRoute }: Pick<Props, 'b' | 'setB' | 'finishRou
             Cancel
           </button>
         </div>
+      )}
+    </section>
+  )
+}
+
+function WallsSection({ game, setGame, b, setB, worldBoxes, worldSize }: Edit & Pick<Props, 'b' | 'setB' | 'worldBoxes' | 'worldSize'>) {
+  const walls = game.walls
+  return (
+    <section aria-label="Walls" className="cell py-2">
+      <h2 className="lbl pb-1">Walls</h2>
+      {!walls ? (
+        <>
+          <p className="text-fg-3 pb-2">The walls are generated from the world seed. Take them over to move, add or delete them by hand; applying changes them live and nobody is disconnected (anyone left inside a wall is moved out).</p>
+          <button type="button" className="btn" onClick={() => setGame(takeOverWalls(game, worldBoxes))}>
+            Edit walls by hand
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-2 pb-1">
+            <span className="text-fg-2">{walls.length} wall(s), hand placed</span>
+            <button type="button" className="btn" disabled={walls.length === 0} onClick={() => setGame({ ...game, walls: [] })}>
+              Clear all
+            </button>
+            <button type="button" className="btn" onClick={() => setGame(generatedWalls(game))}>
+              Back to generated
+            </button>
+          </div>
+          {walls.length === 0 && <Empty>An open field. Use “Draw wall” and drag on the map.</Empty>}
+          {walls.map((w, i) => {
+            const on = b.sel?.kind === 'wall' && b.sel.index === i
+            return (
+              <Strip key={i}>
+                <div className={`flex items-end gap-2 ${on ? 'border-l-2 border-accent pl-2 -ml-2' : ''}`}>
+                  <span className="lbl h-6 leading-6 w-8">#{i + 1}</span>
+                  <div className="grid grid-cols-4 gap-x-2 flex-1">
+                    {(['X0', 'Y0', 'X1', 'Y1'] as const).map((n, k) => (
+                      <NumField key={n} label={`Wall ${i + 1} ${n}`} value={w[k] ?? 0} onCommit={(v) => setGame(setWallEdge(game, i, k as 0 | 1 | 2 | 3, v, worldSize))} />
+                    ))}
+                  </div>
+                  <button type="button" className="btn" aria-pressed={on} onClick={() => setB({ ...b, sel: { kind: 'wall', index: i } })}>
+                    Show
+                  </button>
+                  <button type="button" className="btn px-1" aria-label={`Delete wall ${i + 1}`} onClick={() => { setGame(removeWall(game, i)); setB({ ...b, sel: null }) }}>
+                    <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                  </button>
+                </div>
+              </Strip>
+            )
+          })}
+        </>
       )}
     </section>
   )
@@ -563,6 +619,7 @@ export function Builder(p: Props) {
       )}
       <PlacesSection game={game} setGame={setGame} b={b} setB={setB} />
       <RoutesSection game={game} setGame={setGame} b={b} setB={setB} />
+      <WallsSection game={game} setGame={setGame} b={b} setB={setB} worldBoxes={p.worldBoxes} worldSize={p.worldSize} />
     </div>
   )
 }

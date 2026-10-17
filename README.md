@@ -125,6 +125,17 @@ Measured in-process (no network, no load generator competing, 2,000 clients, eve
 
 Receiving inputs is split the same way: the sim thread reads each batch off the socket and handles handshakes in order, then with `--workers` above 1 the lanes authenticate and decrypt the DATA packets in parallel (each lane owns a slice of clients, so no locks) and the sim thread applies the results. At 2,000 bots with 2 lanes essentially every input is decrypted on a lane, with zero failed decryptions, and tick p50 went from 17.7 to 15.8 ms (the bots share the second core on this VM, so that understates it).
 
+## Map editor
+
+Walls normally come from the world seed. In the Builder tab, "Edit walls by hand" takes the current walls over,
+and the "Draw wall" tool adds a wall by dragging a rectangle on the map. Each wall also has X0/Y0/X1/Y1 fields, a
+Show button and a delete button; "Back to generated" returns to the seed's walls and "Clear all" gives an open field.
+Hand-placed walls live in the game file as `"walls": [[x0, y0, x1, y1], ...]` (at most 2000, inside the world,
+absent = generated). Applying them is live: nobody is disconnected, anything left inside a new wall is moved to a free
+spot, the web play page's `/play/info` and the C client library get the new walls, and the file is saved so they
+survive a restart. Connected players may see a small correction near a changed wall until they reconnect, because
+their prediction used the old walls. Every zone of a scaled-out world must run the same game file.
+
 ## Scale out (zones)
 
 One process is one core's worth of sim. To go past that, cut the world into

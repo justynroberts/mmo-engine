@@ -174,6 +174,22 @@ try:
         check("a rule made bots speak through the chat channel", any(l[3] == "oyez" for l in lines), str(lines[-3:]))
         pg.get_by_role("tab", name="Chat", exact=True).click(); time.sleep(1.4)
         check("the Chat tab shows what bots said", pg.locator("li:has-text('oyez')").count() >= 1)
+
+        # ---- Map editor: draw a wall on the map, apply it live, hand the walls back to the generator.
+        pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.4)
+        n_generated = len(api(base, "/api/world")[1]["boxes"])
+        pg.get_by_role("button", name="Draw wall").click()
+        a = cpos(40, 960); b2 = cpos(140, 1000)
+        pg.mouse.move(*a); pg.mouse.down(); pg.mouse.move(*b2, steps=6); pg.mouse.up(); time.sleep(0.3)
+        check("Draw wall: dragging on the map adds a wall, taking over the generated ones", pg.get_by_role("textbox", name="Wall 1 X0", exact=True).count() == 1 and pg.locator(f"text={n_generated + 1} wall(s)").count() == 1, f"generated {n_generated}")
+        pg.get_by_role("button", name="Apply", exact=True).click(); pg.wait_for_selector("text=Applied live", timeout=5000); time.sleep(0.8)
+        boxes = api(base, "/api/world")[1]["boxes"]
+        check("the applied wall is in the world where it was drawn", len(boxes) == n_generated + 1 and any(abs(w[0] - 40) <= 6 and abs(w[3] - 1000) <= 6 for w in boxes), str(boxes[-1:]))
+        pg.get_by_role("button", name="Delete wall %d" % (n_generated + 1)).click(); time.sleep(0.3)
+        check("deleting a wall removes it from the list", pg.locator(f"text={n_generated} wall(s)").count() == 1)
+        pg.get_by_role("button", name="Back to generated").click(); time.sleep(0.3)
+        pg.get_by_role("button", name="Apply", exact=True).click(); pg.wait_for_selector("text=Applied live", timeout=5000); time.sleep(0.8)
+        check("back to generated walls restores the seed's world", len(api(base, "/api/world")[1]["boxes"]) == n_generated)
         pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.3)
         pg.get_by_role("button", name="Drop test bot").click()
         pg.mouse.click(*cpos(200, 200)); time.sleep(0.8)

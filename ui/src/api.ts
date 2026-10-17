@@ -75,6 +75,8 @@ export interface GameFile {
   archetypes: Archetype[]
   places: Place[]
   routes: Route[]
+  /** Hand-placed walls [x0, y0, x1, y1]; absent means generated from the world seed. */
+  walls?: [number, number, number, number][]
 }
 
 export interface Perf {
@@ -135,6 +137,7 @@ export interface PutResult {
   error?: string
   reset?: boolean
   dropped_clients?: number
+  moved_entities?: number
   content_hash?: string
   saved?: boolean | string
 }

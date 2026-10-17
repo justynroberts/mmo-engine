@@ -10,6 +10,9 @@ export interface EditOverlay {
   sel: Sel
   tool: Tool
   draft: [number, number][]
+  /** Hand-placed walls being edited (null while the world's own walls are in use). */
+  walls: [number, number, number, number][] | null
+  onAddWall: (x0: number, y0: number, x1: number, y1: number) => void
   onPick: (s: Sel) => void
   onClick: (x: number, y: number) => void
   onMovePlace: (i: number, x: number, y: number) => void
@@ -46,6 +49,8 @@ export function WorldView(p: Props) {
   const view = useRef<View>({ cx: 0, cy: 0, scale: 1, fittedFor: 0 })
   const size = useRef({ w: 300, h: 300 })
   const mouse = useRef<{ x: number; y: number } | null>(null)
+  /** Rectangle being dragged with the wall tool, in world units. */
+  const wallDrag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const props = useRef(p)
   props.current = p
 
@@ -128,12 +133,24 @@ export function WorldView(p: Props) {
           return
         }
       }
+      if (ed && ed.tool === 'wall') {
+        const w = worldOf(l)
+        wallDrag.current = { x0: w.x, y0: w.y, x1: w.x, y1: w.y }
+        cv.setPointerCapture(e.pointerId)
+        return
+      }
       drag = { x: l.x, y: l.y, cx: view.current.cx, cy: view.current.cy, moved: false }
       cv.setPointerCapture(e.pointerId)
     }
     const move = (e: PointerEvent) => {
       const l = local(e)
       mouse.current = l
+      if (wallDrag.current) {
+        const w = worldOf(l)
+        wallDrag.current.x1 = w.x
+        wallDrag.current.y1 = w.y
+        return
+      }
       if (grab) {
         const w = worldOf(l)
         const ed = props.current.edit
@@ -152,6 +169,13 @@ export function WorldView(p: Props) {
     }
     const up = (e: PointerEvent) => {
       const l = local(e)
+      if (wallDrag.current) {
+        const r = wallDrag.current
+        wallDrag.current = null
+        cv.releasePointerCapture(e.pointerId)
+        props.current.edit?.onAddWall(r.x0, r.y0, r.x1, r.y1)
+        return
+      }
       if (grab) {
         grab = null
         cv.releasePointerCapture(e.pointerId)
@@ -159,8 +183,14 @@ export function WorldView(p: Props) {
       }
       const ed = props.current.edit
       if (drag && !drag.moved && ed) {
-        if (ed.tool === 'select') ed.onPick(null)
-        else {
+        if (ed.tool === 'select') {
+          // A click on a hand-placed wall selects it; anywhere else clears the selection.
+          const w = worldOf(l)
+          const i = (ed.walls ?? []).findIndex((q) => w.x >= q[0] && w.x <= q[2] && w.y >= q[1] && w.y <= q[3])
+          ed.onPick(i >= 0 ? { kind: 'wall', index: i } : null)
+        } else if (ed.tool === 'wall') {
+          // handled on pointer up above
+        } else {
           const w = worldOf(l)
           ed.onClick(w.x, w.y)
         }
@@ -270,7 +300,7 @@ export function WorldView(p: Props) {
       }
       ctx.globalAlpha = 1
 
-      if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3, accent, line, bg }, mouse.current)
+      if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3, accent, line, bg }, mouse.current, wallDrag.current)
 
       const s = pr.stateRef.current
       let sel: (number[] | undefined)
@@ -381,11 +411,30 @@ function drawEdit(
   h: number,
   c: Palette,
   mouse: { x: number; y: number } | null,
+  rect: { x0: number; y0: number; x1: number; y1: number } | null,
 ) {
   const sx = (x: number) => (x - v.cx) * v.scale + w / 2
   const sy = (y: number) => (y - v.cy) * v.scale + h / 2
   ctx.font = "11px 'Martian Mono', monospace"
   ctx.lineWidth = 1
+
+  ;(ed.walls ?? []).forEach((q, i) => {
+    const on = ed.sel?.kind === 'wall' && ed.sel.index === i
+    ctx.fillStyle = c.accent
+    ctx.globalAlpha = on ? 0.55 : 0.28
+    ctx.fillRect(sx(q[0]), sy(q[1]), (q[2] - q[0]) * v.scale, (q[3] - q[1]) * v.scale)
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = c.accent
+    ctx.lineWidth = on ? 2 : 1
+    ctx.strokeRect(sx(q[0]), sy(q[1]), (q[2] - q[0]) * v.scale, (q[3] - q[1]) * v.scale)
+    ctx.lineWidth = 1
+  })
+  if (rect) {
+    ctx.strokeStyle = c.accent
+    ctx.setLineDash([5, 4])
+    ctx.strokeRect(sx(Math.min(rect.x0, rect.x1)), sy(Math.min(rect.y0, rect.y1)), Math.abs(rect.x1 - rect.x0) * v.scale, Math.abs(rect.y1 - rect.y0) * v.scale)
+    ctx.setLineDash([])
+  }
 
   ed.places.forEach((p, i) => {
     const on = ed.sel?.kind === 'place' && ed.sel.index === i

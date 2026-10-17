@@ -1492,3 +1492,55 @@ fn the_c_client_draws_smooth_motion_between_snapshots() {
     assert!(still * 5 < n, "{still} of {n} frames did not move: motion is stepping");
     assert!(biggest < 2.0, "a frame jumped {biggest} units");
 }
+
+// ---------------------------------------------------------------- map editor
+
+#[test]
+fn walls_edited_live_apply_without_dropping_players_and_free_anyone_trapped() {
+    let srv = start(&[]);
+    let mut p = connect(&srv);
+    p.send_input(0, 0);
+    p.pump(300);
+    let (px, py) = p.pos();
+    // Wall the player in: a slab covering their position.
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["walls"] = serde_json::json!([[(px - 8.0).max(0.0), (py - 8.0).max(0.0), (px + 8.0).min(511.0), (py + 8.0).min(511.0)]]);
+    let (code, res) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(code, 200, "{res}");
+    assert_eq!(res["reset"], false, "walls are not a schema change");
+    assert_eq!(res["dropped_clients"], 0);
+    assert!(res["moved_entities"].as_u64().unwrap() >= 1, "{res}");
+    let (_, world) = json(&srv, "GET", "/api/world", "");
+    assert_eq!(world["boxes"].as_array().unwrap().len(), 1);
+    // Still connected, and no longer inside the wall.
+    p.send_input(0, 0);
+    p.pump(400);
+    let (nx, ny) = p.pos();
+    let inside = nx > px - 8.0 && nx < px + 8.0 && ny > py - 8.0 && ny < py + 8.0;
+    assert!(!inside, "still inside the new wall at ({nx:.1},{ny:.1})");
+    assert_eq!(state(&srv)["clients"], 1);
+    // The play page's info now carries the same walls.
+    // Bad walls are refused and change nothing.
+    game["walls"] = serde_json::json!([[50.0, 50.0, 40.0, 60.0]]);
+    let (code, res) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(code, 400, "{res}");
+    assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), 1);
+    // Removing the key goes back to the generated world.
+    game.as_object_mut().unwrap().remove("walls");
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    assert!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len() > 1);
+}
+
+#[test]
+fn hand_placed_walls_survive_a_restart() {
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-walls-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let srv = start_in(dir.clone(), &[]);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["walls"] = serde_json::json!([[100.0, 100.0, 140.0, 120.0], [200.0, 50.0, 210.0, 300.0]]);
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    let dir = term(srv);
+    let srv = start_in(dir, &[]);
+    let (_, w) = json(&srv, "GET", "/api/world", "");
+    assert_eq!(w["boxes"], serde_json::json!([[100.0, 100.0, 140.0, 120.0], [200.0, 50.0, 210.0, 300.0]]));
+}

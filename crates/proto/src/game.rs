@@ -254,6 +254,9 @@ pub struct GameFile {
     pub places: Vec<Place>,
     #[serde(default)]
     pub routes: Vec<Route>,
+    /// Hand-placed walls as `[x0, y0, x1, y1]`. Absent means the world's walls are generated from its seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walls: Option<Vec<[f32; 4]>>,
 }
 fn d_speed() -> f32 {
     20.0
@@ -322,7 +325,27 @@ pub struct Game {
     pub routes: Vec<Route>,
 }
 
+/// Most walls a game file may place.
+pub const MAX_WALLS: usize = 2000;
+
 impl GameFile {
+    /// The world this file describes: its own walls, or the ones generated from `seed`.
+    pub fn world(&self, size: u16, seed: u64) -> Result<crate::world::World, String> {
+        let Some(walls) = &self.walls else { return Ok(crate::world::World::generate(size, seed)) };
+        if walls.len() > MAX_WALLS {
+            return Err(format!("at most {MAX_WALLS} walls"));
+        }
+        let sf = size as f32;
+        let mut boxes = Vec::with_capacity(walls.len());
+        for (i, w) in walls.iter().enumerate() {
+            if w.iter().any(|v| !v.is_finite()) || w[0] < 0.0 || w[1] < 0.0 || w[2] > sf || w[3] > sf || w[0] >= w[2] || w[1] >= w[3] {
+                return Err(format!("wall {i} {w:?} must satisfy 0 <= x0 < x1 <= {size} and 0 <= y0 < y1 <= {size}"));
+            }
+            boxes.push(crate::world::Aabb { x0: w[0], y0: w[1], x1: w[2], y1: w[3] });
+        }
+        Ok(crate::world::World::from_boxes(sf, seed, boxes))
+    }
+
     /// Same content as `Defs::default_game()`, plus a few example bots.
     pub fn default_game() -> GameFile {
         let attr = |name: &str, replicated: bool, regen: f32, on_zero| AttrFile {
@@ -381,6 +404,7 @@ impl GameFile {
                 Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true },
                 Route { name: "market loop".into(), points: vec![[390.0, 130.0], [450.0, 130.0], [450.0, 190.0], [390.0, 190.0]], looped: true },
             ],
+            walls: None,
             move_speed: 20.0,
             entity_radius: 0.5,
             interest_radius: 128.0,
@@ -710,6 +734,28 @@ impl GameFile {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hand_placed_walls_replace_the_generated_ones_and_are_validated() {
+        let mut g = GameFile::default_game();
+        assert!(!g.world(512, 1).unwrap().boxes.is_empty(), "no walls given: generated from the seed");
+        g.walls = Some(vec![[10.0, 10.0, 20.0, 200.0]]);
+        let w = g.world(512, 1).unwrap();
+        assert_eq!(w.boxes.len(), 1);
+        assert!(w.blocked(15.0, 100.0, 0.5) && !w.blocked(100.0, 100.0, 0.5));
+        g.walls = Some(vec![]);
+        assert!(g.world(512, 1).unwrap().boxes.is_empty(), "an empty list means an open field");
+        for bad in [[20.0, 10.0, 10.0, 20.0], [0.0, 0.0, 600.0, 10.0], [-1.0, 0.0, 5.0, 5.0], [f32::NAN, 0.0, 5.0, 5.0]] {
+            g.walls = Some(vec![bad]);
+            assert!(g.world(512, 1).is_err(), "{bad:?}");
+        }
+        g.walls = Some(vec![[0.0, 0.0, 1.0, 1.0]; MAX_WALLS + 1]);
+        assert!(g.world(512, 1).is_err());
+        // Survives the file round trip, and absent walls stay absent.
+        g.walls = Some(vec![[1.0, 2.0, 3.0, 4.0]]);
+        assert_eq!(GameFile::from_json(&g.to_json()).unwrap().walls, g.walls);
+        assert!(!GameFile::default_game().to_json().contains("walls"));
+    }
+
     use super::*;
 
     #[test]
