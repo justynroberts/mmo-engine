@@ -50,6 +50,12 @@ var terrain_mat: ShaderMaterial
 const TerrainScript := preload("res://scripts/terrain.gd")
 var land: TerrainScript = TerrainScript.new() # hills, rivers, lakes and crags, from the seed and the walls
 var water_mat: ShaderMaterial
+var env_res: Environment
+var sun_light: DirectionalLight3D
+var rain := GPUParticles3D.new()
+var weather := {}         # what /play/info says now: {name, color, intensity}, empty for clear sky
+var weather_poll := 0.0
+var clear_sky := {}       # the environment's own values, to return to when the weather clears
 var boxes: Array = []
 var box_grid := {}  # chunk key -> box indices overlapping it, to keep scenery out of buildings
 var meshes := {}    # path -> Mesh, pulled out of the glTF pieces once
@@ -128,6 +134,8 @@ func _fail(msg: String) -> void:
 	if smoke:
 		print("SMOKE FAIL: ", msg)
 		get_tree().quit(1)
+	elif args.has("shot"):
+		get_tree().quit(1) # a screenshot run would otherwise wait forever
 
 func _start() -> void:
 	info_text = await _fetch("http://%s/play/info" % args["web"])
@@ -147,6 +155,9 @@ func _start() -> void:
 		info = JSON.parse_string(info_text)
 	boxes = info.get("boxes", [])
 	_index_boxes()
+	var w0 = info.get("weather")
+	if w0 is Dictionary:
+		_apply_weather.call_deferred(w0)
 	# KayKit characters are about one unit across at the hips, so they match a radius of 0.5.
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	for a in info["attrs"]:
@@ -228,7 +239,9 @@ func _build_scene() -> void:
 	e.volumetric_fog_length = 140.0
 	env.environment = e
 	add_child(env)
+	env_res = e
 	var sun := DirectionalLight3D.new()
+	sun_light = sun
 	sun.rotation_degrees = Vector3(-48, -35, 0)
 	sun.light_color = Color("fff1d6")
 	sun.light_energy = 0.95
@@ -237,6 +250,32 @@ func _build_scene() -> void:
 	sun.shadow_blur = 1.5
 	sun.directional_shadow_max_distance = 90.0
 	add_child(sun)
+	clear_sky = {"fog": e.fog_density, "fog_color": e.fog_light_color, "vol": e.volumetric_fog_density, "vol_albedo": e.volumetric_fog_albedo,
+		"sun": sun.light_energy, "ambient": e.ambient_light_energy}
+	# Rain (or whatever falls in the current weather): streaks in a box that follows the camera.
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(45, 1, 45)
+	pm.direction = Vector3(0.15, -1, 0.05)
+	pm.spread = 3.0
+	pm.initial_velocity_min = 38.0
+	pm.initial_velocity_max = 48.0
+	pm.gravity = Vector3.ZERO
+	rain.process_material = pm
+	var streak := BoxMesh.new()
+	streak.size = Vector3(0.025, 0.9, 0.025)
+	var sm := StandardMaterial3D.new()
+	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sm.albedo_color = Color(0.8, 0.85, 0.95, 0.45)
+	streak.material = sm
+	rain.draw_pass_1 = streak
+	rain.amount = 6000
+	rain.lifetime = 0.45
+	rain.visibility_aabb = AABB(Vector3(-50, -25, -50), Vector3(100, 30, 100))
+	rain.emitting = false
+	rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(rain)
 	cam.current = true
 	cam.fov = 55
 	cam.far = 900
@@ -631,13 +670,13 @@ func _river_mesh(r: Dictionary) -> Node3D:
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
 	var idxs := PackedInt32Array()
-	var half: float = land.RIVER_HALF + 0.8
+	var half: float = land.RIVER_HALF + 1.0 # inside the lip, where the bank already stands above the water
 	for k in pts.size():
 		var a := pts[maxi(0, k - 1)]
 		var c := pts[mini(pts.size() - 1, k + 1)]
 		var dir := (c - a).normalized()
 		var side := Vector2(-dir.y, dir.x) * half
-		var y: float = lvl[k] - land.RIVER_DEPTH + 1.0
+		var y: float = land.water_level(lvl[k])
 		verts.append(Vector3(pts[k].x + side.x, y, pts[k].y + side.y))
 		verts.append(Vector3(pts[k].x - side.x, y, pts[k].y - side.y))
 		norms.append(Vector3.UP)
@@ -668,7 +707,7 @@ func _river_mesh(r: Dictionary) -> Node3D:
 			continue
 		var dir := (pts[k + 1] - pts[k - 1]).normalized()
 		var side := Vector2(-dir.y, dir.x) * (1.0 if rng.randf() < 0.5 else -1.0)
-		var p := pts[k] + side * (land.RIVER_HALF + rng.randf_range(0.6, 2.6))
+		var p := pts[k] + side * (land.RIVER_HALF + land.RIVER_LIP + rng.randf_range(0.3, 2.3))
 		if rng.randf() < 0.55:
 			var small := [["Rock_1_A_Color1", 0.61, 0.54, 0.0], ["Rock_3_E_Color1", 1.18, 1.29, -0.59], ["Rock_1_J_Color1", 3.76, 3.36, 0.0]]
 			var pick: Array = small[rng.randi() % small.size()]
@@ -1011,6 +1050,7 @@ func _process(delta: float) -> void:
 	_sync_ground()
 	hud.set_bag(net.bag())
 	_camera()
+	_weather(delta)
 	_drive()
 	wall_t += delta
 	if wall_t > 0.4 and me_pos.distance_to(last_wall_sync) > 20.0:
@@ -1039,7 +1079,8 @@ func _process(delta: float) -> void:
 	# The server sends only the nearest max_visible within interest_radius; say so when that is what you are seeing.
 	var cap := int(info.get("max_visible", 0))
 	var crowd := "   nearest %d shown, more around" % cap if cap > 0 and list.size() >= cap else ""
-	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, "   GOD" if god else ""]
+	var sky := "   %s" % String(weather["name"]).to_upper() if not weather.is_empty() else ""
+	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, sky, "   GOD" if god else ""]
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,
@@ -1215,6 +1256,52 @@ func _build_terrain(cx: int, cy: int, size: float) -> MeshInstance3D:
 	mi.mesh = mesh
 	mi.material_override = terrain_mat
 	return mi
+
+# ---------------------------------------------------------------- weather
+
+## The server's weather (set in the console's God tab or by an event) is in /play/info; look every few seconds,
+## like the play page, and draw it: the air thickens towards its colour, the sun dims, and streaks fall.
+func _weather(delta: float) -> void:
+	# Streaks start below the camera so none of them brushes past the lens.
+	rain.global_position = Vector3(me_pos.x, _height(me_pos.x, me_pos.y) + minf(14.0, zoom * 0.5), me_pos.y)
+	weather_poll -= delta
+	if weather_poll > 0.0:
+		return
+	weather_poll = 5.0
+	var text := await _fetch("http://%s/play/info" % args["web"])
+	var fresh = JSON.parse_string(text) if text != "" else null
+	if fresh is Dictionary and str(fresh.get("content_hash", "")) == str(info.get("content_hash", "")):
+		var w = fresh.get("weather")
+		_apply_weather(w if w is Dictionary else {})
+
+func _apply_weather(w: Dictionary) -> void:
+	if w == weather:
+		return
+	weather = w
+	var e := env_res
+	if w.is_empty():
+		e.fog_density = clear_sky["fog"]
+		e.fog_light_color = clear_sky["fog_color"]
+		e.volumetric_fog_density = clear_sky["vol"]
+		e.volumetric_fog_albedo = clear_sky["vol_albedo"]
+		e.ambient_light_energy = clear_sky["ambient"]
+		sun_light.light_energy = clear_sky["sun"]
+		rain.emitting = false
+		hud.say("[color=#9fe8e0]The sky clears.[/color]")
+		return
+	var k := clampf(float(w.get("intensity", 0.5)), 0.0, 1.0)
+	var col := Color(str(w.get("color", "#8899aa")))
+	e.fog_density = clear_sky["fog"] + 0.012 * k
+	e.fog_light_color = (clear_sky["fog_color"] as Color).lerp(col, 0.6)
+	e.volumetric_fog_density = clear_sky["vol"] + 0.02 * k
+	e.volumetric_fog_albedo = (clear_sky["vol_albedo"] as Color).lerp(col, 0.5)
+	e.ambient_light_energy = clear_sky["ambient"] * (1.0 - 0.35 * k)
+	sun_light.light_energy = clear_sky["sun"] * (1.0 - 0.55 * k)
+	var streak := (rain.draw_pass_1 as BoxMesh).material as StandardMaterial3D
+	streak.albedo_color = Color(col.lightened(0.4), 0.35 + 0.3 * k)
+	rain.amount_ratio = clampf(0.25 + k, 0.0, 1.0)
+	rain.emitting = true
+	hud.say("[color=#9fe8e0]Weather: %s.[/color]" % str(w.get("name", "")))
 
 func _sync_ground() -> void:
 	var seen := {}
@@ -1404,9 +1491,15 @@ func _pick(screen: Vector2) -> void:
 # ---------------------------------------------------------------- scripted session for CI
 
 func _post(url: String, body: Dictionary) -> int:
+	return await _request(url, HTTPClient.METHOD_POST, body)
+
+func _request(url: String, method: int, body: Dictionary) -> int:
+	return await _request_text(url, method, JSON.stringify(body))
+
+func _request_text(url: String, method: int, body: String) -> int:
 	var r := HTTPRequest.new()
 	add_child(r)
-	r.request(url, ["Content-Type: application/json", "X-Admin: 1"], HTTPClient.METHOD_POST, JSON.stringify(body))
+	r.request(url, ["Content-Type: application/json", "X-Admin: 1"], method, body)
 	var res: Array = await r.request_completed
 	r.queue_free()
 	return res[1]
@@ -1451,6 +1544,29 @@ func _smoke() -> void:
 		_check("jumps", ok, "")
 		ok = await _wait(3.0, func(): return track.get(net.get_self_id(), {}).get("air", 1.0) == 0.0)
 		_check("and lands", ok, "")
+	# Weather: define one, start it from the admin side, and the client should pick it up and make it rain.
+	var admin_url := "http://%s" % args["admin"]
+	var got := await _fetch(admin_url + "/api/game")
+	if got.begins_with("{"):
+		# Spliced into the text rather than parsed and re-encoded: GDScript's JSON turns every number into a float,
+		# and the server's whole-number fields refuse 12.0.
+		var rain_def := '{"name":"smoke-rain","color":"#5b7fa6","intensity":0.6,"sight_mult":0.8,"drain":[]}'
+		var body := got
+		var at := body.find('"weather":[')
+		if at >= 0:
+			body = body.insert(at + 11, rain_def + ("," if body[at + 11] != "]" else ""))
+		else:
+			body = "{\"weather\":[" + rain_def + "]," + body.substr(1)
+		var put := await _request_text(admin_url + "/api/game", HTTPClient.METHOD_PUT, body)
+		_check("weather defined", put == 200, str(put))
+		_check("weather started", await _post(admin_url + "/api/weather", {"name": "smoke-rain", "duration_secs": 60}) == 200, "")
+		weather_poll = 0.0
+		ok = await _wait(10.0, func(): return weather.get("name", "") == "smoke-rain" and rain.emitting)
+		_check("client shows the weather", ok, str(weather))
+		await _post(admin_url + "/api/weather", {"name": null})
+		weather_poll = 0.0
+		ok = await _wait(10.0, func(): return weather.is_empty() and not rain.emitting)
+		_check("and clears it", ok, str(weather))
 	var items: Array = info.get("items", [])
 	if items.is_empty():
 		print("SMOKE ok (no items defined)")

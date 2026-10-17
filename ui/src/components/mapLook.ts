@@ -201,7 +201,7 @@ export function boxKind(b: Box): number {
   return KEEP
 }
 
-export const RIVER_HALF = 3.5
+export const RIVER_HALF = 5
 
 /**
  * River courses: [x, y] points every 10 units. An LCG on exact integers drives them, and positions are rounded to
@@ -214,7 +214,8 @@ export function rivers(seed: number, size: number, boxes: Box[]): [number, numbe
     s = (s * 1664525 + 1013904223) % 4294967296
     return s / 4294967296
   }
-  const blocked = (x: number, y: number) => boxes.some((b) => x > b[0] - 14 && x < b[2] + 14 && y > b[1] - 14 && y < b[3] + 14)
+  const clear = 18 // as terrain.gd's RIVER_CLEAR
+  const blocked = (x: number, y: number) => boxes.some((b) => x > b[0] - clear && x < b[2] + clear && y > b[1] - clear && y < b[3] + clear)
   const out: [number, number][][] = []
   const count = Math.min(6, Math.max(2, 2 + Math.trunc(size / 2000)))
   const step = 10

@@ -10,8 +10,8 @@ describe('land features match the Godot client', () => {
   it('traces the same rivers', () => {
     const rs = rivers(7, 1500, BOXES)
     const godot = [
-      { n: 158, mid: [704.1, 759.8], end: [494.91, 1503.27] },
-      { n: 181, mid: [776.12, 769.81], end: [-6.95, 624.88] },
+      { n: 162, mid: [762.08, 763.87], end: [489.31, 1501.63] },
+      { n: 164, mid: [1226.01, 767.46], end: [1162.02, 1506.12] },
     ]
     expect(rs).toHaveLength(godot.length)
     rs.forEach((r, i) => {

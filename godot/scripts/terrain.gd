@@ -12,7 +12,9 @@ extends RefCounted
 
 const CELL := 128.0
 const FLAT_PAD := 10.0
-const RIVER_HALF := 3.5   # half the width of the water
+const RIVER_HALF := 5.0   # half the width of the channel's flat bed
+const RIVER_LIP := 1.5    # the bank climbs from the bed to just above the water within this
+const RIVER_CLEAR := 18.0 # rivers keep this far from buildings, past the ground levelled round them
 const RIVER_DEPTH := 1.6  # bed below the river's level
 const KEEP := 0
 const CRAG := 1
@@ -147,7 +149,7 @@ func _make_rivers() -> void:
 		var aim: float = aims[side]
 		var heading: float = aim + (_next() - 0.5) * 0.8
 		var pts := PackedVector2Array([p])
-		var lvl := PackedFloat32Array([raw(p.x, p.y)])
+		var lvl := PackedFloat32Array([_ground_level(p, heading)])
 		for n in 2000:
 			heading += (_next() - 0.5) * 0.35
 			# A gentle pull back towards the far side, so a river crosses the land instead of doubling back.
@@ -171,15 +173,15 @@ func _make_rivers() -> void:
 				continue
 			if outside:
 				pts.append(next)
-				lvl.append(minf(lvl[lvl.size() - 1], raw(next.x, next.y)))
+				lvl.append(minf(lvl[lvl.size() - 1], _ground_level(next, heading)))
 				break
 			p = next
 			pts.append(p)
 			# Water never runs uphill: the level only falls, so a river cuts a gorge through a rise.
-			lvl.append(minf(lvl[lvl.size() - 1], raw(p.x, p.y)))
+			lvl.append(minf(lvl[lvl.size() - 1], _ground_level(p, heading)))
 		var ri := rivers.size()
 		rivers.append({"pts": pts, "lvl": lvl})
-		var pad := RIVER_HALF + 40.0
+		var pad := RIVER_HALF + RIVER_LIP + 40.0
 		for k in pts.size() - 1:
 			var a := pts[k]
 			var b := pts[k + 1]
@@ -187,10 +189,15 @@ func _make_rivers() -> void:
 				for cy in range(_cell(minf(a.y, b.y) - pad), _cell(maxf(a.y, b.y) + pad) + 1):
 					_push(_river_cells, _key(cx, cy), [ri, k])
 
+## The lowest ground across the channel here (centre and both banks), so the water is never above the land.
+func _ground_level(p: Vector2, heading: float) -> float:
+	var side := Vector2(-sin(heading), cos(heading)) * (RIVER_HALF + RIVER_LIP + 1.0)
+	return minf(raw(p.x, p.y), minf(raw(p.x + side.x, p.y + side.y), raw(p.x - side.x, p.y - side.y)))
+
 func _blocked(p: Vector2) -> bool:
 	for i in _box_cells.get(_key(_cell(p.x), _cell(p.y)), []):
 		var b: Array = boxes[i]
-		if p.x > b[0] - 14.0 and p.x < b[2] + 14.0 and p.y > b[1] - 14.0 and p.y < b[3] + 14.0:
+		if p.x > b[0] - RIVER_CLEAR and p.x < b[2] + RIVER_CLEAR and p.y > b[1] - RIVER_CLEAR and p.y < b[3] + RIVER_CLEAR:
 			return true
 	return false
 
@@ -212,18 +219,26 @@ func river_at(x: float, y: float) -> Array:
 			level = lerpf(lvl[e[1]], lvl[e[1] + 1], t)
 	return [best, level]
 
-## Cut the river's channel and its banks into the ground.
+## The water's surface for a river level.
+func water_level(level: float) -> float:
+	return level - RIVER_DEPTH + 1.0
+
+## Cut the river's channel and its banks into the ground: a flat bed, a short lip rising to just above the
+## water (so the water's edge always tucks under it), then a valley side up to the land, steep in hills (a gorge).
 func _carve(x: float, y: float, h: float) -> float:
 	var r := river_at(x, y)
 	var d: float = r[0]
 	if d == INF:
 		return h
 	var bed: float = r[1] - RIVER_DEPTH
+	var top := water_level(r[1]) + 0.5
 	if d <= RIVER_HALF:
-		return minf(h, bed + d / RIVER_HALF * 0.4)
-	var bank := maxf(8.0, (h - bed) * 1.3) # steep ground gives a gorge, flat ground a gentle valley
-	return minf(h, lerpf(bed + 0.4, h, smoothstep(RIVER_HALF, RIVER_HALF + bank, d)))
+		return minf(h, bed + 0.3 * d / RIVER_HALF)
+	if d <= RIVER_HALF + RIVER_LIP:
+		return minf(h, lerpf(bed + 0.3, top, (d - RIVER_HALF) / RIVER_LIP))
+	var bank := maxf(6.0, (h - top) * 1.3)
+	return minf(h, lerpf(top, h, smoothstep(RIVER_HALF + RIVER_LIP, RIVER_HALF + RIVER_LIP + bank, d)))
 
 ## True where there is water, or a riverbank too wet for trees.
 func wet(x: float, y: float) -> bool:
-	return river_at(x, y)[0] < RIVER_HALF + 3.0
+	return river_at(x, y)[0] < RIVER_HALF + RIVER_LIP + 2.0
