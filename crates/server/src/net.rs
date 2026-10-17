@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::net::SocketAddrV4;
 
-use proto::secure::{addr_bytes, data_sid, ServerKeys, Session};
+use proto::secure::{addr_bytes, data_sid, ServerKeys, Session, GUEST};
 use proto::snapshot::{encode_snapshot, MAX_BASELINE_AGE, RING};
 use proto::wire::{self, kind, reject, ClientMsg, Welcome, PROTO_VERSION};
 use proto::Entry;
 
 use crate::io::Tx;
 use crate::sim::{PendingAction, Sim};
+use crate::store::Store;
 
 /// Identity-ish hasher for pre-mixed u64 keys: avoids SipHash on the hot path.
 #[derive(Default)]
@@ -31,6 +32,10 @@ pub struct Client {
     pub addr: SocketAddrV4,
     pub session: Session,
     pub client_pub: [u8; 32],
+    /// Long-term player identity (`GUEST` = none). Trusted only once `proven`.
+    pub id: [u8; 32],
+    /// True after the first packet authenticated, which is what proves the identity.
+    pub proven: bool,
     /// The ACCEPT we sent, kept until the client proves it got it (first valid
     /// DATA packet) so a retransmitted CONNECT can be answered identically.
     pub accept: Option<Vec<u8>>,
@@ -51,6 +56,8 @@ pub struct Clients {
     pub slab: Vec<Option<Client>>,
     free: Vec<u32>,
     by_key: HashMap<u64, u32, BuildHasherDefault<KeyHasher>>,
+    /// Proven identities that are online right now.
+    by_id: HashMap<[u8; 32], u32>,
     pub count: usize,
     /// Chat lines accepted this tick, waiting to be routed: (speaker slot, channel, text).
     pub chat_in: Vec<(usize, u8, String)>,
@@ -90,6 +97,9 @@ impl Clients {
     pub fn remove(&mut self, idx: u32) -> Option<Client> {
         let c = self.slab[idx as usize].take()?;
         self.by_key.remove(&key(&c.addr));
+        if self.by_id.get(&c.id) == Some(&idx) {
+            self.by_id.remove(&c.id);
+        }
         self.free.push(idx);
         self.count -= 1;
         Some(c)
@@ -112,12 +122,16 @@ pub struct NetStats {
     pub timeouts: u64,
     pub chat_in: u64,
     pub chat_dropped: u64,
+    /// Sessions ended because the same identity connected again and proved itself.
+    pub takeovers: u64,
+    pub restored: u64,
 }
 
 pub struct Handshake {
     pub keys: ServerKeys,
     pub defs_hash: u64,
     pub max_clients: usize,
+    pub store: Option<std::sync::Arc<Store>>,
 }
 
 pub fn handle_packet(
@@ -134,7 +148,11 @@ pub fn handle_packet(
 ) {
     stats.in_pkts += 1;
     match data.first().copied() {
-        Some(kind::DATA) => on_data(sim, clients, stats, addr, data, plain),
+        Some(kind::DATA) => {
+            if let Some(sid) = on_data(sim, clients, stats, addr, data, plain) {
+                prove(sim, clients, stats, hs.store.as_deref(), sid);
+            }
+        }
         Some(kind::HELLO) => {
             stats.hellos += 1;
             if let Some(reply) = hs.keys.on_hello(&addr_bytes(addr.ip().octets(), addr.port()), data, now) {
@@ -182,9 +200,7 @@ fn on_connect(
             return;
         }
         // Same address, new keys: the client restarted. Replace the old session.
-        if let Some(old) = clients.remove(ci) {
-            sim.ents.despawn(old.slot);
-        }
+        drop_client(sim, clients, hs.store.as_deref(), ci);
     }
     if hdr.version != PROTO_VERSION {
         return reject_to(tx, stats, addr, reject::BAD_VERSION, scratch);
@@ -225,6 +241,8 @@ fn on_connect(
         addr,
         session,
         client_pub: open.client_pub,
+        id: open.id_pub,
+        proven: false,
         accept: Some(accept),
         slot,
         last_seen: sim.tick,
@@ -242,29 +260,30 @@ fn on_connect(
     sim.ents.owner[slot] = ci;
 }
 
-fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: SocketAddrV4, data: &[u8], plain: &mut Vec<u8>) {
+/// Returns the session id when this was the session's first authenticated packet.
+fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: SocketAddrV4, data: &[u8], plain: &mut Vec<u8>) -> Option<u32> {
     let Some(sid) = data_sid(data) else {
         stats.bad += 1;
-        return;
+        return None;
     };
     let Some(Some(c)) = clients.slab.get_mut(sid as usize) else {
         stats.bad += 1;
-        return;
+        return None;
     };
     if c.addr != addr {
         stats.auth_fail += 1;
-        return;
+        return None;
     }
     let Some(body) = c.session.open(data, plain) else {
         stats.auth_fail += 1;
-        return;
+        return None;
     };
+    let first = c.accept.take().is_some().then_some(sid);
     if body.first() == Some(&proto::chat::kind::SEND) {
         let Some((cseq, ch, text)) = proto::chat::decode_send(body) else {
             stats.bad += 1;
-            return;
+            return first;
         };
-        c.accept = None;
         c.last_seen = sim.tick;
         match c.chat.accept(cseq, ch, &text, sim.tick, sim.tick_hz) {
             proto::chat::Accept::Route { channel, text } => {
@@ -274,15 +293,14 @@ fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: Soc
             proto::chat::Accept::Dropped => stats.chat_dropped += 1,
             proto::chat::Accept::Duplicate => {}
         }
-        return;
+        return first;
     }
     let Some(ClientMsg::Input(i)) = wire::decode_client(body) else {
         stats.bad += 1;
-        return;
+        return first;
     };
     stats.inputs += 1;
     c.chat.on_client_ack(i.chat_ack);
-    c.accept = None;
     c.last_seen = sim.tick;
     // Newest-wins; wrapping compare so seq overflow is harmless.
     if (i.seq.wrapping_sub(c.in_seq) as i32) > 0 {
@@ -304,6 +322,48 @@ fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: Soc
             c.baseline_tick = i.ack_tick;
         }
     }
+    first
+}
+
+/// The session just authenticated its first packet, so its identity claim is now
+/// proven. Anything else online under the same identity is a stale session: end it
+/// (saving its state first) and restore the character into the new one.
+fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Option<&Store>, sid: u32) {
+    let Some(Some(c)) = clients.slab.get_mut(sid as usize) else { return };
+    c.proven = true;
+    let id = c.id;
+    if id == GUEST {
+        return;
+    }
+    let slot = c.slot;
+    if let Some(&old) = clients.by_id.get(&id) {
+        if old != sid {
+            drop_client(sim, clients, store, old);
+            stats.takeovers += 1;
+        }
+    }
+    clients.by_id.insert(id, sid);
+    if let Some(rec) = store.and_then(|s| s.load(&id)) {
+        sim.restore(slot, &rec);
+        stats.restored += 1;
+    }
+}
+
+/// End a session: save its character if it has a proven identity, free its entity.
+pub fn drop_client(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, idx: u32) -> bool {
+    let Some(c) = clients.remove(idx) else { return false };
+    if let (Some(store), true) = (store, c.proven && c.id != GUEST) {
+        store.save(vec![(c.id, sim.record_of(c.slot))]);
+    }
+    sim.ents.despawn(c.slot);
+    true
+}
+
+/// Save every proven player (autosave, shutdown, world restart).
+pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
+    let Some(store) = store else { return };
+    let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST).map(|c| (c.id, sim.record_of(c.slot))).collect();
+    store.save(recs);
 }
 
 /// Radius within which `say` is heard.
@@ -372,7 +432,7 @@ pub fn drain_actions(clients: &mut Clients, out: &mut Vec<PendingAction>) {
 
 /// Drop clients we have not heard from. Their entity leaves the world and the
 /// slot's generation bumps, so stale ids can never alias a newcomer.
-pub fn reap(sim: &mut Sim, clients: &mut Clients, timeout_ticks: u32, stats: &mut NetStats) {
+pub fn reap(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, timeout_ticks: u32, stats: &mut NetStats) {
     let mut dead: Vec<u32> = Vec::new();
     for (i, c) in clients.slab.iter().enumerate() {
         if let Some(c) = c {
@@ -382,8 +442,7 @@ pub fn reap(sim: &mut Sim, clients: &mut Clients, timeout_ticks: u32, stats: &mu
         }
     }
     for i in dead {
-        if let Some(c) = clients.remove(i) {
-            sim.ents.despawn(c.slot);
+        if drop_client(sim, clients, store, i) {
             stats.timeouts += 1;
         }
     }
@@ -555,6 +614,8 @@ mod tests {
                 addr: dest,
                 session,
                 client_pub: [0; 32],
+                id: proto::secure::GUEST,
+                proven: true,
                 accept: None,
                 slot,
                 last_seen: 0,

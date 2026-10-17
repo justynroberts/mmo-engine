@@ -1,7 +1,7 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 3;
+pub const PROTO_VERSION: u16 = 4;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 

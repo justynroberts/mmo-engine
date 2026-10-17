@@ -41,6 +41,7 @@ a Docker daemon where this was built, so it is untested.
 | Flag | Meaning |
 | --- | --- |
 | `--workers N` | Snapshot lanes. 1 = everything on the sim thread, N > 1 builds, encrypts and sends snapshots on N-1 more cores (pinned to `--pin`+1, +2, ...) |
+| `--db FILE` / `--no-db` | Player database for returning players (default `data/world.db`, SQLite in WAL mode) |
 | `--game FILE` | Game definitions (default `game.json`, created if missing) |
 | `--key-file FILE` | Server identity key (default `server.key`, created if missing) |
 | `--admin ADDR` / `--no-admin` | Admin and console HTTP, loopback only (default `127.0.0.1:7780`) |
@@ -65,6 +66,17 @@ Bot types ("archetypes") are server-side only.
 
 The console's Builder tab edits all of the above on the map. Click "Add place" and click the map, "Draw route" and click points then finish, drag a place or a route point to move it, drag a rule by its handle (or use its up and down buttons) to reorder, move sliders for speed, sight and each starting attribute (a tick marks the default; returning to the default stores no override). "Drop test bot" spawns the selected bot type where you click so you can watch the rules run. Renaming or deleting a place, route or attribute rewrites every rule that referred to it. Edits are a draft until you press Apply, and bot-only edits apply live without dropping players.
 
+## Players who come back
+
+A client can hold a long-term identity (an X25519 key it keeps). It travels inside the encrypted CONNECT body, so passive observers cannot link sessions to a player, and it is *proven* by mixing a Diffie-Hellman with that key into the session keys: claiming someone else's identity without their secret yields a session that cannot send a valid packet. A client with no identity is a guest and nothing is saved for it.
+
+- **Saving**: when a proven session ends (timeout, replaced, shutdown, world restart) and every 30 seconds for everyone online, the server queues the character (position and attributes by name) to a writer thread that batches into SQLite transactions. The tick never waits on disk. SIGINT and SIGTERM save everyone before exit.
+- **Loading**: when a session proves itself with its first authenticated packet, the character is restored: position if it is still a legal spot in the current world, attributes matched by name and clamped to their current range. Adding, removing or renaming attributes in the game file never scrambles a saved character. The read is a primary-key lookup on the sim thread, measured at a few microseconds, and a save is visible to the next load immediately even before it has reached disk.
+- **Takeover**: the same identity connecting again does not kick the first session until the newcomer proves itself, so nobody can log you out by claiming your key. Then the old session is saved and ended and the character carries on in the new one.
+- Bots: `bots --persist` gives each bot a stable identity from `--seed` and its number, so rerunning with the same seed brings the same characters back.
+
+Not done: no accounts, passwords or recovery (lose the key, lose the character), no rate limiting per identity, and the database holds one row per identity forever (no expiry).
+
 ## Chat
 
 An encrypted reliable channel on top of UDP (`proto::chat`). Client to server keeps one message in flight and resends it every tick until the server's batch acknowledges it; server to client queues every line per recipient and resends the unacknowledged ones each tick until the client's inputs acknowledge them. Delivery is in order and exactly once over a link that loses and reorders packets (tested at 30 percent loss both ways, 8 seeds). `say` reaches players within 64 units (and the speaker), `shout` reaches everyone, once per 10 seconds per player. Text is cleaned on the server (control characters and bidi overrides become spaces, collapsed, 120 bytes), and each player gets a burst of three lines with one more per second. Bots and the console can speak through the same path (`POST /api/say`, `GET /api/chat`).
@@ -78,7 +90,7 @@ An encrypted reliable channel on top of UDP (`proto::chat`). Client to server ke
 - **Stateless handshake.** HELLO (padded to 96 bytes) is answered with a 53 byte CHALLENGE carrying a cookie: a keyed hash of the client's address, public key and a timestamp. The server stores nothing and does no key agreement until a CONNECT returns a valid, fresh cookie from the claimed address. Spoofed sources never see the challenge, and replies are smaller than requests, so there is no amplification.
 - **Encryption.** X25519 key agreement, BLAKE3 key derivation, ChaCha20-Poly1305 per packet, one key per direction, 32-bit counter nonce, 64-packet replay window. The server's long-term key authenticates it (clients pin it); an ephemeral server key per session gives forward secrecy. Header bytes are authenticated. Cost: 25 bytes per packet.
 - **Admin interface.** Loopback only, no login. Checks the Host header (DNS rebinding) and requires `X-Admin: 1` on writes (cross-site requests). It refuses to start on a non-loopback address.
-- Not done: rekeying (a session ends before its 32-bit counter wraps, years at 20 packets/s), rate limiting per source, authentication of *players* (anyone with the public key can connect), authenticated REJECT packets (a forged reject can only make a handshake fail).
+- Not done: rekeying (a session ends before its 32-bit counter wraps, years at 20 packets/s), rate limiting per source, accounts (identity is a key the client keeps; anyone with the server public key can connect as a guest), authenticated REJECT packets (a forged reject can only make a handshake fail).
 
 ## The second core
 
@@ -104,13 +116,15 @@ Environment: a 2 vCPU VM, over loopback. Server pinned to core 0, bots on core 1
 | Headroom (2048 world) | 4,000 | 1 | 40.3 ms | 60.9 ms | 80 of 400 |
 | Headroom (2048 world), bots share core 1 | 4,000 | 2 | 36.8 ms | 60.1 ms | 14 of 400 |
 
+Re-checked after chat, rules, identity and persistence were added (same VM, same day, A/B against the first commit): the in-process snapshot phase is the same within noise (9.0 to 10.6 ms against 9.2 to 10.0 ms for 2,000 clients, 1 lane), and the live 2,000-client run gave p50 19 to 20 ms, p99 37 to 44 ms against 18.7 and 34.4 for the old build. The live tail is a little worse and the bots now also run prediction on the shared core, so I would not call that difference proven either way. With 2,000 live bots the prediction correction is p50 0.000 and p99 1.0 unit: the server uses the newest input per tick, so a tick that receives two inputs or none shifts a bot by one step until the next snapshot corrects it.
+
 All runs: zero decode errors, zero missing baselines, zero failed decryptions.
 For comparison, before encryption the same machine did 2,000 normal-density clients at p50 11.2 ms and 4,000 at 6 of 600 ticks over budget, so encryption costs about 50 percent more CPU per client here. One core now holds roughly 2,000 to 3,000 clients with the gate (2,000 bots at 20 Hz on one core) still passing. The two-lane live run is muddied because the bots occupy the second core on this machine; the in-process table above is the clean measurement.
 
 ## Tests
 
 ```sh
-cargo test --release                 # 54 proto + 16 server unit tests, 19 end-to-end tests (real server, real UDP and HTTP)
+cargo test --release                 # 57 proto + 24 server unit tests, 23 end-to-end tests (real server, real UDP and HTTP)
 (cd ui && npm test)                  # 40 unit and accessibility tests
 scripts/ui_e2e.py [--shots DIR]      # 54 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
@@ -122,7 +136,7 @@ The end-to-end tests include forged, bit-flipped and replayed packets, wrong-add
 
 - Move input receive and decrypt onto the lanes; share candidate lists per grid cell
 - Fields are byte aligned. The schema carries bit widths, so bit packing is a protocol-only change
-- No player accounts or login, no rate limiting, no rekeying (see Security model)
+- No accounts or login recovery, no rate limiting, no rekeying (see Security model)
 - The console possesses bots through the admin API, not through the UDP protocol, so it bypasses the encrypted path; bots-as-clients exercise that
 - The game file is JSON on disk. The DB and baker from the plan would produce the same `GameFile`
 - World is generated boxes. A real baker would emit heightfields, navmesh and chunks

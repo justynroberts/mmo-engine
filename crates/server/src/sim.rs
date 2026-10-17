@@ -288,6 +288,34 @@ impl Sim {
         Some(slot)
     }
 
+    /// Everything about an entity worth saving.
+    pub fn record_of(&self, slot: usize) -> crate::store::Record {
+        crate::store::Record {
+            x: self.ents.x[slot],
+            y: self.ents.y[slot],
+            attrs: self.defs.attrs.iter().enumerate().map(|(i, d)| (d.name.clone(), self.ents.attrs[i][slot])).collect(),
+        }
+    }
+
+    /// Put a saved character back. Position is kept only if it is still a legal spot
+    /// (the world may have changed); attributes are matched by name and clamped to
+    /// their current range, so a changed game file never produces an invalid value.
+    pub fn restore(&mut self, slot: usize, rec: &crate::store::Record) {
+        let r = self.defs.entity_radius;
+        let size = self.world.size;
+        if rec.x.is_finite() && rec.y.is_finite() && rec.x >= r && rec.y >= r && rec.x <= size - r && rec.y <= size - r && !self.world.blocked(rec.x, rec.y, r) {
+            self.ents.x[slot] = rec.x;
+            self.ents.y[slot] = rec.y;
+        }
+        for (i, d) in self.defs.attrs.iter().enumerate() {
+            if let Some(&v) = rec.attrs.get(&d.name) {
+                if v.is_finite() {
+                    self.ents.attrs[i][slot] = v.clamp(d.min, d.max);
+                }
+            }
+        }
+    }
+
     /// A free point inside the home place if there is one, else anywhere free.
     fn spawn_point(&mut self, home: Option<usize>, r: f32) -> (f32, f32) {
         if let Some(p) = home.and_then(|h| self.places.get(h)).cloned() {
@@ -996,5 +1024,35 @@ mod tests {
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 100.0, "too far to hit yet");
         run(&mut s, 120);
         assert!(s.ents.attrs[ATTR_HEALTH as usize][p] < 100.0, "should have been zapped");
+    }
+
+    #[test]
+    fn restore_matches_attributes_by_name_clamps_and_rejects_bad_positions() {
+        use crate::store::Record;
+        let mut s = sim();
+        let p = s.spawn(0).unwrap();
+        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default() };
+        rec.attrs.insert("health".into(), 37.0);
+        rec.attrs.insert("energy".into(), 9999.0); // beyond the current max
+        rec.attrs.insert("removed_attr".into(), 5.0); // no longer exists
+        s.restore(p, &rec);
+        assert_eq!((s.ents.x[p], s.ents.y[p]), (123.0, 45.0));
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 37.0);
+        assert_eq!(s.ents.attrs[ATTR_ENERGY as usize][p], 100.0, "clamped to the attribute's max");
+        // Out of the world, or not a number: position is left alone, attributes still apply.
+        let (x0, y0) = (s.ents.x[p], s.ents.y[p]);
+        for (x, y) in [(-5.0, 10.0), (9999.0, 10.0), (f32::NAN, 1.0), (10.0, f32::INFINITY)] {
+            s.restore(p, &Record { x, y, attrs: Default::default() });
+            assert_eq!((s.ents.x[p], s.ents.y[p]), (x0, y0), "({x}, {y})");
+        }
+        // A saved NaN attribute is ignored rather than poisoning the entity.
+        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default() };
+        bad.attrs.insert("health".into(), f32::NAN);
+        s.restore(p, &bad);
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 37.0);
+        // A new attribute missing from the record keeps its default (new entities start there).
+        let q = s.spawn(1).unwrap();
+        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default() });
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][q], 100.0);
     }
 }

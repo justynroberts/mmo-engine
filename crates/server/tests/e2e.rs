@@ -37,6 +37,11 @@ fn free_tcp() -> u16 {
 fn start(extra: &[&str]) -> Srv {
     let dir = std::env::temp_dir().join(format!("mmo-e2e-{}-{}", std::process::id(), free_udp()));
     std::fs::create_dir_all(&dir).unwrap();
+    start_in(dir, extra)
+}
+
+/// Start a server working in `dir` (so a restart can reuse its key and player database).
+fn start_in(dir: PathBuf, extra: &[&str]) -> Srv {
     let (u, h) = (free_udp(), free_tcp());
     let child = Command::new(env!("CARGO_BIN_EXE_server"))
         .current_dir(&dir)
@@ -114,10 +119,17 @@ enum Outcome {
 }
 
 fn connect_with(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64) -> Outcome {
+    connect_full(srv, pinned, hash, None)
+}
+
+fn connect_full(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64, identity: Option<[u8; 32]>) -> Outcome {
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     sock.connect(srv.udp).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(150))).unwrap();
-    let mut hs = ClientHs::new(pinned, hash);
+    let mut hs = match identity {
+        Some(id) => ClientHs::with_identity(pinned, hash, id),
+        None => ClientHs::new(pinned, hash),
+    };
     let mut buf = [0u8; 2048];
     let t = Instant::now();
     while t.elapsed() < Duration::from_secs(4) {
@@ -151,6 +163,14 @@ fn connect_with(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64) -> Outcome {
         }
     }
     Outcome::Silent
+}
+
+fn connect_as(srv: &Srv, identity: [u8; 32]) -> Client {
+    match connect_full(srv, Some(server_key(srv)), defs().content_hash(), Some(identity)) {
+        Outcome::Connected(c) => *c,
+        Outcome::Rejected(r) => panic!("rejected: {r}"),
+        Outcome::Silent => panic!("no answer"),
+    }
 }
 
 fn connect(srv: &Srv) -> Client {
@@ -665,4 +685,120 @@ fn a_bot_rule_can_make_bots_talk_and_new_places_apply_live() {
     let (code, body) = json(&srv, "PUT", "/api/game", &game.to_string());
     assert_eq!(code, 400);
     assert!(body["error"].as_str().unwrap().contains("unknown place"), "{body}");
+}
+
+fn walk(c: &mut Client, ticks: usize) {
+    for _ in 0..ticks {
+        c.send_input(127, 0);
+        c.pump(40);
+    }
+}
+
+/// Rows in the server's player database (it lives in the server's working directory).
+fn saved_rows(srv: &Srv) -> i64 {
+    let conn = rusqlite::Connection::open_with_flags(srv.dir.join("data/world.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    conn.query_row("SELECT COUNT(*) FROM players", [], |r| r.get(0)).unwrap()
+}
+
+fn wait_for_clients(srv: &Srv, n: u64) {
+    let t = Instant::now();
+    while state(srv)["clients"].as_u64() != Some(n) {
+        assert!(t.elapsed() < Duration::from_secs(8), "clients never reached {n}: {}", state(srv)["clients"]);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn a_returning_player_is_put_back_where_they_were() {
+    let srv = start(&[]);
+    let id = proto::secure::new_identity();
+    let mut a = connect_as(&srv, id);
+    walk(&mut a, 25);
+    a.send_input(0, 0); // stop, so the position we note is the one that gets saved
+    a.pump(300);
+    let (x, y) = a.pos();
+    drop(a); // goes silent; the server times it out and saves it
+    wait_for_clients(&srv, 0);
+    let mut b = connect_as(&srv, id);
+    b.send_input(0, 0); // the first authenticated packet is what proves the identity
+    b.pump(300);
+    let (bx, by) = b.pos();
+    assert!((bx - x).hypot(by - y) < 2.0, "was at ({x:.1},{y:.1}), came back at ({bx:.1},{by:.1})");
+    assert_eq!(state(&srv)["net"]["restored"], 1);
+    assert_eq!(state(&srv)["store"]["loaded"], 1);
+    // Someone else, or a guest, is not that character.
+    let mut g = connect(&srv);
+    g.send_input(0, 0);
+    g.pump(200);
+    let (gx, gy) = g.pos();
+    assert!((gx - x).hypot(gy - y) > 1.0 || (gx, gy) != (x, y), "a guest should spawn at random");
+    assert_eq!(saved_rows(&srv), 1, "guests are never written down");
+}
+
+#[test]
+fn characters_survive_a_server_restart() {
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-restart-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let id = proto::secure::new_identity();
+    let (x, y);
+    {
+        let srv = start_in(dir.clone(), &[]);
+        let mut a = connect_as(&srv, id);
+        walk(&mut a, 25);
+        a.send_input(0, 0);
+        a.pump(300);
+        (x, y) = a.pos();
+        // SIGTERM, not SIGKILL: the server saves everyone online on the way out.
+        let status = Command::new("kill").arg("-TERM").arg(srv.child.id().to_string()).status().unwrap();
+        assert!(status.success());
+        let mut srv = srv;
+        let t = Instant::now();
+        while srv.child.try_wait().unwrap().is_none() {
+            assert!(t.elapsed() < Duration::from_secs(5), "server did not exit on SIGTERM");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // Keep the directory for the second run.
+        std::mem::forget(std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep")));
+    }
+    let srv = start_in(dir.clone(), &[]);
+    let mut b = connect_as(&srv, id);
+    b.send_input(0, 0);
+    b.pump(300);
+    let (bx, by) = b.pos();
+    assert!((bx - x).hypot(by - y) < 2.0, "was at ({x:.1},{y:.1}), after restart ({bx:.1},{by:.1})");
+    drop(srv);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_same_identity_connecting_again_replaces_the_old_session_once_it_proves_itself() {
+    let srv = start(&["--timeout", "30"]);
+    let id = proto::secure::new_identity();
+    let mut a = connect_as(&srv, id);
+    walk(&mut a, 15);
+    a.send_input(0, 0);
+    a.pump(300);
+    let (x, y) = a.pos();
+    let mut b = connect_as(&srv, id);
+    // Connected but not yet proven: the first session is still there.
+    assert_eq!(state(&srv)["clients"], 2);
+    b.send_input(0, 0);
+    b.pump(300);
+    assert_eq!(state(&srv)["clients"], 1, "the proven newcomer replaced the old session");
+    assert_eq!(state(&srv)["net"]["takeovers"], 1);
+    let (bx, by) = b.pos();
+    assert!((bx - x).hypot(by - y) < 3.0, "newcomer continues from where the old session was");
+    a.pump(150); // drain what was already in flight
+    assert_eq!(a.pump(300), 0, "the replaced session gets nothing more");
+}
+
+#[test]
+fn an_identity_that_never_sends_a_packet_is_never_saved() {
+    let srv = start(&[]);
+    let id = proto::secure::new_identity();
+    let a = connect_as(&srv, id); // handshake done, but no authenticated DATA ever sent
+    wait_for_clients(&srv, 0);
+    drop(a);
+    assert_eq!(saved_rows(&srv), 0, "an unproven identity must not write a record");
+    assert_eq!(state(&srv)["net"]["restored"], 0);
 }

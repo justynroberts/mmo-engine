@@ -27,6 +27,7 @@ struct Config {
     game: String,
     server_key: Option<[u8; 32]>,
     chat: f64,
+    persist: bool,
 }
 
 fn usage(msg: &str) -> ! {
@@ -34,7 +35,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -51,6 +52,7 @@ fn parse_args() -> Config {
         game: "game.json".into(),
         server_key: None,
         chat: 0.0,
+        persist: false,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -72,6 +74,7 @@ fn parse_args() -> Config {
                 c.server_key = Some(from_hex32(&val(a)).unwrap_or_else(|| usage("--server-key must be 64 hex characters")))
             }
             "--chat" => c.chat = val(a).parse().unwrap_or_else(|_| usage("bad --chat")),
+            "--persist" => c.persist = true,
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -135,6 +138,20 @@ struct Totals {
     chat_bad: u64,
 }
 
+/// Handshake state for bot `i`. With `--persist` its identity is fixed by the seed, so a
+/// reconnect (or a whole new run with the same seed) is the same player to the server.
+fn new_hs(cfg: &Config, i: usize, hash: u64) -> ClientHs {
+    if !cfg.persist {
+        return ClientHs::new(cfg.server_key, hash);
+    }
+    let mut r = Rng::new(cfg.seed.wrapping_mul(0x9E37_79B9).wrapping_add(i as u64).wrapping_add(0x1D));
+    let mut secret = [0u8; 32];
+    for chunk in secret.chunks_mut(8) {
+        chunk.copy_from_slice(&r.next_u64().to_le_bytes());
+    }
+    ClientHs::with_identity(cfg.server_key, hash, secret)
+}
+
 fn main() {
     let cfg = parse_args();
     let game = match std::fs::read_to_string(&cfg.game) {
@@ -161,7 +178,7 @@ fn main() {
         sock.set_nonblocking(true).expect("nonblocking");
         bots.push(Bot {
             sock,
-            hs: ClientHs::new(cfg.server_key, hash),
+            hs: new_hs(&cfg, i, hash),
             session: None,
             last_rx: now,
             state: State::Idle,
@@ -227,7 +244,7 @@ fn main() {
             activated += 1;
         }
 
-        for b in bots.iter_mut() {
+        for (bi, b) in bots.iter_mut().enumerate() {
             if matches!(b.state, State::Idle | State::Rejected | State::Untrusted) {
                 continue;
             }
@@ -362,7 +379,7 @@ fn main() {
                 State::Playing => {
                     // Server restarted, dropped us or changed content: start over with fresh keys.
                     if b.last_rx.elapsed() > Duration::from_secs(3) {
-                        b.hs = ClientHs::new(cfg.server_key, hash);
+                        b.hs = new_hs(&cfg, bi, hash);
                         b.session = None;
                         b.chat = Default::default();
                         b.state = State::Connecting;

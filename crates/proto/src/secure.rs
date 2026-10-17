@@ -6,7 +6,7 @@
 //! ```text
 //! C -> S  HELLO      version, C ephemeral public key, padded to 96 bytes
 //! S -> C  CHALLENGE  S public key, timestamp, cookie            (53 bytes, S keeps NO state)
-//! C -> S  CONNECT    version, C pub, timestamp, cookie, AEAD{defs hash}
+//! C -> S  CONNECT    version, C pub, timestamp, cookie, AEAD{defs hash, C identity pub}
 //! S -> C  ACCEPT     AEAD{S ephemeral pub, session id, welcome}  (S allocates state only now)
 //! both    DATA       session id, counter, AEAD{inner message}
 //! ```
@@ -20,6 +20,12 @@
 //!   so only the holder of S's private key can answer. Session keys also mix in
 //!   DH(C ephemeral, S ephemeral), so recording traffic and later stealing S's
 //!   long-term key does not reveal past sessions.
+//! * A player's identity is a long-term X25519 key kept by the client. It is
+//!   sent inside CONNECT's encrypted body (so passive observers cannot link
+//!   sessions to a player) and proven by mixing DH(S ephemeral, C identity) into
+//!   the session keys: only the holder of the identity secret can derive them,
+//!   so a client that merely claims someone else's identity gets a session it
+//!   cannot use. An all-zero identity means "guest": nothing is saved for it.
 //! * DATA packets use ChaCha20-Poly1305 with one key per direction and an
 //!   explicit 32-bit counter as the nonce, plus a 64-packet replay window.
 //!   Header bytes are authenticated, not encrypted.
@@ -278,14 +284,16 @@ impl ServerKeys {
         let dh1 = dh(&self.secret, &hdr.client_pub)?;
         let k_c2s = derive("mmo-engine 1 hs c2s", &[&dh1, &hdr.client_pub, &self.public]);
         let k_s2c = derive("mmo-engine 1 hs s2c", &[&dh1, &hdr.client_pub, &self.public]);
-        let mut body = pkt[55..55 + 8].to_vec();
-        let tag = Tag::from_slice(&pkt[55 + 8..]);
+        let mut body = pkt[55..55 + 40].to_vec();
+        let tag = Tag::from_slice(&pkt[55 + 40..]);
         ChaCha20Poly1305::new(Key::from_slice(&k_c2s))
             .decrypt_in_place_detached(&nonce(0), &pkt[..55], &mut body, tag)
             .ok()?;
         let mut h = [0u8; 8];
-        h.copy_from_slice(&body);
-        Some(ConnectOpen { client_pub: hdr.client_pub, defs_hash: u64::from_le_bytes(h), dh1, k_s2c })
+        h.copy_from_slice(&body[..8]);
+        let mut id_pub = [0u8; 32];
+        id_pub.copy_from_slice(&body[8..]);
+        Some(ConnectOpen { client_pub: hdr.client_pub, defs_hash: u64::from_le_bytes(h), id_pub, dh1, k_s2c })
     }
 
     /// Finish the handshake: create the session and the ACCEPT packet that
@@ -294,7 +302,8 @@ impl ServerKeys {
         let eph = StaticSecret::from(random::<32>());
         let eph_pub = PublicKey::from(&eph).to_bytes();
         let dh2 = dh(&eph, &open.client_pub)?;
-        let parts: [&[u8]; 5] = [&open.dh1, &dh2, &open.client_pub, &self.public, &eph_pub];
+        let dh3 = if open.id_pub == GUEST { [0u8; 32] } else { dh(&eph, &open.id_pub)? };
+        let parts: [&[u8]; 7] = [&open.dh1, &dh2, &dh3, &open.client_pub, &self.public, &eph_pub, &open.id_pub];
         let k_c2s = derive("mmo-engine 1 session c2s", &parts);
         let k_s2c = derive("mmo-engine 1 session s2c", &parts);
 
@@ -315,7 +324,20 @@ impl ServerKeys {
     }
 }
 
-pub const CONNECT_LEN: usize = 55 + 8 + TAG_LEN;
+pub const CONNECT_LEN: usize = 55 + 8 + 32 + TAG_LEN;
+
+/// The identity of a client that wants nothing remembered.
+pub const GUEST: [u8; 32] = [0; 32];
+
+/// Public half of an identity secret.
+pub fn identity_public(secret: &[u8; 32]) -> [u8; 32] {
+    PublicKey::from(&StaticSecret::from(*secret)).to_bytes()
+}
+
+/// A fresh random identity secret.
+pub fn new_identity() -> [u8; 32] {
+    random::<32>()
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ConnectHdr {
@@ -326,6 +348,9 @@ pub struct ConnectHdr {
 pub struct ConnectOpen {
     pub client_pub: [u8; 32],
     pub defs_hash: u64,
+    /// The client's claimed identity (`GUEST` for none). Only trustworthy once
+    /// the session's first packet authenticates, because that is what proves it.
+    pub id_pub: [u8; 32],
     dh1: [u8; 32],
     k_s2c: [u8; 32],
 }
@@ -342,6 +367,7 @@ pub enum HsError {
 pub struct ClientHs {
     secret: StaticSecret,
     public: [u8; 32],
+    identity: Option<StaticSecret>,
     pinned: Option<[u8; 32]>,
     defs_hash: u64,
     server_pub: Option<[u8; 32]>,
@@ -356,7 +382,19 @@ impl ClientHs {
     pub fn new(pinned: Option<[u8; 32]>, defs_hash: u64) -> ClientHs {
         let secret = StaticSecret::from(random::<32>());
         let public = PublicKey::from(&secret).to_bytes();
-        ClientHs { secret, public, pinned, defs_hash, server_pub: None, dh1: [0; 32], k_s2c: [0; 32], connect: None }
+        ClientHs { secret, public, identity: None, pinned, defs_hash, server_pub: None, dh1: [0; 32], k_s2c: [0; 32], connect: None }
+    }
+
+    /// Like `new`, but as a returning player: the server can recognise this
+    /// identity across sessions and restore its character.
+    pub fn with_identity(pinned: Option<[u8; 32]>, defs_hash: u64, identity_secret: [u8; 32]) -> ClientHs {
+        let mut h = ClientHs::new(pinned, defs_hash);
+        h.identity = Some(StaticSecret::from(identity_secret));
+        h
+    }
+
+    fn id_pub(&self) -> [u8; 32] {
+        self.identity.as_ref().map_or(GUEST, |i| PublicKey::from(i).to_bytes())
     }
 
     pub fn hello(&self) -> Vec<u8> {
@@ -404,6 +442,7 @@ impl ClientHs {
         out.extend_from_slice(&pkt[33..37]); // timestamp
         out.extend_from_slice(&pkt[37..53]); // cookie
         let mut body = self.defs_hash.to_le_bytes().to_vec();
+        body.extend_from_slice(&self.id_pub());
         let tag = ChaCha20Poly1305::new(Key::from_slice(&k_c2s))
             .encrypt_in_place_detached(&nonce(0), &out, &mut body)
             .map_err(|_| HsError::Malformed)?;
@@ -433,7 +472,11 @@ impl ClientHs {
         eph_pub.copy_from_slice(&body[..32]);
         let sid = u32::from_le_bytes([body[32], body[33], body[34], body[35]]);
         let dh2 = dh(&self.secret, &eph_pub)?;
-        let parts: [&[u8]; 5] = [&self.dh1, &dh2, &self.public, &spub, &eph_pub];
+        let dh3 = match &self.identity {
+            Some(i) => dh(i, &eph_pub)?,
+            None => [0u8; 32],
+        };
+        let parts: [&[u8]; 7] = [&self.dh1, &dh2, &dh3, &self.public, &spub, &eph_pub, &self.id_pub()];
         let k_c2s = derive("mmo-engine 1 session c2s", &parts);
         let k_s2c = derive("mmo-engine 1 session s2c", &parts);
         Some((Session::new(sid, k_c2s, k_s2c), body[36..].to_vec()))
@@ -659,5 +702,83 @@ mod tests {
         let (mut c, _) = handshake(&server, None, 1);
         c.tx_ctr = u32::MAX;
         assert!(!c.seal(b"x", &mut Vec::new()));
+    }
+
+    /// Handshake as a client with the given identity (None = guest), returning what the
+    /// server learned, both sessions and the CONNECT packet.
+    fn handshake_as(server: &ServerKeys, secret: Option<[u8; 32]>) -> ([u8; 32], Session, Session, Vec<u8>) {
+        let mut c = match secret {
+            Some(s) => ClientHs::with_identity(None, 7, s),
+            None => ClientHs::new(None, 7),
+        };
+        let chal = server.on_hello(&A, &c.hello(), 1000).unwrap();
+        c.on_challenge(&chal).unwrap();
+        let cp = c.connect_packet().unwrap().to_vec();
+        let hdr = server.check_connect(&A, &cp, 1001).expect("cookie");
+        let open = server.open_connect(&hdr, &cp).expect("body");
+        let (accept, ssess) = server.accept(&open, 3, &welcome_bytes()).unwrap();
+        let (csess, _) = c.on_accept(&accept).expect("accept");
+        (open.id_pub, csess, ssess, cp)
+    }
+
+    #[test]
+    fn a_returning_player_is_recognised_and_the_session_works() {
+        let (server, _) = ServerKeys::generate();
+        let secret = new_identity();
+        let (id, mut c, mut s, cp) = handshake_as(&server, Some(secret));
+        assert_eq!(id, identity_public(&secret));
+        assert_eq!(cp.len(), CONNECT_LEN);
+        assert!(!cp.windows(32).any(|w| w == id), "identity must not travel in the clear");
+        let (mut pkt, mut sc) = (Vec::new(), Vec::new());
+        assert!(c.seal(b"hi", &mut pkt));
+        assert_eq!(s.open(&pkt, &mut sc), Some(&b"hi"[..]));
+        // Same identity later: same id, different session keys (ephemeral keys differ).
+        let (id2, mut c2, _, _) = handshake_as(&server, Some(secret));
+        assert_eq!(id2, id);
+        let mut pkt2 = Vec::new();
+        assert!(c2.seal(b"hi", &mut pkt2));
+        assert_ne!(pkt[9..], pkt2[9..]);
+    }
+
+    #[test]
+    fn guests_have_no_identity() {
+        let (server, _) = ServerKeys::generate();
+        let (id, mut c, mut s, _) = handshake_as(&server, None);
+        assert_eq!(id, GUEST);
+        let (mut pkt, mut sc) = (Vec::new(), Vec::new());
+        assert!(c.seal(b"x", &mut pkt));
+        assert_eq!(s.open(&pkt, &mut sc), Some(&b"x"[..]));
+    }
+
+    /// Claiming someone's identity without their secret gives a session that cannot talk.
+    #[test]
+    fn claiming_another_identity_without_its_secret_fails_to_authenticate() {
+        let (server, _) = ServerKeys::generate();
+        let victim = new_identity();
+        let victim_pub = identity_public(&victim);
+        // Build a CONNECT body that names the victim's public key but is sealed by someone who lacks the secret.
+        let mut c = ClientHs::with_identity(None, 7, [5u8; 32]);
+        c.identity = Some(StaticSecret::from([5u8; 32]));
+        let chal = server.on_hello(&A, &c.hello(), 1000).unwrap();
+        // Derive the same CONNECT but with the victim's pub in the body.
+        c.on_challenge(&chal).unwrap();
+        let spub = c.server_pub().unwrap();
+        let dh1 = dh(&c.secret, &spub).unwrap();
+        let k_c2s = derive("mmo-engine 1 hs c2s", &[&dh1, &c.public, &spub]);
+        let mut cp = c.connect_packet().unwrap().to_vec();
+        let mut body = 7u64.to_le_bytes().to_vec();
+        body.extend_from_slice(&victim_pub);
+        let tag = ChaCha20Poly1305::new(Key::from_slice(&k_c2s)).encrypt_in_place_detached(&nonce(0), &cp[..55], &mut body).unwrap();
+        cp.truncate(55);
+        cp.extend_from_slice(&body);
+        cp.extend_from_slice(&tag);
+        let hdr = server.check_connect(&A, &cp, 1001).expect("cookie");
+        let open = server.open_connect(&hdr, &cp).expect("body");
+        assert_eq!(open.id_pub, victim_pub, "the server hears the claim");
+        let (accept, mut ssess) = server.accept(&open, 3, &welcome_bytes()).unwrap();
+        let (mut csess, _) = c.on_accept(&accept).expect("the accept itself decrypts, the identity is only proven by the data keys");
+        let (mut pkt, mut sc) = (Vec::new(), Vec::new());
+        assert!(csess.seal(b"let me be the victim", &mut pkt));
+        assert_eq!(ssess.open(&pkt, &mut sc), None, "no proof of the identity secret, so no valid packets");
     }
 }

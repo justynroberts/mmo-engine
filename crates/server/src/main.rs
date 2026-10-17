@@ -7,6 +7,7 @@ mod ctl;
 mod io;
 mod net;
 mod sim;
+mod store;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -34,6 +35,7 @@ struct Config {
     key_file: PathBuf,
     admin: Option<String>,
     ui_dir: Option<PathBuf>,
+    db: Option<PathBuf>,
 }
 
 fn parse_args() -> Config {
@@ -53,6 +55,7 @@ fn parse_args() -> Config {
         key_file: PathBuf::from("server.key"),
         admin: Some("127.0.0.1:7780".into()),
         ui_dir: None,
+        db: Some(PathBuf::from("data/world.db")),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -78,6 +81,8 @@ fn parse_args() -> Config {
             "--admin" => c.admin = Some(val(a)),
             "--no-admin" => c.admin = None,
             "--ui-dir" => c.ui_dir = Some(PathBuf::from(val(a))),
+            "--db" => c.db = Some(PathBuf::from(val(a))),
+            "--no-db" => c.db = None,
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -92,7 +97,9 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --quiet           only print the final summary"
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player database for returning players (data/world.db)
+  --no-db           do not remember players
+  --quiet           only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -117,8 +124,18 @@ fn ms(us: f64) -> String {
     format!("{:.2}", us / 1000.0)
 }
 
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+extern "C" fn on_signal(_: libc::c_int) {
+    STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn main() {
     let cfg = parse_args();
+    // Stop cleanly on SIGINT/SIGTERM so players are saved on the way out.
+    unsafe {
+        libc::signal(libc::SIGINT, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+    }
     let mut game_file = load_game(&cfg.game);
     let game = game_file.build().expect("validated by load_game");
     let defs_hash = game.defs.content_hash();
@@ -132,6 +149,12 @@ fn main() {
         sim.spawn(NONE);
     }
     let keys = load_keys(&cfg.key_file);
+    let store = cfg.db.as_ref().map(|p| {
+        std::sync::Arc::new(store::Store::open(p).unwrap_or_else(|e| {
+            eprintln!("cannot open player database: {e}");
+            std::process::exit(1);
+        }))
+    });
 
     let sock = io::bind(cfg.port, 8 << 20, 8 << 20).unwrap_or_else(|e| {
         eprintln!("cannot bind UDP port {}: {e}", cfg.port);
@@ -156,7 +179,7 @@ fn main() {
     );
     eprintln!("server public key (pin this in clients with --server-key): {}", to_hex(&keys.public));
 
-    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients };
+    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store };
     let params = ctl::Params {
         cap,
         world_size: cfg.world_size,
@@ -247,7 +270,10 @@ fn main() {
         // 2. Simulate.
         net::drain_actions(&mut clients, &mut pending);
         if sim.tick % 20 == 0 {
-            net::reap(&mut sim, &mut clients, timeout_ticks, &mut nstats);
+            net::reap(&mut sim, &mut clients, hs.store.as_deref(), timeout_ticks, &mut nstats);
+            if sim.tick % (20 * 30) == 0 {
+                net::save_all(&sim, &clients, hs.store.as_deref());
+            }
         }
         sim.step(&pending);
         net::route_chat(&mut sim, &mut clients);
@@ -330,9 +356,15 @@ fn main() {
             last_report = t4;
         }
 
-        if cfg.duration > 0 && (t4 - start).as_secs() >= cfg.duration {
+        if (cfg.duration > 0 && (t4 - start).as_secs() >= cfg.duration) || STOP.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
+    }
+
+    // Everyone online is saved before we exit.
+    net::save_all(&sim, &clients, hs.store.as_deref());
+    if let Some(st) = &hs.store {
+        st.flush();
     }
 
     // Final summary.
