@@ -883,3 +883,69 @@ fn logging_in_with_the_same_account_and_passphrase_from_a_fresh_client_returns_t
     let (wx, wy) = w.pos();
     assert!((wx - x).hypot(wy - y) > 0.5);
 }
+
+/// Stop a server with SIGTERM (it saves on the way out) and keep its directory for a restart.
+fn term(mut srv: Srv) -> PathBuf {
+    let status = Command::new("kill").arg("-TERM").arg(srv.child.id().to_string()).status().unwrap();
+    assert!(status.success());
+    let t = Instant::now();
+    while srv.child.try_wait().unwrap().is_none() {
+        assert!(t.elapsed() < Duration::from_secs(5), "server did not exit on SIGTERM");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let dir = srv.dir.clone();
+    std::mem::forget(std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep")));
+    dir
+}
+
+fn bots_of(srv: &Srv, arch: i64) -> usize {
+    state(srv)["e"].as_array().unwrap().iter().filter(|e| e[3] == arch).count()
+}
+
+#[test]
+fn the_bot_population_survives_a_restart_and_fresh_world_ignores_it() {
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-world-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let hounds = 5; // archetype 5 in the default game, 3 by default
+    let srv = start_in(dir.clone(), &[]);
+    assert_eq!(bots_of(&srv, 5), 3);
+    let (code, body) = json(&srv, "POST", "/api/spawn", r#"{"archetype":"hound","count":4}"#);
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(bots_of(&srv, 5), 3 + 4);
+    let dir = term(srv);
+    let srv = start_in(dir.clone(), &[]);
+    assert_eq!(bots_of(&srv, 5), 3 + 4, "bots added by hand come back after a restart (of {hounds} kinds)");
+    let dir = term(srv);
+    let srv = start_in(dir.clone(), &["--fresh-world"]);
+    assert_eq!(bots_of(&srv, 5), 3, "--fresh-world starts from the archetype counts");
+    drop(srv);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_world_restart_from_an_attribute_edit_still_saves_the_characters_in_it() {
+    let srv = start(&[]);
+    let id = proto::secure::new_identity();
+    let mut a = connect_as(&srv, id);
+    walk(&mut a, 25);
+    a.send_input(0, 0);
+    a.pump(300);
+    let (x, y) = a.pos();
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["attrs"][0]["max"] = 250.into();
+    game["attrs"][0]["default"] = 250.into();
+    let (s, v) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!((s, v["reset"].clone()), (200, true.into()), "{v}");
+    // The character was written down from the old world, not from the blank new one.
+    let conn = rusqlite::Connection::open_with_flags(srv.dir.join("data/world.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let t = Instant::now();
+    let rec: serde_json::Value = loop {
+        if let Ok(text) = conn.query_row("SELECT data FROM players", [], |r| r.get::<_, String>(0)) {
+            break serde_json::from_str(&text).unwrap();
+        }
+        assert!(t.elapsed() < Duration::from_secs(5), "nothing was saved");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let (sx, sy) = (rec["x"].as_f64().unwrap(), rec["y"].as_f64().unwrap());
+    assert!((sx - x as f64).hypot(sy - y as f64) < 2.0, "saved ({sx:.1},{sy:.1}), was at ({x:.1},{y:.1})");
+}

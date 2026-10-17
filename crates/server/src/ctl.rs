@@ -482,10 +482,14 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
         // fresh world under the new definitions; clients see a content mismatch
         // on reconnect until they load the same game file.
         dropped = c.clients.count;
+        // Characters survive a world restart: save them from the world they are in, before it is replaced.
+        crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
         let world = World::generate(c.params.world_size, c.params.seed);
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
-        // Characters survive a world restart: save them before the clients are dropped.
-        crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
+        // The saved bots belong to the old definitions; the new world starts from its own counts.
+        if let Some(st) = &c.hs.store {
+            st.clear_world();
+        }
         let (limiter, id_limiter) = (c.clients.limiter.take(), c.clients.id_limiter.take());
         *c.clients = Clients::default();
         c.clients.limiter = limiter;

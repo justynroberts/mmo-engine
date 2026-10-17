@@ -179,3 +179,20 @@ Default population (40 bots): 12 drifters and 8 civilians (wander and flee),
 holding the watchtower who attack anyone who comes close. The last four are
 built entirely from the rule builder, so they are good examples to edit.
 Existing `game.json` files are not touched; delete yours to get the new defaults.
+
+World persistence: the bot population is saved with the players (every 30 s, on
+SIGTERM, and before a world restart) in the same database, and restored at
+startup. Each saved bot comes back where it was, with its attributes, matched
+by archetype name, so edits to the game file never scramble a saved world.
+Archetypes that no longer exist are dropped, and every archetype is topped up
+to its `count`. So `count` is the starting population of a new world and the
+minimum of a returning one, and bots you added by hand survive a restart.
+`--fresh-world` ignores the saved bots, and a world restart caused by an
+attribute edit forgets them (the definitions changed). Saving the world is a
+JSON dump of the bots on the sim thread, a millisecond or two per few thousand
+bots. Rule state such as which waypoint a patrolling bot was heading for is not
+saved; it picks up again from the nearest start.
+
+Fixed on the way: a world restart used to save players after replacing the
+world, writing blank characters over the good ones. It saves first now, with a
+regression test.

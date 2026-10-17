@@ -595,6 +595,7 @@ pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
     let Some(store) = store else { return };
     let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST).map(|c| (c.id, sim.record_of(c.slot))).collect();
     store.save(recs);
+    store.save_world(&sim.bot_records());
 }
 
 /// Radius within which `say` is heard.

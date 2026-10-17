@@ -340,15 +340,48 @@ impl Sim {
         }
     }
 
+    /// Everything about the bots worth saving: which archetype, where, and their attributes.
+    pub fn bot_records(&self) -> crate::store::WorldSave {
+        let mut bots = Vec::new();
+        for s in 0..self.ents.high {
+            if self.ents.alive[s] && self.ents.arch[s] != NO_ARCH && self.ents.owner[s] >= DRIVEN {
+                let Some(a) = self.archs.get(self.ents.arch[s] as usize) else { continue };
+                let rec = self.record_of(s);
+                bots.push(crate::store::BotRec { arch: a.name.clone(), x: rec.x, y: rec.y, attrs: rec.attrs });
+            }
+        }
+        crate::store::WorldSave { bots }
+    }
+
+    /// Bring a saved world back: every saved bot whose archetype still exists returns where it
+    /// was with the attributes it had, then each archetype is topped up to its `count`. So
+    /// `count` is the starting population of a new world and the minimum of a returning one;
+    /// bots added by hand survive a restart.
+    pub fn populate_from(&mut self, saved: &crate::store::WorldSave) {
+        self.populate_bots_with(Some(saved));
+    }
+
     /// Replace the bot population with what the archetypes ask for.
     pub fn populate_bots(&mut self) {
+        self.populate_bots_with(None);
+    }
+
+    fn populate_bots_with(&mut self, saved: Option<&crate::store::WorldSave>) {
         for s in 0..self.ents.high {
             if self.ents.alive[s] && self.ents.arch[s] != NO_ARCH && self.ents.owner[s] >= DRIVEN {
                 self.ents.despawn(s);
             }
         }
+        let mut have = vec![0u32; self.archs.len()];
+        for b in saved.map_or(&[][..], |w| &w.bots[..]) {
+            let Some(a) = self.archs.iter().position(|a| a.name == b.arch) else { continue };
+            let Some(slot) = self.spawn_as(NONE, a as u8, Some((b.x, b.y))) else { return };
+            // A spot that is no longer legal falls back to a fresh one inside spawn_as; attributes still apply.
+            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone() });
+            have[a] += 1;
+        }
         for a in 0..self.archs.len() {
-            for _ in 0..self.archs[a].count {
+            for _ in have[a]..self.archs[a].count {
                 if self.spawn_as(NONE, a as u8, None).is_none() {
                     return;
                 }
@@ -1054,5 +1087,45 @@ mod tests {
         let q = s.spawn(1).unwrap();
         s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default() });
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][q], 100.0);
+    }
+
+    #[test]
+    fn a_saved_world_returns_bots_where_they_were_drops_unknown_archetypes_and_tops_up() {
+        use crate::store::{BotRec, WorldSave};
+        let mut s = sim();
+        let counts = |s: &Sim| {
+            let mut n = vec![0usize; s.archs.len()];
+            for i in 0..s.ents.high {
+                if s.ents.alive[i] && s.ents.arch[i] != NO_ARCH && s.ents.owner[i] >= DRIVEN {
+                    n[s.ents.arch[i] as usize] += 1;
+                }
+            }
+            n
+        };
+        s.populate_bots();
+        let fresh = counts(&s);
+        let drone = s.archs.iter().position(|a| a.name == "drone").unwrap();
+        // Hurt one drone and note where everything is, then save and rebuild the world.
+        let hurt = (0..s.ents.high).find(|&i| s.ents.alive[i] && s.ents.arch[i] == drone as u8).unwrap();
+        s.ents.attrs[ATTR_HEALTH as usize][hurt] = 7.0;
+        let mut saved = s.bot_records();
+        assert_eq!(saved.bots.len(), fresh.iter().sum::<usize>());
+        // An archetype that has since been deleted from the game file, and one extra drone added by hand.
+        saved.bots.push(BotRec { arch: "ghost".into(), x: 10.0, y: 10.0, attrs: Default::default() });
+        saved.bots.push(BotRec { arch: "drone".into(), x: 77.0, y: 88.0, attrs: Default::default() });
+        // Lose one archetype's bots entirely from the save: it must be topped back up to `count`.
+        let hound = s.archs.iter().position(|a| a.name == "hound").unwrap();
+        saved.bots.retain(|b| b.arch != "hound");
+        let mut t = sim();
+        t.populate_from(&saved);
+        let n = counts(&t);
+        assert_eq!(n[drone], fresh[drone] + 1, "the hand-added drone survives");
+        assert_eq!(n[hound], fresh[hound], "a missing archetype is topped up to its count");
+        assert_eq!(n.iter().sum::<usize>(), fresh.iter().sum::<usize>() + 1, "the unknown archetype is dropped");
+        let at = |t: &Sim, x: f32, y: f32| (0..t.ents.high).any(|i| t.ents.alive[i] && (t.ents.x[i] - x).abs() < 0.01 && (t.ents.y[i] - y).abs() < 0.01);
+        assert!(at(&t, 77.0, 88.0));
+        let (bx, by) = (s.ents.x[hurt], s.ents.y[hurt]);
+        let back = (0..t.ents.high).find(|&i| t.ents.alive[i] && (t.ents.x[i] - bx).abs() < 0.01 && (t.ents.y[i] - by).abs() < 0.01).expect("the hurt drone is where it was");
+        assert_eq!(t.ents.attrs[ATTR_HEALTH as usize][back], 7.0, "and still hurt");
     }
 }

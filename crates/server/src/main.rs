@@ -39,6 +39,7 @@ struct Config {
     hello_rate: u32,
     limit_loopback: bool,
     db_expire_days: u32,
+    fresh_world: bool,
     new_ids_per_hour: u32,
 }
 
@@ -63,6 +64,7 @@ fn parse_args() -> Config {
         hello_rate: 100,
         limit_loopback: false,
         db_expire_days: 90,
+        fresh_world: false,
         new_ids_per_hour: 30,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -94,6 +96,7 @@ fn parse_args() -> Config {
             "--hello-rate" => c.hello_rate = val(a).parse().unwrap_or_else(|_| usage("bad --hello-rate")),
             "--limit-loopback" => c.limit_loopback = true,
             "--new-identities-per-hour" => c.new_ids_per_hour = val(a).parse().unwrap_or_else(|_| usage("bad --new-identities-per-hour")),
+            "--fresh-world" => c.fresh_world = true,
             "--db-expire-days" => c.db_expire_days = val(a).parse().unwrap_or_else(|_| usage("bad --db-expire-days")),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
@@ -109,7 +112,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player database for returning players (data/world.db)
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
@@ -160,10 +163,6 @@ fn main() {
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
-    sim.populate_bots();
-    for _ in 0..cfg.npcs {
-        sim.spawn(NONE);
-    }
     let keys = load_keys(&cfg.key_file);
     let store = cfg.db.as_ref().map(|p| {
         let st = store::Store::open(p).unwrap_or_else(|e| {
@@ -178,6 +177,16 @@ fn main() {
         }
         std::sync::Arc::new(st)
     });
+    match store.as_ref().filter(|_| !cfg.fresh_world).and_then(|st| st.load_world()) {
+        Some(w) => {
+            sim.populate_from(&w);
+            eprintln!("restored {} saved bot(s)", w.bots.len());
+        }
+        None => sim.populate_bots(),
+    }
+    for _ in 0..cfg.npcs {
+        sim.spawn(NONE);
+    }
 
     let sock = io::bind(cfg.port, 8 << 20, 8 << 20).unwrap_or_else(|e| {
         eprintln!("cannot bind UDP port {}: {e}", cfg.port);

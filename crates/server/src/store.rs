@@ -30,8 +30,26 @@ pub struct Record {
 
 pub type PlayerId = [u8; 32];
 
+/// One saved bot. The archetype is stored by name, like attributes, so editing the game
+/// file never scrambles a saved world: bots of archetypes that no longer exist are dropped.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct BotRec {
+    pub arch: String,
+    pub x: f32,
+    pub y: f32,
+    pub attrs: BTreeMap<String, f32>,
+}
+
+/// The saved population of the world (everything that is not a player).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct WorldSave {
+    pub bots: Vec<BotRec>,
+}
+
 enum Msg {
     Save(Vec<(PlayerId, Record)>),
+    /// `None` forgets the saved world.
+    World(Option<String>),
     Flush(Sender<()>),
 }
 
@@ -55,6 +73,11 @@ pub struct Store {
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS players (
     id      BLOB PRIMARY KEY,
+    data    TEXT NOT NULL,
+    updated INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS world (
+    key     TEXT PRIMARY KEY,
     data    TEXT NOT NULL,
     updated INTEGER NOT NULL
 ) WITHOUT ROWID;";
@@ -92,14 +115,26 @@ impl Store {
                 while let Ok(first) = rx.recv() {
                     let mut batch: Vec<(PlayerId, Record)> = Vec::new();
                     let mut acks: Vec<Sender<()>> = Vec::new();
-                    let take = |m: Msg, batch: &mut Vec<(PlayerId, Record)>, acks: &mut Vec<Sender<()>>| match m {
+                    // Only the newest world snapshot matters; `Some(None)` is a request to forget it.
+                    let mut world: Option<Option<String>> = None;
+                    let mut take = |m: Msg, batch: &mut Vec<(PlayerId, Record)>, acks: &mut Vec<Sender<()>>| match m {
                         Msg::Save(v) => batch.extend(v),
+                        Msg::World(w) => world = Some(w),
                         Msg::Flush(a) => acks.push(a),
                     };
                     take(first, &mut batch, &mut acks);
                     // Coalesce whatever else is already waiting into the same transaction.
                     while let Ok(m) = rx.try_recv() {
                         take(m, &mut batch, &mut acks);
+                    }
+                    if let Some(w) = world {
+                        let r = match w {
+                            Some(text) => write.execute("INSERT OR REPLACE INTO world (key, data, updated) VALUES ('bots', ?1, ?2)", params![text, now_secs()]),
+                            None => write.execute("DELETE FROM world WHERE key = 'bots'", []),
+                        };
+                        if r.is_err() {
+                            st.errors.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                     if !batch.is_empty() {
                         match write_batch(&mut write, &batch) {
@@ -144,6 +179,25 @@ impl Store {
             }
         }
         let _ = self.tx.send(Msg::Save(records));
+    }
+
+    /// Queue a snapshot of the bot population. Only the newest one is kept.
+    pub fn save_world(&self, w: &WorldSave) {
+        if let Ok(text) = serde_json::to_string(w) {
+            let _ = self.tx.send(Msg::World(Some(text)));
+        }
+    }
+
+    /// Forget the saved world (a deliberate restart under new definitions).
+    pub fn clear_world(&self) {
+        let _ = self.tx.send(Msg::World(None));
+    }
+
+    /// The saved population, if there is a readable one. Call `flush` first if you just saved.
+    pub fn load_world(&self) -> Option<WorldSave> {
+        let conn = self.read.lock().ok()?;
+        let text: Option<String> = conn.query_row("SELECT data FROM world WHERE key = 'bots'", [], |r| r.get(0)).optional().ok().flatten();
+        text.and_then(|t| serde_json::from_str(&t).ok())
     }
 
     /// Wait until everything queued so far is on disk (shutdown, tests).
@@ -319,5 +373,29 @@ mod tests {
         assert_eq!(s.load(&[1; 32]), None);
         assert!(s.load(&[2; 32]).is_some());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_saved_world_round_trips_keeps_only_the_newest_and_can_be_forgotten() {
+        let path = tmp("world");
+        let st = Store::open(&path).unwrap();
+        assert_eq!(st.load_world(), None);
+        let bot = |arch: &str, x: f32| BotRec { arch: arch.into(), x, y: x + 1.0, attrs: BTreeMap::from([("health".to_string(), 12.0)]) };
+        st.save_world(&WorldSave { bots: vec![bot("old", 1.0)] });
+        st.save_world(&WorldSave { bots: vec![bot("drone", 5.0), bot("guard", 7.0)] });
+        st.flush();
+        let w = st.load_world().unwrap();
+        assert_eq!(w.bots.len(), 2);
+        assert_eq!(w.bots[0], bot("drone", 5.0));
+        drop(st);
+        let st = Store::open(&path).unwrap();
+        assert_eq!(st.load_world().unwrap().bots.len(), 2, "survives a reopen");
+        st.clear_world();
+        st.flush();
+        assert_eq!(st.load_world(), None);
+        // Garbage in the table reads as "no saved world", not a crash.
+        let c = Connection::open(&path).unwrap();
+        c.execute("INSERT OR REPLACE INTO world (key, data, updated) VALUES ('bots', 'not json', 0)", []).unwrap();
+        assert_eq!(st.load_world(), None);
     }
 }
