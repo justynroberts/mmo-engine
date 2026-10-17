@@ -192,6 +192,7 @@ impl Store {
     }
 
     /// Forget the saved world (a deliberate restart under new definitions).
+    #[allow(dead_code)] // kept for tests and tools; world edits now carry the bots over instead
     pub fn clear_world(&self) {
         let _ = self.tx.send(Msg::World(None));
     }

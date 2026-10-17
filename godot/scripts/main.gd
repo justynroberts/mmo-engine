@@ -1036,7 +1036,10 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_SPACE) and not hud.typing() and not smoke:
 		_attack() # holding Space keeps swinging, at the action's cooldown
 	var names := ["connecting", "connected", "refused", "closed"]
-	hud.status.text = "%s   %d ms   %d, %d   %d in view%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), "   GOD" if god else ""]
+	# The server sends only the nearest max_visible within interest_radius; say so when that is what you are seeing.
+	var cap := int(info.get("max_visible", 0))
+	var crowd := "   nearest %d shown, more around" % cap if cap > 0 and list.size() >= cap else ""
+	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, "   GOD" if god else ""]
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,

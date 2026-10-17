@@ -592,6 +592,26 @@ fn spawn_drive_and_kill_bots_through_the_admin_api() {
 }
 
 #[test]
+fn spawned_bots_survive_game_edits() {
+    let srv = start(&[]);
+    let bots = |srv: &_| state(srv)["e"].as_array().unwrap().iter().filter(|e| e[3].as_i64().unwrap_or(-1) >= 0).count();
+    let before = bots(&srv);
+    assert_eq!(json(&srv, "POST", "/api/spawn", r#"{"archetype":"drifter","count":25}"#).1["spawned"], 25);
+    assert_eq!(bots(&srv), before + 25);
+    // A bot-only edit (a colour) applies live and keeps every spawned bot.
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["archetypes"][0]["color"] = "#123456".into();
+    let (s, v) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!((s, v["reset"].clone()), (200, false.into()));
+    assert_eq!(bots(&srv), before + 25);
+    // A definitions edit restarts the world, and the bots still carry over (matched by name).
+    game["max_visible"] = 60.into();
+    let (s, v) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!((s, v["reset"].clone()), (200, true.into()));
+    assert_eq!(bots(&srv), before + 25);
+}
+
+#[test]
 fn bot_archetypes_behave_as_defined() {
     // One drone (chases and zaps) next to one civilian (flees): the drone should close in and hurt it.
     let srv = start(&[]);

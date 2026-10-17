@@ -181,6 +181,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "move_speed": sim.defs.move_speed,
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
+        "max_visible": sim.defs.max_visible,
         "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
@@ -640,6 +641,13 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         Err(e) => return err(400, e),
     };
     let hash = game.defs.content_hash();
+    // The bots carry over any edit, matched by archetype and attribute name like a save and restore: spawned
+    // bots are not thrown away, removed archetypes are dropped and every archetype is topped up to its count.
+    // An archetype whose count the edit changes starts again at its new count, so lowering a count removes bots.
+    let mut bots = c.sim.bot_records();
+    let old_count = |name: &str| c.sim.archs.iter().find(|a| a.name == name).map(|a| a.count);
+    let recount: Vec<String> = game.archs.iter().filter(|a| old_count(&a.name) != Some(a.count)).map(|a| a.name.clone()).collect();
+    bots.bots.retain(|b| !recount.contains(&b.arch));
     let mut dropped = 0;
     let mut moved = 0;
     let reset = hash != c.hs.defs_hash;
@@ -652,10 +660,6 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
         c.sim.player_reserve = c.params.max_clients;
-        // The saved bots belong to the old definitions; the new world starts from its own counts.
-        if let Some(st) = &c.hs.store {
-            st.clear_world();
-        }
         let (limiter, id_limiter) = (c.clients.limiter.take(), c.clients.id_limiter.take());
         *c.clients = Clients::default();
         c.clients.limiter = limiter;
@@ -673,7 +677,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
             moved = c.sim.replace_world(world);
         }
     }
-    c.sim.populate_bots();
+    c.sim.populate_from(&bots);
     *c.game = file;
     c.director.sync(c.game, c.sim.tick, c.params.hz);
     if let Some(g) = &c.hs.gateway {
