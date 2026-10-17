@@ -232,6 +232,18 @@ pub struct Sim {
     pub admin_actions: Vec<PendingAction>,
     /// This process's strip of the world (x range) when running as one zone of several: bots stay inside it.
     pub zone: Option<(f32, f32)>,
+    /// How far bots see right now, as a multiple of what their type says (set by the weather).
+    pub sight_mult: f32,
+    /// What clients are told about the current weather, if any.
+    pub weather: Option<WeatherView>,
+}
+
+/// The part of the weather that clients draw.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WeatherView {
+    pub name: String,
+    pub color: String,
+    pub intensity: f32,
 }
 
 impl Sim {
@@ -257,6 +269,8 @@ impl Sim {
             npc_actions: Vec::new(),
             admin_actions: Vec::new(),
             zone: None,
+            sight_mult: 1.0,
+            weather: None,
         }
     }
 
@@ -490,7 +504,8 @@ impl Sim {
     fn run_rules(&mut self, s: usize, a: usize) -> bool {
         use proto::game::{ActRt, CondRt, Seek};
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
-        let (reach, attack) = (self.archs[a].reach, self.archs[a].attack);
+        let m = self.sight_mult;
+        let (reach, attack) = (self.archs[a].reach * m.max(1.0), self.archs[a].attack);
         let attack_range = attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range);
 
         // One neighbour scan: nearest player, nearest other bot, nearest of either.
@@ -536,7 +551,7 @@ impl Sim {
                         Seek::Bot => 1,
                         Seek::Any => 2,
                     }];
-                    target = n.filter(|(d2, _)| *d2 <= within * within);
+                    target = n.filter(|(d2, _)| *d2 <= (within * m) * (within * m));
                     target.is_some()
                 }
                 CondRt::AttrBelow { attr, value } => self.ents.attrs[attr][s] < value,
@@ -552,7 +567,7 @@ impl Sim {
             }
             // Chasing, fleeing and attacking need someone: without a `sees` target
             // use the nearest anyone within the archetype's own sight.
-            let sight = self.archs[a].sight;
+            let sight = self.archs[a].sight * m;
             let foe = || target.or(near[2].filter(|(d2, _)| *d2 <= sight * sight));
             let steer: (i8, i8) = match then {
                 ActRt::Say { text, shout } => {
@@ -639,7 +654,7 @@ impl Sim {
             let (behaviour, sight, attack, attack_range) = match self.archs.get(a as usize) {
                 Some(r) => (
                     r.behaviour,
-                    r.sight,
+                    r.sight * self.sight_mult,
                     r.attack,
                     r.attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range),
                 ),

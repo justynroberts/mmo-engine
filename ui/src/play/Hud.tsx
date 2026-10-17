@@ -37,6 +37,7 @@ interface Readout {
   rtt: number
   fps: number
   hurt: number
+  weather: string
   pos: [number, number] | null
   target: ReturnType<typeof snapshotTarget>
 }
@@ -46,7 +47,7 @@ function snapshotTarget(s: Shared) {
 }
 
 export default function Hud({ client, info, shared, status, lines, recovery, dark, onToggleTheme }: Props) {
-  const [r, setR] = useState<Readout>({ hp: 1, hpText: '', low: false, down: false, visible: 0, rtt: 0, fps: 0, hurt: 0, pos: null, target: null })
+  const [r, setR] = useState<Readout>({ hp: 1, hpText: '', low: false, down: false, visible: 0, rtt: 0, fps: 0, hurt: 0, weather: '', pos: null, target: null })
   const [panel, setPanel] = useState<'none' | 'code' | 'help'>('none')
   const [copied, setCopied] = useState(false)
   const [sound, setSound] = useState(soundWanted)
@@ -85,6 +86,7 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
         rtt: Math.round(client.rtt),
         fps: shared.current.fps,
         hurt: hurtCount.current,
+        weather: shared.current.weather?.name ?? '',
         pos: me ? [Math.round(me.x * 10) / 10, Math.round(me.y * 10) / 10] : null,
         target: snapshotTarget(shared.current),
       }
@@ -108,8 +110,13 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
   const cycleTarget = useCallback(() => {
     const { self, others } = client.last
     if (!self || others.length === 0) return
+    // With nothing locked, T locks what is already shown as the target; after that it steps outward.
+    const cur = shared.current.selected
+    if (cur === null && shared.current.target) {
+      shared.current.selected = shared.current.target.id
+      return
+    }
     const order = [...others].sort((a, b) => Math.hypot(a.x - self.x, a.y - self.y) - Math.hypot(b.x - self.x, b.y - self.y)).map((e) => e.id)
-    const cur = shared.current.selected ?? shared.current.target?.id ?? null
     const at = cur === null ? -1 : order.indexOf(cur)
     shared.current.selected = order[(at + 1) % order.length] ?? null
   }, [client, shared])
@@ -200,6 +207,7 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
             <div className="hud-dim">
               {r.visible} in view · {r.rtt ? `${r.rtt} ms` : '… ms'} · {r.fps || '…'} fps
             </div>
+            {r.weather && <div>WEATHER · {r.weather}</div>}
           </div>
           {t && (
             <div className="hud-panel p-2 leading-5" aria-label="Target" role="group">

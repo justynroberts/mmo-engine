@@ -67,6 +67,19 @@ guests are unaffected. Counted as `identity_limited` in stats.
 | `--ui-dir DIR` | Built UI to serve (default `ui/dist` if present) |
 | `--port --hz --world-size --seed --max-clients --npcs --pin --timeout --duration --quiet` | As before |
 
+## God tab: spawn, weather, events
+
+The console's God tab is the game master's panel. Everything on it is data in the game file, so it is built in the console, applied live and saved, and none of it changes the wire format or drops a player.
+
+| Part | What it does |
+|---|---|
+| Spawn | Pick a running bot type and a count, then drop them anywhere, spread over a place, or by clicking the map (the map arms until you press Stop) |
+| Weather | Named conditions with a colour, thickness, a bot-sight multiplier (fog, clear night) and attribute drains on everything alive (acid rain: -1 health a second). Start one for N seconds or until cleared; a drain that reaches zero is a death like any other. Players see it: the play page draws haze and falling streaks in its colour |
+| Events | A list of steps that run together: announce (a message from "server" to everyone), set or clear the weather, spawn bots in a place, change an attribute for everyone in a place, remove all bots of a type. Fire by hand, or on a timer with a chance each time it comes due |
+| Log | What fired and what each step did |
+
+Presets give a start (fog, acid rain, bot wave, strike, storm front, cleanup). Renaming or deleting an attribute, bot type, place or weather rewrites or drops the steps that used it, and a deleted place never turns a local strike into a global one. API: `POST /api/weather {"name": "fog", "duration_secs": 60}` (`name: null` clears), `POST /api/events/fire {"name": "wave"}`, and `/api/state` carries `director` (current weather, event counters, log). `POST /api/spawn` takes an optional `radius` to scatter around `x, y`. With several zones each zone runs its own timers.
+
 ## Browser client
 
 The play page (`--web ADDR`, then open the address) is a full client, not a demo. It is the only client that needs no install.
@@ -237,7 +250,7 @@ For comparison, before encryption the same machine did 2,000 normal-density clie
 ```sh
 cargo test --release                 # 59 proto + 27 server unit tests, 26 end-to-end tests (real server, real UDP and HTTP)
 (cd ui && npm test)                  # 40 unit and accessibility tests
-scripts/ui_e2e.py [--shots DIR]      # 84 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
+scripts/ui_e2e.py [--shots DIR]      # 97 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
 ```
 

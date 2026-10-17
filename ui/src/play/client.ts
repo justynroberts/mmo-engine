@@ -23,6 +23,8 @@ export interface PlayInfo {
   /** Set when the server is one zone of several: its index, and each zone's web base URL (null if unknown). */
   zone?: number | null
   zones?: (string | null)[] | null
+  /** The weather right now, or null for clear sky. */
+  weather?: { name: string; color: string; intensity: number } | null
 }
 
 /** Where to open the WebSocket for a zone, from the base URL the operator configured. */

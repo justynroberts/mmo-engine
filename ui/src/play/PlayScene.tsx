@@ -114,6 +114,19 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     bars.frustumCulled = false
     scene.add(bars)
 
+    // Weather: the fog closes in and streaks fall around you, in the weather's colour.
+    const RAIN = 700
+    const rainGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(RAIN * 6), 3))
+    const rainMat = new THREE.LineBasicMaterial({ color: pal.line, transparent: true, opacity: 0.55 })
+    const rain = new THREE.LineSegments(rainGeo, rainMat)
+    rain.frustumCulled = false
+    rain.visible = false
+    scene.add(rain)
+    const rainPos = Array.from({ length: RAIN }, () => ({ x: Math.random() * 80 - 40, y: Math.random() * 40, z: Math.random() * 80 - 40 }))
+    const fogBase = new THREE.Color(pal.bg)
+    const fogTint = new THREE.Color()
+    const fog = scene.fog as THREE.Fog
+
     // Floating damage numbers.
     const textures = new Map<string, THREE.CanvasTexture>()
     const labelTexture = (text: string, color: number) => {
@@ -341,6 +354,41 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         me.visible = false
         ring.visible = false
       }
+      const wx = s.weather
+      if (wx && self) {
+        const k = Math.max(0, Math.min(1, wx.intensity))
+        fogTint.set(wx.color)
+        scene.background = null
+        fog.color.copy(fogBase).lerp(fogTint, 0.35 * k)
+        renderer.setClearColor(fog.color, 1)
+        fog.near = 50 - 40 * k
+        fog.far = 150 - 90 * k
+        rainMat.color.set(wx.color).lerp(new THREE.Color(pal.line), 0.4)
+        const n = k > 0.25 ? Math.round(RAIN * k) : 0
+        rain.visible = n > 0
+        const rp = rainGeo.getAttribute('position') as THREE.BufferAttribute
+        const sx = self.x - half
+        const sz = self.y - half
+        for (let i = 0; i < n; i++) {
+          const r = rainPos[i]!
+          r.y -= dt * 38
+          if (r.y < 0) {
+            r.y = 40
+            r.x = Math.random() * 80 - 40
+            r.z = Math.random() * 80 - 40
+          }
+          rp.setXYZ(i * 2, sx + r.x, r.y, sz + r.z)
+          rp.setXYZ(i * 2 + 1, sx + r.x, r.y + 1.6, sz + r.z)
+        }
+        rainGeo.setDrawRange(0, n * 2)
+        rp.needsUpdate = true
+      } else {
+        rain.visible = false
+        fog.color.copy(fogBase)
+        renderer.setClearColor(fogBase, 1)
+        fog.near = 50
+        fog.far = 150
+      }
       renderer.render(scene, camera)
     }
     raf = requestAnimationFrame(frame)
@@ -357,6 +405,8 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       grid.geometry.dispose()
       ;(grid.material as THREE.Material).dispose()
       ringMat.dispose()
+      rainGeo.dispose()
+      rainMat.dispose()
       for (const o of [others, me, ring, bars]) {
         o.geometry.dispose()
         ;(o.material as THREE.Material).dispose()

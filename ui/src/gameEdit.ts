@@ -1,4 +1,5 @@
 import type { Act, ActionFile, Archetype, AttrFile, Cond, GameFile, Place, Route, Rule } from './api'
+import { rewriteRefs } from './directorEdit'
 
 /** Everything that changes the wire schema (and so the handshake hash). */
 export function wireOf(g: GameFile): string {
@@ -65,7 +66,7 @@ export function renameAttr(g: GameFile, index: number, name: string): GameFile {
   const old = g.attrs[index]?.name
   if (old === undefined || old === name) return g
   const swap = (n: string) => (n === old ? name : n)
-  return {
+  return rewriteRefs({
     ...g,
     attrs: g.attrs.map((a, i) => (i === index ? { ...a, name } : a)),
     actions: g.actions.map((a) => ({
@@ -80,14 +81,14 @@ export function renameAttr(g: GameFile, index: number, name: string): GameFile {
         r.when.kind === 'attr_below' || r.when.kind === 'attr_above' ? { ...r, when: { ...r.when, attr: swap(r.when.attr) } } : r,
       ),
     })),
-  }
+  }, 'attr', old, name)
 }
 
 /** Remove an attribute and anything that referred to it. */
 export function removeAttr(g: GameFile, index: number): GameFile {
   const gone = g.attrs[index]?.name
   if (gone === undefined) return g
-  return {
+  return rewriteRefs({
     ...g,
     attrs: g.attrs.filter((_, i) => i !== index),
     actions: g.actions.map((a) => ({
@@ -100,7 +101,7 @@ export function removeAttr(g: GameFile, index: number): GameFile {
       attrs: Object.fromEntries(Object.entries(a.attrs).filter(([k]) => k !== gone)),
       rules: a.rules.filter((r) => !((r.when.kind === 'attr_below' || r.when.kind === 'attr_above') && r.when.attr === gone)),
     })),
-  }
+  }, 'attr', gone, null)
 }
 
 /** Rename an action and any bot that attacks with it. */
@@ -272,7 +273,7 @@ export function renamePlace(g: GameFile, index: number, name: string): GameFile 
   if (old === undefined || old === name) return g
   const swapC = (c: Cond): Cond => (c.kind === 'in_place' && c.place === old ? { ...c, place: name } : c)
   const swapA = (a: Act): Act => (a.kind === 'goto' && a.place === old ? { ...a, place: name } : a)
-  return {
+  return rewriteRefs({
     ...g,
     places: g.places.map((p, i) => (i === index ? { ...p, name } : p)),
     archetypes: g.archetypes.map((a) => ({
@@ -280,14 +281,14 @@ export function renamePlace(g: GameFile, index: number, name: string): GameFile 
       home: a.home === old ? name : a.home,
       rules: a.rules.map((r) => ({ when: swapC(r.when), then: swapA(r.then) })),
     })),
-  }
+  }, 'place', old, name)
 }
 
 /** Remove a place, and the rules and homes that pointed at it. */
 export function removePlace(g: GameFile, index: number): GameFile {
   const gone = g.places[index]?.name
   if (gone === undefined) return g
-  return {
+  return rewriteRefs({
     ...g,
     places: g.places.filter((_, i) => i !== index),
     archetypes: g.archetypes.map((a) => ({
@@ -295,7 +296,7 @@ export function removePlace(g: GameFile, index: number): GameFile {
       home: a.home === gone ? null : a.home,
       rules: a.rules.filter((r) => !refsPlace(r.when, gone) && !refsPlace(r.then, gone)),
     })),
-  }
+  }, 'place', gone, null)
 }
 
 export function renameRoute(g: GameFile, index: number, name: string): GameFile {

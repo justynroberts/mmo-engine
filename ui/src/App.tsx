@@ -1,4 +1,5 @@
 import * as Tabs from '@radix-ui/react-tabs'
+import God, { type Drop } from './components/God'
 import { motion, useReducedMotion } from 'framer-motion'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type GameFile, type Info, type PutResult, type State, type WorldGeom } from './api'
@@ -14,6 +15,7 @@ import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
 const TABS: readonly (readonly [string, string])[] = [
   ['bots', 'Bots'],
   ['builder', 'Builder'],
+  ['god', 'God'],
   ['attrs', 'Attributes'],
   ['actions', 'Actions'],
   ['entity', 'Entity'],
@@ -133,6 +135,7 @@ export default function App() {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [b, setB] = useState<BuilderState>(initialBuilder)
   const [note, setNote] = useState<string | null>(null)
+  const [drop, setDrop] = useState<Drop | null>(null)
 
   const onState = useCallback((s: State | null) => {
     stateRef.current = s
@@ -221,6 +224,12 @@ export default function App() {
     setB({ ...b, tool: 'select', draft: [], sel: { kind: 'route', index: draft.routes.length } })
   }
   const onMapClick = (x: number, y: number) => {
+    if (tab === 'god' && drop) {
+      void api<{ error?: string }>('/api/spawn', 'POST', { archetype: drop.arch, count: drop.count, x, y, radius: 6 }).then((r) =>
+        setNote(r.status === 200 ? `Dropped ${drop.count} ${drop.arch} at ${Math.round(x)}, ${Math.round(y)}.` : (r.body.error ?? `server said ${r.status}`)),
+      )
+      return
+    }
     if (!draft) return
     if (b.tool === 'place') {
       setGame({ ...draft, places: [...draft.places, newPlace(draft, x, y)] })
@@ -264,13 +273,13 @@ export default function App() {
   {!view3d ? (
           <WorldView
             edit={
-              tab === 'builder' && draft
+              (tab === 'builder' || (tab === 'god' && drop)) && draft
                 ? {
                     places: draft.places,
                     routes: draft.routes,
                     home: draft.archetypes[b.arch]?.home ?? null,
                     sel: b.sel,
-                    tool: b.tool,
+                    tool: tab === 'god' ? 'spawn' : b.tool,
                     draft: b.draft,
                     walls: draft.walls ?? null,
                     onAddWall: (x0, y0, x1, y1) => {
@@ -340,6 +349,7 @@ export default function App() {
             onValueChange={(v) => {
               // Half-typed JSON is dropped when you leave the JSON tab; the draft keeps its last valid state.
               if (v !== 'raw') setRaw(null)
+              if (v !== 'god') setDrop(null)
               setTab(v)
             }} className="flex flex-col lg:min-h-0 lg:flex-1">
             <Tabs.List aria-label="Sections" className="cell flex px-2 overflow-x-auto shrink-0">
@@ -363,6 +373,15 @@ export default function App() {
                 {body(
                   draft ? (
                     <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} worldBoxes={world?.boxes ?? []} worldSize={world?.size ?? 2048} />
+                  ) : (
+                    <p className="text-fg-3 py-4">Loading game file…</p>
+                  ),
+                )}
+              </Tabs.Content>
+              <Tabs.Content value="god" tabIndex={-1}>
+                {body(
+                  draft ? (
+                    <God game={draft} live={live} setGame={setGame} director={stats?.director} drop={drop} setDrop={setDrop} note={note} />
                   ) : (
                     <p className="text-fg-3 py-4">Loading game file…</p>
                   ),

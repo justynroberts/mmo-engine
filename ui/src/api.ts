@@ -65,6 +65,37 @@ export interface Archetype {
   home: string | null
   rules: Rule[]
 }
+export interface Drain {
+  attr: string
+  per_sec: number
+}
+export interface WeatherDef {
+  name: string
+  color: string
+  intensity: number
+  sight_mult: number
+  drain: Drain[]
+}
+export type Step =
+  | { kind: 'announce'; text: string }
+  | { kind: 'weather'; name: string | null; duration_secs: number }
+  | { kind: 'spawn'; archetype: string; count: number; place: string | null }
+  | { kind: 'hit'; attr: string; delta: number; place: string | null }
+  | { kind: 'clear'; archetype: string }
+export interface EventDef {
+  name: string
+  every_secs: number
+  chance_pct: number
+  steps: Step[]
+}
+export interface DirectorState {
+  weather: { name: string; left_secs: number | null } | null
+  weathers: string[]
+  events: { name: string; fired: number; next_in_secs: number | null }[]
+  /** Newest first: [tick, text]. */
+  log: [number, string][]
+}
+
 export interface GameFile {
   move_speed: number
   entity_radius: number
@@ -77,6 +108,8 @@ export interface GameFile {
   routes: Route[]
   /** Hand-placed walls [x0, y0, x1, y1]; absent means generated from the world seed. */
   walls?: [number, number, number, number][]
+  weather?: WeatherDef[]
+  events?: EventDef[]
 }
 
 export interface Perf {
@@ -115,6 +148,7 @@ export interface State {
   attrs: string[]
   e: EntityRow[]
   shown: number
+  director?: DirectorState
 }
 export interface Info {
   server_key: string

@@ -22,8 +22,8 @@ function useTheme() {
   return { dark, toggle }
 }
 
-/** The walls can be edited while people play; look for changes now and then so prediction keeps matching the server. */
-const WALL_CHECK_MS = 15000
+/** Walls and weather can change while people play; look now and then so prediction and the sky match the server. */
+const WORLD_CHECK_MS = 5000
 
 export default function Play() {
   const { dark, toggle } = useTheme()
@@ -48,7 +48,7 @@ export default function Play() {
     setIdentity(id)
     const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
     const add = (m: ChatMsg, self: number) =>
-      setLines((l) => [...l.slice(-30), { key: lineKey.current++, who: m.from === self ? 'you' : `#${m.from & 0xffffff}`, text: m.text, shout: m.channel === 1 }])
+      setLines((l) => [...l.slice(-30), { key: lineKey.current++, who: m.from === 0 ? 'server' : m.from === self ? 'you' : `#${m.from & 0xffffff}`, text: m.text, shout: m.channel === 1 }])
     const c: GameClient = new GameClient(info, id, url, {
       onStatus: (s, detail) => setStatus({ s, detail }),
       onChat: (m) => add(m, c.entity),
@@ -59,23 +59,30 @@ export default function Play() {
 
   useEffect(() => () => client?.stop(), [client])
 
-  // Pick up wall edits made in the console while we are playing.
+  // Pick up wall edits and weather changes made in the console.
   useEffect(() => {
     if (!client) return
-    let last = JSON.stringify(info?.boxes)
+    let lastBoxes = JSON.stringify(info?.boxes)
+    let lastWeather = ''
     const t = setInterval(() => {
       fetch('/play/info')
         .then((r) => (r.ok ? r.json() : null))
         .then((fresh: PlayInfo | null) => {
           if (!fresh || fresh.content_hash !== info?.content_hash) return
+          const w = JSON.stringify(fresh.weather ?? null)
+          if (w !== lastWeather) {
+            lastWeather = w
+            shared.current.weather = fresh.weather ?? null
+          }
           const key = JSON.stringify(fresh.boxes)
-          if (key === last) return
-          last = key
+          if (key === lastBoxes) return
+          lastBoxes = key
           client.setBoxes(fresh.boxes)
           setInfo((p) => (p ? { ...p, boxes: fresh.boxes } : p))
         })
         .catch(() => undefined)
-    }, WALL_CHECK_MS)
+    }, WORLD_CHECK_MS)
+    shared.current.weather = info?.weather ?? null
     return () => clearInterval(t)
   }, [client, info?.content_hash]) // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -36,6 +36,22 @@ pub enum Cmd {
     Release { id: u32 },
     ChatLog,
     Say(SayReq),
+    SetWeather(WeatherReq),
+    FireEvent(FireReq),
+}
+
+#[derive(Deserialize)]
+pub struct WeatherReq {
+    /// A weather from the game file, or null to clear.
+    pub name: Option<String>,
+    /// How long it lasts; 0 means until changed.
+    #[serde(default)]
+    pub duration_secs: u32,
+}
+
+#[derive(Deserialize)]
+pub struct FireReq {
+    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +69,9 @@ pub struct SpawnReq {
     pub count: u32,
     pub x: Option<f32>,
     pub y: Option<f32>,
+    /// With x and y: scatter the bots within this distance of the point instead of stacking them on it.
+    #[serde(default)]
+    pub radius: Option<f32>,
 }
 fn one() -> u32 {
     1
@@ -126,6 +145,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
         "boxes": boxes,
+        "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
         "zone": hs.zone.as_ref().map(|z| z.index),
         "zones": hs.zone.as_ref().map(|z| (0..z.count).map(|i| hs.zone_web.get(i as usize).cloned()).collect::<Vec<_>>()),
     })
@@ -142,6 +162,7 @@ pub struct Ctl<'a> {
     pub live: &'a LiveStats,
     pub params: &'a Params,
     pub bot_dir: Option<&'a crate::botdir::BotDirStatus>,
+    pub director: &'a mut crate::director::Director,
 }
 
 pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>) -> std::io::Result<Receiver<Request>> {
@@ -291,6 +312,8 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
         }
         ("GET", "/api/chat") => Some(Cmd::ChatLog),
         ("POST", "/api/say") => serde_json::from_slice(&req.body).ok().map(Cmd::Say),
+        ("POST", "/api/weather") => serde_json::from_slice(&req.body).ok().map(Cmd::SetWeather),
+        ("POST", "/api/events/fire") => serde_json::from_slice(&req.body).ok().map(Cmd::FireEvent),
         _ => None,
     };
     if let Some(cmd) = cmd {
@@ -401,9 +424,17 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             let Some(a) = c.sim.archs.iter().position(|a| a.name == r.archetype) else {
                 return err(400, format!("no archetype named '{}'", r.archetype));
             };
-            let at = r.x.zip(r.y);
+            let centre = r.x.zip(r.y);
+            let spread = r.radius.filter(|v| v.is_finite()).map_or(0.0, |v| v.clamp(0.0, 512.0));
             let mut n = 0;
             for _ in 0..r.count.min(5000) {
+                let at = centre.map(|(x, y)| {
+                    if spread <= 0.0 {
+                        return (x, y);
+                    }
+                    let (ang, d) = (c.sim.rng.f32() * std::f32::consts::TAU, spread * c.sim.rng.f32().sqrt());
+                    (x + ang.cos() * d, y + ang.sin() * d)
+                });
                 if c.sim.spawn_as(NONE, a as u8, at).is_none() {
                     break;
                 }
@@ -478,6 +509,19 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             crate::net::say_from(c.sim, c.clients, s, ch, &text);
             (200, json!({ "ok": true, "text": text }).to_string())
         }
+        Cmd::SetWeather(r) => match c.director.set_weather(c.sim, r.name.as_deref(), r.duration_secs.min(86_400)) {
+            Ok(()) => {
+                if let Some(g) = &c.hs.gateway {
+                    g.set_info(play_info(c.sim, c.hs));
+                }
+                (200, json!({ "ok": true, "weather": r.name }).to_string())
+            }
+            Err(e) => err(400, e),
+        },
+        Cmd::FireEvent(r) => match c.director.fire(&r.name) {
+            Ok(()) => (200, json!({ "ok": true, "queued": r.name }).to_string()),
+            Err(e) => err(404, e),
+        },
         Cmd::Release { id } => {
             let Some(s) = c.sim.ents.resolve(id) else { return err(404, "no such entity") };
             if c.sim.ents.owner[s] == DRIVEN {
@@ -537,6 +581,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
     }
     c.sim.populate_bots();
     *c.game = file;
+    c.director.sync(c.game, c.sim.tick, c.params.hz);
     if let Some(g) = &c.hs.gateway {
         g.set_info(play_info(c.sim, c.hs));
     }
@@ -591,6 +636,19 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     }
     if let Some(b) = c.bot_dir {
         let _ = write!(o, r#""bot_dir":{},"#, json!({"dir": b.dir, "files": b.files, "bots": b.bots, "error": b.error, "applied": b.applied}));
+    }
+    {
+        let d = &*c.director;
+        let _ = write!(
+            o,
+            r#""director":{},"#,
+            json!({
+                "weather": d.active.as_ref().map(|a| json!({"name": a.name, "left_secs": a.until.map(|u| u.saturating_sub(s.tick) / s.tick_hz.max(1))})),
+                "weathers": d.weather_names(),
+                "events": d.event_rows(s.tick, s.tick_hz),
+                "log": d.log.iter().rev().take(40).map(|(t, x)| json!([t, x])).collect::<Vec<_>>(),
+            })
+        );
     }
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(

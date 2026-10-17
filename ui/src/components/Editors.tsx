@@ -2,6 +2,7 @@ import { Footprints, Pause, PersonSimpleRun, Target } from '@phosphor-icons/reac
 import { Copy, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { ActionFile, Archetype, AttrFile, Behaviour, GameFile } from '../api'
+import { removeArch, renameArch } from '../directorEdit'
 import {
   addFromTemplate,
   BOT_TEMPLATES,
@@ -255,10 +256,10 @@ export function BotsEditor({
                   className="block h-6 w-8 cursor-pointer border border-line bg-transparent p-0 rounded-sm"
                 />
               </label>
-              <TextField label="Bot type" value={a.name} invalid={dup(a.name, i)} onCommit={(n) => patch(i, { name: n })} className="flex-1" />
+              <TextField label="Bot type" value={a.name} invalid={dup(a.name, i)} onCommit={(n) => setGame(renameArch(game, i, n))} className="flex-1" />
               <IconButton
                 label={`Delete bot type ${a.name}`}
-                onClick={() => setGame({ ...game, archetypes: game.archetypes.filter((_, k) => k !== i) })}
+                onClick={() => setGame(removeArch(game, i))}
               >
                 <Trash2 size={16} strokeWidth={1.5} aria-hidden />
               </IconButton>

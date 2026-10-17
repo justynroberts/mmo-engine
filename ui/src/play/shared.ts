@@ -13,7 +13,15 @@ export interface Target {
 }
 
 /** Mutable state passed by ref between the HUD (keys, buttons) and the scene (clicks, frames). */
+export interface Weather {
+  name: string
+  color: string
+  intensity: number
+}
+
 export interface Shared {
+  /** What the server says the weather is; the scene draws it, the HUD names it. */
+  weather: Weather | null,
   target: Target | null
   /** An entity the player chose by clicking or pressing T; null means "whatever is nearest". */
   selected: number | null
@@ -22,7 +30,7 @@ export interface Shared {
   zoom: number
 }
 
-export const newShared = (): Shared => ({ target: null, selected: null, fps: 0, zoom: 1 })
+export const newShared = (): Shared => ({ weather: null, target: null, selected: null, fps: 0, zoom: 1 })
 
 export const ZOOM_MIN = 0.5
 export const ZOOM_MAX = 1.8

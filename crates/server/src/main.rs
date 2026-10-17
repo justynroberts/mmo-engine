@@ -5,6 +5,7 @@
 
 mod botdir;
 mod ctl;
+mod director;
 mod io;
 mod net;
 mod sim;
@@ -216,6 +217,8 @@ fn main() {
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
+    let mut director = director::Director::new();
+    director.sync(&game_file, 0, cfg.hz);
     let mut botdir = cfg.bots_dir.as_deref().map(botdir::BotDir::open);
     let mut zone: Option<zone::Zone> = cfg.zone.map(|(index, count)| {
         let secret = cfg.zone_secret.clone().or_else(|| std::env::var("MMO_ZONE_SECRET").ok()).unwrap_or_default();
@@ -387,6 +390,7 @@ fn main() {
                 live: &live,
                 params: &params,
                 bot_dir: botdir.as_ref().map(|b| &b.status),
+                director: &mut director,
             };
             ctl::service(rx, &mut c);
         }
@@ -403,6 +407,7 @@ fn main() {
                     live: &live,
                     params: &params,
                     bot_dir: None,
+                    director: &mut director,
                 };
                 let (status, body) = ctl::apply_game(&text, &mut c);
                 if status != 200 {
@@ -424,6 +429,11 @@ fn main() {
         }
         if let Some(z) = zone.as_mut() {
             z.ingest(&mut sim);
+        }
+        if director.tick(&mut sim, &mut clients) {
+            if let Some(g) = &hs.gateway {
+                g.set_info(ctl::play_info(&sim, &hs));
+            }
         }
         sim.step(&pending);
         if let Some(z) = zone.as_mut() {

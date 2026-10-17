@@ -257,6 +257,10 @@ pub struct GameFile {
     /// Hand-placed walls as `[x0, y0, x1, y1]`. Absent means the world's walls are generated from its seed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub walls: Option<Vec<[f32; 4]>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weather: Vec<WeatherDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<EventDef>,
 }
 fn d_speed() -> f32 {
     20.0
@@ -269,6 +273,103 @@ fn d_interest() -> f32 {
 }
 fn d_visible() -> u32 {
     64
+}
+
+
+// ---------------------------------------------------------------- weather and events
+
+pub const MAX_WEATHER: usize = 16;
+pub const MAX_EVENTS: usize = 32;
+pub const MAX_STEPS: usize = 12;
+pub const MAX_EVENT_SPAWN: u32 = 500;
+
+/// A per-second change to one attribute of everything in the world while a weather is active.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Drain {
+    pub attr: String,
+    /// Negative hurts, positive heals.
+    pub per_sec: f32,
+}
+
+/// A kind of weather. Clients are told its name, colour and intensity (to draw it); the server applies the
+/// effects: attribute drains on every player and bot, and how far bots can see.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WeatherDef {
+    pub name: String,
+    #[serde(default = "d_weather_color")]
+    pub color: String,
+    /// 0 (barely there) to 1 (thick), for how it is drawn.
+    #[serde(default = "d_half")]
+    pub intensity: f32,
+    /// Multiplies how far bots see: fog under 1, clear air over it.
+    #[serde(default = "d_one")]
+    pub sight_mult: f32,
+    #[serde(default)]
+    pub drain: Vec<Drain>,
+}
+fn d_weather_color() -> String {
+    "#8899aa".into()
+}
+fn d_half() -> f32 {
+    0.5
+}
+fn d_duration() -> u32 {
+    120
+}
+fn d_spawn_count() -> u32 {
+    5
+}
+fn d_chance() -> f32 {
+    100.0
+}
+
+/// One thing an event does. Steps run in order, all in the same tick.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Step {
+    /// A server message to every player.
+    Announce { text: String },
+    /// Start a weather for a while, or with no name end the current one.
+    Weather {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default = "d_duration")]
+        duration_secs: u32,
+    },
+    /// Add bots, spread over a place or anywhere.
+    Spawn {
+        archetype: String,
+        #[serde(default = "d_spawn_count")]
+        count: u32,
+        #[serde(default)]
+        place: Option<String>,
+    },
+    /// Change an attribute once for everything inside a place, or everywhere.
+    Hit {
+        attr: String,
+        delta: f32,
+        #[serde(default)]
+        place: Option<String>,
+    },
+    /// Remove every live bot of a type.
+    Clear { archetype: String },
+}
+
+/// Something that happens: on demand from the console, or on a timer.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EventDef {
+    pub name: String,
+    /// Run itself every this many seconds (at least 5). 0 means only when fired by hand.
+    #[serde(default)]
+    pub every_secs: u32,
+    /// Each time it comes due, the chance in percent that it really happens.
+    #[serde(default = "d_chance")]
+    pub chance_pct: f32,
+    #[serde(default)]
+    pub steps: Vec<Step>,
 }
 
 /// Server-side runtime form of an archetype: names resolved to indices.
@@ -405,6 +506,8 @@ impl GameFile {
                 Route { name: "market loop".into(), points: vec![[390.0, 130.0], [450.0, 130.0], [450.0, 190.0], [390.0, 190.0]], looped: true },
             ],
             walls: None,
+            weather: Vec::new(),
+            events: Vec::new(),
             move_speed: 20.0,
             entity_radius: 0.5,
             interest_radius: 128.0,
@@ -720,6 +823,7 @@ impl GameFile {
                 start,
             });
         }
+        self.check_director()?;
         Ok(Game { defs, archs, places: self.places.clone(), routes: self.routes.clone() })
     }
 
@@ -729,6 +833,122 @@ impl GameFile {
 
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("serialise")
+    }
+}
+
+impl GameFile {
+    /// Weather and events refer to attributes, bot types and places by name; make sure every reference lands.
+    fn check_director(&self) -> Result<(), String> {
+        let attr = |n: &str| self.attrs.iter().any(|a| a.name == n);
+        let arch = |n: &str| self.archetypes.iter().any(|a| a.name == n);
+        let place = |n: &str| self.places.iter().any(|p| p.name == n);
+        let plain = |n: &str, what: &str| -> Result<(), String> {
+            if n.trim().is_empty() || n.len() > 32 || n.trim() != n {
+                return Err(format!("{what}: name must be 1..32 characters, no edge spaces"));
+            }
+            Ok(())
+        };
+        if self.weather.len() > MAX_WEATHER {
+            return Err(format!("at most {MAX_WEATHER} weathers"));
+        }
+        if self.events.len() > MAX_EVENTS {
+            return Err(format!("at most {MAX_EVENTS} events"));
+        }
+        let mut seen = HashSet::new();
+        for w in &self.weather {
+            plain(&w.name, "weather")?;
+            if !seen.insert(w.name.as_str()) {
+                return Err(format!("duplicate weather '{}'", w.name));
+            }
+            if !(0.0..=1.0).contains(&w.intensity) {
+                return Err(format!("weather '{}': intensity must be 0..1", w.name));
+            }
+            if !(w.sight_mult >= 0.1 && w.sight_mult <= 4.0) {
+                return Err(format!("weather '{}': sight_mult must be 0.1..4", w.name));
+            }
+            if w.color.len() != 7 || !w.color.starts_with('#') || !w.color[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(format!("weather '{}': colour must look like #aabbcc", w.name));
+            }
+            if w.drain.len() > 4 {
+                return Err(format!("weather '{}': at most 4 drains", w.name));
+            }
+            for d in &w.drain {
+                if !attr(&d.attr) {
+                    return Err(format!("weather '{}': unknown attribute '{}'", w.name, d.attr));
+                }
+                if !d.per_sec.is_finite() || d.per_sec.abs() > 1000.0 {
+                    return Err(format!("weather '{}': drain per_sec must be a number within 1000", w.name));
+                }
+            }
+        }
+        let mut seen = HashSet::new();
+        for e in &self.events {
+            plain(&e.name, "event")?;
+            if !seen.insert(e.name.as_str()) {
+                return Err(format!("duplicate event '{}'", e.name));
+            }
+            if e.every_secs != 0 && !(5..=86_400).contains(&e.every_secs) {
+                return Err(format!("event '{}': every_secs must be 0 (by hand) or 5..86400", e.name));
+            }
+            if !(0.0..=100.0).contains(&e.chance_pct) {
+                return Err(format!("event '{}': chance_pct must be 0..100", e.name));
+            }
+            if e.steps.is_empty() || e.steps.len() > MAX_STEPS {
+                return Err(format!("event '{}': needs 1 to {MAX_STEPS} steps", e.name));
+            }
+            for (i, st) in e.steps.iter().enumerate() {
+                let ctx = format!("event '{}' step {}", e.name, i + 1);
+                match st {
+                    Step::Announce { text } => {
+                        if text.trim().is_empty() || text.len() > 120 {
+                            return Err(format!("{ctx}: the message must be 1..120 bytes"));
+                        }
+                    }
+                    Step::Weather { name, duration_secs } => {
+                        if let Some(n) = name {
+                            if !self.weather.iter().any(|w| &w.name == n) {
+                                return Err(format!("{ctx}: unknown weather '{n}'"));
+                            }
+                            if *duration_secs == 0 || *duration_secs > 86_400 {
+                                return Err(format!("{ctx}: duration must be 1..86400 seconds"));
+                            }
+                        }
+                    }
+                    Step::Spawn { archetype, count, place: pl } => {
+                        if !arch(archetype) {
+                            return Err(format!("{ctx}: unknown bot type '{archetype}'"));
+                        }
+                        if *count == 0 || *count > MAX_EVENT_SPAWN {
+                            return Err(format!("{ctx}: count must be 1..{MAX_EVENT_SPAWN}"));
+                        }
+                        if let Some(p) = pl {
+                            if !place(p) {
+                                return Err(format!("{ctx}: unknown place '{p}'"));
+                            }
+                        }
+                    }
+                    Step::Hit { attr: a, delta, place: pl } => {
+                        if !attr(a) {
+                            return Err(format!("{ctx}: unknown attribute '{a}'"));
+                        }
+                        if !delta.is_finite() {
+                            return Err(format!("{ctx}: delta must be a number"));
+                        }
+                        if let Some(p) = pl {
+                            if !place(p) {
+                                return Err(format!("{ctx}: unknown place '{p}'"));
+                            }
+                        }
+                    }
+                    Step::Clear { archetype } => {
+                        if !arch(archetype) {
+                            return Err(format!("{ctx}: unknown bot type '{archetype}'"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -888,5 +1108,53 @@ mod tests {
         .unwrap();
         let guard = g.archs.iter().find(|a| a.name == "guard").unwrap();
         assert!(matches!(&guard.rules[0].then, ActRt::Say { text, shout: true } if text == "hi there"));
+    }
+
+    #[test]
+    fn weather_and_events_are_validated_by_name_and_old_files_still_load() {
+        let mut g = GameFile::default_game();
+        assert!(g.weather.is_empty() && g.events.is_empty());
+        assert!(!g.to_json().contains("weather"), "empty lists are not written, so old files round-trip unchanged");
+        g.weather.push(WeatherDef { name: "storm".into(), color: "#445566".into(), intensity: 0.8, sight_mult: 0.5, drain: vec![Drain { attr: "health".into(), per_sec: -1.0 }] });
+        g.events.push(EventDef {
+            name: "raid".into(),
+            every_secs: 60,
+            chance_pct: 50.0,
+            steps: vec![
+                Step::Announce { text: "Raiders at the plaza".into() },
+                Step::Weather { name: Some("storm".into()), duration_secs: 30 },
+                Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 5, place: Some("plaza".into()) },
+                Step::Hit { attr: "health".into(), delta: -10.0, place: Some("plaza".into()) },
+                Step::Clear { archetype: g.archetypes[0].name.clone() },
+            ],
+        });
+        g.build().expect("a consistent game builds");
+        let back = GameFile::from_json(&g.to_json()).unwrap();
+        assert_eq!(back, g);
+
+        let bad = |f: &dyn Fn(&mut GameFile), needle: &str| {
+            let mut h = g.clone();
+            f(&mut h);
+            let e = h.build().err().unwrap_or_else(|| panic!("should refuse: {needle}"));
+            assert!(e.contains(needle), "{e} should mention {needle}");
+        };
+        bad(&|h| h.weather[0].drain[0].attr = "mana".into(), "unknown attribute 'mana'");
+        bad(&|h| h.weather[0].intensity = 2.0, "intensity");
+        bad(&|h| h.weather[0].color = "red".into(), "colour");
+        bad(&|h| h.weather[0].sight_mult = 0.0, "sight_mult");
+        bad(&|h| h.events[0].every_secs = 2, "every_secs");
+        bad(&|h| h.events[0].steps.clear(), "steps");
+        bad(&|h| h.events[0].steps[1] = Step::Weather { name: Some("hail".into()), duration_secs: 5 }, "unknown weather 'hail'");
+        bad(&|h| h.events[0].steps[2] = Step::Spawn { archetype: "ghost".into(), count: 1, place: None }, "unknown bot type");
+        bad(&|h| h.events[0].steps[2] = Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 9999, place: None }, "count");
+        bad(&|h| h.events[0].steps[3] = Step::Hit { attr: "health".into(), delta: -1.0, place: Some("nowhere".into()) }, "unknown place");
+        bad(&|h| h.events.push(h.events[0].clone()), "duplicate event");
+        // Removing a bot type that an event spawns is caught too.
+        bad(&|h| { let n = h.archetypes[0].name.clone(); h.archetypes.retain(|a| a.name != n) }, "unknown bot type");
+        // Weather and events change nothing on the wire.
+        let mut w = g.clone();
+        w.weather.clear();
+        w.events.clear();
+        assert_eq!(g.build().unwrap().defs.content_hash(), w.build().unwrap().defs.content_hash());
     }
 }

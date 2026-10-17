@@ -1709,3 +1709,55 @@ fn a_json_file_dropped_in_the_bots_directory_adds_a_bot_live_and_a_broken_one_ch
     let saved = std::fs::read_to_string(srv.dir.join("game.json")).unwrap();
     assert!(saved.contains("ghoul"));
 }
+
+#[test]
+fn weather_and_events_are_built_fired_and_reported_live_without_dropping_players() {
+    let srv = start(&[]);
+    let _player = connect(&srv);
+    wait_for_clients(&srv, 1);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    let arch = game["archetypes"][0]["name"].as_str().unwrap().to_string();
+    for a in game["archetypes"].as_array_mut().unwrap() {
+        a["count"] = 0.into();
+    }
+    game["weather"] = serde_json::json!([{"name":"fog","color":"#8899aa","intensity":0.9,"sight_mult":0.4,"drain":[]}]);
+    game["events"] = serde_json::json!([{"name":"arrival","every_secs":0,"steps":[
+        {"kind":"announce","text":"Strangers are arriving"},
+        {"kind":"weather","name":"fog","duration_secs":60},
+        {"kind":"spawn","archetype":arch,"count":7,"place":"plaza"}
+    ]}]);
+    let (s, body) = http(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{body}");
+    assert_eq!(state(&srv)["clients"], 1, "adding weather and events does not drop anyone");
+
+    // A mistake is refused with a reason and changes nothing.
+    let mut bad = game.clone();
+    bad["events"][0]["steps"][2]["place"] = "atlantis".into();
+    let (s, body) = http(&srv, "PUT", "/api/game", &bad.to_string());
+    assert_eq!(s, 400);
+    assert!(body.contains("atlantis"), "{body}");
+
+    // By hand.
+    assert_eq!(http(&srv, "POST", "/api/weather", r#"{"name":"hail"}"#).0, 400);
+    assert_eq!(http(&srv, "POST", "/api/events/fire", r#"{"name":"nope"}"#).0, 404);
+    assert_eq!(http(&srv, "POST", "/api/weather", r#"{"name":"fog","duration_secs":30}"#).0, 200);
+    wait_until("fog", || state(&srv)["director"]["weather"]["name"] == "fog");
+    assert!(state(&srv)["director"]["weather"]["left_secs"].as_u64().unwrap() <= 30);
+    assert_eq!(http(&srv, "POST", "/api/weather", r#"{"name":null}"#).0, 200);
+    wait_until("clear sky", || state(&srv)["director"]["weather"].is_null());
+
+    // An event: announcement reaches the chat log from the server, weather starts, bots appear.
+    assert_eq!(http(&srv, "POST", "/api/events/fire", r#"{"name":"arrival"}"#).0, 200);
+    wait_until("seven arrivals", || bots_of(&srv, 0) == 7);
+    let chat = json(&srv, "GET", "/api/chat", "").1;
+    assert!(chat["lines"].as_array().unwrap().iter().any(|l| l[1] == 0 && l[3] == "Strangers are arriving"), "{chat}");
+    let st = state(&srv);
+    assert_eq!(st["director"]["weather"]["name"], "fog");
+    assert_eq!(st["director"]["events"][0]["fired"], 1);
+    assert!(st["director"]["log"].as_array().unwrap().iter().any(|l| l[1].as_str().unwrap().contains("arrival")));
+    assert_eq!(st["clients"], 1);
+
+    // It is in the saved game file.
+    let saved = std::fs::read_to_string(srv.dir.join("game.json")).unwrap();
+    assert!(saved.contains("arrival") && saved.contains("fog"));
+}

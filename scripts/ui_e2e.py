@@ -278,6 +278,43 @@ try:
         check("switching back to 2D restores the map", pg.get_by_role("img", name="Top-down map").count() == 1)
         ctx.close()
 
+        # The God tab: weather, events and spawning, built and used from the console.
+        ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page()
+        gerr = []; pg.on("pageerror", lambda e: gerr.append(str(e)))
+        pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
+        pg.get_by_role("tab", name="God", exact=True).click(); time.sleep(0.3)
+        pg.get_by_label("Add a weather from a preset").select_option("fog")
+        pg.get_by_label("Add an event from a preset").select_option("wave")
+        check("a weather and an event can be added from presets", pg.get_by_label("Weather", exact=True).count() >= 1 and pg.get_by_role("list", name="Steps of wave").count() == 1)
+        check("a new event cannot be fired before it is applied", pg.get_by_role("button", name="Fire now").is_disabled())
+        pg.add_script_tag(path=str(AXE))
+        res = pg.evaluate("axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21aa','best-practice']}).then(r=>r.violations.map(v=>({id:v.id,n:v.nodes.length,t:v.nodes.slice(0,2).map(n=>n.target.join(' '))})))")
+        check("God tab: no axe violations", not res, json.dumps(res)[:600])
+        if SHOTS: pg.screenshot(path=str(SHOTS / "god.png"))
+        c_before = api(base, "/api/state")[1]["clients"]
+        pg.get_by_role("button", name="Apply", exact=True).click(); pg.wait_for_selector("text=Applied live", timeout=5000); time.sleep(0.8)
+        check("weather and events apply live without dropping players", api(base, "/api/state")[1]["clients"] >= c_before - 2, f"{c_before} -> {api(base, '/api/state')[1]['clients']}")
+        pg.get_by_role("button", name="fog", exact=True).click(); time.sleep(0.6)
+        check("the fog button starts the weather", (api(base, "/api/state")[1].get("director", {}).get("weather") or {}).get("name") == "fog")
+        pg.wait_for_selector("text=Now: fog", timeout=4000)
+        pg.get_by_role("button", name="Clear sky").click(); time.sleep(0.6)
+        check("Clear sky ends it", api(base, "/api/state")[1]["director"]["weather"] is None)
+        n0 = api(base, "/api/state?limit=6000")[1]["live"]
+        pg.get_by_role("button", name="Fire now").click(); time.sleep(1.0)
+        st = api(base, "/api/state?limit=6000")[1]
+        check("firing the wave event spawns bots", st["live"] >= n0 + 8, f"{n0} -> {st['live']}")
+        check("the event's announcement is in the chat from the server", any(l[1] == 0 and "Intruders" in l[3] for l in api(base, "/api/chat")[1]["lines"]))
+        check("the log lists what happened", "wave" in pg.get_by_role("region", name="What happened").inner_text())
+        # Spawn by clicking the map.
+        pg.get_by_role("region", name="Spawn bots").get_by_label("Where").select_option("@map")
+        pg.get_by_role("button", name="Arm the map").click()
+        n1 = api(base, "/api/state?limit=6000")[1]["live"]
+        m = pg.get_by_role("img", name="Top-down map"); box = m.bounding_box()
+        m.click(position={"x": box["width"] * 0.5, "y": box["height"] * 0.5}); time.sleep(0.8)
+        check("clicking the armed map drops bots there", api(base, "/api/state?limit=6000")[1]["live"] >= n1 + 5)
+        check("the God tab raised no page errors", not gerr, str(gerr))
+        ctx.close()
+
         # The play page: sign in with a passphrase, walk, chat, and see the recovery code.
         ctx = br.new_context(viewport={"width": 1280, "height": 800}); pg = ctx.new_page()
         perr = []; pg.on("pageerror", lambda e: perr.append(str(e)))
@@ -345,6 +382,11 @@ try:
         if SHOTS: pg.screenshot(path=str(SHOTS / ("play-light.png" if was_dark else "play-dark.png")))
         pg.get_by_role("button", name="Switch to dark theme" if was_dark else "Switch to light theme").click(); time.sleep(0.8)
         check("the game keeps running after a theme switch", pg.get_by_test_id("hud").count() == 1 and pg.get_by_text("LIVE").count() >= 1)
+        api(base, "/api/weather", "POST", {"name": "fog", "duration_secs": 0}); time.sleep(6.5)
+        check("the play page shows the weather the console started", "fog" in pg.get_by_test_id("hud").inner_text().lower())
+        if SHOTS: pg.screenshot(path=str(SHOTS / "play-fog.png"))
+        api(base, "/api/weather", "POST", {"name": None}); time.sleep(6.5)
+        check("and drops it when the console clears it", "weather" not in pg.get_by_test_id("hud").inner_text().lower())
         pg.get_by_role("button", name="Recovery code").click(); time.sleep(0.3)
         import re
         code = pg.locator("code").first.inner_text()
