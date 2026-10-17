@@ -1426,12 +1426,14 @@ fn the_c_client_library_follows_a_zone_handoff_by_itself() {
     // Zones have no web gateway here, so build the info the gateway would serve from the admin API.
     let (_, ai) = json(&zs.z[0], "GET", "/api/info", "");
     let (_, g) = json(&zs.z[0], "GET", "/api/game", "");
+    let (_, w) = json(&zs.z[0], "GET", "/api/world", "");
     let attrs: Vec<_> = g["attrs"].as_array().unwrap().iter().map(|a| serde_json::json!({"name": a["name"], "min": a["min"], "max": a["max"], "bits": a["bits"], "replicated": a["replicated"]})).collect();
     let replicated: Vec<usize> = attrs.iter().enumerate().filter(|(_, a)| a["replicated"] == true).map(|(i, _)| i).collect();
     let info = serde_json::json!({
         "server_key": ai["server_key"], "content_hash": ai["content_hash"], "proto": ai["proto"], "hz": 20,
         "move_speed": g["move_speed"], "entity_radius": g["entity_radius"], "interest_radius": g["interest_radius"],
         "attrs": attrs, "replicated": replicated,
+        "world_size": w["size"], "seed": 1, "boxes": w["boxes"],
     })
     .to_string();
     let mut id = [0 as std::ffi::c_char; 65];
@@ -1459,4 +1461,34 @@ fn the_c_client_library_follows_a_zone_handoff_by_itself() {
     assert_eq!(unsafe { mmo_client::mmo_status(c.0) }, mmo_client::MMO_PLAYING);
     let _ = first; // the entity id is allowed to change across zones
     assert_eq!(state(&zs.z[1])["net"]["restored"], 1);
+}
+
+#[test]
+fn the_c_client_draws_smooth_motion_between_snapshots() {
+    let (srv, web) = start_web(&[]);
+    let c = ffi::connect(srv.udp.port(), &play_info(web), None);
+    assert!(frames(&c, 5, |c| ffi::me(c).is_some()));
+    unsafe { mmo_client::mmo_set_move(c.0, 1, 0) };
+    // Let the character get going, then watch 60 fps frames: a client that only moved on
+    // snapshots (20 per second) would change position on one frame in three.
+    frames(&c, 1, |_| false);
+    let mut last = ffi::me(&c).unwrap();
+    let (mut n, mut still, mut biggest) = (0, 0, 0.0f32);
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_millis(1500) {
+        unsafe { mmo_client::mmo_poll(c.0) };
+        let e = ffi::me(&c).unwrap();
+        let d = (e.x - last.x).hypot(e.y - last.y);
+        if e.x >= 480.0 {
+            break; // walked into the east wall
+        }
+        n += 1;
+        still += (d < 1e-4) as i32;
+        biggest = biggest.max(d);
+        last = e;
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    assert!(n > 40, "only {n} frames");
+    assert!(still * 5 < n, "{still} of {n} frames did not move: motion is stepping");
+    assert!(biggest < 2.0, "a frame jumped {biggest} units");
 }

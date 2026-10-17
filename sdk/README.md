@@ -25,7 +25,7 @@ there is no Godot in this environment. Expect to fix small API mismatches on fir
 
 1. Copy `target/release/libmmo_godot.so` to `res://bin/` and `sdk/godot/mmo.gdextension` next to it.
 2. Attach `sdk/godot/Game.gd` to a Node2D. It fetches `/play/info`, creates and stores an identity, connects, sends
-   WASD/arrow intent and draws every entity as a square, gliding between snapshots.
+   WASD/arrow intent and draws every entity as a square.
 
 Node API: `connect_to(host, port, info_json, identity) -> String` (empty on success), `set_move(Vector2)`,
 `act(action, target)`, `say(text, shout)`, `entities() -> Array[Dictionary]` (`id`, `position`, one key per replicated
@@ -39,7 +39,11 @@ Also untested here. Put `mmo_client.h` and the library in a plugin's `ThirdParty
 ticks `mmo_poll` from a `FTickableGameObject`. Entities map to replicated-looking actors you spawn and move yourself
 (this server is authoritative, so do not use Unreal replication). Fetch `/play/info` with `FHttpModule`.
 
-## What the library does not do
+## Interpolation and prediction
 
-No prediction or interpolation: snapshots arrive about 20 times a second and the engine should interpolate between
-them. `crates/proto/src/predict.rs` is the reference predictor if you want it. IPv4 only.
+Built in. Other entities are drawn two ticks in the past, blended between the snapshots either side, so they move
+smoothly at your frame rate (teleports such as respawns are not slid across the map). Your own entity is predicted with the
+same movement code the server runs (walls come from `/play/info` `boxes`) and reconciled on each snapshot, so it answers
+input immediately. `mmo_entity` already returns these smoothed positions; just draw them.
+
+IPv4 only.

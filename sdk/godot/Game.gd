@@ -44,9 +44,9 @@ func _process(_dt: float) -> void:
 			s.color = Color.WHITE if e.id == net.get_self_id() else Color(0.2, 1.0, 0.4)
 			add_child(s)
 			sprites[e.id] = s
-		# Snapshots come about 20 times a second: glide to each new position.
+		# The extension already interpolates (others) and predicts (you): just place them.
 		var s: Node2D = sprites[e.id]
-		s.position = s.position.lerp(e.position * SCALE, 0.35)
+		s.position = e.position * SCALE
 	for id in sprites.keys():
 		if not seen.has(id):
 			sprites[id].queue_free()

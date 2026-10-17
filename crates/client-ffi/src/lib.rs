@@ -11,9 +11,13 @@ use std::ffi::{c_char, CStr};
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
+mod interp;
+
 use proto::chat::{self, ChatClient};
+use proto::world::World;
+use proto::Predictor;
 use proto::secure::{self, ClientHs, Session};
-use proto::snapshot::MAX_REPL;
+pub use proto::snapshot::MAX_REPL;
 use proto::wire::{self, kind, Input, ServerMsg};
 use proto::{decode_snapshot, AttrDef, ClientView, Defs, OnZero};
 
@@ -70,6 +74,13 @@ pub struct Client {
     attr_names: Vec<std::ffi::CString>,
     ents: Vec<MmoEntity>,
     err: String,
+    world: World,
+    pred: Option<Predictor>,
+    hist: interp::History,
+    t0: Instant,
+    last_poll: Instant,
+    /// Where our own entity is drawn: the prediction, smoothed.
+    vis: Option<(f32, f32)>,
 }
 
 fn new_hs(c: &Client) -> ClientHs {
@@ -186,6 +197,15 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
     let Some(pinned) = v["server_key"].as_str().and_then(secure::from_hex32) else { return fail("info_json: bad server_key") };
     let Some(hash) = v["content_hash"].as_str().and_then(|h| u64::from_str_radix(h, 16).ok()) else { return fail("info_json: bad content_hash") };
     let Some(defs) = defs_from_info(&v) else { return fail("info_json: bad attribute schema") };
+    let size = v["world_size"].as_f64().unwrap_or(0.0) as u32;
+    let boxes: Vec<proto::Aabb> = v["boxes"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|b| Some(proto::Aabb { x0: b[0].as_f64()? as f32, y0: b[1].as_f64()? as f32, x1: b[2].as_f64()? as f32, y1: b[3].as_f64()? as f32 })).collect())
+        .unwrap_or_default();
+    if size == 0 {
+        return fail("info_json: no world_size");
+    }
+    let world = World::from_boxes(size as f32, v["seed"].as_u64().unwrap_or(0), boxes);
     let hz = v["hz"].as_u64().unwrap_or(20).clamp(1, 120) as u32;
     let id = match cstr(identity) {
         None => None,
@@ -229,6 +249,12 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         attr_names,
         ents: Vec::new(),
         err: String::new(),
+        world,
+        pred: None,
+        hist: Default::default(),
+        t0: now,
+        last_poll: now,
+        vis: None,
     };
     c.hs = new_hs(&c);
     Box::into_raw(Box::new(c))
@@ -253,6 +279,9 @@ impl Client {
         self.session = None;
         self.status = MMO_CONNECTING;
         self.view = ClientView::new();
+        self.pred = None;
+        self.vis = None;
+        self.hist.clear();
         self.sent.clear();
         self.last_rx = Instant::now();
         self.last_hello = Instant::now() - Duration::from_secs(1);
@@ -303,6 +332,18 @@ impl Client {
                     }
                 } else if let Ok(info) = decode_snapshot(inner, &self.defs, &mut self.view) {
                     if !info.stale {
+                        let at = self.t0.elapsed().as_secs_f64();
+                        let ents = self.view.entries().iter().map(|e| self.ent_of(e)).collect();
+                        self.hist.push(interp::Snap { tick: info.tick, at, ents });
+                        if let Some(me) = self.view.get(self.entity).copied() {
+                            let (mx, my) = (proto::world::dpos(me.x), proto::world::dpos(me.y));
+                            match self.pred.as_mut() {
+                                Some(p) => {
+                                    p.reconcile(&self.world, mx, my, info.last_input_seq);
+                                }
+                                None => self.pred = Some(Predictor::new(mx, my, self.defs.move_speed, self.hz, self.defs.entity_radius)),
+                            }
+                        }
                         if let Some(i) = self.sent.iter().position(|(s, _)| *s == info.last_input_seq) {
                             self.rtt_ms = self.sent[i].1.elapsed().as_secs_f32() * 1000.0;
                             self.sent.drain(..=i);
@@ -326,6 +367,9 @@ impl Client {
         if self.sent.len() > 128 {
             self.sent.remove(0);
         }
+        if let Some(p) = self.pred.as_mut() {
+            p.apply_input(&self.world, self.seq, self.dir.0, self.dir.1);
+        }
         wire::encode_input(
             &mut plain,
             &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: self.dir.0, dir_y: self.dir.1, action: self.action, target: self.target, chat_ack: self.chat.ack() },
@@ -337,13 +381,38 @@ impl Client {
         self.target = 0;
     }
 
-    fn refresh_entities(&mut self) {
-        let rep = &self.defs.replicated;
+    fn ent_of(&self, e: &proto::Entry) -> interp::Ent {
+        let mut attrs = [0.0; MAX_REPL];
+        for (k, &a) in self.defs.replicated.iter().enumerate() {
+            attrs[k] = self.defs.dequantize(a, e.attrs[k]);
+        }
+        interp::Ent { id: e.id, x: proto::world::dpos(e.x), y: proto::world::dpos(e.y), attrs }
+    }
+
+    /// Everyone else interpolated between snapshots (drawn two ticks in the past), and
+    /// ourselves predicted, so our own movement answers the keyboard at once.
+    fn refresh_entities(&mut self, dt: f32) {
+        let now = self.t0.elapsed().as_secs_f64();
         self.ents.clear();
-        for e in self.view.entries() {
-            let mut m = MmoEntity { id: e.id, x: proto::world::dpos(e.x), y: proto::world::dpos(e.y), attrs: [0.0; MAX_REPL] };
-            for (k, &a) in rep.iter().enumerate() {
-                m.attrs[k] = self.defs.dequantize(a, e.attrs[k]);
+        let mine = self.entity;
+        if let Some(p) = &self.pred {
+            let target = (p.x, p.y);
+            let v = self.vis.get_or_insert(target);
+            if (v.0 - target.0).hypot(v.1 - target.1) > 24.0 {
+                *v = target;
+            } else {
+                // One predicted step is a whole tick of movement: spread it over the frames in between.
+                let k = 1.0 - (-dt * 25.0).exp();
+                v.0 += (target.0 - v.0) * k;
+                v.1 += (target.1 - v.1) * k;
+            }
+        }
+        for e in self.hist.sample(now, self.hz as f64, 2.0) {
+            let mut m = MmoEntity { id: e.id, x: e.x, y: e.y, attrs: e.attrs };
+            if e.id == mine {
+                if let Some((x, y)) = self.vis {
+                    (m.x, m.y) = (x, y);
+                }
             }
             self.ents.push(m);
         }
@@ -390,7 +459,9 @@ pub unsafe extern "C" fn mmo_poll(c: *mut Client) -> i32 {
             c.restart(s);
         }
     }
-    c.refresh_entities();
+    let dt = now.duration_since(c.last_poll).as_secs_f32().min(0.25);
+    c.last_poll = now;
+    c.refresh_entities(dt);
     c.status
 }
 
