@@ -1,5 +1,6 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { Moon, Sun } from 'lucide-react'
+import { Info, Moon, Sun } from 'lucide-react'
+import { useRef } from 'react'
 import type { State } from '../api'
 
 function Cell({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
@@ -111,9 +112,11 @@ export function StatusBar({
       ) : (
         <p className="text-fg-3">Waiting for the server at /api/state</p>
       )}
+      <div className="justify-self-end flex gap-2">
+      <About />
       <button
         type="button"
-        className="btn justify-self-end"
+        className="btn"
         aria-pressed={!dark}
         aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
         onClick={onTheme}
@@ -121,6 +124,39 @@ export function StatusBar({
         {dark ? <Sun size={16} strokeWidth={1.5} aria-hidden /> : <Moon size={16} strokeWidth={1.5} aria-hidden />}
         {dark ? 'Light' : 'Dark'}
       </button>
+      </div>
     </header>
+  )
+}
+
+/** The house credit: a small button that opens a dialog. Escape, the backdrop and Close all shut it. */
+function About() {
+  const dlg = useRef<HTMLDialogElement>(null)
+  return (
+    <>
+      <button type="button" className="btn" aria-label="About this app" aria-haspopup="dialog" onClick={() => dlg.current?.showModal()}>
+        <Info size={16} strokeWidth={1.5} aria-hidden />
+      </button>
+      <dialog
+        ref={dlg}
+        aria-labelledby="about-title"
+        className="m-auto border border-line rounded-sm bg-bg text-fg p-4 backdrop:bg-black/60"
+        onClick={(e) => {
+          if (e.target === dlg.current) dlg.current?.close()
+        }}
+      >
+        <h2 id="about-title" className="text-head leading-6 m-0">mmo-engine console</h2>
+        <p className="lbl m-0">Version 0.1.0</p>
+        <p className="m-0 mt-2">
+          Made by{' '}
+          <a href="https://fintonlabs.com" target="_blank" rel="noopener" className="text-accent">
+            FintonLabs
+          </a>
+        </p>
+        <button type="button" className="btn mt-3" onClick={() => dlg.current?.close()}>
+          Close
+        </button>
+      </dialog>
+    </>
   )
 }

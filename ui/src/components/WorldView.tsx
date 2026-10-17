@@ -1,6 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
+import { MAP, groundImage, hpColor, trees } from './mapLook'
 
 /** When present the map is in builder mode: it shows places and routes and edits them. */
 export interface EditOverlay {
@@ -31,6 +32,8 @@ interface Props {
   healthIdx: number
   healthMax: number
   themeKey: string
+  /** World seed: the ground and trees are drawn from it, as in the game clients. */
+  seed?: number
 }
 
 interface View {
@@ -41,7 +44,6 @@ interface View {
   fittedFor: number
 }
 
-const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'
 
 export function WorldView(p: Props) {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -243,6 +245,8 @@ export function WorldView(p: Props) {
   // Draw loop.
   useEffect(() => {
     let raf = 0
+    // The ground picture and the trees only change with the world, so they are made once per world.
+    let look: { key: string; ground: HTMLCanvasElement | null; trees: [number, number, number][] } | null = null
     const draw = () => {
       raf = requestAnimationFrame(draw)
       const cv = canvas.current
@@ -261,24 +265,47 @@ export function WorldView(p: Props) {
       }
       const dpr = window.devicePixelRatio || 1
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      const bg = css('--color-bg')
-      const bg2 = css('--color-bg-2')
-      const line = css('--color-line')
-      const fg3 = css('--color-fg-3')
-      const accent = css('--color-accent')
-      const fg = css('--color-fg')
-      ctx.fillStyle = bg2
+      const boxes = pr.world?.boxes ?? []
+      const key = `${pr.seed ?? 1}/${worldSize}/${boxes.length}/${boxes[0]?.join(',') ?? ''}`
+      if (pr.world && look?.key !== key) {
+        look = { key, ground: groundImage(pr.seed ?? 1, worldSize, boxes), trees: trees(pr.seed ?? 1, worldSize, boxes) }
+      }
+      const fg = MAP.parchment
+      const accent = MAP.gold
+      ctx.fillStyle = MAP.void
       ctx.fillRect(0, 0, w, h)
 
       const sx = (x: number) => (x - v.cx) * v.scale + w / 2
       const sy = (y: number) => (y - v.cy) * v.scale + h / 2
-      ctx.fillStyle = bg
-      ctx.fillRect(sx(0), sy(0), worldSize * v.scale, worldSize * v.scale)
+      if (look?.ground) {
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(look.ground, sx(0), sy(0), worldSize * v.scale, worldSize * v.scale)
+      } else {
+        ctx.fillStyle = '#5f8c3a'
+        ctx.fillRect(sx(0), sy(0), worldSize * v.scale, worldSize * v.scale)
+      }
+
+      // Trees as canopies seen from above, once they are big enough to read.
+      if (look && v.scale > 0.9) {
+        const r = Math.max(1.5, v.scale * 2.2)
+        ctx.fillStyle = MAP.tree
+        ctx.strokeStyle = MAP.treeEdge
+        ctx.lineWidth = 1
+        for (const [tx, ty, ts] of look.trees) {
+          const x = sx(tx)
+          const y = sy(ty)
+          if (x < -20 || y < -20 || x > w + 20 || y > h + 20) continue
+          ctx.beginPath()
+          ctx.arc(x, y, r * (ts / 3), 0, Math.PI * 2)
+          ctx.fill()
+          if (r > 3) ctx.stroke()
+        }
+      }
 
       // Grid every 64 units, only while it is readable.
       if (v.scale * 64 > 12) {
-        ctx.strokeStyle = line
-        ctx.globalAlpha = 0.6
+        ctx.strokeStyle = MAP.ink
+        ctx.globalAlpha = 0.12
         ctx.lineWidth = 1
         ctx.beginPath()
         for (let g = 0; g <= worldSize; g += 64) {
@@ -290,22 +317,35 @@ export function WorldView(p: Props) {
         ctx.stroke()
         ctx.globalAlpha = 1
       }
-      ctx.strokeStyle = fg3
+      ctx.strokeStyle = MAP.ink
       ctx.strokeRect(sx(0) + 0.5, sy(0) + 0.5, worldSize * v.scale, worldSize * v.scale)
 
-      ctx.fillStyle = fg3
-      ctx.globalAlpha = 0.35
-      for (const b of pr.world?.boxes ?? []) {
-        ctx.fillRect(sx(b[0]), sy(b[1]), (b[2] - b[0]) * v.scale, (b[3] - b[1]) * v.scale)
+      // Buildings: stone roofs with a darker rim, and the wall line inset when there is room for it.
+      for (const b of boxes) {
+        const x = sx(b[0])
+        const y = sy(b[1])
+        const bw = (b[2] - b[0]) * v.scale
+        const bh = (b[3] - b[1]) * v.scale
+        if (x > w || y > h || x + bw < 0 || y + bh < 0) continue
+        ctx.fillStyle = MAP.stone
+        ctx.fillRect(x, y, bw, bh)
+        ctx.strokeStyle = MAP.stoneEdge
+        ctx.lineWidth = 1
+        ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(bw), Math.round(bh))
+        const inset = v.scale * 1.2
+        if (inset >= 2 && bw > inset * 4 && bh > inset * 4) {
+          ctx.globalAlpha = 0.35
+          ctx.strokeRect(x + inset, y + inset, bw - inset * 2, bh - inset * 2)
+          ctx.globalAlpha = 1
+        }
       }
-      ctx.globalAlpha = 1
 
-      if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3, accent, line, bg }, mouse.current, wallDrag.current)
+      if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3: MAP.ink, accent, line: MAP.ink, bg: MAP.parchment }, mouse.current, wallDrag.current)
 
       const s = pr.stateRef.current
       let sel: (number[] | undefined)
       if (s) {
-        const px = Math.min(8, Math.max(3, v.scale * 1.4))
+        const px = Math.min(9, Math.max(4, v.scale * 1.4))
         const showBars = v.scale > 1.2
         for (const row of s.e) {
           const x = sx(row[1] ?? 0)
@@ -313,34 +353,46 @@ export function WorldView(p: Props) {
           if (x < -10 || y < -10 || x > w + 10 || y > h + 10) continue
           const kind = row[4] ?? 0
           const arch = row[3] ?? -1
-          const col = arch >= 0 ? pr.colors[arch] ?? fg3 : fg3
+          const col = arch >= 0 ? pr.colors[arch] ?? MAP.parchment : MAP.parchment
           if (row[0] === pr.selected) sel = row
+          // Every marker has an ink rim so it reads on grass, stone and dirt alike.
+          ctx.lineWidth = 1
+          ctx.strokeStyle = MAP.ink
           if (kind === KIND_PLAYER) {
-            // Players are plain bright squares; the accent is kept for selection and possession.
+            // Players are parchment diamonds; gold is kept for selection and possession.
             ctx.fillStyle = fg
-            ctx.fillRect(x - px / 2 - 0.5, y - px / 2 - 0.5, px + 1, px + 1)
+            ctx.beginPath()
+            ctx.moveTo(x, y - px * 0.8)
+            ctx.lineTo(x + px * 0.8, y)
+            ctx.lineTo(x, y + px * 0.8)
+            ctx.lineTo(x - px * 0.8, y)
+            ctx.closePath()
+            ctx.fill()
+            ctx.stroke()
           } else if (kind === KIND_DRIVEN) {
             ctx.fillStyle = col
             ctx.fillRect(x - px / 2, y - px / 2, px, px)
+            ctx.strokeRect(x - px / 2 - 0.5, y - px / 2 - 0.5, px + 1, px + 1)
             ctx.strokeStyle = accent
             ctx.lineWidth = 1.5
-            ctx.strokeRect(x - px / 2 - 2, y - px / 2 - 2, px + 4, px + 4)
+            ctx.strokeRect(x - px / 2 - 2.5, y - px / 2 - 2.5, px + 5, px + 5)
           } else if (kind === KIND_GHOST) {
             // A mirror of something in the neighbouring zone: hollow and faint.
-            ctx.strokeStyle = fg3
-            ctx.lineWidth = 1
+            ctx.strokeStyle = MAP.parchment
             ctx.strokeRect(x - px / 2 + 0.5, y - px / 2 + 0.5, px - 1, px - 1)
           } else {
             ctx.fillStyle = col
             ctx.fillRect(x - px / 2, y - px / 2, px, px)
+            ctx.strokeRect(x - px / 2 - 0.5, y - px / 2 - 0.5, px + 1, px + 1)
           }
           if (showBars && pr.healthIdx >= 0) {
             const hp = (row[5 + pr.healthIdx] ?? 0) / (pr.healthMax || 1)
             if (hp < 0.999) {
-              ctx.fillStyle = line
-              ctx.fillRect(x - px, y + px / 2 + 2, px * 2, 2)
-              ctx.fillStyle = accent
-              ctx.fillRect(x - px, y + px / 2 + 2, px * 2 * Math.max(0, Math.min(1, hp)), 2)
+              const f = Math.max(0, Math.min(1, hp))
+              ctx.fillStyle = MAP.ink
+              ctx.fillRect(x - px - 1, y + px / 2 + 2, px * 2 + 2, 4)
+              ctx.fillStyle = hpColor(f)
+              ctx.fillRect(x - px, y + px / 2 + 3, px * 2 * f, 2)
             }
           }
         }
@@ -370,9 +422,13 @@ export function WorldView(p: Props) {
         }
       }
 
-      // Readout.
+      // Readout, on an ink band so it reads over any ground.
       ctx.font = "11px 'Martian Mono', monospace"
-      ctx.fillStyle = fg3
+      ctx.fillStyle = MAP.ink
+      ctx.globalAlpha = 0.72
+      ctx.fillRect(0, h - 22, w, 22)
+      ctx.globalAlpha = 1
+      ctx.fillStyle = MAP.parchment
       const m = mouse.current
       const wx = m ? (m.x - w / 2) / v.scale + v.cx : null
       const wy = m ? (m.y - h / 2) / v.scale + v.cy : null
@@ -387,7 +443,7 @@ export function WorldView(p: Props) {
   }, [])
 
   return (
-    <div ref={box} className="relative min-h-[240px] h-full bg-bg-2">
+    <div ref={box} className="relative min-h-[240px] h-full" style={{ background: MAP.void }}>
       <canvas
         ref={canvas}
         role="img"
@@ -405,6 +461,17 @@ interface Palette {
   accent: string
   line: string
   bg: string
+}
+
+/** Text in the current fill colour with an ink rim, so labels read over grass, stone and dirt. */
+function inked(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
+  const lw = ctx.lineWidth
+  ctx.lineWidth = 3
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = MAP.ink
+  ctx.strokeText(text, x, y)
+  ctx.fillText(text, x, y)
+  ctx.lineWidth = lw
 }
 
 /** Places as dashed circles, routes as numbered polylines with direction ticks. */
@@ -464,7 +531,7 @@ function drawEdit(
     ctx.lineTo(x, y + 4)
     ctx.stroke()
     ctx.fillStyle = on || home ? c.accent : c.fg
-    ctx.fillText(home ? `${p.name} (home)` : p.name, x + 6, y - 6)
+    inked(ctx, home ? `${p.name} (home)` : p.name, x + 6, y - 6)
   })
 
   const drawLine = (pts: [number, number][], loop: boolean, color: string, dashed: boolean) => {
@@ -515,10 +582,10 @@ function drawEdit(
       ctx.strokeRect(x - 4, y - 4, 8, 8)
       if (k === 0) {
         ctx.fillStyle = on ? c.accent : c.fg
-        ctx.fillText(r.name, x + 7, y - 7)
+        inked(ctx, r.name, x + 7, y - 7)
       } else if (on || v.scale > 0.6) {
         ctx.fillStyle = on ? c.accent : c.fg3
-        ctx.fillText(String(k + 1), x + 7, y - 7)
+        inked(ctx, String(k + 1), x + 7, y - 7)
       }
     })
   })

@@ -314,14 +314,17 @@ export default function App() {
             healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
             healthMax={healthDef?.max ?? 100}
             themeKey={dark ? 'dark' : 'light'}
+            seed={info?.seed}
           />
           ) : (
-            <Suspense fallback={<div className="h-full bg-black" />}>
+            <Suspense fallback={<div className="h-full bg-[#a9c3d6]" />}>
               <Scene3D
                 world={world}
                 places={live?.places ?? []}
                 routes={live?.routes ?? []}
                 archetypes={live?.archetypes.map((a) => a.name) ?? []}
+                colors={live?.archetypes.map((a) => a.color) ?? []}
+                seed={info?.seed}
                 healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
                 healthMax={healthDef?.max ?? 100}
                 stateRef={stateRef}

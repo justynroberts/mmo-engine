@@ -262,14 +262,14 @@ try:
         check("arrow keys switch tabs", pg.get_by_role("tab", name="Builder", exact=True).get_attribute("data-state") == "active")
         ctx.close()
 
-        # 3D wireframe view: renders, lists entities, selects on click, switches back.
+        # 3D view: renders, lists entities, selects on click, switches back.
         ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page()
         errs3 = []; pg.on("pageerror", lambda e: errs3.append(str(e)))
         pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
         pg.get_by_role("button", name="3D", exact=True).click(); pg.wait_for_timeout(2500)
         legend = pg.get_by_role("list", name="Legend").inner_text()
         check("3D view shows a legend with live counts", "drifter" in legend and "players" in legend, legend.replace("\n", " "))
-        check("3D view has a labelled canvas", pg.get_by_role("img", name="3D wireframe view").count() == 1)
+        check("3D view has a labelled canvas", pg.get_by_role("img", name="3D view of the world").count() == 1)
         lit = pg.evaluate("() => { const c = document.querySelector('canvas[aria-label^=\"3D\"]'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; return c.width > 0 }")
         check("3D canvas has a size", lit)
         check("3D view raised no page errors", not errs3, str(errs3))

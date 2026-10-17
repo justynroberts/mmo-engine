@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { KIND_DRIVEN, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
+import { MAP, Terrain, hpColor, meadow, trees } from './mapLook'
 
 interface Props {
   world: WorldGeom | null
@@ -9,6 +10,10 @@ interface Props {
   routes: Route[]
   /** Archetype names, in index order: they decide the shapes and the legend. */
   archetypes: string[]
+  /** Archetype colours, in the same order; entities are painted with them. */
+  colors?: string[]
+  /** World seed: the hills, ground and trees are drawn from it, as in the game clients. */
+  seed?: number
   /** Index of the health attribute among the replicated ones in an entity row, or -1. */
   healthIdx: number
   healthMax: number
@@ -19,11 +24,8 @@ interface Props {
   interest: number
 }
 
-// Fixed phosphor palette: the 3D view is a wireframe "terminal" whatever the page theme is.
-const GREEN = 0x00ff41
-const DIM = 0x0a5a1e
-const HOT = 0xd8ffe0
 const CAP = 6000
+const WALL_H = 8
 
 /** One silhouette per archetype (repeating after five), so kinds can be told apart without colour. */
 const SHAPES: { name: string; make: () => THREE.BufferGeometry; svg: string }[] = [
@@ -44,7 +46,7 @@ interface Ghost {
   hp: number
 }
 
-/** A name on the ground: a sprite textured from a canvas, so no extra font loader is needed. */
+/** A name over a place: a sprite textured from a canvas, parchment with an ink rim so it reads on any ground. */
 function label(text: string): THREE.Sprite {
   const cv = document.createElement('canvas')
   const ctx = cv.getContext('2d')!
@@ -54,8 +56,12 @@ function label(text: string): THREE.Sprite {
   cv.width = w
   cv.height = 44
   ctx.font = font
-  ctx.fillStyle = '#00ff41'
   ctx.textBaseline = 'middle'
+  ctx.lineWidth = 6
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = MAP.ink
+  ctx.strokeText(text, 8, 24)
+  ctx.fillStyle = MAP.parchment
   ctx.fillText(text, 8, 24)
   const tex = new THREE.CanvasTexture(cv)
   tex.colorSpace = THREE.SRGBColorSpace
@@ -65,91 +71,56 @@ function label(text: string): THREE.Sprite {
   return sp
 }
 
-/** A falling-digits backdrop. Static when the user prefers reduced motion. */
-function useRain(cv: React.RefObject<HTMLCanvasElement>) {
-  useEffect(() => {
-    const el = cv.current
-    const ctx = el?.getContext('2d')
-    if (!el || !ctx) return
-    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    const cell = 16
-    let drops: number[] = []
-    const fit = () => {
-      el.width = el.clientWidth
-      el.height = el.clientHeight
-      drops = Array.from({ length: Math.ceil(el.width / cell) }, () => Math.random() * (el.height / cell))
-      ctx.fillStyle = '#000'
-      ctx.fillRect(0, 0, el.width, el.height)
-    }
-    fit()
-    const ro = new ResizeObserver(fit)
-    ro.observe(el)
-    const step = () => {
-      ctx.fillStyle = 'rgba(0,0,0,0.12)'
-      ctx.fillRect(0, 0, el.width, el.height)
-      ctx.font = `${cell - 2}px "Martian Mono", monospace`
-      ctx.fillStyle = '#0f7a2c'
-      drops.forEach((y, i) => {
-        ctx.fillText(String((Math.random() * 10) | 0), i * cell, y * cell)
-        drops[i] = y * cell > el.height && Math.random() > 0.975 ? 0 : y + 1
-      })
-    }
-    if (still) for (let k = 0; k < 60; k++) step()
-    const t = still ? undefined : setInterval(step, 70)
-    return () => {
-      ro.disconnect()
-      if (t) clearInterval(t)
-    }
-  }, [cv])
-}
-
 export default function Scene3D(p: Props) {
   const box = useRef<HTMLDivElement>(null)
-  const rain = useRef<HTMLCanvasElement>(null)
   const tag = useRef<HTMLDivElement>(null)
   const props = useRef(p)
   props.current = p
   const [failed, setFailed] = useState(false)
   const [counts, setCounts] = useState<number[]>([])
   const [players, setPlayers] = useState(0)
-  useRain(rain)
 
   useEffect(() => {
     const host = box.current
     if (!host) return
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      renderer = new THREE.WebGLRenderer({ antialias: true })
     } catch {
       setFailed(true)
       return
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    renderer.setClearColor(0x000000, 0)
+    renderer.setClearColor(MAP.sky)
     const cv = renderer.domElement
     cv.className = 'absolute inset-0 h-full w-full touch-none'
     cv.setAttribute('role', 'img')
-    cv.setAttribute('aria-label', '3D wireframe view of the world. Drag to orbit, scroll to zoom, click an entity to select it. The Entity tab lists the same entities.')
+    cv.setAttribute('aria-label', '3D view of the world. Drag to orbit, scroll to zoom, click an entity to select it. The Entity tab lists the same entities.')
     host.appendChild(cv)
 
     const scene = new THREE.Scene()
+    scene.background = new THREE.Color(MAP.sky)
+    scene.add(new THREE.HemisphereLight(0xcfe0ee, 0x4a5a2a, 1.1))
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.6)
+    sun.position.set(-0.6, 1, -0.4)
+    scene.add(sun)
     const camera = new THREE.PerspectiveCamera(50, 1, 1, 8000)
     const controls = new OrbitControls(camera, cv)
     controls.enableDamping = true
     controls.maxPolarAngle = Math.PI / 2 - 0.05
     controls.minDistance = 10
 
-    const wire = (c: number) => new THREE.MeshBasicMaterial({ color: c, wireframe: true })
+    const solid = () => new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true })
     // One instanced mesh per silhouette, plus one for players.
     const kinds = SHAPES.map((s) => {
-      const m = new THREE.InstancedMesh(s.make(), wire(0xffffff), CAP)
+      const m = new THREE.InstancedMesh(s.make(), solid(), CAP)
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
       m.frustumCulled = false
       m.count = 0
       scene.add(m)
       return { mesh: m, ids: [] as number[] }
     })
-    const people = new THREE.InstancedMesh(new THREE.ConeGeometry(3.4, 11, 4), wire(0xffffff), CAP)
+    const people = new THREE.InstancedMesh(new THREE.ConeGeometry(3.4, 11, 4), solid(), CAP)
     people.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
     people.frustumCulled = false
     people.count = 0
@@ -159,11 +130,11 @@ export default function Scene3D(p: Props) {
     const tmp = new THREE.Object3D()
     const col = new THREE.Color()
 
-    // Health bars for anything hurt: two segments each, in a fixed buffer rewritten every frame.
-    const bars = new THREE.LineSegments(
-      new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP * 12), 3)),
-      new THREE.LineBasicMaterial({ color: HOT }),
-    )
+    // Health bars for anything hurt: two segments each, coloured by how hurt, in a buffer rewritten every frame.
+    const barGeo = new THREE.BufferGeometry()
+    barGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP * 12), 3))
+    barGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(CAP * 12), 3))
+    const bars = new THREE.LineSegments(barGeo, new THREE.LineBasicMaterial({ vertexColors: true }))
     bars.frustumCulled = false
     scene.add(bars)
 
@@ -182,47 +153,106 @@ export default function Scene3D(p: Props) {
       }
     }
     let half = 1024
+    let terrain = new Terrain(1, [])
+    const ground = (x: number, z: number) => terrain.height(x + half, z + half)
     const build = () => {
       const pr = props.current
       const size = pr.world?.size ?? 2048
-      const key = JSON.stringify([size, pr.world?.boxes.length, pr.places, pr.routes])
+      const boxes = pr.world?.boxes ?? []
+      const seed = pr.seed ?? 1
+      const key = JSON.stringify([size, seed, boxes.length, boxes[0], pr.places, pr.routes])
       if (key === builtFor) return
       builtFor = key
       dispose(statics)
       half = size / 2
-      scene.fog = new THREE.Fog(0x000000, size * 0.35, size * 1.4)
-      const grid = new THREE.GridHelper(size, Math.max(8, Math.round(size / 64)), GREEN, DIM)
-      ;(grid.material as THREE.Material).transparent = true
-      ;(grid.material as THREE.Material).opacity = 0.55
-      statics.add(grid)
-      for (const [x0, y0, x1, y1] of pr.world?.boxes ?? []) {
-        const g = new THREE.EdgesGeometry(new THREE.BoxGeometry(x1 - x0, 8, y1 - y0))
-        g.translate((x0 + x1) / 2 - half, 4, (y0 + y1) / 2 - half)
-        statics.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: GREEN })))
+      terrain = new Terrain(seed, boxes)
+      scene.fog = new THREE.Fog(MAP.fog, size * 0.35, size * 1.4)
+
+      // Ground: a height field coloured like the clients' meadow, over a forest-dark apron past the edge.
+      const seg = Math.min(200, Math.max(64, Math.round(size / 12)))
+      const g = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2)
+      const pos = g.getAttribute('position') as THREE.BufferAttribute
+      const colors = new Float32Array(pos.count * 3)
+      const c = new THREE.Color()
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i) + half
+        const z = pos.getZ(i) + half
+        pos.setY(i, terrain.height(x, z))
+        const [r, gg, b] = meadow(x, z, seed)
+        c.setRGB(r, gg, b, THREE.SRGBColorSpace)
+        colors.set([c.r, c.g, c.b], i * 3)
       }
+      g.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      g.computeVertexNormals()
+      statics.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true })))
+      const apron = new THREE.Mesh(new THREE.PlaneGeometry(size * 5, size * 5).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: MAP.void }))
+      apron.position.y = -terrain.amplitude - 2
+      statics.add(apron)
+
+      // Buildings: stone blocks on levelled ground, with a dark rim so their shape reads from far off.
+      const stone = new THREE.MeshLambertMaterial({ color: MAP.stone, flatShading: true })
+      boxes.forEach(([x0, y0, x1, y1], i) => {
+        const base = terrain.baseOf(i)
+        const bg = new THREE.BoxGeometry(x1 - x0, WALL_H, y1 - y0)
+        bg.translate((x0 + x1) / 2 - half, base + WALL_H / 2, (y0 + y1) / 2 - half)
+        statics.add(new THREE.Mesh(bg, stone.clone()))
+        const eg = new THREE.EdgesGeometry(bg)
+        statics.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: MAP.stoneEdge })))
+      })
+
+      // Trees from the seed: a trunk and a canopy each, instanced.
+      const ts = trees(seed, size, boxes)
+      const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.7, 4, 5), new THREE.MeshLambertMaterial({ color: MAP.trunk }), Math.max(1, ts.length))
+      const tops = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(3.2, 0), new THREE.MeshLambertMaterial({ color: MAP.tree, flatShading: true }), Math.max(1, ts.length))
+      ts.forEach(([x, y, s], i) => {
+        const h = terrain.height(x, y)
+        tmp.position.set(x - half, h + s, y - half)
+        tmp.rotation.set(0, i, 0)
+        tmp.scale.setScalar(s / 2.5)
+        tmp.updateMatrix()
+        trunks.setMatrixAt(i, tmp.matrix)
+        tmp.position.y = h + s * 2.4
+        tmp.updateMatrix()
+        tops.setMatrixAt(i, tmp.matrix)
+      })
+      trunks.count = tops.count = ts.length
+      tmp.scale.setScalar(1)
+      statics.add(trunks, tops)
+
       for (const pl of pr.places) {
-        const ring = new THREE.RingGeometry(Math.max(0.5, pl.r - 0.6), pl.r, 48)
+        const ring = new THREE.RingGeometry(Math.max(0.5, pl.r - 0.8), pl.r, 48)
         ring.rotateX(-Math.PI / 2)
-        const m = new THREE.Mesh(ring, new THREE.MeshBasicMaterial({ color: HOT, wireframe: true, side: THREE.DoubleSide }))
-        m.position.set(pl.x - half, 0.2, pl.y - half)
+        const m = new THREE.Mesh(ring, new THREE.MeshBasicMaterial({ color: MAP.gold, side: THREE.DoubleSide, transparent: true, opacity: 0.8 }))
+        m.position.set(pl.x - half, terrain.height(pl.x, pl.y) + 0.4, pl.y - half)
         statics.add(m)
         const t = label(pl.name)
-        t.position.set(pl.x - half, 22 + pl.r * 0.2, pl.y - half)
+        t.position.set(pl.x - half, terrain.height(pl.x, pl.y) + 22 + pl.r * 0.2, pl.y - half)
         statics.add(t)
       }
       for (const rt of pr.routes) {
-        const pts = rt.points.map(([x, y]) => new THREE.Vector3(x - half, 0.4, y - half))
-        if (rt.loop && pts.length > 2) pts.push(pts[0]!.clone())
-        if (pts.length > 1) statics.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: GREEN, dashSize: 6, gapSize: 4 })))
+        // Follow the ground: points every few units along each leg, lifted just above it.
+        const raw = rt.loop && rt.points.length > 2 ? [...rt.points, rt.points[0]!] : rt.points
+        const pts: THREE.Vector3[] = []
+        for (let k = 0; k < raw.length; k++) {
+          const a = raw[k]!
+          const b = raw[k + 1]
+          const steps = b ? Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 6)) : 1
+          for (let j = 0; j < steps; j++) {
+            const x = b ? a[0] + ((b[0] - a[0]) * j) / steps : a[0]
+            const y = b ? a[1] + ((b[1] - a[1]) * j) / steps : a[1]
+            pts.push(new THREE.Vector3(x - half, terrain.height(x, y) + 0.6, y - half))
+          }
+        }
+        if (pts.length > 1) statics.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: MAP.parchment, dashSize: 6, gapSize: 4 })))
       }
       for (const o of statics.children) if (o instanceof THREE.Line) o.computeLineDistances()
       camera.far = size * 3
       camera.updateProjectionMatrix()
     }
 
-    // Selection marker: an interest-radius circle plus a spinning diamond.
-    const interest = new THREE.Mesh(new THREE.RingGeometry(0.985, 1, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: HOT, side: THREE.DoubleSide, transparent: true, opacity: 0.6 }))
-    const marker = new THREE.Mesh(new THREE.OctahedronGeometry(5), new THREE.MeshBasicMaterial({ color: HOT, wireframe: true }))
+    // Selection marker: an interest-radius circle plus a turning diamond, in gold like the client's target ring.
+    const interest = new THREE.Mesh(new THREE.RingGeometry(0.985, 1, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: MAP.gold, side: THREE.DoubleSide, transparent: true, opacity: 0.7 }))
+    const marker = new THREE.Mesh(new THREE.OctahedronGeometry(5), new THREE.MeshLambertMaterial({ color: MAP.gold, flatShading: true }))
     interest.visible = marker.visible = false
     scene.add(interest, marker)
 
@@ -303,11 +333,17 @@ export default function Scene3D(p: Props) {
       let np = 0
       let nb = 0
       let selPos: Ghost | null = null
+      let selY = 0
       const bp = bars.geometry.getAttribute('position') as THREE.BufferAttribute
+      const bc = bars.geometry.getAttribute('color') as THREE.BufferAttribute
       for (const [id, g] of ghosts) {
         g.x += (g.tx - g.x) * k
         g.z += (g.tz - g.z) * k
-        if (id === pr.selected) selPos = g
+        const gy = ground(g.x, g.z)
+        if (id === pr.selected) {
+          selPos = g
+          selY = gy
+        }
         const person = g.kind === KIND_PLAYER
         const shape = person ? -1 : (g.arch < 0 ? 0 : g.arch) % SHAPES.length
         if (person ? np >= CAP : n[shape]! >= CAP) continue
@@ -315,22 +351,25 @@ export default function Scene3D(p: Props) {
         const i = person ? np++ : n[shape]!++
         ;(person ? peopleIds : kinds[shape]!.ids)[i] = id
         if (!person && g.arch >= 0 && g.arch < per.length) per[g.arch]!++
-        tmp.position.set(g.x, person ? 5.5 : 4.5, g.z)
+        tmp.position.set(g.x, gy + (person ? 5.5 : 4.5), g.z)
         tmp.rotation.set(0, now / (person ? 2400 : 1800) + id, 0)
         tmp.updateMatrix()
         mesh.setMatrixAt(i, tmp.matrix)
-        // Archetypes also differ in brightness; players and driven units are near white.
-        if (person || g.kind === KIND_DRIVEN) col.setHex(HOT)
-        else col.setHSL(0.36, 1, 0.3 + 0.16 * (((g.arch + 1) % 4) / 3))
+        // Archetypes wear their own colour; players are parchment, possessed units gold.
+        if (person) col.set(MAP.parchment)
+        else if (g.kind === KIND_DRIVEN) col.set(MAP.gold)
+        else col.set(pr.colors?.[g.arch] ?? MAP.parchment)
         mesh.setColorAt(i, col)
         if (g.hp < 0.995 && nb < CAP) {
           const w = 12
-          const y = person ? 13 : 11
+          const y = gy + (person ? 13 : 11)
           const f = Math.max(0, Math.min(1, g.hp))
           bp.setXYZ(nb * 4, g.x - w / 2, y, g.z)
           bp.setXYZ(nb * 4 + 1, g.x - w / 2 + w * f, y, g.z)
           bp.setXYZ(nb * 4 + 2, g.x - w / 2, y + 0.4, g.z)
           bp.setXYZ(nb * 4 + 3, g.x - w / 2 + w * f, y + 0.4, g.z)
+          col.set(hpColor(f))
+          for (let v = 0; v < 4; v++) bc.setXYZ(nb * 4 + v, col.r, col.g, col.b)
           nb++
         }
       }
@@ -342,6 +381,7 @@ export default function Scene3D(p: Props) {
       }
       bars.geometry.setDrawRange(0, nb * 4)
       bp.needsUpdate = true
+      bc.needsUpdate = true
       const sig = per.join(',') + '/' + np
       if (sig !== lastShown) {
         lastShown = sig
@@ -350,11 +390,11 @@ export default function Scene3D(p: Props) {
       }
       if (selPos) {
         interest.visible = marker.visible = true
-        interest.position.set(selPos.x, 0.3, selPos.z)
+        interest.position.set(selPos.x, selY + 0.5, selPos.z)
         interest.scale.setScalar(pr.interest)
-        marker.position.set(selPos.x, 18, selPos.z)
+        marker.position.set(selPos.x, selY + 18, selPos.z)
         marker.rotation.y = now / 600
-        if (pr.follow) controls.target.lerp(new THREE.Vector3(selPos.x, 0, selPos.z), 0.15)
+        if (pr.follow) controls.target.lerp(new THREE.Vector3(selPos.x, selY, selPos.z), 0.15)
       } else interest.visible = marker.visible = false
       controls.update()
       renderer.render(scene, camera)
@@ -363,7 +403,7 @@ export default function Scene3D(p: Props) {
       const el = tag.current
       if (el) {
         if (selPos && pr.selected !== null) {
-          vec.set(selPos.x, 24, selPos.z).project(camera)
+          vec.set(selPos.x, selY + 24, selPos.z).project(camera)
           const visible = vec.z < 1 && Math.abs(vec.x) < 1.05 && Math.abs(vec.y) < 1.05
           el.style.display = visible ? 'block' : 'none'
           el.style.transform = `translate(${((vec.x + 1) / 2) * host.clientWidth}px, ${((1 - vec.y) / 2) * host.clientHeight}px) translate(-50%, -100%)`
@@ -392,37 +432,38 @@ export default function Scene3D(p: Props) {
     }
   }, [])
 
-  const legend = p.archetypes.map((name, i) => ({ name, i, n: counts[i] ?? 0, shape: SHAPES[i % SHAPES.length]! }))
+  const legend = p.archetypes.map((name, i) => ({ name, i, n: counts[i] ?? 0, shape: SHAPES[i % SHAPES.length]!, color: p.colors?.[i] }))
+  // Overlay text sits on ink bands so it reads over sky and grass.
+  const band = 'bg-[#1a1a12]/75 text-[#f3ead2] font-mono text-[11px]'
   return (
-    <div ref={box} className="relative min-h-[240px] h-full bg-black overflow-hidden">
-      <canvas ref={rain} aria-hidden="true" className="absolute inset-0 h-full w-full opacity-40" />
+    <div ref={box} className="relative min-h-[240px] h-full overflow-hidden" style={{ background: MAP.sky }}>
       <div
         ref={tag}
         aria-hidden="true"
         style={{ display: 'none' }}
-        className="absolute left-0 top-0 pointer-events-none whitespace-nowrap border border-[#0a5a1e] bg-black/80 px-1 text-[11px] leading-4 text-[#d8ffe0] font-mono"
+        className={`absolute z-10 left-0 top-0 pointer-events-none whitespace-nowrap border border-[#ffd27a] px-1 leading-4 ${band}`}
       />
       {!failed && (
-        <ul aria-label="Legend" className="absolute left-3 bottom-8 m-0 p-0 list-none text-[11px] leading-5 text-[#00ff41] font-mono pointer-events-none">
+        <ul aria-label="Legend" className={`absolute z-10 left-3 bottom-8 m-0 px-2 py-1 list-none leading-5 pointer-events-none ${band}`}>
           {legend.map((l) => (
             <li key={l.name} className="flex items-center gap-2">
-              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill={l.color ?? 'none'} stroke="currentColor" strokeWidth="1.5">
                 <path d={l.shape.svg} />
               </svg>
               <span>{l.name}</span>
-              <span className="opacity-60">{l.n}</span>
+              <span className="opacity-70">{l.n}</span>
             </li>
           ))}
-          <li className="flex items-center gap-2 text-[#d8ffe0]">
-            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <li className="flex items-center gap-2">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill={MAP.parchment} stroke="currentColor" strokeWidth="1.5">
               <path d="M8 1 L13 14 H3 Z" />
             </svg>
             <span>players</span>
-            <span className="opacity-60">{players}</span>
+            <span className="opacity-70">{players}</span>
           </li>
         </ul>
       )}
-      <p className="absolute left-3 bottom-2 m-0 text-[11px] tracking-wider text-[#00ff41] font-mono pointer-events-none" role="status">
+      <p className={`absolute z-10 left-3 bottom-2 m-0 px-2 tracking-wider pointer-events-none ${band}`} role="status">
         {failed ? 'WebGL is not available in this browser. The 2D map still works.' : 'drag to orbit · scroll to zoom · click to select'}
       </p>
     </div>
