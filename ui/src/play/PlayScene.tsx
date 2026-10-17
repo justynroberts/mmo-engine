@@ -7,7 +7,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { glowTexture, Particles, windowTexture } from './fx'
 import type { GameClient, PlayInfo } from './client'
 import { css, readPalette, type Palette } from './palette'
-import { clampZoom, healthAttr, type Shared, type Target } from './shared'
+import { clampZoom, healthAttr, jumpLift, type Shared, type Target } from './shared'
 
 interface Props {
   client: GameClient
@@ -496,7 +496,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         world.push({ id: e.id, x, z })
         const hp = frac(hpOf(e.attrs))
         if (n < CAP) {
-          tmp.position.set(x, 1, z)
+          tmp.position.set(x, 1 + jumpLift(inf, e.attrs), z)
           tmp.rotation.set(0, now / 1500 + e.id, 0)
           tmp.updateMatrix()
           others.setMatrixAt(n, tmp.matrix)
@@ -579,7 +579,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         const sx = self.x - half
         const sz = self.y - half
         me.visible = true
-        me.position.set(sx, 1.3, sz)
+        me.position.set(sx, 1.3 + jumpLift(inf, self.attrs), sz)
         me.rotation.y = now / 1200
         meCore.visible = mePool.visible = lightPool.visible = true
         meCore.position.copy(me.position)

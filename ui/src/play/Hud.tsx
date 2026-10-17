@@ -6,7 +6,7 @@ import Bag from './Bag'
 import Joystick from './Joystick'
 import Minimap from './Minimap'
 import { play as sfx, rememberSound, soundWanted } from './sfx'
-import { ACT_DROP, ACT_PICKUP, ACT_USE, clampZoom, healthAttr, type Shared } from './shared'
+import { ACT_DROP, ACT_JUMP, ACT_PICKUP, ACT_USE, clampZoom, healthAttr, type Shared } from './shared'
 
 export interface Line {
   key: number
@@ -169,6 +169,10 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
       if (k === 'e') {
         client.act(ACT_PICKUP, 0)
         beep('act')
+        return
+      }
+      if (k === 'j') {
+        client.act(ACT_JUMP, 0)
         return
       }
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
@@ -337,6 +341,7 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
                 ['Shift + 1 to 8', 'use a bag item'],
                 ['G, then 1 to 8', 'drop a bag item'],
                 ['E', 'pick up what is at your feet'],
+                ['J', 'jump (attacks miss you in the air)'],
                 ['Click / tap', 'target a character'],
                 ['T', 'next target'],
                 ['Esc', 'release the target'],

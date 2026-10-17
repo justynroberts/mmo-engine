@@ -16,6 +16,7 @@ extends Node3D
 @export var hit := "Hit_A"
 @export var death := "Death_A"
 @export var stand_up := ""
+@export var jump_name := "Jump_Full_Short"
 ## Ground speed, in units a second, that each cycle was authored for, so feet slide as little as possible.
 @export var walk_speed := 2.5
 @export var run_speed := 6.5
@@ -114,6 +115,11 @@ func set_speed(s: float) -> void:
 func attack() -> void:
 	if not dead:
 		_one_shot(attack_name, 1.4)
+
+## Take-off: the arc itself comes from the server (main.gd lifts the node); this is the legs.
+func jump(seconds: float) -> void:
+	if not dead and anim and anim.has_animation(jump_name):
+		_one_shot(jump_name, anim.get_animation(jump_name).length / maxf(seconds, 0.1))
 
 func hurt() -> void:
 	if not dead and busy <= 0.0:

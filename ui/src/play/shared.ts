@@ -48,4 +48,16 @@ export const BAG_SLOTS = 8
 export const ACT_USE = 200
 export const ACT_DROP = 216
 export const ACT_PICKUP = 250
+/** Jump: in the air for a moment, and nothing can target you while you are (a dodge). */
+export const ACT_JUMP = 251
+const JUMP_HEIGHT = 2.6
+
+/** How high a character is on its jump, from the server's replicated `airborne` attribute (the share still to come). */
+export function jumpLift(info: PlayInfo, attrs: Record<string, number>): number {
+  const a = info.attrs.find((x) => x.name === 'airborne')
+  const v = a ? attrs[a.name] : undefined
+  if (!a || v === undefined || v <= a.min) return 0
+  const k = 1 - Math.min(1, (v - a.min) / (a.max - a.min || 1))
+  return 4 * JUMP_HEIGHT * k * (1 - k)
+}
 export const PICKUP_RANGE = 3

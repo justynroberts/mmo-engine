@@ -49,6 +49,10 @@ var meshes := {}    # path -> Mesh, pulled out of the glTF pieces once
 var track := {}     # entity id -> {hp, pos, vel, face_until}
 var corpses: Array = [] # [node, seconds left]
 var entity_scale := 1.0
+const ACT_JUMP := 251
+const JUMP_SECS := 0.6
+const JUMP_HEIGHT := 2.2
+var air_max := 0.0 # max of the server's "airborne" attribute; 0 when the game has none
 var action_range := 8.0
 var ground_mesh := MeshInstance3D.new()
 var target_ring := MeshInstance3D.new()
@@ -139,6 +143,9 @@ func _start() -> void:
 	# KayKit characters are about one unit across at the hips, so they match a radius of 0.5.
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	for a in info["attrs"]:
+		if a["name"] == "airborne" and a["replicated"]:
+			air_max = maxf(float(a["max"]), 1.0)
+			continue
 		if a["replicated"] and (health_idx == "" or a["name"] == "health"):
 			health_idx = a["name"]
 			health_max = max(float(a["max"]), 1.0)
@@ -196,8 +203,22 @@ func _build_scene() -> void:
 	e.tonemap_exposure = 0.95
 	e.fog_enabled = true
 	e.fog_light_color = Color("a9bfc9")
-	e.fog_density = 0.0025
+	e.fog_density = 0.0018
 	e.fog_sky_affect = 0.0
+	# Forward+ extras. The Compatibility renderer ignores what it cannot do, so these are safe either way.
+	e.glow_enabled = true # bloom on torches, loot beams and anything brighter than white
+	e.glow_intensity = 0.7
+	e.glow_bloom = 0.04
+	e.glow_hdr_threshold = 1.1
+	e.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	e.ssao_enabled = true # contact shadow where walls, trees and feet meet the ground
+	e.ssao_radius = 1.6
+	e.ssao_intensity = 1.8
+	e.volumetric_fog_enabled = true # a light haze that the sun shafts through
+	e.volumetric_fog_density = 0.006
+	e.volumetric_fog_albedo = Color("dfe8ee")
+	e.volumetric_fog_anisotropy = 0.35
+	e.volumetric_fog_length = 140.0
 	env.environment = e
 	add_child(env)
 	var sun := DirectionalLight3D.new()
@@ -205,6 +226,8 @@ func _build_scene() -> void:
 	sun.light_color = Color("fff1d6")
 	sun.light_energy = 0.95
 	sun.shadow_enabled = true
+	sun.light_volumetric_fog_energy = 1.4
+	sun.shadow_blur = 1.5
 	sun.directional_shadow_max_distance = 90.0
 	add_child(sun)
 	cam.current = true
@@ -414,7 +437,7 @@ func _gem_node(color: String) -> Node3D:
 	bm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	bm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	bm.cull_mode = BaseMaterial3D.CULL_DISABLED
-	bm.albedo_color = Color(col.r, col.g, col.b, 0.22)
+	bm.albedo_color = Color(col.r * 1.6, col.g * 1.6, col.b * 1.6, 0.3) # over 1, so glow picks it up
 	beam.material_override = bm
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	beam.position.y = 1.6
@@ -491,6 +514,27 @@ func _build_box(b: Array, idx: int) -> Node3D:
 	for c in [Vector3(x0 + 0.75, 0, y0 + 0.75), Vector3(x1 - 0.75, 0, y0 + 0.75), Vector3(x0 + 0.75, 0, y1 - 0.75), Vector3(x1 - 0.75, 0, y1 - 0.75)]:
 		for layer in layers:
 			pieces["pillar.gltf"].append(Transform3D(Basis(), c + Vector3(0, 4.0 * layer, 0)))
+	# Each torch gets a flame that blooms and a warm light (Forward+ handles many lights cheaply).
+	for xf in pieces["torch_mounted.gltf"]:
+		var at: Vector3 = (xf as Transform3D) * Vector3(0, 0.75, 0.35)
+		var flame := MeshInstance3D.new()
+		var fs := SphereMesh.new()
+		fs.radius = 0.14
+		fs.height = 0.32
+		flame.mesh = fs
+		var fm := StandardMaterial3D.new()
+		fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fm.albedo_color = Color(3.0, 1.5, 0.45)
+		flame.material_override = fm
+		flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		flame.position = at
+		node.add_child(flame)
+		var tl := OmniLight3D.new()
+		tl.light_color = Color("ffb35c")
+		tl.light_energy = 1.6
+		tl.omni_range = 9.0
+		tl.position = at + Vector3(0, 0.2, 0)
+		node.add_child(tl)
 	for p in pieces:
 		if pieces[p].is_empty():
 			continue
@@ -612,7 +656,8 @@ func _process(delta: float) -> void:
 		var p: Vector2 = e["position"]
 		var np := Vector3(p.x, _height(p.x, p.y), p.y)
 		var hp := clampf(float(e.get(health_idx, health_max)) / health_max, 0.0, 1.0) if health_idx != "" else 1.0
-		_animate(id, node, np, hp, mine, delta, self_id)
+		var air := clampf(float(e.get("airborne", 0.0)) / air_max, 0.0, 1.0) if air_max > 0.0 else 0.0
+		_animate(id, node, np, hp, mine, delta, self_id, air)
 		if mine:
 			me_pos = p
 		elif node.has_node("body"):
@@ -668,10 +713,10 @@ func _process(delta: float) -> void:
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,
 ## and a nearly dead character that jumps across the map was killed and respawned (the server does both in one tick).
-func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: float, self_id: int) -> void:
+func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: float, self_id: int, air := 0.0) -> void:
 	var t: Dictionary = track.get(id, {})
 	if t.is_empty():
-		t = {"hp": hp, "pos": np, "vel": Vector3.ZERO, "face_until": 0.0, "since": t_total, "hit_at": -100.0}
+		t = {"hp": hp, "pos": np, "vel": Vector3.ZERO, "face_until": 0.0, "since": t_total, "hit_at": -100.0, "air": 0.0}
 		track[id] = t
 		node.position = np
 	var moved: Vector3 = np - t["pos"]
@@ -693,8 +738,15 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 		t["vel"] = Vector3.ZERO
 	elif delta > 0.0:
 		t["vel"] = (t["vel"] as Vector3).lerp(moved / delta, minf(1.0, delta * 10.0))
-	node.position = np
 	t["pos"] = np
+	# The jump arc: `air` is the share of the jump still to come, so progress is 1 - air.
+	if air > 0.0:
+		var k := 1.0 - air
+		np.y += 4.0 * JUMP_HEIGHT * entity_scale * k * (1.0 - k)
+		if t["air"] <= 0.0 and node.has_method("jump"):
+			node.jump(JUMP_SECS)
+	t["air"] = air
+	node.position = np
 	var vel: Vector3 = t["vel"]
 	if t_total > t["face_until"] and vel.length() > 0.8:
 		node.rotation.y = lerp_angle(node.rotation.y, atan2(vel.x, vel.z), minf(1.0, delta * 12.0))
@@ -742,16 +794,18 @@ func _corpse(n: Node3D) -> void:
 	corpses.append([n, 6.0])
 
 func _damage_number(at: Vector3, amount: float, mine: bool) -> void:
-	if amount < 0.5:
-		return
+	if amount >= 0.5:
+		_float_text(at, "-%d" % int(round(amount)), Color("ff5a4a") if mine else Color("ffd27a"))
+
+func _float_text(at: Vector3, text: String, color: Color) -> void:
 	var l := Label3D.new()
-	l.text = "-%d" % int(round(amount))
+	l.text = text
 	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	l.pixel_size = 0.012
 	l.font_size = 40
 	l.outline_size = 10
 	l.no_depth_test = true
-	l.modulate = Color("ff5a4a") if mine else Color("ffd27a")
+	l.modulate = color
 	l.position = at + Vector3(randf_range(-0.4, 0.4), 3.3 * entity_scale, 0)
 	add_child(l)
 	var tw := create_tween()
@@ -921,6 +975,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_attack()
 		elif k == KEY_G:
 			_toggle_god()
+		elif k == KEY_J:
+			net.act(ACT_JUMP, 0)
 		elif k == KEY_F11:
 			var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -951,6 +1007,8 @@ func _attack() -> void:
 				_notice("Nothing within reach (%d units). Get closer." % int(action_range))
 			return
 		target_id = near
+	if track.has(target_id) and track[target_id].get("air", 0.0) > 0.0:
+		_float_text((ents[target_id] as Node3D).position, "dodge", Color("9fe8e0"))
 	net.act(attack_id, target_id)
 	next_swing = t_total + 0.5
 	var me: Node3D = ents.get(net.get_self_id())
@@ -1067,6 +1125,12 @@ func _smoke() -> void:
 	if not walls.is_empty() and ResourceLoader.exists(DUNGEON + "wall.gltf"):
 		_check("walls are built from dungeon pieces", walls.values()[0].get_child_count() > 1, "%d parts" % walls.values()[0].get_child_count())
 	_check("scenery is scattered", props.size() > 0, "%d chunks" % props.size())
+	if air_max > 0.0:
+		net.act(ACT_JUMP, 0)
+		ok = await _wait(3.0, func(): return track.get(net.get_self_id(), {}).get("air", 0.0) > 0.0)
+		_check("jumps", ok, "")
+		ok = await _wait(3.0, func(): return track.get(net.get_self_id(), {}).get("air", 1.0) == 0.0)
+		_check("and lands", ok, "")
 	var items: Array = info.get("items", [])
 	if items.is_empty():
 		print("SMOKE ok (no items defined)")
@@ -1083,8 +1147,14 @@ func _smoke() -> void:
 	ok = await _wait(5.0, func(): return _dropped_here(name) != 0 and gems.has(_dropped_here(name)))
 	_check("dropped item appears on the ground", ok, "%d gems" % gems.size())
 	var mine_id := _dropped_here(name)
+	# Items share a quarter-second cooldown, and the drop may show up sooner than that, so press again until it
+	# goes, as a player would.
+	var press := func():
+		if Time.get_ticks_msec() % 300 < 20:
+			net.pickup()
+		return not net.ground().any(func(g): return g["id"] == mine_id)
 	net.pickup()
-	ok = await _wait(5.0, func(): return not net.ground().any(func(g): return g["id"] == mine_id))
+	ok = await _wait(5.0, press)
 	_check("pickup takes it off the ground", ok, "gem %d" % mine_id)
 	ok = await _wait(5.0, func(): return net.bag().any(func(s): return s["item"] == name))
 	_check("and puts it back in the bag", ok)

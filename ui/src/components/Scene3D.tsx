@@ -17,6 +17,9 @@ interface Props {
   /** Index of the health attribute among the replicated ones in an entity row, or -1. */
   healthIdx: number
   healthMax: number
+  /** Index of the `airborne` attribute in an entity row's attributes, or -1; jumping entities are lifted by it. */
+  airIdx?: number
+  airMax?: number
   stateRef: MutableRefObject<State | null>
   selected: number | null
   onSelect: (id: number | null) => void
@@ -44,6 +47,7 @@ interface Ghost {
   kind: number
   arch: number
   hp: number
+  air: number
 }
 
 /** A name over a place: a sprite textured from a canvas, parchment with an ink rim so it reads on any ground. */
@@ -315,6 +319,8 @@ export default function Scene3D(p: Props) {
           const tx = (row[1] ?? 0) - half
           const tz = (row[2] ?? 0) - half
           const hp = hi >= 0 && pr.healthMax > 0 ? (row[5 + hi] ?? pr.healthMax) / pr.healthMax : 1
+          const ai = pr.airIdx ?? -1
+          const air = ai >= 0 ? Math.max(0, Math.min(1, (row[5 + ai] ?? 0) / (pr.airMax || 100))) : 0
           const g = ghosts.get(id)
           if (g) {
             g.tx = tx
@@ -322,7 +328,8 @@ export default function Scene3D(p: Props) {
             g.kind = row[4] ?? 0
             g.arch = row[3] ?? -1
             g.hp = hp
-          } else ghosts.set(id, { x: tx, z: tz, tx, tz, kind: row[4] ?? 0, arch: row[3] ?? -1, hp })
+            g.air = air
+          } else ghosts.set(id, { x: tx, z: tz, tx, tz, kind: row[4] ?? 0, arch: row[3] ?? -1, hp, air })
         }
         for (const id of ghosts.keys()) if (!seen.has(id)) ghosts.delete(id)
       }
@@ -339,7 +346,8 @@ export default function Scene3D(p: Props) {
       for (const [id, g] of ghosts) {
         g.x += (g.tx - g.x) * k
         g.z += (g.tz - g.z) * k
-        const gy = ground(g.x, g.z)
+        // On a jump, `air` is the share still to come: a parabola over the ground.
+        const gy = ground(g.x, g.z) + (g.air > 0 ? 4 * 6 * (1 - g.air) * g.air : 0)
         if (id === pr.selected) {
           selPos = g
           selY = gy

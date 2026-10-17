@@ -325,6 +325,8 @@ export default function App() {
                 archetypes={live?.archetypes.map((a) => a.name) ?? []}
                 colors={live?.archetypes.map((a) => a.color) ?? []}
                 seed={info?.seed}
+                airIdx={live?.attrs.findIndex((a) => a.name === 'airborne') ?? -1}
+                airMax={live?.attrs.find((a) => a.name === 'airborne')?.max ?? 100}
                 healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
                 healthMax={healthDef?.max ?? 100}
                 stateRef={stateRef}
