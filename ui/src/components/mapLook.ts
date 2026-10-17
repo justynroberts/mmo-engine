@@ -182,3 +182,84 @@ export function groundImage(seed: number, size: number, boxes: Box[], px = 512):
 export function hpColor(hp: number): string {
   return hp > 0.5 ? MAP.hpHigh : hp > 0.25 ? '#e0b53a' : MAP.hpLow
 }
+
+// ------------------------------------------------------------------------------------------------ land features
+// The same box kinds and river courses as the Godot client (godot/scripts/terrain.gd), step for step.
+
+export const KEEP = 0
+export const CRAG = 1
+export const LAKE = 2
+
+/** Keep, crag or lake, from the box's own corner. */
+export function boxKind(b: Box): number {
+  const w = b[2] - b[0]
+  const d = b[3] - b[1]
+  if (Math.min(w, d) < 10) return KEEP
+  const h = (Math.trunc(b[0]) * 7 + Math.trunc(b[1]) * 13) % 10
+  if (h >= 8 && Math.min(w, d) >= 12) return LAKE
+  if (h >= 5) return CRAG
+  return KEEP
+}
+
+export const RIVER_HALF = 3.5
+
+/**
+ * River courses: [x, y] points every 10 units. An LCG on exact integers drives them, and positions are rounded to
+ * 32 bit floats each step as Godot's Vector2 is, so both clients trace the same lines.
+ */
+export function rivers(seed: number, size: number, boxes: Box[]): [number, number][][] {
+  const f = Math.fround
+  let s = (seed * 2654435761 + 12345) % 4294967296
+  const next = () => {
+    s = (s * 1664525 + 1013904223) % 4294967296
+    return s / 4294967296
+  }
+  const blocked = (x: number, y: number) => boxes.some((b) => x > b[0] - 14 && x < b[2] + 14 && y > b[1] - 14 && y < b[3] + 14)
+  const out: [number, number][][] = []
+  const count = Math.min(4, Math.max(1, 1 + Math.trunc(size / 2500)))
+  const step = 10
+  for (let r = 0; r < count; r++) {
+    const side = Math.trunc(next() * 4)
+    const along = (0.15 + 0.7 * next()) * size
+    const starts: [number, number][] = [[along, 0], [size, along], [along, size], [0, along]]
+    const aims = [Math.PI / 2, Math.PI, -Math.PI / 2, 0]
+    let p: [number, number] = [f(starts[side]![0]), f(starts[side]![1])]
+    const aim = aims[side]!
+    let heading = aim + (next() - 0.5) * 0.8
+    const step2 = (h: number): [number, number] => [f(p[0] + f(f(Math.cos(h)) * step)), f(p[1] + f(f(Math.sin(h)) * step))]
+    const pts: [number, number][] = [p]
+    for (let n = 0; n < 2000; n++) {
+      heading += (next() - 0.5) * 0.35
+      let off = ((aim - heading + Math.PI) % (Math.PI * 2)) - Math.PI
+      if (off < -Math.PI) off += Math.PI * 2
+      heading += off * 0.06
+      let q = step2(heading)
+      if (blocked(q[0], q[1])) {
+        const course = heading
+        for (let t = 0; t < 8; t++) {
+          heading = course + 0.4 * (Math.trunc(t / 2) + 1) * (t % 2 === 0 ? 1 : -1)
+          q = step2(heading)
+          if (!blocked(q[0], q[1])) break
+        }
+      }
+      const outside = q[0] < 0 || q[1] < 0 || q[0] > size || q[1] > size
+      if (outside && n < 30) {
+        heading = aim
+        continue
+      }
+      if (outside) {
+        pts.push(q)
+        break
+      }
+      p = q
+      pts.push(p)
+    }
+    out.push(pts)
+  }
+  return out
+}
+
+export const WATER = '#2f7f8f'
+export const WATER_DEEP = '#1d4f66'
+export const SAND = '#c9b68a'
+export const ROCK = '#7d776e'

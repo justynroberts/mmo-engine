@@ -1,7 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
-import { MAP, groundImage, hpColor, trees } from './mapLook'
+import { CRAG, LAKE, MAP, RIVER_HALF, ROCK, SAND, WATER, WATER_DEEP, boxKind, groundImage, hpColor, rivers, trees } from './mapLook'
 
 /** When present the map is in builder mode: it shows places and routes and edits them. */
 export interface EditOverlay {
@@ -246,7 +246,7 @@ export function WorldView(p: Props) {
   useEffect(() => {
     let raf = 0
     // The ground picture and the trees only change with the world, so they are made once per world.
-    let look: { key: string; ground: HTMLCanvasElement | null; trees: [number, number, number][] } | null = null
+    let look: { key: string; ground: HTMLCanvasElement | null; trees: [number, number, number][]; rivers: [number, number][][]; kinds: number[] } | null = null
     const draw = () => {
       raf = requestAnimationFrame(draw)
       const cv = canvas.current
@@ -268,7 +268,16 @@ export function WorldView(p: Props) {
       const boxes = pr.world?.boxes ?? []
       const key = `${pr.seed ?? 1}/${worldSize}/${boxes.length}/${boxes[0]?.join(',') ?? ''}`
       if (pr.world && look?.key !== key) {
-        look = { key, ground: groundImage(pr.seed ?? 1, worldSize, boxes), trees: trees(pr.seed ?? 1, worldSize, boxes) }
+        look = {
+          key,
+          ground: groundImage(pr.seed ?? 1, worldSize, boxes),
+          trees: trees(pr.seed ?? 1, worldSize, boxes).filter(([x, y]) => !nearRiver(x, y)),
+          rivers: rivers(pr.seed ?? 1, worldSize, boxes),
+          kinds: boxes.map(boxKind),
+        }
+        function nearRiver(x: number, y: number) {
+          return look?.rivers.some((r) => r.some((p) => Math.abs(p[0] - x) < 9 && Math.abs(p[1] - y) < 9)) ?? false
+        }
       }
       const fg = MAP.parchment
       const accent = MAP.gold
@@ -283,6 +292,20 @@ export function WorldView(p: Props) {
       } else {
         ctx.fillStyle = '#5f8c3a'
         ctx.fillRect(sx(0), sy(0), worldSize * v.scale, worldSize * v.scale)
+      }
+
+      // Rivers, wide enough to see at any zoom.
+      if (look) {
+        ctx.strokeStyle = WATER
+        ctx.lineWidth = Math.max(1.5, RIVER_HALF * 2 * v.scale)
+        ctx.lineJoin = 'round'
+        ctx.lineCap = 'round'
+        for (const r of look.rivers) {
+          ctx.beginPath()
+          r.forEach((p, k) => (k === 0 ? ctx.moveTo(sx(p[0]), sy(p[1])) : ctx.lineTo(sx(p[0]), sy(p[1]))))
+          ctx.stroke()
+        }
+        ctx.lineCap = 'butt'
       }
 
       // Trees as canopies seen from above, once they are big enough to read.
@@ -321,12 +344,48 @@ export function WorldView(p: Props) {
       ctx.strokeRect(sx(0) + 0.5, sy(0) + 0.5, worldSize * v.scale, worldSize * v.scale)
 
       // Buildings: stone roofs with a darker rim, and the wall line inset when there is room for it.
-      for (const b of boxes) {
+      boxes.forEach((b, bi) => {
         const x = sx(b[0])
         const y = sy(b[1])
         const bw = (b[2] - b[0]) * v.scale
         const bh = (b[3] - b[1]) * v.scale
-        if (x > w || y > h || x + bw < 0 || y + bh < 0) continue
+        if (x > w || y > h || x + bw < 0 || y + bh < 0) return
+        const kind = look?.kinds[bi] ?? 0
+        if (kind === LAKE) {
+          // Beach to the box's edge (where you are stopped), water inside it with rounded corners.
+          ctx.fillStyle = SAND
+          ctx.fillRect(x, y, bw, bh)
+          const inset = 3 * v.scale
+          ctx.fillStyle = WATER
+          ctx.beginPath()
+          ctx.roundRect(x + inset, y + inset, Math.max(1, bw - inset * 2), Math.max(1, bh - inset * 2), Math.min(8 * v.scale, bw / 3, bh / 3))
+          ctx.fill()
+          ctx.fillStyle = WATER_DEEP
+          ctx.beginPath()
+          ctx.roundRect(x + bw * 0.25, y + bh * 0.25, bw * 0.5, bh * 0.5, Math.min(6 * v.scale, bw / 4, bh / 4))
+          ctx.fill()
+          return
+        }
+        if (kind === CRAG) {
+          // A mountain as a relief map draws one: rock, with contour rings stepping up to the peak.
+          ctx.fillStyle = ROCK
+          ctx.fillRect(x, y, bw, bh)
+          ctx.strokeStyle = MAP.ink
+          for (let k = 1; k <= 3; k++) {
+            const ix = (bw / 2) * (k / 4)
+            const iy = (bh / 2) * (k / 4)
+            ctx.globalAlpha = 0.25
+            ctx.strokeRect(x + ix, y + iy, bw - ix * 2, bh - iy * 2)
+          }
+          ctx.globalAlpha = 1
+          ctx.fillStyle = MAP.parchment
+          ctx.beginPath()
+          ctx.arc(x + bw / 2, y + bh / 2, Math.max(1.5, Math.min(bw, bh) * 0.08), 0, Math.PI * 2)
+          ctx.fill()
+          ctx.strokeStyle = MAP.stoneEdge
+          ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(bw), Math.round(bh))
+          return
+        }
         ctx.fillStyle = MAP.stone
         ctx.fillRect(x, y, bw, bh)
         ctx.strokeStyle = MAP.stoneEdge
@@ -338,7 +397,7 @@ export function WorldView(p: Props) {
           ctx.strokeRect(x + inset, y + inset, bw - inset * 2, bh - inset * 2)
           ctx.globalAlpha = 1
         }
-      }
+      })
 
       if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3: MAP.ink, accent, line: MAP.ink, bg: MAP.parchment }, mouse.current, wallDrag.current)
 

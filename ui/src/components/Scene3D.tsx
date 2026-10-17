@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { KIND_DRIVEN, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
-import { MAP, Terrain, hpColor, meadow, trees } from './mapLook'
+import { CRAG, LAKE, MAP, RIVER_HALF, ROCK, Terrain, WATER, boxKind, hpColor, meadow, rivers, trees } from './mapLook'
 
 interface Props {
   world: WorldGeom | null
@@ -193,16 +193,58 @@ export default function Scene3D(p: Props) {
       apron.position.y = -terrain.amplitude - 2
       statics.add(apron)
 
-      // Buildings: stone blocks on levelled ground, with a dark rim so their shape reads from far off.
+      // Buildings: stone blocks on levelled ground, with a dark rim so their shape reads from far off. Crags are
+      // rocky peaks and lakes are water, as in the game client.
       const stone = new THREE.MeshLambertMaterial({ color: MAP.stone, flatShading: true })
+      const rock = new THREE.MeshLambertMaterial({ color: ROCK, flatShading: true })
+      const water = new THREE.MeshLambertMaterial({ color: WATER, transparent: true, opacity: 0.85 })
       boxes.forEach(([x0, y0, x1, y1], i) => {
         const base = terrain.baseOf(i)
+        const kind = boxKind([x0, y0, x1, y1])
+        if (kind === CRAG) {
+          const peak = Math.min(56, Math.max(14, Math.min(x1 - x0, y1 - y0) * 1.4))
+          const cone = new THREE.ConeGeometry(0.5, 1, 7).rotateY(Math.PI / 7)
+          cone.scale(x1 - x0, peak, y1 - y0)
+          cone.translate((x0 + x1) / 2 - half, base + peak / 2, (y0 + y1) / 2 - half)
+          statics.add(new THREE.Mesh(cone, rock))
+          return
+        }
+        if (kind === LAKE) {
+          const lake = new THREE.PlaneGeometry(x1 - x0 - 4, y1 - y0 - 4).rotateX(-Math.PI / 2)
+          lake.translate((x0 + x1) / 2 - half, base + 0.3, (y0 + y1) / 2 - half)
+          statics.add(new THREE.Mesh(lake, water))
+          return
+        }
         const bg = new THREE.BoxGeometry(x1 - x0, WALL_H, y1 - y0)
         bg.translate((x0 + x1) / 2 - half, base + WALL_H / 2, (y0 + y1) / 2 - half)
         statics.add(new THREE.Mesh(bg, stone.clone()))
         const eg = new THREE.EdgesGeometry(bg)
         statics.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: MAP.stoneEdge })))
       })
+
+      // Rivers: a ribbon over the ground along each course.
+      for (const r of rivers(seed, size, boxes)) {
+        const pos: number[] = []
+        r.forEach((p, k) => {
+          const a = r[Math.max(0, k - 1)]!
+          const b = r[Math.min(r.length - 1, k + 1)]!
+          const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
+          const nx = (-(b[1] - a[1]) / len) * (RIVER_HALF + 0.5)
+          const nz = ((b[0] - a[0]) / len) * (RIVER_HALF + 0.5)
+          const y = terrain.height(p[0], p[1]) + 0.4
+          pos.push(p[0] + nx - half, y, p[1] + nz - half, p[0] - nx - half, y, p[1] - nz - half)
+        })
+        const idx: number[] = []
+        for (let k = 1; k < r.length; k++) {
+          const i = k * 2
+          idx.push(i - 2, i - 1, i, i - 1, i + 1, i)
+        }
+        const rg = new THREE.BufferGeometry()
+        rg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+        rg.setIndex(idx)
+        rg.computeVertexNormals()
+        statics.add(new THREE.Mesh(rg, new THREE.MeshLambertMaterial({ color: WATER, side: THREE.DoubleSide })))
+      }
 
       // Trees from the seed: a trunk and a canopy each, instanced.
       const ts = trees(seed, size, boxes)

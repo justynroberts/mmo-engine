@@ -144,19 +144,32 @@ func _make_rivers() -> void:
 		var starts: Array[Vector2] = [Vector2(along, 0), Vector2(size, along), Vector2(along, size), Vector2(0, along)]
 		var aims: Array[float] = [PI / 2.0, PI, -PI / 2.0, 0.0]
 		var p: Vector2 = starts[side]
-		var heading: float = aims[side] + (_next() - 0.5) * 0.8
+		var aim: float = aims[side]
+		var heading: float = aim + (_next() - 0.5) * 0.8
 		var pts := PackedVector2Array([p])
 		var lvl := PackedFloat32Array([raw(p.x, p.y)])
 		for n in 2000:
 			heading += (_next() - 0.5) * 0.35
+			# A gentle pull back towards the far side, so a river crosses the land instead of doubling back.
+			var off := fmod(aim - heading + PI, TAU) - PI
+			if off < -PI:
+				off += TAU
+			heading += off * 0.06
 			var next := p + Vector2(cos(heading), sin(heading)) * step
-			# Bend away from buildings rather than run under them.
-			var tries := 0
-			while _blocked(next) and tries < 8:
-				heading += 0.5 if tries % 2 == 0 else -1.0
-				next = p + Vector2(cos(heading), sin(heading)) * step
-				tries += 1
-			if next.x < 0.0 or next.y < 0.0 or next.x > size or next.y > size:
+			# Bend away from buildings rather than run under them: try either side of the course, wider each time.
+			if _blocked(next):
+				var course := heading
+				for t in 8:
+					var turn := 0.4 * float(t / 2 + 1) * (1.0 if t % 2 == 0 else -1.0)
+					heading = course + turn
+					next = p + Vector2(cos(heading), sin(heading)) * step
+					if not _blocked(next):
+						break
+			var outside := next.x < 0.0 or next.y < 0.0 or next.x > size or next.y > size
+			if outside and n < 30:
+				heading = aim # too soon to leave: turn back towards the far side
+				continue
+			if outside:
 				pts.append(next)
 				lvl.append(minf(lvl[lvl.size() - 1], raw(next.x, next.y)))
 				break
