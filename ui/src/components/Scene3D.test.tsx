@@ -7,7 +7,7 @@ import Scene3D from './Scene3D'
 describe('Scene3D without WebGL', () => {
   it('explains itself and stays accessible', async () => {
     const { container } = render(
-      <Scene3D world={null} places={[]} routes={[]} stateRef={{ current: null }} selected={null} onSelect={() => undefined} follow={false} interest={128} />,
+      <Scene3D world={null} places={[]} routes={[]} archetypes={[]} healthIdx={-1} healthMax={100} stateRef={{ current: null }} selected={null} onSelect={() => undefined} follow={false} interest={128} />,
     )
     expect(await screen.findByRole('status')).toHaveTextContent(/WebGL is not available/i)
     const r = await axe.run(container, { rules: { 'color-contrast': { enabled: false } } })

@@ -168,8 +168,10 @@ The end-to-end tests include forged, bit-flipped and replayed packets, wrong-add
 3D view: the 2D/3D switch over the map shows the world as a green wireframe
 (three.js, loaded on demand). Drag to orbit, scroll to zoom, click an entity to
 select it (same selection as the 2D map), and Follow tracks the selected one.
-Bots are octahedra, players are white cones, walls and places are wireframes,
-and digits fall in the background (static if you prefer reduced motion). It
+Each bot type has its own silhouette (diamond, square, triangle, ball, hex) and
+brightness, players are white cones, hurt entities get a health bar, places are
+named on the ground, the selected entity wears a tag, and a legend lists live
+counts per type. Walls and places are wireframes, and digits fall in the background (static if you prefer reduced motion). It
 reads the same `/api/state` feed as the 2D map and falls back to a message
 when WebGL is unavailable.
 

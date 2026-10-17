@@ -303,6 +303,9 @@ export default function App() {
                 world={world}
                 places={live?.places ?? []}
                 routes={live?.routes ?? []}
+                archetypes={live?.archetypes.map((a) => a.name) ?? []}
+                healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
+                healthMax={healthDef?.max ?? 100}
                 stateRef={stateRef}
                 selected={selected}
                 onSelect={(id) => {
