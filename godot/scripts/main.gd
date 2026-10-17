@@ -61,11 +61,17 @@ var last_wall_sync := Vector2(-1e9, -1e9)
 var wall_t := 0.0
 var t_total := 0.0
 var smoke := false
+var god := false
+var next_swing := 0.0
+var notice_until := 0.0
+var notice := ""
 var smoke_log: Array[String] = []
 
 func _ready() -> void:
 	args = _parse_args()
 	smoke = args.has("smoke")
+	if args.has("fullscreen"):
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	if args.has("zoom"):
 		zoom = clampf(float(args["zoom"]), 8.0, 60.0)
 	_build_scene()
@@ -78,7 +84,7 @@ func _ready() -> void:
 	_start()
 
 func _parse_args() -> Dictionary:
-	var a := {"host": "127.0.0.1", "udp": "7777", "web": "127.0.0.1:8081", "admin": "127.0.0.1:8080"}
+	var a := {"host": "127.0.0.1", "udp": "7777", "web": "127.0.0.1:8081", "admin": "127.0.0.1:7780"}
 	var u := OS.get_cmdline_user_args()
 	var i := 0
 	while i < u.size():
@@ -651,9 +657,13 @@ func _process(delta: float) -> void:
 				tgt += "   %s %d" % [health_idx, int(e.get(health_idx, 0))]
 	else:
 		target_id = 0
+	if t_total < notice_until:
+		tgt = notice
 	hud.target.text = tgt
+	if Input.is_key_pressed(KEY_SPACE) and not hud.typing() and not smoke:
+		_attack() # holding Space keeps swinging, at the action's cooldown
 	var names := ["connecting", "connected", "refused", "closed"]
-	hud.status.text = "%s   %d ms   %d, %d   %d in view" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size()]
+	hud.status.text = "%s   %d ms   %d, %d   %d in view%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), "   GOD" if god else ""]
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,
@@ -909,6 +919,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_cycle_target()
 		elif k == KEY_SPACE:
 			_attack()
+		elif k == KEY_G:
+			_toggle_god()
+		elif k == KEY_F11:
+			var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		elif k == KEY_F:
 			net.pickup()
 		elif k >= KEY_1 and k <= KEY_8:
@@ -921,13 +936,56 @@ func _on_chat(text: String) -> void:
 	var shout := text.begins_with("!")
 	net.say(text.trim_prefix("!").strip_edges(), shout)
 
+## Attack the target if it is in reach, otherwise whatever is nearest within reach (and target that). The server
+## checks range, cooldown and energy and ignores a request that fails, so the checks it can see are made here
+## first and explained, instead of a swing that silently does nothing.
 func _attack() -> void:
-	if target_id != 0 and attack_id >= 0:
-		net.act(attack_id, target_id)
-		var me: Node3D = ents.get(net.get_self_id())
-		if me and ents.has(target_id) and me.has_method("attack"):
-			_face(me, (ents[target_id] as Node3D).position)
-			me.attack()
+	if attack_id < 0 or t_total < next_swing:
+		return
+	if target_id == 0 or not ents.has(target_id) or _dist_to(target_id) > action_range:
+		var near := _nearest_in(action_range)
+		if near == 0:
+			if target_id != 0 and ents.has(target_id):
+				_notice("Too far: %d units away, reach is %d." % [int(_dist_to(target_id)), int(action_range)])
+			else:
+				_notice("Nothing within reach (%d units). Get closer." % int(action_range))
+			return
+		target_id = near
+	net.act(attack_id, target_id)
+	next_swing = t_total + 0.5
+	var me: Node3D = ents.get(net.get_self_id())
+	if me and me.has_method("attack"):
+		_face(me, (ents[target_id] as Node3D).position)
+		me.attack()
+
+func _dist_to(id: int) -> float:
+	var n: Node3D = ents.get(id)
+	return Vector2(n.position.x, n.position.z).distance_to(me_pos) if n else INF
+
+func _nearest_in(r: float) -> int:
+	var best := 0
+	var best_d := r
+	for id in ents:
+		if id == net.get_self_id():
+			continue
+		var d := _dist_to(id)
+		if d <= best_d:
+			best_d = d
+			best = id
+	return best
+
+func _notice(text: String) -> void:
+	notice = text
+	notice_until = t_total + 2.5
+
+## God mode lives on the server (admin API, loopback only): your attributes are held at full every tick.
+func _toggle_god() -> void:
+	var code := await _post("http://%s/api/god" % args["admin"], {"id": net.get_self_id(), "on": not god})
+	if code == 200:
+		god = not god
+		_notice("God mode on: you cannot die and never run out of energy." if god else "God mode off.")
+	else:
+		_notice("God mode needs the server's admin API on this machine (--admin %s did not answer)." % args["admin"])
 
 func _cycle_target() -> void:
 	var best := 0
@@ -1021,9 +1079,10 @@ func _smoke() -> void:
 	ok = await _wait(5.0, func(): return net.bag().any(func(s): return s["item"] == name))
 	_check("item arrives in the bag", ok, name)
 	net.drop_slot(_slot_of(name))
-	ok = await _wait(5.0, func(): return net.ground().size() > 0 and gems.size() > 0)
+	# Wait for our own drop, not just anything: bots fighting nearby leave loot too, and it can arrive first.
+	ok = await _wait(5.0, func(): return _dropped_here(name) != 0 and gems.has(_dropped_here(name)))
 	_check("dropped item appears on the ground", ok, "%d gems" % gems.size())
-	var mine_id := _nearest_ground()
+	var mine_id := _dropped_here(name)
 	net.pickup()
 	ok = await _wait(5.0, func(): return not net.ground().any(func(g): return g["id"] == mine_id))
 	_check("pickup takes it off the ground", ok, "gem %d" % mine_id)
@@ -1032,12 +1091,13 @@ func _smoke() -> void:
 	print("SMOKE ok")
 	get_tree().quit(0)
 
-func _nearest_ground() -> int:
+## The nearest pile of `item` within pickup reach (3 units), or 0.
+func _dropped_here(item: String) -> int:
 	var best := 0
-	var best_d := 1e9
+	var best_d := 3.0
 	for g in net.ground():
 		var d := (g["position"] as Vector2).distance_to(me_pos)
-		if d < best_d:
+		if g["item"] == item and d <= best_d:
 			best_d = d
 			best = g["id"]
 	return best

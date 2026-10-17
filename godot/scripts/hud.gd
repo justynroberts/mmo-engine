@@ -22,8 +22,8 @@ func _ready() -> void:
 	root.add_child(status)
 
 	target.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	target.position = Vector2(-120, 10)
-	target.custom_minimum_size = Vector2(240, 0)
+	target.position = Vector2(-320, 10)
+	target.custom_minimum_size = Vector2(640, 0)
 	target.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	target.add_theme_color_override("font_color", Color("ffd27a"))
 	root.add_child(target)
@@ -59,7 +59,7 @@ func _ready() -> void:
 			chat_submitted.emit(t))
 	root.add_child(chat_in)
 
-	help.text = "WASD move   Q/E turn   wheel zoom   Tab target   Space attack   1-8 use   Shift+1-8 drop   F pick up"
+	help.text = "WASD move   Q/E turn   wheel zoom   Tab target   Space attack (hold)   1-8 use   Shift+1-8 drop   F pick up   G god   F11 full screen"
 	help.position = Vector2(14, 720 - 28)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	root.add_child(help)
