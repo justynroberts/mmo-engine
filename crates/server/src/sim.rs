@@ -3,11 +3,16 @@
 //! attribute 0, and "combat" is just the data-driven effects on an action.
 
 use proto::defs::{Defs, Effect, OnZero};
+use proto::game::{ArchRt, Behaviour, Game};
 use proto::world::{integrate, qpos, World};
 use proto::{Entry, Rng};
 
 /// "No owner": the entity is an NPC rather than a player.
 pub const NONE: u32 = u32::MAX;
+/// Owned by the admin UI ("possessed"): the NPC AI leaves it alone.
+pub const DRIVEN: u32 = u32::MAX - 1;
+/// Archetype of entities that are not bots (players, plain NPCs).
+pub const NO_ARCH: u8 = u8::MAX;
 const SLOT_MASK: u32 = 0x00FF_FFFF;
 
 pub struct Entities {
@@ -20,6 +25,10 @@ pub struct Entities {
     pub cooldown_until: Vec<u32>,
     /// Owning client index, or `NONE`.
     pub owner: Vec<u32>,
+    /// Archetype index, or `NO_ARCH`.
+    pub arch: Vec<u8>,
+    /// Units per second at full input.
+    pub speed: Vec<f32>,
     /// One array per attribute, indexed by slot (structure of arrays).
     pub attrs: Vec<Vec<f32>>,
     free: Vec<u32>,
@@ -39,6 +48,8 @@ impl Entities {
             dir_y: vec![0; cap],
             cooldown_until: vec![0; cap],
             owner: vec![NONE; cap],
+            arch: vec![NO_ARCH; cap],
+            speed: vec![0.0; cap],
             attrs: (0..n_attrs).map(|_| vec![0.0; cap]).collect(),
             free: Vec::new(),
             high: 0,
@@ -189,10 +200,16 @@ pub struct Sim {
     /// Wire entry for every live slot, rebuilt once per tick. Snapshots copy
     /// from here, so quantisation cost is O(entities), not O(clients x visible).
     pub entry_cache: Vec<Entry>,
+    pub archs: Vec<ArchRt>,
+    /// Actions requested by bots this tick.
+    npc_actions: Vec<PendingAction>,
+    /// Actions injected by the admin UI for the next tick.
+    pub admin_actions: Vec<PendingAction>,
 }
 
 impl Sim {
-    pub fn new(defs: Defs, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
+    pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
+        let Game { defs, archs } = game;
         let ents = Entities::new(cap, defs.attrs.len());
         let grid = Grid::new(world.size, defs.interest_radius, cap);
         Sim {
@@ -206,12 +223,26 @@ impl Sim {
             rng: Rng::new(seed ^ 0x5EED),
             stats: SimStats::default(),
             entry_cache: vec![Entry::default(); cap],
+            archs,
+            npc_actions: Vec::new(),
+            admin_actions: Vec::new(),
         }
     }
 
     pub fn spawn(&mut self, owner: u32) -> Option<usize> {
+        self.spawn_as(owner, NO_ARCH, None)
+    }
+
+    /// Spawn an entity of an archetype (or a plain one with `NO_ARCH`), at a
+    /// given spot if it is free, otherwise at a random free spot.
+    pub fn spawn_as(&mut self, owner: u32, arch: u8, at: Option<(f32, f32)>) -> Option<usize> {
+        let r = self.defs.entity_radius;
         let slot = self.ents.alloc()?;
-        let (x, y) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
+        let (x, y) = match at {
+            Some((x, y)) if !self.world.blocked(x, y, r) => (x, y),
+            _ => self.world.random_spawn(&mut self.rng, r),
+        };
+        let speed = self.defs.move_speed * self.archs.get(arch as usize).map_or(1.0, |a| a.speed_mult);
         let e = &mut self.ents;
         e.alive[slot] = true;
         e.x[slot] = x;
@@ -220,20 +251,50 @@ impl Sim {
         e.dir_y[slot] = 0;
         e.cooldown_until[slot] = 0;
         e.owner[slot] = owner;
-        for (a, def) in self.defs.attrs.iter().enumerate() {
-            e.attrs[a][slot] = def.default;
-        }
+        e.arch[slot] = arch;
+        e.speed[slot] = speed;
         e.live += 1;
+        self.reset_attrs(slot);
         Some(slot)
+    }
+
+    /// Attributes back to their starting values (archetype overrides included).
+    fn reset_attrs(&mut self, slot: usize) {
+        let a = self.ents.arch[slot] as usize;
+        for (i, def) in self.defs.attrs.iter().enumerate() {
+            self.ents.attrs[i][slot] = self.archs.get(a).map_or(def.default, |r| r.start[i]);
+        }
+    }
+
+    /// Replace the bot population with what the archetypes ask for.
+    pub fn populate_bots(&mut self) {
+        for s in 0..self.ents.high {
+            if self.ents.alive[s] && self.ents.arch[s] != NO_ARCH && self.ents.owner[s] >= DRIVEN {
+                self.ents.despawn(s);
+            }
+        }
+        for a in 0..self.archs.len() {
+            for _ in 0..self.archs[a].count {
+                if self.spawn_as(NONE, a as u8, None).is_none() {
+                    return;
+                }
+            }
+        }
     }
 
     /// Advance the world by one fixed step.
     pub fn step(&mut self, pending: &[PendingAction]) {
         self.tick += 1;
+        self.npc_actions.clear();
         self.system_npc_ai();
         self.system_regen();
         self.system_movement();
         self.system_actions(pending);
+        let npc = std::mem::take(&mut self.npc_actions);
+        self.system_actions(&npc);
+        self.npc_actions = npc;
+        let adm = std::mem::take(&mut self.admin_actions);
+        self.system_actions(&adm);
         self.system_rules();
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -243,8 +304,9 @@ impl Sim {
         }
     }
 
-    /// NPCs are ordinary entities. Their "AI" just writes the same direction
-    /// fields a player's input would, at a low rate (every 10th tick, staggered).
+    /// Bots are ordinary entities. Their "AI" writes the same direction fields
+    /// a player's input would, and queues the same action requests, at a low
+    /// rate (every 10th tick, staggered).
     fn system_npc_ai(&mut self) {
         let tick = self.tick;
         for s in 0..self.ents.high {
@@ -254,13 +316,67 @@ impl Sim {
             if (tick as usize + s) % 10 != 0 {
                 continue;
             }
-            if self.rng.below(4) == 0 {
-                self.ents.dir_x[s] = 0;
-                self.ents.dir_y[s] = 0;
-            } else {
-                const D: [i8; 3] = [-127, 0, 127];
-                self.ents.dir_x[s] = D[self.rng.below(3) as usize];
-                self.ents.dir_y[s] = D[self.rng.below(3) as usize];
+            let a = self.ents.arch[s];
+            let (behaviour, sight, attack, attack_range) = match self.archs.get(a as usize) {
+                Some(r) => (
+                    r.behaviour,
+                    r.sight,
+                    r.attack,
+                    r.attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range),
+                ),
+                None => (Behaviour::Wander, 0.0, None, 0.0),
+            };
+            let wants_target = matches!(behaviour, Behaviour::Chase | Behaviour::Flee) || attack.is_some();
+            let mut near: Option<(f32, usize)> = None;
+            if wants_target {
+                let reach = sight.max(attack_range);
+                let (x, y) = (self.ents.x[s], self.ents.y[s]);
+                let e = &self.ents;
+                self.grid.for_neighbours(x, y, |t| {
+                    let t = t as usize;
+                    if t == s || e.arch[t] == a && a != NO_ARCH {
+                        return;
+                    }
+                    let (dx, dy) = (e.x[t] - x, e.y[t] - y);
+                    let d2 = dx * dx + dy * dy;
+                    if d2 <= reach * reach && near.map_or(true, |(b, _)| d2 < b) {
+                        near = Some((d2, t));
+                    }
+                });
+            }
+            let toward = |near: Option<(f32, usize)>, e: &Entities, sign: f32| -> Option<(i8, i8)> {
+                let (d2, t) = near?;
+                if d2 < 1.0 {
+                    return Some((0, 0));
+                }
+                let d = d2.sqrt();
+                let q = |v: f32| (v * 127.0).round().clamp(-127.0, 127.0) as i8;
+                Some((q(sign * (e.x[t] - e.x[s]) / d), q(sign * (e.y[t] - e.y[s]) / d)))
+            };
+            let steer = match behaviour {
+                Behaviour::Idle => Some((0, 0)),
+                Behaviour::Chase => toward(near.filter(|n| n.0 <= sight * sight), &self.ents, 1.0),
+                Behaviour::Flee => toward(near.filter(|n| n.0 <= sight * sight), &self.ents, -1.0),
+                Behaviour::Wander => None,
+            };
+            let (dx, dy) = match steer {
+                Some(d) => d,
+                None if behaviour == Behaviour::Idle => (0, 0),
+                None => {
+                    if self.rng.below(4) == 0 {
+                        (0, 0)
+                    } else {
+                        const D: [i8; 3] = [-127, 0, 127];
+                        (D[self.rng.below(3) as usize], D[self.rng.below(3) as usize])
+                    }
+                }
+            };
+            self.ents.dir_x[s] = dx;
+            self.ents.dir_y[s] = dy;
+            if let (Some(act), Some((d2, t))) = (attack, near) {
+                if d2 <= attack_range * attack_range {
+                    self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t) });
+                }
             }
         }
     }
@@ -280,14 +396,13 @@ impl Sim {
 
     fn system_movement(&mut self) {
         let r = self.defs.entity_radius;
-        let speed = self.defs.move_speed;
         let dt = self.dt;
         let e = &mut self.ents;
         for s in 0..e.high {
             if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0) {
                 continue;
             }
-            let (nx, ny) = integrate(&self.world, e.x[s], e.y[s], e.dir_x[s], e.dir_y[s], speed, dt, r);
+            let (nx, ny) = integrate(&self.world, e.x[s], e.y[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
             e.x[s] = nx;
             e.y[s] = ny;
         }
@@ -346,18 +461,17 @@ impl Sim {
     /// Data-driven rules: an attribute that hits its minimum can trigger a
     /// respawn. This is where "death" lives, and it is just a rule on health.
     fn system_rules(&mut self) {
-        for (a, def) in self.defs.attrs.iter().enumerate() {
-            if def.on_zero != OnZero::Respawn {
+        for a in 0..self.defs.attrs.len() {
+            if self.defs.attrs[a].on_zero != OnZero::Respawn {
                 continue;
             }
+            let min = self.defs.attrs[a].min;
             for s in 0..self.ents.high {
-                if self.ents.alive[s] && self.ents.attrs[a][s] <= def.min {
+                if self.ents.alive[s] && self.ents.attrs[a][s] <= min {
                     let (x, y) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
                     self.ents.x[s] = x;
                     self.ents.y[s] = y;
-                    for (b, d) in self.defs.attrs.iter().enumerate() {
-                        self.ents.attrs[b][s] = d.default;
-                    }
+                    self.reset_attrs(s);
                     self.stats.respawns += 1;
                 }
             }
@@ -382,9 +496,9 @@ mod tests {
     use proto::defs::{ACTION_ZAP, ATTR_ENERGY, ATTR_HEALTH};
 
     fn sim() -> Sim {
-        let defs = Defs::default_game();
+        let game = proto::game::GameFile::default_game().build().unwrap();
         let world = World::from_boxes(512.0, 1, vec![]);
-        Sim::new(defs, world, 64, 20, 1)
+        Sim::new(game, world, 64, 20, 1)
     }
 
     fn place(s: &mut Sim, slot: usize, x: f32, y: f32) {

@@ -1,16 +1,20 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 1;
+pub const PROTO_VERSION: u16 = 2;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 
 pub mod kind {
     pub const HELLO: u8 = 0x01;
     pub const INPUT: u8 = 0x02;
+    pub const CONNECT: u8 = 0x03;
+    pub const DATA: u8 = 0x10;
     pub const WELCOME: u8 = 0x81;
     pub const SNAPSHOT: u8 = 0x82;
     pub const REJECT: u8 = 0x83;
+    pub const CHALLENGE: u8 = 0x84;
+    pub const ACCEPT: u8 = 0x85;
 }
 
 pub mod reject {
@@ -86,7 +90,6 @@ impl<'a> Reader<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClientMsg {
-    Hello { version: u16, defs_hash: u64 },
     Input(Input),
 }
 
@@ -104,13 +107,6 @@ pub struct Input {
     pub target: u32,
 }
 
-pub fn encode_hello(out: &mut Vec<u8>, defs_hash: u64) {
-    out.clear();
-    put_u8(out, kind::HELLO);
-    put_u16(out, PROTO_VERSION);
-    put_u64(out, defs_hash);
-}
-
 pub fn encode_input(out: &mut Vec<u8>, i: &Input) {
     out.clear();
     put_u8(out, kind::INPUT);
@@ -125,10 +121,6 @@ pub fn encode_input(out: &mut Vec<u8>, i: &Input) {
 pub fn decode_client(buf: &[u8]) -> Option<ClientMsg> {
     let mut r = Reader::new(buf);
     match r.u8()? {
-        kind::HELLO => Some(ClientMsg::Hello {
-            version: r.u16()?,
-            defs_hash: r.u64()?,
-        }),
         kind::INPUT => Some(ClientMsg::Input(Input {
             seq: r.u32()?,
             ack_tick: r.u32()?,
@@ -194,16 +186,6 @@ pub fn decode_server(buf: &[u8]) -> Option<ServerMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hello_roundtrip() {
-        let mut b = Vec::new();
-        encode_hello(&mut b, 0xDEAD_BEEF_1234);
-        assert_eq!(
-            decode_client(&b),
-            Some(ClientMsg::Hello { version: PROTO_VERSION, defs_hash: 0xDEAD_BEEF_1234 })
-        );
-    }
 
     #[test]
     fn input_roundtrip() {

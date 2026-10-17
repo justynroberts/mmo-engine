@@ -3,16 +3,19 @@
 //! One pinned thread owns the zone: drain inputs, step the simulation at a fixed
 //! rate, build interest-filtered delta snapshots, send them in batches.
 
+mod ctl;
 mod io;
 mod net;
 mod sim;
 
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use proto::game::GameFile;
+use proto::secure::{from_hex32, to_hex, ServerKeys};
 use proto::world::World;
-use proto::Defs;
 
-use net::{Clients, Handshake, NetStats, SnapScratch, SnapStats};
+use net::{Clients, Handshake, NetStats, SnapStats, Worker};
 use sim::{PendingAction, Sim, NONE};
 
 struct Config {
@@ -26,6 +29,11 @@ struct Config {
     pin: Option<usize>,
     quiet: bool,
     timeout_secs: u32,
+    workers: usize,
+    game: PathBuf,
+    key_file: PathBuf,
+    admin: Option<String>,
+    ui_dir: Option<PathBuf>,
 }
 
 fn parse_args() -> Config {
@@ -40,6 +48,11 @@ fn parse_args() -> Config {
         pin: None,
         quiet: false,
         timeout_secs: 5,
+        workers: 1,
+        game: PathBuf::from("game.json"),
+        key_file: PathBuf::from("server.key"),
+        admin: Some("127.0.0.1:7780".into()),
+        ui_dir: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -59,6 +72,12 @@ fn parse_args() -> Config {
             "--duration" => c.duration = val(a).parse().unwrap_or_else(|_| usage("bad --duration")),
             "--pin" => c.pin = Some(val(a).parse().unwrap_or_else(|_| usage("bad --pin"))),
             "--timeout" => c.timeout_secs = val(a).parse().unwrap_or_else(|_| usage("bad --timeout")),
+            "--workers" => c.workers = val(a).parse().unwrap_or_else(|_| usage("bad --workers")),
+            "--game" => c.game = PathBuf::from(val(a)),
+            "--key-file" => c.key_file = PathBuf::from(val(a)),
+            "--admin" => c.admin = Some(val(a)),
+            "--no-admin" => c.admin = None,
+            "--ui-dir" => c.ui_dir = Some(PathBuf::from(val(a))),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -73,7 +92,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --quiet           only print the final summary"
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --quiet           only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -100,15 +119,19 @@ fn ms(us: f64) -> String {
 
 fn main() {
     let cfg = parse_args();
-    let defs = Defs::default_game();
-    let defs_hash = defs.content_hash();
+    let mut game_file = load_game(&cfg.game);
+    let game = game_file.build().expect("validated by load_game");
+    let defs_hash = game.defs.content_hash();
     let world = World::generate(cfg.world_size, cfg.seed);
     let n_boxes = world.boxes.len();
-    let cap = cfg.max_clients + cfg.npcs + 16;
-    let mut sim = Sim::new(defs, world, cap, cfg.hz, cfg.seed);
+    let bots: u32 = game.archs.iter().map(|a| a.count).sum();
+    let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
+    let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
+    sim.populate_bots();
     for _ in 0..cfg.npcs {
         sim.spawn(NONE);
     }
+    let keys = load_keys(&cfg.key_file);
 
     let sock = io::bind(cfg.port, 8 << 20, 8 << 20).unwrap_or_else(|e| {
         eprintln!("cannot bind UDP port {}: {e}", cfg.port);
@@ -118,6 +141,8 @@ fn main() {
     let fd = std::os::fd::AsRawFd::as_raw_fd(&sock);
     let mut rx = io::Rx::new(fd);
     let mut tx = io::Tx::new(fd);
+    let lanes_n = cfg.workers.max(1);
+    let mut lanes: Vec<Worker> = (0..lanes_n).map(|_| Worker::new(fd)).collect();
 
     if let Some(core) = cfg.pin {
         if !io::pin_to_core(core) {
@@ -126,16 +151,42 @@ fn main() {
     }
 
     eprintln!(
-        "world server up: udp/{} {} Hz, world {}x{} ({} static boxes), {} npcs, content hash {:016x}, socket buffers rx {} KiB tx {} KiB",
-        cfg.port, cfg.hz, cfg.world_size, cfg.world_size, n_boxes, cfg.npcs, defs_hash, rcv / 1024, snd / 1024
+        "world server up: udp/{} {} Hz, world {}x{} ({} static boxes), {} bots + {} plain npcs, content hash {:016x}, socket buffers rx {} KiB tx {} KiB, {} snapshot lane(s)",
+        cfg.port, cfg.hz, cfg.world_size, cfg.world_size, n_boxes, bots, cfg.npcs, defs_hash, rcv / 1024, snd / 1024, lanes_n
     );
+    eprintln!("server public key (pin this in clients with --server-key): {}", to_hex(&keys.public));
 
-    let hs = Handshake { defs_hash, max_clients: cfg.max_clients };
+    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients };
+    let params = ctl::Params {
+        cap,
+        world_size: cfg.world_size,
+        seed: cfg.seed,
+        hz: cfg.hz,
+        port: cfg.port,
+        plain_npcs: cfg.npcs,
+        game_path: Some(cfg.game.clone()),
+    };
+    let mut live = ctl::LiveStats { snap_lanes: lanes_n, ..Default::default() };
+    let admin_rx = cfg.admin.as_ref().map(|a| {
+        let addr: std::net::SocketAddr = a.parse().unwrap_or_else(|_| usage("bad --admin address"));
+        let ui = cfg.ui_dir.clone().or_else(|| {
+            let d = PathBuf::from("ui/dist");
+            d.is_dir().then_some(d)
+        });
+        let rx = ctl::start(addr, ui.clone()).unwrap_or_else(|e| {
+            eprintln!("cannot start admin interface on {a}: {e}");
+            std::process::exit(1);
+        });
+        eprintln!(
+            "admin ui: http://{a}/  ({})",
+            ui.map_or("no UI directory, API only".to_string(), |d| format!("serving {}", d.display()))
+        );
+        rx
+    });
     let mut clients = Clients::default();
     let mut nstats = NetStats::default();
-    let mut sstats = SnapStats::default();
     let mut scratch: Vec<u8> = Vec::with_capacity(1500);
-    let mut snap_scratch = SnapScratch::default();
+    let mut plain: Vec<u8> = Vec::with_capacity(256);
     let mut pending: Vec<PendingAction> = Vec::new();
 
     let dt = Duration::from_secs_f64(1.0 / cfg.hz as f64);
@@ -165,16 +216,31 @@ fn main() {
             late += 1;
         }
 
-        // 1. Inputs.
+        // 1. Inputs and handshakes.
+        let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
         loop {
             let n = rx.recv();
             for i in 0..n {
                 let (addr, data) = rx.packet(i);
-                net::handle_packet(&mut sim, &mut clients, &mut tx, &hs, &mut nstats, addr, data, &mut scratch);
+                net::handle_packet(&mut sim, &mut clients, &mut tx, &hs, &mut nstats, addr, data, &mut scratch, &mut plain, now_secs);
             }
             if n < io::RBATCH {
                 break;
             }
+        }
+        // Handshake replies go out now rather than after the whole tick.
+        tx.flush();
+        if let Some(rx) = &admin_rx {
+            let mut c = ctl::Ctl {
+                sim: &mut sim,
+                clients: &mut clients,
+                hs: &mut hs,
+                game: &mut game_file,
+                net: &nstats,
+                live: &live,
+                params: &params,
+            };
+            ctl::service(rx, &mut c);
         }
         let t1 = Instant::now();
 
@@ -186,13 +252,10 @@ fn main() {
         sim.step(&pending);
         let t2 = Instant::now();
 
-        // 3. Snapshots.
-        net::build_snapshots(&sim, &mut clients, &mut tx, &mut snap_scratch, &mut sstats);
+        // 3. Snapshots: built, encrypted and sent by the lanes (in parallel when workers > 1).
+        net::build_snapshots(&sim, &mut clients, &mut lanes, cfg.pin);
         let t3 = Instant::now();
-
-        // 4. Send.
-        tx.flush();
-        let t4 = Instant::now();
+        let t4 = t3;
 
         let total = (t4 - t0).as_micros() as u32;
         window.push(total);
@@ -223,11 +286,24 @@ fn main() {
             w.sort_unstable();
             let avg = w.iter().map(|&x| x as f64).sum::<f64>() / n;
             let in_rate = (nstats.in_pkts - w_in) as f64 / secs;
-            let out_rate = (tx.sent - w_out) as f64 / secs;
-            let mbit = (tx.bytes - w_bytes) as f64 * 8.0 / secs / 1e6;
+            let (t_sent, t_bytes, t_drop) = totals(&tx, &lanes);
+            let out_rate = (t_sent - w_out) as f64 / secs;
+            let mbit = (t_bytes - w_bytes) as f64 * 8.0 / secs / 1e6;
+            live = ctl::LiveStats {
+                tick_avg_ms: avg / 1000.0,
+                tick_p99_ms: pct(&w, 0.99) as f64 / 1000.0,
+                recv_ms: phase_w.recv as f64 / n / 1000.0,
+                sim_ms: phase_w.sim as f64 / n / 1000.0,
+                snap_ms: phase_w.snap as f64 / n / 1000.0,
+                send_ms: 0.0,
+                in_pps: in_rate,
+                out_pps: out_rate,
+                mbit,
+                snap_lanes: lanes_n,
+            };
             if !cfg.quiet {
                 eprintln!(
-                    "[{:>4}s] clients {:>5} ents {:>5} | tick avg {} p99 {} max {} ms (recv {} sim {} snap {} send {}) | in {:.1}k/s out {:.1}k/s {:.1} Mbit/s | late {} over {} drops {}",
+                    "[{:>4}s] clients {:>5} ents {:>5} | tick avg {} p99 {} max {} ms (recv {} sim {} snap+send {}) | in {:.1}k/s out {:.1}k/s {:.1} Mbit/s | late {} over {} drops {}",
                     (t4 - start).as_secs(),
                     clients.count,
                     sim.ents.live,
@@ -237,20 +313,19 @@ fn main() {
                     ms(phase_w.recv as f64 / n),
                     ms(phase_w.sim as f64 / n),
                     ms(phase_w.snap as f64 / n),
-                    ms(phase_w.send as f64 / n),
                     in_rate / 1000.0,
                     out_rate / 1000.0,
                     mbit,
                     late,
                     overruns,
-                    tx.dropped,
+                    t_drop,
                 );
             }
             window.clear();
             phase_w = Phase::default();
             w_in = nstats.in_pkts;
-            w_out = tx.sent;
-            w_bytes = tx.bytes;
+            w_out = t_sent;
+            w_bytes = t_bytes;
             last_report = t4;
         }
 
@@ -285,15 +360,18 @@ fn main() {
         (user + sys) / wall * 100.0
     );
     println!(
-        "packets in {} (hello {}, input {}, bad {}), rejected handshakes {}, timeouts {}",
-        nstats.in_pkts, nstats.hellos, nstats.inputs, nstats.bad, nstats.rejected, nstats.timeouts
+        "packets in {} (hello {}, connect {}, input {}), unparseable {}, bad cookie {}, failed authentication {}, rejected handshakes {}, timeouts {}",
+        nstats.in_pkts, nstats.hellos, nstats.connects, nstats.inputs, nstats.bad, nstats.bad_cookie, nstats.auth_fail, nstats.rejected, nstats.timeouts
     );
-    println!(
-        "packets out {} ({:.1} MiB), send drops {}",
-        tx.sent,
-        tx.bytes as f64 / 1048576.0,
-        tx.dropped
-    );
+    let (t_sent, t_bytes, t_drop) = totals(&tx, &lanes);
+    println!("packets out {} ({:.1} MiB), send drops {}, snapshot lanes {}", t_sent, t_bytes as f64 / 1048576.0, t_drop, lanes_n);
+    let mut sstats = SnapStats::default();
+    for l in &lanes {
+        sstats.snapshots += l.st.snapshots;
+        sstats.full += l.st.full;
+        sstats.entries_visible += l.st.entries_visible;
+        sstats.entries_changed += l.st.entries_changed;
+    }
     let snaps = sstats.snapshots.max(1) as f64;
     println!(
         "snapshots {}: {:.1}% full, avg visible {:.1}, avg changed {:.1} entries",
@@ -303,4 +381,62 @@ fn main() {
         sstats.entries_changed as f64 / snaps
     );
     println!("gameplay: zaps {} respawns {} rejected actions {}", sim.stats.zaps, sim.stats.respawns, sim.stats.rejected_actions);
+}
+
+fn totals(tx: &io::Tx, lanes: &[Worker]) -> (u64, u64, u64) {
+    lanes.iter().fold((tx.sent, tx.bytes, tx.dropped), |a, l| (a.0 + l.tx.sent, a.1 + l.tx.bytes, a.2 + l.tx.dropped))
+}
+
+/// Load the game file, writing the defaults the first time so there is
+/// something to edit. A broken file is a startup error, not a silent fallback.
+fn load_game(path: &PathBuf) -> GameFile {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let f = GameFile::from_json(&text).unwrap_or_else(|e| {
+                eprintln!("{}: {e}", path.display());
+                std::process::exit(1);
+            });
+            if let Err(e) = f.build() {
+                eprintln!("{}: {e}", path.display());
+                std::process::exit(1);
+            }
+            f
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let f = GameFile::default_game();
+            match std::fs::write(path, f.to_json()) {
+                Ok(()) => eprintln!("wrote default game definitions to {}", path.display()),
+                Err(e) => eprintln!("warning: could not write {}: {e}", path.display()),
+            }
+            f
+        }
+        Err(e) => {
+            eprintln!("cannot read {}: {e}", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The server's long-term identity. Created on first run; keep the file private.
+fn load_keys(path: &PathBuf) -> ServerKeys {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Ok(text) = std::fs::read_to_string(path) {
+        let secret = from_hex32(&text).unwrap_or_else(|| {
+            eprintln!("{} must hold 64 hex characters", path.display());
+            std::process::exit(1);
+        });
+        return ServerKeys::from_secret(secret);
+    }
+    let (keys, secret) = ServerKeys::generate();
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, to_hex(&secret).as_bytes()));
+    match written {
+        Ok(()) => eprintln!("created server identity key {}", path.display()),
+        Err(e) => eprintln!("warning: could not save {}: {e} (clients must re-pin after a restart)", path.display()),
+    }
+    keys
 }

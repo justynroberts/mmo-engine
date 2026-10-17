@@ -14,7 +14,7 @@ pub enum OnZero {
 
 #[derive(Clone, Debug)]
 pub struct AttrDef {
-    pub name: &'static str,
+    pub name: String,
     pub min: f32,
     pub max: f32,
     pub default: f32,
@@ -34,7 +34,7 @@ pub enum Effect {
 #[derive(Clone, Debug)]
 pub struct ActionDef {
     pub id: u8,
-    pub name: &'static str,
+    pub name: String,
     pub cooldown_ticks: u16,
     pub range: f32,
     /// Self attribute must be at least this value to use the action.
@@ -62,7 +62,7 @@ impl Defs {
     pub fn default_game() -> Defs {
         let attrs = vec![
             AttrDef {
-                name: "health",
+                name: "health".into(),
                 min: 0.0,
                 max: 100.0,
                 default: 100.0,
@@ -72,7 +72,7 @@ impl Defs {
                 on_zero: OnZero::Respawn,
             },
             AttrDef {
-                name: "energy",
+                name: "energy".into(),
                 min: 0.0,
                 max: 100.0,
                 default: 100.0,
@@ -84,7 +84,7 @@ impl Defs {
         ];
         let actions = vec![ActionDef {
             id: ACTION_ZAP,
-            name: "zap",
+            name: "zap".into(),
             cooldown_ticks: 10,
             range: 8.0,
             requires: Some((ATTR_ENERGY, 5.0)),

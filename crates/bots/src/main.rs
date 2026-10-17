@@ -1,6 +1,6 @@
 //! Bot load tester: N real UDP clients speaking the real protocol.
 //!
-//! Each bot handshakes, sends one input per tick (random walk plus the odd
+//! Each bot does the encrypted handshake, sends one input per tick (random walk plus the odd
 //! zap), applies delta snapshots with the same `ClientView` a game client would
 //! use, acks them, and measures input-to-ack latency. Because it decodes every
 //! snapshot, it also catches protocol corruption, not just throughput problems.
@@ -8,10 +8,11 @@
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
-use proto::defs::ACTION_ZAP;
-use proto::wire::{self, kind, Input, ServerMsg, PROTO_VERSION};
+use proto::game::GameFile;
+use proto::secure::{from_hex32, ClientHs, HsError, Session};
+use proto::wire::{self, kind, Input, ServerMsg};
 use proto::world::dpos;
-use proto::{decode_snapshot, ClientView, DecodeError, Defs, Rng};
+use proto::{decode_snapshot, ClientView, DecodeError, Rng};
 
 struct Config {
     server: String,
@@ -21,6 +22,8 @@ struct Config {
     ramp: usize,
     seed: u64,
     quiet: bool,
+    game: String,
+    server_key: Option<[u8; 32]>,
 }
 
 fn usage(msg: &str) -> ! {
@@ -28,7 +31,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -42,6 +45,8 @@ fn parse_args() -> Config {
         ramp: 500,
         seed: 1,
         quiet: false,
+        game: "game.json".into(),
+        server_key: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -58,6 +63,10 @@ fn parse_args() -> Config {
             "--hz" => c.hz = val(a).parse().unwrap_or_else(|_| usage("bad --hz")),
             "--ramp" => c.ramp = val(a).parse().unwrap_or_else(|_| usage("bad --ramp")),
             "--seed" => c.seed = val(a).parse().unwrap_or_else(|_| usage("bad --seed")),
+            "--game" => c.game = val(a),
+            "--server-key" => {
+                c.server_key = Some(from_hex32(&val(a)).unwrap_or_else(|| usage("--server-key must be 64 hex characters")))
+            }
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -73,10 +82,15 @@ enum State {
     Connecting,
     Playing,
     Rejected,
+    /// Pinned key did not match: refuse to talk to this server.
+    Untrusted,
 }
 
 struct Bot {
     sock: UdpSocket,
+    hs: ClientHs,
+    session: Option<Session>,
+    last_rx: Instant,
     state: State,
     last_hello: Instant,
     entity: u32,
@@ -100,6 +114,9 @@ struct Totals {
     self_missing: u64,
     welcomes: u64,
     rejects: u64,
+    reconnects: u64,
+    untrusted: u64,
+    auth_fail: u64,
     inputs_sent: u64,
     zaps_sent: u64,
     send_errors: u64,
@@ -107,8 +124,14 @@ struct Totals {
 
 fn main() {
     let cfg = parse_args();
-    let defs = Defs::default_game();
+    let game = match std::fs::read_to_string(&cfg.game) {
+        Ok(t) => GameFile::from_json(&t).unwrap_or_else(|e| usage(&format!("{}: {e}", cfg.game))),
+        Err(_) => GameFile::default_game(),
+    };
+    let defs = game.build().unwrap_or_else(|e| usage(&format!("{}: {e}", cfg.game))).defs;
     let hash = defs.content_hash();
+    let attack_action = defs.actions.first().map_or(0, |a| a.id);
+    let attack_range = defs.actions.first().map_or(0.0, |a| a.range);
     let server: std::net::SocketAddr = std::net::ToSocketAddrs::to_socket_addrs(&cfg.server)
         .ok()
         .and_then(|mut a| a.next())
@@ -125,6 +148,9 @@ fn main() {
         sock.set_nonblocking(true).expect("nonblocking");
         bots.push(Bot {
             sock,
+            hs: ClientHs::new(cfg.server_key, hash),
+            session: None,
+            last_rx: now,
             state: State::Idle,
             last_hello: now,
             entity: 0,
@@ -143,6 +169,8 @@ fn main() {
     let mut next = start + dt;
     let mut buf = [0u8; 2048];
     let mut out = Vec::with_capacity(64);
+    let mut sealed = Vec::with_capacity(96);
+    let mut plain = Vec::with_capacity(2048);
     let mut tot = Totals::default();
     let mut rtts: Vec<u32> = Vec::new();
     let mut window_rtts: Vec<u32> = Vec::new();
@@ -181,7 +209,7 @@ fn main() {
         }
 
         for b in bots.iter_mut() {
-            if b.state == State::Idle || b.state == State::Rejected {
+            if matches!(b.state, State::Idle | State::Rejected | State::Untrusted) {
                 continue;
             }
             // Receive everything waiting.
@@ -189,48 +217,76 @@ fn main() {
                 match b.sock.recv(&mut buf) {
                     Ok(n) if n > 0 => {
                         let t = Instant::now();
+                        b.last_rx = t;
                         match buf[0] {
-                            kind::SNAPSHOT => match decode_snapshot(&buf[..n], &defs, &mut b.view) {
-                                Ok(info) if !info.stale => {
-                                    tot.snaps += 1;
-                                    tot.snap_bytes += n as u64;
-                                    tot.visible += b.view.entries().len() as u64;
-                                    w_snaps += 1;
-                                    w_bytes += n as u64;
-                                    if b.view.get(b.entity).is_none() {
-                                        tot.self_missing += 1;
-                                    }
-                                    // Input-to-ack latency, once per input seq.
-                                    let s = info.last_input_seq;
-                                    if s != 0 && s != b.rtt_seq {
-                                        let (q, at) = b.sent_at[s as usize % 128];
-                                        if q == s {
-                                            let us = (t - at).as_micros() as u32;
-                                            rtts.push(us);
-                                            window_rtts.push(us);
-                                            b.rtt_seq = s;
-                                        }
-                                    }
+                            kind::CHALLENGE => match b.hs.on_challenge(&buf[..n]) {
+                                Ok(()) => {}
+                                Err(HsError::KeyMismatch) => {
+                                    b.state = State::Untrusted;
+                                    tot.untrusted += 1;
                                 }
-                                Ok(_) => tot.stale += 1,
-                                Err(DecodeError::MissingBaseline) => tot.missing_baseline += 1,
-                                Err(_) => tot.decode_err += 1,
+                                Err(HsError::Malformed) => tot.decode_err += 1,
                             },
-                            _ => match wire::decode_server(&buf[..n]) {
-                                Some(ServerMsg::Welcome(w)) => {
-                                    if b.state != State::Playing {
-                                        b.state = State::Playing;
-                                        b.entity = w.entity;
-                                        tot.welcomes += 1;
+                            kind::ACCEPT => {
+                                if b.state != State::Playing {
+                                    if let Some((sess, w)) = b.hs.on_accept(&buf[..n]) {
+                                        if let Some(ServerMsg::Welcome(w)) = wire::decode_server(&w) {
+                                            b.session = Some(sess);
+                                            b.state = State::Playing;
+                                            b.entity = w.entity;
+                                            b.view = ClientView::new();
+                                            tot.welcomes += 1;
+                                        }
+                                    } else {
+                                        tot.auth_fail += 1;
                                     }
                                 }
-                                Some(ServerMsg::Reject { reason }) => {
+                            }
+                            kind::REJECT => {
+                                if b.state == State::Connecting {
                                     b.state = State::Rejected;
                                     tot.rejects += 1;
-                                    eprintln!("rejected by server, reason {reason}");
+                                    eprintln!("rejected by server, reason {}", buf.get(1).copied().unwrap_or(0));
                                 }
-                                None => tot.decode_err += 1,
-                            },
+                            }
+                            kind::DATA => {
+                                let Some(sess) = b.session.as_mut() else { continue };
+                                let Some(inner) = sess.open(&buf[..n], &mut plain) else {
+                                    tot.auth_fail += 1;
+                                    continue;
+                                };
+                                if inner.first() != Some(&kind::SNAPSHOT) {
+                                    tot.decode_err += 1;
+                                    continue;
+                                }
+                                match decode_snapshot(inner, &defs, &mut b.view) {
+                                    Ok(info) if !info.stale => {
+                                        tot.snaps += 1;
+                                        tot.snap_bytes += n as u64;
+                                        tot.visible += b.view.entries().len() as u64;
+                                        w_snaps += 1;
+                                        w_bytes += n as u64;
+                                        if b.view.get(b.entity).is_none() {
+                                            tot.self_missing += 1;
+                                        }
+                                        // Input-to-ack latency, once per input seq.
+                                        let s = info.last_input_seq;
+                                        if s != 0 && s != b.rtt_seq {
+                                            let (q, at) = b.sent_at[s as usize % 128];
+                                            if q == s {
+                                                let us = (t - at).as_micros() as u32;
+                                                rtts.push(us);
+                                                window_rtts.push(us);
+                                                b.rtt_seq = s;
+                                            }
+                                        }
+                                    }
+                                    Ok(_) => tot.stale += 1,
+                                    Err(DecodeError::MissingBaseline) => tot.missing_baseline += 1,
+                                    Err(_) => tot.decode_err += 1,
+                                }
+                            }
+                            _ => tot.decode_err += 1,
                         }
                     }
                     Ok(_) => {}
@@ -241,12 +297,24 @@ fn main() {
             match b.state {
                 State::Connecting => {
                     if b.last_hello.elapsed() >= Duration::from_millis(250) {
-                        wire::encode_hello(&mut out, hash);
-                        let _ = b.sock.send(&out);
+                        // HELLO until a CHALLENGE arrives, then CONNECT until the ACCEPT does.
+                        let _ = match b.hs.connect_packet() {
+                            Some(c) => b.sock.send(c),
+                            None => b.sock.send(&b.hs.hello()),
+                        };
                         b.last_hello = Instant::now();
                     }
                 }
                 State::Playing => {
+                    // Server restarted, dropped us or changed content: start over with fresh keys.
+                    if b.last_rx.elapsed() > Duration::from_secs(3) {
+                        b.hs = ClientHs::new(cfg.server_key, hash);
+                        b.session = None;
+                        b.state = State::Connecting;
+                        b.last_hello = Instant::now() - Duration::from_secs(10);
+                        tot.reconnects += 1;
+                        continue;
+                    }
                     // Random walk: new direction every 1 to 3 seconds, sometimes stand still.
                     if b.dir_left == 0 {
                         b.dir_left = cfg.hz + b.rng.below(cfg.hz * 2);
@@ -263,7 +331,7 @@ fn main() {
                     let (mut action, mut target) = (0u8, 0u32);
                     if let Some(me) = b.view.get(b.entity) {
                         let (mx, my) = (dpos(me.x), dpos(me.y));
-                        let mut best = 8.0f32 * 8.0;
+                        let mut best = attack_range * attack_range;
                         for e in b.view.entries() {
                             if e.id == b.entity {
                                 continue;
@@ -272,7 +340,7 @@ fn main() {
                             let d2 = dx * dx + dy * dy;
                             if d2 <= best {
                                 best = d2;
-                                action = ACTION_ZAP;
+                                action = attack_action;
                                 target = e.id;
                             }
                         }
@@ -294,9 +362,13 @@ fn main() {
                             target,
                         },
                     );
-                    match b.sock.send(&out) {
-                        Ok(_) => tot.inputs_sent += 1,
-                        Err(_) => tot.send_errors += 1,
+                    if let Some(sess) = b.session.as_mut() {
+                        if sess.seal(&out, &mut sealed) {
+                            match b.sock.send(&sealed) {
+                                Ok(_) => tot.inputs_sent += 1,
+                                Err(_) => tot.send_errors += 1,
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -344,7 +416,10 @@ fn main() {
     rtts.sort_unstable();
     let wall = start.elapsed().as_secs_f64();
     println!("\n==== bots summary ====");
-    println!("bots playing at end {playing}/{}, handshakes ok {}, rejected {}", cfg.bots, tot.welcomes, tot.rejects);
+    println!(
+        "bots playing at end {playing}/{}, handshakes ok {}, rejected {}, reconnects {}, untrusted server key {}",
+        cfg.bots, tot.welcomes, tot.rejects, tot.reconnects, tot.untrusted
+    );
     println!(
         "inputs sent {} ({:.1}k/s), zaps requested {}, send errors {}",
         tot.inputs_sent,
@@ -367,11 +442,10 @@ fn main() {
         *rtts.last().unwrap_or(&0) as f64 / 1000.0
     );
     println!(
-        "integrity: decode errors {}, missing baseline {}, stale {}, own entity missing from snapshot {}",
-        tot.decode_err, tot.missing_baseline, tot.stale, tot.self_missing
+        "integrity: decode errors {}, missing baseline {}, stale {}, own entity missing from snapshot {}, failed decryption {}",
+        tot.decode_err, tot.missing_baseline, tot.stale, tot.self_missing, tot.auth_fail
     );
     println!("tester late ticks {late_ticks} of {tick} (if high, the load generator, not the server, is the bottleneck)");
-    let _ = PROTO_VERSION;
 }
 
 fn pct(sorted: &[u32], p: f64) -> u32 {

@@ -7,9 +7,9 @@ use std::os::fd::AsRawFd;
 
 pub const RBATCH: usize = 512;
 pub const SBATCH: usize = 512;
-/// Inputs are 16 bytes; anything larger than this slot is truncated and will
+/// Largest expected packet is a CONNECT (79 bytes); anything larger than this slot is truncated and will
 /// fail to decode (which is the right outcome for junk).
-pub const RSLOT: usize = 64;
+pub const RSLOT: usize = 128;
 
 pub fn bind(port: u16, rcvbuf: i32, sndbuf: i32) -> std::io::Result<UdpSocket> {
     let sock = UdpSocket::bind(("0.0.0.0", port))?;
@@ -138,6 +138,10 @@ pub struct Tx {
     pub bytes: u64,
     pub dropped: u64,
 }
+
+// The raw pointers inside the mmsghdr array point into this struct's own heap
+// vectors, so moving a Tx to another thread is sound.
+unsafe impl Send for Tx {}
 
 impl Tx {
     pub fn new(fd: i32) -> Tx {
