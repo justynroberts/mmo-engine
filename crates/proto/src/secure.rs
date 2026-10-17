@@ -334,6 +334,42 @@ pub fn identity_public(secret: &[u8; 32]) -> [u8; 32] {
     PublicKey::from(&StaticSecret::from(*secret)).to_bytes()
 }
 
+/// An identity derived from an account name and a passphrase, so a player can log in from any
+/// device (or after losing everything) by typing the same two things. Argon2id makes each guess
+/// cost ~20 MiB and a few milliseconds. Nothing secret is stored server-side; the trade-off is that
+/// a weak passphrase can be guessed offline by anyone who learns the identity public key (the
+/// server operator can see it), so passphrases should be long.
+pub fn identity_from_passphrase(account: &str, passphrase: &str) -> [u8; 32] {
+    let salt = blake3::derive_key("mmo-engine 1 account salt", account.trim().to_lowercase().as_bytes());
+    let params = argon2::Params::new(19 * 1024, 2, 1, Some(32)).expect("valid argon2 parameters");
+    let mut out = [0u8; 32];
+    argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
+        .hash_password_into(passphrase.as_bytes(), &salt[..16], &mut out)
+        .expect("argon2 with fixed parameters cannot fail");
+    out
+}
+
+/// A copyable backup of an identity: 64 hex characters in groups of eight plus a 4 character
+/// checksum, so a typo is caught instead of silently becoming a different (empty) character.
+pub fn recovery_code(secret: &[u8; 32]) -> String {
+    let hex = to_hex(secret);
+    let sum = blake3::keyed_hash(&blake3::derive_key("mmo-engine 1 recovery checksum", b""), secret);
+    let mut groups: Vec<&str> = (0..8).map(|i| &hex[i * 8..i * 8 + 8]).collect();
+    let check = to_hex(&sum.as_bytes()[..2]);
+    groups.push(&check);
+    groups.join("-")
+}
+
+/// Inverse of `recovery_code`. Case, dashes and spaces are ignored. `None` on a typo.
+pub fn parse_recovery_code(code: &str) -> Option<[u8; 32]> {
+    let clean: String = code.chars().filter(|c| c.is_ascii_hexdigit()).collect::<String>().to_lowercase();
+    if clean.len() != 68 {
+        return None;
+    }
+    let secret = from_hex32(&clean[..64])?;
+    (recovery_code(&secret).replace('-', "") == clean).then_some(secret)
+}
+
 /// A fresh random identity secret.
 pub fn new_identity() -> [u8; 32] {
     random::<32>()
@@ -780,5 +816,37 @@ mod tests {
         let (mut pkt, mut sc) = (Vec::new(), Vec::new());
         assert!(csess.seal(b"let me be the victim", &mut pkt));
         assert_eq!(ssess.open(&pkt, &mut sc), None, "no proof of the identity secret, so no valid packets");
+    }
+
+    #[test]
+    fn passphrase_identities_are_stable_and_distinct() {
+        let a = identity_from_passphrase("Alice", "correct horse battery staple");
+        assert_eq!(a, identity_from_passphrase("  alice ", "correct horse battery staple"), "account names ignore case and padding");
+        assert_ne!(a, identity_from_passphrase("alice", "correct horse battery stapl"));
+        assert_ne!(a, identity_from_passphrase("bob", "correct horse battery staple"));
+        // And it works as a real identity in a handshake.
+        let (server, _) = ServerKeys::generate();
+        let (id, mut c, mut s, _) = handshake_as(&server, Some(a));
+        assert_eq!(id, identity_public(&a));
+        let (mut pkt, mut sc) = (Vec::new(), Vec::new());
+        assert!(c.seal(b"hi", &mut pkt));
+        assert_eq!(s.open(&pkt, &mut sc), Some(&b"hi"[..]));
+    }
+
+    #[test]
+    fn recovery_codes_round_trip_and_catch_typos() {
+        let secret = new_identity();
+        let code = recovery_code(&secret);
+        assert_eq!(code.len(), 64 + 8 + 4, "{code}");
+        assert_eq!(parse_recovery_code(&code), Some(secret));
+        assert_eq!(parse_recovery_code(&code.to_uppercase().replace('-', " ")), Some(secret));
+        // Flip one character anywhere: rejected.
+        for i in (0..code.len()).filter(|&i| code.as_bytes()[i] != b'-') {
+            let mut bad = code.clone().into_bytes();
+            bad[i] = if bad[i] == b'0' { b'1' } else { b'0' };
+            assert_eq!(parse_recovery_code(&String::from_utf8(bad).unwrap()), None, "typo at {i}");
+        }
+        assert_eq!(parse_recovery_code(""), None);
+        assert_eq!(parse_recovery_code(&code[..code.len() - 1]), None);
     }
 }

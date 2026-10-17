@@ -28,6 +28,9 @@ struct Config {
     server_key: Option<[u8; 32]>,
     chat: f64,
     persist: bool,
+    /// Fixed identity for bot 0 (from --account/--passphrase or --recovery-code).
+    identity: Option<[u8; 32]>,
+    print_recovery: bool,
 }
 
 fn usage(msg: &str) -> ! {
@@ -35,7 +38,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -53,7 +56,10 @@ fn parse_args() -> Config {
         server_key: None,
         chat: 0.0,
         persist: false,
+        identity: None,
+        print_recovery: false,
     };
+    let (mut account, mut pass): (Option<String>, Option<String>) = (None, None);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
@@ -75,11 +81,22 @@ fn parse_args() -> Config {
             }
             "--chat" => c.chat = val(a).parse().unwrap_or_else(|_| usage("bad --chat")),
             "--persist" => c.persist = true,
+            "--account" => account = Some(val(a)),
+            "--passphrase" => pass = Some(val(a)),
+            "--recovery-code" => {
+                c.identity = Some(proto::secure::parse_recovery_code(&val(a)).unwrap_or_else(|| usage("that recovery code has a typo in it")))
+            }
+            "--print-recovery" => c.print_recovery = true,
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
         }
         i += 1;
+    }
+    match (account, pass) {
+        (Some(a), Some(p)) => c.identity = Some(proto::secure::identity_from_passphrase(&a, &p)),
+        (None, None) => {}
+        _ => usage("--account and --passphrase go together"),
     }
     c
 }
@@ -141,6 +158,11 @@ struct Totals {
 /// Handshake state for bot `i`. With `--persist` its identity is fixed by the seed, so a
 /// reconnect (or a whole new run with the same seed) is the same player to the server.
 fn new_hs(cfg: &Config, i: usize, hash: u64) -> ClientHs {
+    if i == 0 {
+        if let Some(id) = cfg.identity {
+            return ClientHs::with_identity(cfg.server_key, hash, id);
+        }
+    }
     if !cfg.persist {
         return ClientHs::new(cfg.server_key, hash);
     }
@@ -154,6 +176,23 @@ fn new_hs(cfg: &Config, i: usize, hash: u64) -> ClientHs {
 
 fn main() {
     let cfg = parse_args();
+    if cfg.print_recovery {
+        let secret = match (cfg.identity, cfg.persist) {
+            (Some(id), _) => id,
+            (None, true) => {
+                // Same derivation `new_hs` uses for bot 0.
+                let mut r = Rng::new(cfg.seed.wrapping_mul(0x9E37_79B9).wrapping_add(0x1D));
+                let mut secret = [0u8; 32];
+                for chunk in secret.chunks_mut(8) {
+                    chunk.copy_from_slice(&r.next_u64().to_le_bytes());
+                }
+                secret
+            }
+            _ => usage("--print-recovery needs --account/--passphrase, --recovery-code or --persist"),
+        };
+        println!("{}", proto::secure::recovery_code(&secret));
+        return;
+    }
     let game = match std::fs::read_to_string(&cfg.game) {
         Ok(t) => GameFile::from_json(&t).unwrap_or_else(|e| usage(&format!("{}: {e}", cfg.game))),
         Err(_) => GameFile::default_game(),

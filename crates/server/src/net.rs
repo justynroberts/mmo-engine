@@ -62,6 +62,7 @@ pub struct Clients {
     /// Chat lines accepted this tick, waiting to be routed: (speaker slot, channel, text).
     pub chat_in: Vec<(usize, u8, String)>,
     pub limiter: Option<RateLimiter>,
+    pub id_limiter: Option<IdentityLimiter>,
     /// Recent chat for the console: (tick, speaker id, channel, text).
     pub chat_log: std::collections::VecDeque<(u32, u32, u8, String)>,
 }
@@ -104,6 +105,41 @@ impl Clients {
         self.free.push(idx);
         self.count -= 1;
         Some(c)
+    }
+}
+
+/// Caps how many *new* identities one address can create per hour, so an identity (and its
+/// database row) is not free to mint. Same fixed direct-mapped table idea as `RateLimiter`.
+pub struct IdentityLimiter {
+    slots: Vec<(u32, u32, u32)>,
+    pub per_hour: u32,
+    pub exempt_loopback: bool,
+}
+
+impl IdentityLimiter {
+    pub fn new(per_hour: u32, exempt_loopback: bool) -> Self {
+        IdentityLimiter { slots: vec![(0, 0, 0); 4096], per_hour, exempt_loopback }
+    }
+
+    /// May this address create one more new identity at `tick`?
+    pub fn allow(&mut self, ip: [u8; 4], tick: u32, hz: u32) -> bool {
+        if self.per_hour == 0 || (self.exempt_loopback && ip[0] == 127) {
+            return true;
+        }
+        let tag = u32::from_be_bytes(ip);
+        let i = (tag.wrapping_mul(0x85EB_CA6B) >> 20) as usize % self.slots.len();
+        let (t, count, start) = &mut self.slots[i];
+        let hour = hz * 3600;
+        if *t != tag || tick.wrapping_sub(*start) >= hour {
+            *t = tag;
+            *count = 0;
+            *start = tick;
+        }
+        if *count >= self.per_hour {
+            return false;
+        }
+        *count += 1;
+        true
     }
 }
 
@@ -153,6 +189,8 @@ impl RateLimiter {
 pub struct NetStats {
     /// Handshake packets dropped by the per-address rate limit.
     pub rate_limited: u64,
+    /// Sessions refused because their address had created too many new identities.
+    pub identity_limited: u64,
     /// DATA packets authenticated on a lane instead of the sim thread.
     pub lane_decoded: u64,
     pub in_pkts: u64,
@@ -515,11 +553,31 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
             stats.takeovers += 1;
         }
     }
-    clients.by_id.insert(id, sid);
-    if let Some(rec) = store.and_then(|s| s.load(&id)) {
-        sim.restore(slot, &rec);
-        stats.restored += 1;
+    if let Some(store) = store {
+        match store.load(&id) {
+            Some(rec) => {
+                sim.restore(slot, &rec);
+                stats.restored += 1;
+            }
+            None => {
+                // A brand new identity: its address only gets so many per hour.
+                let ip = clients.slab[sid as usize].as_ref().map(|c| c.addr.ip().octets());
+                let ok = match (ip, clients.id_limiter.as_mut()) {
+                    (Some(ip), Some(l)) => l.allow(ip, sim.tick, sim.tick_hz),
+                    _ => true,
+                };
+                if !ok {
+                    stats.identity_limited += 1;
+                    // Ended without saving: it never becomes a database row.
+                    if let Some(c) = clients.remove(sid) {
+                        sim.ents.despawn(c.slot);
+                    }
+                    return;
+                }
+            }
+        }
     }
+    clients.by_id.insert(id, sid);
 }
 
 /// End a session: save its character if it has a proven identity, free its entity.
@@ -850,6 +908,18 @@ mod tests {
         // Rate 0 means off.
         let mut off = RateLimiter::new(0, false);
         assert!((0..500).all(|_| off.allow(ip, 0, 20)));
+    }
+
+    #[test]
+    fn identity_limiter_caps_new_identities_per_address_per_hour() {
+        let mut l = IdentityLimiter::new(3, true);
+        let (a, b) = ([203, 0, 113, 5], [203, 0, 113, 6]);
+        assert!((0..3).all(|_| l.allow(a, 0, 20)));
+        assert!(!l.allow(a, 100, 20), "fourth in the hour is refused");
+        assert!(l.allow(b, 100, 20), "a different address is unaffected");
+        assert!(l.allow(a, 20 * 3600 + 1, 20), "the window rolls over after an hour");
+        assert!((0..100).all(|_| l.allow([127, 0, 0, 1], 0, 20)), "loopback exempt");
+        assert!((0..100).all(|_| IdentityLimiter::new(0, false).allow(a, 0, 20)));
     }
 
     #[test]

@@ -486,9 +486,10 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
         // Characters survive a world restart: save them before the clients are dropped.
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
-        let limiter = c.clients.limiter.take();
+        let (limiter, id_limiter) = (c.clients.limiter.take(), c.clients.id_limiter.take());
         *c.clients = Clients::default();
         c.clients.limiter = limiter;
+        c.clients.id_limiter = id_limiter;
         c.hs.defs_hash = hash;
         for _ in 0..c.params.plain_npcs {
             c.sim.spawn(NONE);
@@ -534,8 +535,8 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     );
     let _ = write!(
         o,
-        r#""net":{{"hellos":{},"connects":{},"inputs":{},"bad":{},"bad_cookie":{},"auth_fail":{},"rejected":{},"timeouts":{},"chat_in":{},"chat_dropped":{},"takeovers":{},"restored":{},"rate_limited":{}}},"#,
-        n.hellos, n.connects, n.inputs, n.bad, n.bad_cookie, n.auth_fail, n.rejected, n.timeouts, n.chat_in, n.chat_dropped, n.takeovers, n.restored, n.rate_limited
+        r#""net":{{"hellos":{},"connects":{},"inputs":{},"bad":{},"bad_cookie":{},"auth_fail":{},"rejected":{},"timeouts":{},"chat_in":{},"chat_dropped":{},"takeovers":{},"restored":{},"rate_limited":{},"identity_limited":{}}},"#,
+        n.hellos, n.connects, n.inputs, n.bad, n.bad_cookie, n.auth_fail, n.rejected, n.timeouts, n.chat_in, n.chat_dropped, n.takeovers, n.restored, n.rate_limited, n.identity_limited
     );
     let (sv, ld, er) = c.hs.store.as_ref().map_or((0, 0, 0), |st| {
         use std::sync::atomic::Ordering::Relaxed;

@@ -39,6 +39,7 @@ struct Config {
     hello_rate: u32,
     limit_loopback: bool,
     db_expire_days: u32,
+    new_ids_per_hour: u32,
 }
 
 fn parse_args() -> Config {
@@ -62,6 +63,7 @@ fn parse_args() -> Config {
         hello_rate: 100,
         limit_loopback: false,
         db_expire_days: 90,
+        new_ids_per_hour: 30,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -91,6 +93,7 @@ fn parse_args() -> Config {
             "--no-db" => c.db = None,
             "--hello-rate" => c.hello_rate = val(a).parse().unwrap_or_else(|_| usage("bad --hello-rate")),
             "--limit-loopback" => c.limit_loopback = true,
+            "--new-identities-per-hour" => c.new_ids_per_hour = val(a).parse().unwrap_or_else(|_| usage("bad --new-identities-per-hour")),
             "--db-expire-days" => c.db_expire_days = val(a).parse().unwrap_or_else(|_| usage("bad --db-expire-days")),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
@@ -109,6 +112,7 @@ fn usage(msg: &str) -> ! {
         "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player database for returning players (data/world.db)
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
+  --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
   --hello-rate N    handshake packets per second allowed from one address, 0 = unlimited (100)
   --limit-loopback  apply that limit to 127.x too (off so local load tests work)
   --quiet           only print the final summary"
@@ -227,6 +231,7 @@ fn main() {
     });
     let mut clients = Clients::default();
     clients.limiter = Some(net::RateLimiter::new(cfg.hello_rate, !cfg.limit_loopback));
+    clients.id_limiter = Some(net::IdentityLimiter::new(cfg.new_ids_per_hour, !cfg.limit_loopback));
     let mut nstats = NetStats::default();
     let mut scratch: Vec<u8> = Vec::with_capacity(1500);
     let mut plain: Vec<u8> = Vec::with_capacity(256);
@@ -411,8 +416,8 @@ fn main() {
         (user + sys) / wall * 100.0
     );
     println!(
-        "packets in {} (hello {}, connect {}, input {}), unparseable {}, bad cookie {}, failed authentication {}, rejected handshakes {}, timeouts {}, decrypted on lanes {}, rate limited {}",
-        nstats.in_pkts, nstats.hellos, nstats.connects, nstats.inputs, nstats.bad, nstats.bad_cookie, nstats.auth_fail, nstats.rejected, nstats.timeouts, nstats.lane_decoded, nstats.rate_limited
+        "packets in {} (hello {}, connect {}, input {}), unparseable {}, bad cookie {}, failed authentication {}, rejected handshakes {}, timeouts {}, decrypted on lanes {}, rate limited {}, identity limited {}",
+        nstats.in_pkts, nstats.hellos, nstats.connects, nstats.inputs, nstats.bad, nstats.bad_cookie, nstats.auth_fail, nstats.rejected, nstats.timeouts, nstats.lane_decoded, nstats.rate_limited, nstats.identity_limited
     );
     let (t_sent, t_bytes, t_drop) = totals(&tx, &lanes);
     println!("packets out {} ({:.1} MiB), send drops {}, snapshot lanes {}", t_sent, t_bytes as f64 / 1048576.0, t_drop, lanes_n);

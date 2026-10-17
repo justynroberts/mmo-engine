@@ -33,8 +33,24 @@ First run writes `game.json` (the definitions you edit in the console) and
 `server.key` (the server's private identity, mode 0600; keep it private).
 
 Docker: `docker compose up --build` (host networking, because the admin
-interface only binds to loopback). The Dockerfile is written but I could not run
-a Docker daemon where this was built, so it is untested.
+interface only binds to loopback). The runtime stage was verified by hand: runs
+as non-root (uid 10001), serves the UI, accepts 30 persisting bots and writes
+the database to the volume. The builder stages were not run end to end, because
+the registry was unreachable where this was built, so a first `docker build`
+on your machine is still the real test.
+
+Accounts and recovery: a player identity can be derived from an account name
+and passphrase (Argon2id, 19 MiB, t=2), so logging in from another device
+gives the same character. Bots: `--account NAME --passphrase PW`,
+`--recovery-code CODE`, or `--print-recovery` to show the code. A recovery code
+is the raw identity secret as 8 hex groups plus a checksum; keep it like a
+password. Trade-off: the server never sees the passphrase, but anyone who can
+see a handshake can brute-force a weak one offline, so use long passphrases.
+
+Identity minting: each address may create `--new-identities-per-hour` new
+identities (default 30, 0 disables, loopback exempt unless `--limit-loopback`).
+Over the limit the session is dropped silently; returning identities and
+guests are unaffected. Counted as `identity_limited` in stats.
 
 ### Server flags
 

@@ -824,3 +824,62 @@ fn handshake_floods_from_one_address_are_rate_limited_but_established_players_ar
     }
     assert!(p.pump(500) > 0, "an established player keeps getting snapshots");
 }
+
+#[test]
+fn one_address_cannot_mint_unlimited_identities() {
+    let srv = start(&["--limit-loopback", "--hello-rate", "0", "--new-identities-per-hour", "3"]);
+    let mut kept = Vec::new();
+    for _ in 0..3 {
+        let mut c = connect_as(&srv, proto::secure::new_identity());
+        c.send_input(0, 0);
+        c.pump(100);
+        kept.push(c);
+    }
+    // The fourth new identity from this address is cut off as soon as it proves itself.
+    let mut c4 = connect_as(&srv, proto::secure::new_identity());
+    c4.send_input(0, 0);
+    c4.pump(300);
+    let st = state(&srv);
+    assert_eq!(st["net"]["identity_limited"], 1, "{}", st["net"]);
+    assert_eq!(st["clients"], 3);
+    assert_eq!(c4.pump(200), 0, "the refused session gets nothing");
+    // A returning identity is not "new", so it is still welcome, and so are guests.
+    let mut guest = connect(&srv);
+    guest.send_input(0, 0);
+    assert!(guest.pump(300) > 0);
+}
+
+#[test]
+fn logging_in_with_the_same_account_and_passphrase_from_a_fresh_client_returns_the_character() {
+    let srv = start(&[]);
+    let id = proto::secure::identity_from_passphrase("Justyn", "a long passphrase nobody would guess");
+    let mut a = connect_as(&srv, id);
+    walk(&mut a, 25);
+    a.send_input(0, 0);
+    a.pump(300);
+    let (x, y) = a.pos();
+    drop(a);
+    wait_for_clients(&srv, 0);
+    // A different "device": nothing but the account name and passphrase carried over.
+    let again = proto::secure::identity_from_passphrase("justyn", "a long passphrase nobody would guess");
+    let mut b = connect_as(&srv, again);
+    b.send_input(0, 0);
+    b.pump(300);
+    let (bx, by) = b.pos();
+    assert!((bx - x).hypot(by - y) < 2.0, "was at ({x:.1},{y:.1}), logged back in at ({bx:.1},{by:.1})");
+    // Lost the passphrase but kept the recovery code: same character again.
+    let code = proto::secure::recovery_code(&id);
+    drop(b);
+    wait_for_clients(&srv, 0);
+    let mut c = connect_as(&srv, proto::secure::parse_recovery_code(&code).unwrap());
+    c.send_input(0, 0);
+    c.pump(300);
+    let (cx, cy) = c.pos();
+    assert!((cx - x).hypot(cy - y) < 2.0);
+    // A wrong passphrase is simply a different, empty character.
+    let mut w = connect_as(&srv, proto::secure::identity_from_passphrase("justyn", "wrong"));
+    w.send_input(0, 0);
+    w.pump(300);
+    let (wx, wy) = w.pos();
+    assert!((wx - x).hypot(wy - y) > 0.5);
+}
