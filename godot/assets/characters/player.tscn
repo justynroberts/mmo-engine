@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://assets/characters/character.gd" id="1"]
+[ext_resource type="PackedScene" path="res://assets/characters/Knight.glb" id="2"]
+
+[node name="Player" type="Node3D"]
+script = ExtResource("1")
+model = ExtResource("2")
+idle = "Idle"
+walk = "Walking_A"
+run = "Running_A"
+attack_name = "1H_Melee_Attack_Chop"
+hit = "Hit_A"
+death = "Death_A"
+stand_up = "Lie_StandUp"
+hide_meshes = PackedStringArray("1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword")

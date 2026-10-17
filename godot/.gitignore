@@ -1,3 +1,6 @@
 .godot/
 bin/
 *.import
+# extracted from the .glb files on import
+assets/characters/Knight_knight_texture.png
+assets/characters/Skeleton_Warrior_skeleton_texture.png
