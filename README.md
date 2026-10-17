@@ -35,9 +35,10 @@ First run writes `game.json` (the definitions you edit in the console) and
 Docker: `docker compose up --build` (host networking, because the admin
 interface only binds to loopback). The runtime stage was verified by hand: runs
 as non-root (uid 10001), serves the UI, accepts 30 persisting bots and writes
-the database to the volume. The builder stages were not run end to end, because
-the registry was unreachable where this was built, so a first `docker build`
-on your machine is still the real test.
+the database to the volume. The builder stages' commands were replayed by hand on a clean `git archive` of
+HEAD (`npm ci && npm run build`, then `cargo build --release --locked -p server
+-p bots`) and both succeed. Only the base image pull itself could not be run,
+because the registry was unreachable where this was built.
 
 Accounts and recovery: a player identity can be derived from an account name
 and passphrase (Argon2id, 19 MiB, t=2), so logging in from another device
