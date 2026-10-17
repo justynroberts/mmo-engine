@@ -354,3 +354,15 @@ Limits of the browser client today: no client-side prediction (you see the
 server's position, one network round trip behind, smoothed), every other entity
 looks the same because snapshots carry position and replicated attributes but
 not which archetype an entity is, and the touch controls are basic arrows.
+
+## Godot client (vertical slice)
+
+`godot/` is a Godot 4.6 project that plays the world through the `mmo_godot` extension: sign in as a guest, camera-relative WASD, orbit and zoom, tab or click targeting, attack, an 8 slot bag, loot on the ground, chat. It draws primitives so it runs with no art; put `player.tscn` and `mob.tscn` under `godot/assets/characters/` (for example KayKit or Quaternius characters) and they are used instead.
+
+```
+scripts/build_godot.sh                     # builds the extension into godot/bin
+godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
+scripts/godot_e2e.sh                       # headless scripted session against a real server (GODOT=/path/to/godot)
+```
+
+The extension is built against the Godot 4.6 API and refuses to load in older editors. It now exposes `bag()`, `ground()`, `use_slot()`, `drop_slot()` and `pickup()` (the C SDK has `mmo_bag_*`, `mmo_ground*` and `mmo_item_*` to match). Worlds that stream their walls are loaded whole by the slice (`/play/walls?all=1`), which is fine to a few thousand boxes; streaming by area in GDScript is the next step. Weather and the item `usable` flag are not exposed yet.

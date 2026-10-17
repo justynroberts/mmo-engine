@@ -46,7 +46,23 @@ pub struct MmoChat {
     pub text: [u8; 256],
 }
 
+/// Something lying on the ground in reach. Positions are world units.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MmoGround {
+    pub id: u32,
+    pub x: f32,
+    pub y: f32,
+    /// 1-based index into the item list (`mmo_item_name`); 0 would be empty.
+    pub item: u8,
+    pub count: u8,
+}
+
 pub struct Client {
+    bag: Vec<(u8, u8)>,
+    ground: Vec<wire::GroundEntry>,
+    item_names: Vec<std::ffi::CString>,
+    item_colors: Vec<std::ffi::CString>,
     sock: UdpSocket,
     server: SocketAddr,
     defs: Defs,
@@ -224,7 +240,14 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
     };
     let attr_names = defs.replicated.iter().map(|&i| std::ffi::CString::new(defs.attrs[i].name.replace('\0', "")).unwrap_or_default()).collect();
     let now = Instant::now();
+    let items = v["items"].as_array().cloned().unwrap_or_default();
+    let item_names = items.iter().map(|i| std::ffi::CString::new(i["name"].as_str().unwrap_or("").replace('\0', "")).unwrap_or_default()).collect();
+    let item_colors = items.iter().map(|i| std::ffi::CString::new(i["color"].as_str().unwrap_or("#ffffff").replace('\0', "")).unwrap_or_default()).collect();
     let mut c = Client {
+        bag: Vec::new(),
+        ground: Vec::new(),
+        item_names,
+        item_colors,
         sock,
         server,
         defs,
@@ -284,6 +307,8 @@ impl Client {
         self.view = ClientView::new();
         self.pred = None;
         self.vis = None;
+        self.bag.clear();
+        self.ground.clear();
         self.hist.clear();
         self.sent.clear();
         self.last_rx = Instant::now();
@@ -328,6 +353,14 @@ impl Client {
                     // The zone we were in handed us over: same identity, new server.
                     let to = SocketAddr::from((r.ip, r.port));
                     self.restart(to);
+                } else if inner.first() == Some(&kind::INVENTORY) {
+                    if let Some(b) = wire::decode_inventory(inner) {
+                        self.bag = b;
+                    }
+                } else if inner.first() == Some(&kind::GROUND) {
+                    if let Some(g) = wire::decode_ground(inner) {
+                        self.ground = g;
+                    }
                 } else if inner.first() == Some(&chat::kind::BATCH) {
                     if let Some((ack, msgs)) = chat::decode_batch(inner) {
                         let fresh = self.chat.on_batch(ack, msgs);
@@ -575,4 +608,56 @@ pub unsafe extern "C" fn mmo_rtt_ms(c: *const Client) -> f32 {
 #[no_mangle]
 pub extern "C" fn mmo_protocol_version() -> u16 {
     wire::PROTO_VERSION
+}
+
+/// Slots in the bag (always the server's bag size once the first inventory arrives, 0 before).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_bag_len(c: *const Client) -> usize {
+    c.as_ref().map_or(0, |c| c.bag.len())
+}
+
+/// Slot `i`: the 1-based item index (0 = empty) and how many. Use an item with `mmo_act(c, 200 + slot, 0)`,
+/// drop it with `216 + slot`, pick up the nearest thing within 3 units with 250.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_bag_slot(c: *const Client, i: usize, item: *mut u8, count: *mut u8) -> i32 {
+    let Some(c) = c.as_ref() else { return 0 };
+    let Some(&(it, n)) = c.bag.get(i) else { return 0 };
+    if !item.is_null() {
+        *item = it;
+    }
+    if !count.is_null() {
+        *count = n;
+    }
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mmo_ground_count(c: *const Client) -> usize {
+    c.as_ref().map_or(0, |c| c.ground.len())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mmo_ground(c: *const Client, i: usize, out: *mut MmoGround) -> i32 {
+    let (Some(c), Some(out)) = (c.as_ref(), out.as_mut()) else { return 0 };
+    let Some(g) = c.ground.get(i) else { return 0 };
+    *out = MmoGround { id: g.id, x: proto::world::dpos(g.x), y: proto::world::dpos(g.y), item: g.item, count: g.count };
+    1
+}
+
+/// Number of item kinds in the game, from `info_json`.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_item_count(c: *const Client) -> usize {
+    c.as_ref().map_or(0, |c| c.item_names.len())
+}
+
+/// Name of an item by its 1-based index (what bag slots and ground items carry), or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_item_name(c: *const Client, item: u8) -> *const c_char {
+    c.as_ref().and_then(|c| c.item_names.get((item as usize).wrapping_sub(1))).map_or(std::ptr::null(), |s| s.as_ptr())
+}
+
+/// The item's colour as a `#rrggbb` string, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_item_color(c: *const Client, item: u8) -> *const c_char {
+    c.as_ref().and_then(|c| c.item_colors.get((item as usize).wrapping_sub(1))).map_or(std::ptr::null(), |s| s.as_ptr())
 }

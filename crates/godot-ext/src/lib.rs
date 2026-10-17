@@ -20,6 +20,18 @@ struct MmoClient {
     c: *mut m::Client,
 }
 
+impl MmoClient {
+    fn item_name(&self, item: u8) -> GString {
+        let p = unsafe { m::mmo_item_name(self.c, item) };
+        if p.is_null() { GString::new() } else { GString::from(unsafe { CStr::from_ptr(p) }.to_string_lossy().as_ref()) }
+    }
+
+    fn item_color(&self, item: u8) -> GString {
+        let p = unsafe { m::mmo_item_color(self.c, item) };
+        if p.is_null() { GString::from("#ffffff") } else { GString::from(unsafe { CStr::from_ptr(p) }.to_string_lossy().as_ref()) }
+    }
+}
+
 #[godot_api]
 impl INode for MmoClient {
     fn init(base: Base<Node>) -> Self {
@@ -155,6 +167,70 @@ impl MmoClient {
             out.push(&d);
         }
         out
+    }
+
+    /// The bag: one dictionary per slot with `slot`, `item` (name, empty string if the slot is empty), `color`
+    /// (`#rrggbb`) and `count`. Use a slot with `use_slot`, drop it with `drop_slot`.
+    #[func]
+    fn bag(&self) -> Array<VarDictionary> {
+        let mut out = Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        for i in 0..unsafe { m::mmo_bag_len(self.c) } {
+            let (mut item, mut count) = (0u8, 0u8);
+            if unsafe { m::mmo_bag_slot(self.c, i, &mut item, &mut count) } == 0 {
+                continue;
+            }
+            let mut d = VarDictionary::new();
+            d.set("slot", i as i64);
+            d.set("item", &self.item_name(item));
+            d.set("color", &self.item_color(item));
+            d.set("count", count as i64);
+            out.push(&d);
+        }
+        out
+    }
+
+    /// Things on the ground near you: `id`, `position`, `item` (name), `color`, `count`.
+    #[func]
+    fn ground(&self) -> Array<VarDictionary> {
+        let mut out = Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        for i in 0..unsafe { m::mmo_ground_count(self.c) } {
+            let mut g = m::MmoGround::default();
+            if unsafe { m::mmo_ground(self.c, i, &mut g) } == 0 {
+                continue;
+            }
+            let mut d = VarDictionary::new();
+            d.set("id", g.id as i64);
+            d.set("position", Vector2::new(g.x, g.y));
+            d.set("item", &self.item_name(g.item));
+            d.set("color", &self.item_color(g.item));
+            d.set("count", g.count as i64);
+            out.push(&d);
+        }
+        out
+    }
+
+    /// Use the item in a bag slot (0 to 7).
+    #[func]
+    fn use_slot(&mut self, slot: i64) {
+        self.act(200 + slot.clamp(0, 15), 0);
+    }
+
+    /// Drop the stack in a bag slot onto the ground.
+    #[func]
+    fn drop_slot(&mut self, slot: i64) {
+        self.act(216 + slot.clamp(0, 15), 0);
+    }
+
+    /// Pick up the nearest thing within reach (3 units).
+    #[func]
+    fn pickup(&mut self) {
+        self.act(250, 0);
     }
 
     /// A fresh random identity (64 hex characters). Store it: it is the player's account.
