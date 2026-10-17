@@ -638,3 +638,31 @@ fn admin_can_make_a_bot_speak_and_read_the_chat_log() {
     assert_eq!(log["lines"][0][3], "beep boop");
     assert_eq!(json(&srv, "POST", "/api/say", r#"{"id":1,"text":"   "}"#).0, 400);
 }
+
+#[test]
+fn a_bot_rule_can_make_bots_talk_and_new_places_apply_live() {
+    let srv = start(&[]);
+    let mut p = connect(&srv);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["places"].as_array_mut().unwrap().push(serde_json::json!({"name":"dock","x":50.0,"y":60.0,"r":10.0}));
+    game["archetypes"].as_array_mut().unwrap().push(serde_json::json!({
+        "name":"crier","count":2,"home":"dock",
+        "rules":[{"when":{"kind":"chance","pct":100.0},"then":{"kind":"say","text":"oyez   oyez","shout":true}},
+                 {"when":{"kind":"always"},"then":{"kind":"goto","place":"dock"}}]
+    }));
+    let (code, body) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["reset"], false, "bot-only edits keep players connected");
+    for _ in 0..40 {
+        p.tick();
+    }
+    assert!(p.heard.iter().any(|m| m.text == "oyez oyez"), "heard: {:?}", p.heard);
+    let st = state(&srv);
+    let near_dock = st["e"].as_array().unwrap().iter().filter(|e| e[3] == 4 && (e[1].as_f64().unwrap() - 50.0).hypot(e[2].as_f64().unwrap() - 60.0) < 12.0).count();
+    assert_eq!(near_dock, 2, "both criers spawned at the dock");
+    // A rule naming a place that does not exist is refused and changes nothing.
+    game["archetypes"][4]["home"] = "atlantis".into();
+    let (code, body) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(code, 400);
+    assert!(body["error"].as_str().unwrap().contains("unknown place"), "{body}");
+}

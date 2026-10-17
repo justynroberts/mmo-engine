@@ -29,6 +29,11 @@ pub struct Entities {
     pub arch: Vec<u8>,
     /// Units per second at full input.
     pub speed: Vec<f32>,
+    /// Patrol progress: next waypoint index and direction.
+    pub wp: Vec<u8>,
+    pub wp_fwd: Vec<bool>,
+    /// Tick before which this bot will not speak again.
+    pub say_at: Vec<u32>,
     /// One array per attribute, indexed by slot (structure of arrays).
     pub attrs: Vec<Vec<f32>>,
     free: Vec<u32>,
@@ -50,6 +55,9 @@ impl Entities {
             owner: vec![NONE; cap],
             arch: vec![NO_ARCH; cap],
             speed: vec![0.0; cap],
+            wp: vec![0; cap],
+            wp_fwd: vec![true; cap],
+            say_at: vec![0; cap],
             attrs: (0..n_attrs).map(|_| vec![0.0; cap]).collect(),
             free: Vec::new(),
             high: 0,
@@ -98,6 +106,17 @@ impl Entities {
             self.live -= 1;
         }
     }
+}
+
+/// Unit direction toward an offset as input bytes; (0, 0) inside `stop` units.
+fn dir_to(dx: f32, dy: f32, stop: f32) -> (i8, i8) {
+    let d2 = dx * dx + dy * dy;
+    if d2 <= stop * stop || d2 == 0.0 {
+        return (0, 0);
+    }
+    let d = d2.sqrt();
+    let q = |v: f32| (v * 127.0).round().clamp(-127.0, 127.0) as i8;
+    (q(dx / d), q(dy / d))
 }
 
 /// Uniform grid rebuilt every tick with a counting sort: no allocation, no
@@ -201,6 +220,10 @@ pub struct Sim {
     /// from here, so quantisation cost is O(entities), not O(clients x visible).
     pub entry_cache: Vec<Entry>,
     pub archs: Vec<ArchRt>,
+    pub places: Vec<proto::game::Place>,
+    pub routes: Vec<proto::game::Route>,
+    /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
+    pub npc_say: Vec<(usize, bool, String)>,
     /// Actions requested by bots this tick.
     npc_actions: Vec<PendingAction>,
     /// Actions injected by the admin UI for the next tick.
@@ -209,7 +232,7 @@ pub struct Sim {
 
 impl Sim {
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs } = game;
+        let Game { defs, archs, places, routes } = game;
         let ents = Entities::new(cap, defs.attrs.len());
         let grid = Grid::new(world.size, defs.interest_radius, cap);
         Sim {
@@ -224,6 +247,9 @@ impl Sim {
             stats: SimStats::default(),
             entry_cache: vec![Entry::default(); cap],
             archs,
+            places,
+            routes,
+            npc_say: Vec::new(),
             npc_actions: Vec::new(),
             admin_actions: Vec::new(),
         }
@@ -238,9 +264,10 @@ impl Sim {
     pub fn spawn_as(&mut self, owner: u32, arch: u8, at: Option<(f32, f32)>) -> Option<usize> {
         let r = self.defs.entity_radius;
         let slot = self.ents.alloc()?;
+        let home = if owner == NONE { self.archs.get(arch as usize).and_then(|a| a.home) } else { None };
         let (x, y) = match at {
             Some((x, y)) if !self.world.blocked(x, y, r) => (x, y),
-            _ => self.world.random_spawn(&mut self.rng, r),
+            _ => self.spawn_point(home, r),
         };
         let speed = self.defs.move_speed * self.archs.get(arch as usize).map_or(1.0, |a| a.speed_mult);
         let e = &mut self.ents;
@@ -253,9 +280,28 @@ impl Sim {
         e.owner[slot] = owner;
         e.arch[slot] = arch;
         e.speed[slot] = speed;
+        e.wp[slot] = 0;
+        e.wp_fwd[slot] = true;
+        e.say_at[slot] = 0;
         e.live += 1;
         self.reset_attrs(slot);
         Some(slot)
+    }
+
+    /// A free point inside the home place if there is one, else anywhere free.
+    fn spawn_point(&mut self, home: Option<usize>, r: f32) -> (f32, f32) {
+        if let Some(p) = home.and_then(|h| self.places.get(h)).cloned() {
+            let size = self.world.size;
+            for _ in 0..24 {
+                let ang = self.rng.f32() * std::f32::consts::TAU;
+                let d = self.rng.f32().sqrt() * p.r;
+                let (x, y) = ((p.x + ang.cos() * d).clamp(r, size - r), (p.y + ang.sin() * d).clamp(r, size - r));
+                if !self.world.blocked(x, y, r) {
+                    return (x, y);
+                }
+            }
+        }
+        self.world.random_spawn(&mut self.rng, r)
     }
 
     /// Attributes back to their starting values (archetype overrides included).
@@ -304,6 +350,153 @@ impl Sim {
         }
     }
 
+    /// Random-walk step, drifting back toward the home place when outside it.
+    fn wander_dir(&mut self, s: usize, a: usize) -> (i8, i8) {
+        if let Some(p) = self.archs.get(a).and_then(|r| r.home).and_then(|h| self.places.get(h)) {
+            let (dx, dy) = (p.x - self.ents.x[s], p.y - self.ents.y[s]);
+            if dx * dx + dy * dy > p.r * p.r {
+                return dir_to(dx, dy, 0.5);
+            }
+        }
+        if self.rng.below(4) == 0 {
+            (0, 0)
+        } else {
+            const D: [i8; 3] = [-127, 0, 127];
+            (D[self.rng.below(3) as usize], D[self.rng.below(3) as usize])
+        }
+    }
+
+    /// Evaluate an archetype's rule stack for one bot. Returns false when no
+    /// movement rule matched, so the plain `behaviour` still applies.
+    fn run_rules(&mut self, s: usize, a: usize) -> bool {
+        use proto::game::{ActRt, CondRt, Seek};
+        let (x, y) = (self.ents.x[s], self.ents.y[s]);
+        let (reach, attack) = (self.archs[a].reach, self.archs[a].attack);
+        let attack_range = attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range);
+
+        // One neighbour scan: nearest player, nearest other bot, nearest of either.
+        let mut near: [Option<(f32, usize)>; 3] = [None; 3];
+        let scan = reach.max(attack_range);
+        if scan > 0.0 {
+            let e = &self.ents;
+            let me_arch = e.arch[s];
+            self.grid.for_neighbours(x, y, |t| {
+                let t = t as usize;
+                if t == s {
+                    return;
+                }
+                let (dx, dy) = (e.x[t] - x, e.y[t] - y);
+                let d2 = dx * dx + dy * dy;
+                if d2 > scan * scan {
+                    return;
+                }
+                let cat = if e.owner[t] < DRIVEN { 0 } else if e.arch[t] == me_arch && me_arch != NO_ARCH { return } else { 1 };
+                for c in [cat, 2] {
+                    if near[c].map_or(true, |(b, _)| d2 < b) {
+                        near[c] = Some((d2, t));
+                    }
+                }
+            });
+        }
+
+        let n_rules = self.archs[a].rules.len();
+        for ri in 0..n_rules {
+            let (when, then) = {
+                let r = &self.archs[a].rules[ri];
+                (r.when.clone(), r.then.clone())
+            };
+            let mut target: Option<(f32, usize)> = None;
+            let hit = match when {
+                CondRt::Always => true,
+                CondRt::Sees { who, within } => {
+                    let n = near[match who {
+                        Seek::Player => 0,
+                        Seek::Bot => 1,
+                        Seek::Any => 2,
+                    }];
+                    target = n.filter(|(d2, _)| *d2 <= within * within);
+                    target.is_some()
+                }
+                CondRt::AttrBelow { attr, value } => self.ents.attrs[attr][s] < value,
+                CondRt::AttrAbove { attr, value } => self.ents.attrs[attr][s] > value,
+                CondRt::InPlace { place } => {
+                    let p = &self.places[place];
+                    (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r
+                }
+                CondRt::Chance { pct } => self.rng.f32() * 100.0 < pct,
+            };
+            if !hit {
+                continue;
+            }
+            // Chasing, fleeing and attacking need someone: without a `sees` target
+            // use the nearest anyone within the archetype's own sight.
+            let sight = self.archs[a].sight;
+            let foe = || target.or(near[2].filter(|(d2, _)| *d2 <= sight * sight));
+            let steer: (i8, i8) = match then {
+                ActRt::Say { text, shout } => {
+                    if self.tick >= self.ents.say_at[s] {
+                        self.ents.say_at[s] = self.tick + self.tick_hz * 6;
+                        self.npc_say.push((s, shout, text));
+                    }
+                    continue;
+                }
+                ActRt::Idle => (0, 0),
+                ActRt::Wander => self.wander_dir(s, a),
+                ActRt::Chase | ActRt::Flee | ActRt::Attack => {
+                    let Some((d2, t)) = foe() else { continue };
+                    let (dx, dy) = (self.ents.x[t] - x, self.ents.y[t] - y);
+                    if matches!(then, ActRt::Attack) {
+                        if let Some(act) = attack {
+                            if d2 <= attack_range * attack_range {
+                                self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t) });
+                            }
+                        }
+                    }
+                    match then {
+                        ActRt::Flee => dir_to(-dx, -dy, 1.0),
+                        _ => dir_to(dx, dy, 1.0),
+                    }
+                }
+                ActRt::Goto { place } => {
+                    let p = &self.places[place];
+                    dir_to(p.x - x, p.y - y, (p.r * 0.5).max(1.0))
+                }
+                ActRt::Patrol { route } => {
+                    let r = &self.routes[route];
+                    let n = r.points.len();
+                    let mut i = (self.ents.wp[s] as usize).min(n - 1);
+                    let mut fwd = self.ents.wp_fwd[s];
+                    let [px, py] = r.points[i];
+                    if (px - x).powi(2) + (py - y).powi(2) < 9.0 {
+                        if fwd {
+                            if i + 1 < n {
+                                i += 1;
+                            } else if r.looped {
+                                i = 0;
+                            } else {
+                                fwd = false;
+                                i = n.saturating_sub(2);
+                            }
+                        } else if i > 0 {
+                            i -= 1;
+                        } else {
+                            fwd = true;
+                            i = 1.min(n - 1);
+                        }
+                        self.ents.wp[s] = i as u8;
+                        self.ents.wp_fwd[s] = fwd;
+                    }
+                    let [px, py] = r.points[i];
+                    dir_to(px - x, py - y, 0.5)
+                }
+            };
+            self.ents.dir_x[s] = steer.0;
+            self.ents.dir_y[s] = steer.1;
+            return true;
+        }
+        false
+    }
+
     /// Bots are ordinary entities. Their "AI" writes the same direction fields
     /// a player's input would, and queues the same action requests, at a low
     /// rate (every 10th tick, staggered).
@@ -314,6 +507,10 @@ impl Sim {
                 continue;
             }
             if (tick as usize + s) % 10 != 0 {
+                continue;
+            }
+            let a = self.ents.arch[s];
+            if self.archs.get(a as usize).is_some_and(|r| !r.rules.is_empty()) && self.run_rules(s, a as usize) {
                 continue;
             }
             let a = self.ents.arch[s];
@@ -362,14 +559,7 @@ impl Sim {
             let (dx, dy) = match steer {
                 Some(d) => d,
                 None if behaviour == Behaviour::Idle => (0, 0),
-                None => {
-                    if self.rng.below(4) == 0 {
-                        (0, 0)
-                    } else {
-                        const D: [i8; 3] = [-127, 0, 127];
-                        (D[self.rng.below(3) as usize], D[self.rng.below(3) as usize])
-                    }
-                }
+                None => self.wander_dir(s, a as usize),
             };
             self.ents.dir_x[s] = dx;
             self.ents.dir_y[s] = dy;
@@ -642,5 +832,169 @@ mod tests {
         }
         // The test only means something if the walls were actually hit.
         assert!(blocked_ticks > 100 && moved > 1000, "blocked {blocked_ticks}, moved {moved}");
+    }
+
+    // ---- rule builder behaviour
+
+    use proto::game::{Act, Archetype, Behaviour, Cond, GameFile, Place, Route, Rule, Seek};
+
+    fn arch(name: &str, behaviour: Behaviour, rules: Vec<Rule>) -> Archetype {
+        Archetype {
+            name: name.into(),
+            color: "#112233".into(),
+            count: 0,
+            behaviour,
+            speed_mult: 1.0,
+            sight: 40.0,
+            attack: None,
+            attrs: Default::default(),
+            home: None,
+            rules,
+        }
+    }
+
+    fn sim_with(f: impl FnOnce(&mut GameFile)) -> Sim {
+        let mut g = GameFile::default_game();
+        g.archetypes.clear();
+        f(&mut g);
+        Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 3)
+    }
+
+    fn run(s: &mut Sim, ticks: u32) {
+        for _ in 0..ticks {
+            s.step(&[]);
+        }
+    }
+
+    #[test]
+    fn patrol_walks_the_route_in_order_and_loops() {
+        let mut s = sim_with(|g| {
+            g.routes = vec![Route { name: "sq".into(), points: vec![[100.0, 100.0], [140.0, 100.0], [140.0, 140.0], [100.0, 140.0]], looped: true }];
+            g.archetypes = vec![arch("g", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Patrol { route: "sq".into() } }])];
+        });
+        let b = s.spawn_as(NONE, 0, Some((100.0, 100.0))).unwrap();
+        let mut visited = Vec::new();
+        for _ in 0..1200 {
+            s.step(&[]);
+            let (x, y) = (s.ents.x[b], s.ents.y[b]);
+            for (i, p) in [[100.0f32, 100.0], [140.0, 100.0], [140.0, 140.0], [100.0, 140.0]].iter().enumerate() {
+                if (x - p[0]).hypot(y - p[1]) < 3.0 && visited.last() != Some(&i) {
+                    visited.push(i);
+                }
+            }
+        }
+        assert!(visited.len() >= 9, "only visited {visited:?}");
+        for w in visited.windows(2) {
+            assert_eq!(w[1], (w[0] + 1) % 4, "out of order: {visited:?}");
+        }
+    }
+
+    #[test]
+    fn open_routes_turn_around_at_the_ends() {
+        let mut s = sim_with(|g| {
+            g.routes = vec![Route { name: "line".into(), points: vec![[100.0, 100.0], [150.0, 100.0]], looped: false }];
+            g.archetypes = vec![arch("g", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Patrol { route: "line".into() } }])];
+        });
+        let b = s.spawn_as(NONE, 0, Some((100.0, 100.0))).unwrap();
+        let (mut hit_far, mut came_back) = (false, false);
+        for _ in 0..800 {
+            s.step(&[]);
+            let x = s.ents.x[b];
+            hit_far |= x > 147.0;
+            came_back |= hit_far && x < 103.0;
+        }
+        assert!(hit_far && came_back);
+    }
+
+    #[test]
+    fn bots_spawn_in_their_home_place_and_wander_stays_near_it() {
+        let mut s = sim_with(|g| {
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0 }];
+            let mut a = arch("w", Behaviour::Wander, vec![]);
+            a.home = Some("home".into());
+            a.count = 20;
+            g.archetypes = vec![a];
+        });
+        s.populate_bots();
+        for sl in 0..s.ents.high {
+            let d = (s.ents.x[sl] - 250.0).hypot(s.ents.y[sl] - 250.0);
+            assert!(d <= 15.01, "spawned {d} from the centre");
+        }
+        run(&mut s, 3000);
+        for sl in 0..s.ents.high {
+            let d = (s.ents.x[sl] - 250.0).hypot(s.ents.y[sl] - 250.0);
+            assert!(d < 15.0 + 10.0, "wandered {d} from home");
+        }
+    }
+
+    #[test]
+    fn first_matching_rule_wins_and_low_health_beats_chasing() {
+        let rules = vec![
+            Rule { when: Cond::AttrBelow { attr: "health".into(), value: 30.0 }, then: Act::Flee },
+            Rule { when: Cond::Sees { who: Seek::Player, within: 50.0 }, then: Act::Chase },
+        ];
+        let mut s = sim_with(|g| g.archetypes = vec![arch("b", Behaviour::Idle, rules)]);
+        let player = s.spawn(0).unwrap();
+        place(&mut s, player, 200.0, 200.0);
+        let bot = s.spawn_as(NONE, 0, Some((220.0, 200.0))).unwrap();
+        run(&mut s, 12);
+        assert!(s.ents.x[bot] < 220.0, "healthy bot should approach the player, x={}", s.ents.x[bot]);
+        s.ents.attrs[ATTR_HEALTH as usize][bot] = 10.0;
+        place(&mut s, player, 200.0, 200.0);
+        place(&mut s, bot, 210.0, 200.0);
+        s.ents.dir_x[bot] = 0;
+        run(&mut s, 40);
+        assert!(s.ents.x[bot] > 215.0, "hurt bot should run away, x={}", s.ents.x[bot]);
+    }
+
+    #[test]
+    fn say_fires_once_per_cooldown_and_does_not_stop_movement_rules() {
+        let rules = vec![
+            Rule { when: Cond::Sees { who: Seek::Player, within: 30.0 }, then: Act::Say { text: "Halt".into(), shout: false } },
+            Rule { when: Cond::Always, then: Act::Goto { place: "gate".into() } },
+        ];
+        let mut s = sim_with(|g| {
+            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0 }];
+            g.archetypes = vec![arch("b", Behaviour::Idle, rules)];
+        });
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 100.0, 110.0);
+        let bot = s.spawn_as(NONE, 0, Some((100.0, 100.0))).unwrap();
+        let mut said = 0;
+        for _ in 0..100 {
+            s.step(&[]);
+            said += s.npc_say.len();
+            s.npc_say.clear();
+        }
+        assert_eq!(said, 1, "one line, then the 6 second cooldown (100 ticks is 5 s)");
+        assert!(s.ents.x[bot] > 150.0, "kept walking to the gate while talking, x={}", s.ents.x[bot]);
+        run(&mut s, 400);
+        let (x, y) = (s.ents.x[bot], s.ents.y[bot]);
+        assert!((x - 300.0).hypot(y - 100.0) <= 6.0, "arrived at the gate: ({x}, {y})");
+    }
+
+    #[test]
+    fn rules_that_do_not_match_fall_back_to_the_plain_behaviour() {
+        let rules = vec![Rule { when: Cond::Sees { who: Seek::Player, within: 20.0 }, then: Act::Flee }];
+        let mut s = sim_with(|g| g.archetypes = vec![arch("b", Behaviour::Idle, rules)]);
+        let bot = s.spawn_as(NONE, 0, Some((100.0, 100.0))).unwrap();
+        run(&mut s, 100);
+        assert_eq!((s.ents.x[bot], s.ents.y[bot]), (100.0, 100.0), "idle fallback does not move");
+    }
+
+    #[test]
+    fn attack_rule_closes_in_and_fires_only_when_in_range() {
+        let mut s = sim_with(|g| {
+            let mut a = arch("d", Behaviour::Idle, vec![Rule { when: Cond::Sees { who: Seek::Player, within: 60.0 }, then: Act::Attack }]);
+            a.attack = Some("zap".into());
+            g.archetypes = vec![a];
+        });
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 200.0, 200.0);
+        let _bot = s.spawn_as(NONE, 0, Some((250.0, 200.0))).unwrap();
+        run(&mut s, 5);
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 100.0, "too far to hit yet");
+        run(&mut s, 120);
+        assert!(s.ents.attrs[ATTR_HEALTH as usize][p] < 100.0, "should have been zapped");
     }
 }

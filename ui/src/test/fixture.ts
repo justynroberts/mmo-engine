@@ -23,6 +23,8 @@ export const fixture = (): GameFile => ({
     },
   ],
   archetypes: [
-    { name: 'drone', color: '#e0457b', count: 4, behaviour: 'chase', speed_mult: 1, sight: 40, attack: 'zap', attrs: { health: 60 } },
+    { name: 'drone', color: '#e0457b', count: 4, behaviour: 'chase', speed_mult: 1, sight: 40, attack: 'zap', attrs: { health: 60 }, home: null, rules: [] },
   ],
+  places: [],
+  routes: [],
 })

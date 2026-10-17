@@ -336,7 +336,7 @@ impl Clients {
 }
 
 /// Route chat accepted during the input phase and refill rate limits once a second.
-pub fn route_chat(sim: &Sim, clients: &mut Clients) {
+pub fn route_chat(sim: &mut Sim, clients: &mut Clients) {
     if sim.tick % sim.tick_hz == 0 {
         for c in clients.slab.iter_mut().flatten() {
             c.chat.refill(1.0);
@@ -346,6 +346,15 @@ pub fn route_chat(sim: &Sim, clients: &mut Clients) {
     for (slot, ch, text) in &events {
         say_from(sim, clients, *slot, *ch, text);
     }
+    let said = std::mem::take(&mut sim.npc_say);
+    for (slot, shout, text) in &said {
+        // A bot that died or was removed since it decided to speak stays quiet.
+        if sim.ents.alive[*slot] {
+            say_from(sim, clients, *slot, if *shout { proto::chat::channel::SHOUT } else { proto::chat::channel::SAY }, text);
+        }
+    }
+    sim.npc_say = said;
+    sim.npc_say.clear();
     clients.chat_in = events;
     clients.chat_in.clear();
 }

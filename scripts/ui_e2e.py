@@ -5,7 +5,7 @@ Usage: scripts/ui_e2e.py [--shots DIR]
 Needs: cargo build --release, (cd ui && npm run build), python3 playwright + chromium.
 Starts its own server on free ports with a throwaway game.json and key.
 """
-import json, os, shutil, signal, socket, subprocess, sys, tempfile, time, urllib.request
+import json, os, re, shutil, signal, socket, subprocess, sys, tempfile, time, urllib.request
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -53,7 +53,7 @@ try:
 
     with sync_playwright() as pw:
         br = pw.chromium.launch(args=["--no-sandbox"])
-        TABS = ["Bots", "Attributes", "Actions", "Entity", "Connect", "JSON"]
+        TABS = ["Bots", "Builder", "Attributes", "Actions", "Entity", "Chat", "Connect", "JSON"]
         for theme in ("dark", "light"):
             ctx = br.new_context(viewport={"width": 1440, "height": 900}, color_scheme=theme)
             pg = ctx.new_page()
@@ -118,6 +118,77 @@ try:
         n2 = sum(1 for r in api(base, "/api/state")[1]["e"] if r[3] == 0)
         check("Spawn 10 adds ten bots", n2 == 30, f"{n2}")
 
+        # ---- Visual builder: places, routes, rules, test bot, all through the real UI.
+        pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.4)
+        cv = pg.locator("canvas[role=img]")
+        def cpos(wx, wy):
+            bb = cv.bounding_box(); sc = min(bb["width"], bb["height"]) / 1024
+            return bb["x"] + bb["width"] / 2 + (wx - 512) * sc, bb["y"] + bb["height"] / 2 + (wy - 512) * sc
+        def field(name, n=0): return pg.get_by_role("textbox", name=name, exact=True).nth(n)
+        n_places = pg.get_by_role("textbox", name="Place", exact=True).count()
+        pg.get_by_role("button", name="Add place").click()
+        pg.mouse.click(*cpos(600, 600)); time.sleep(0.3)
+        check("Add place tool: clicking the map adds a place", pg.get_by_role("textbox", name="Place", exact=True).count() == n_places + 1)
+        px = float(field("X", n_places).input_value())
+        check("the new place sits where the map was clicked", abs(px - 600) <= 4, f"x={px}")
+        a = cpos(600, 600); b = cpos(700, 650)
+        pg.mouse.move(*a); pg.mouse.down(); pg.mouse.move((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, steps=4); pg.mouse.move(*b, steps=4); pg.mouse.up(); time.sleep(0.3)
+        px, py = float(field("X", n_places).input_value()), float(field("Y", n_places).input_value())
+        check("dragging a place on the map moves it", abs(px - 700) <= 5 and abs(py - 650) <= 5, f"({px},{py})")
+        n_routes = pg.get_by_role("textbox", name="Route", exact=True).count()
+        pg.get_by_role("button", name="Draw route").click()
+        for pt in [(300, 800), (500, 850), (650, 800)]:
+            pg.mouse.click(*cpos(*pt)); time.sleep(0.1)
+        pg.get_by_role("button", name="Finish route").click(); time.sleep(0.3)
+        check("Draw route tool: finishing adds a route", pg.get_by_role("textbox", name="Route", exact=True).count() == n_routes + 1)
+        check("route has the clicked points", pg.locator("text=3 points").count() >= 1)
+
+        pg.get_by_label("Editing bot type").select_option(label="guard")
+        pg.get_by_label("Home").select_option("place")
+        pg.get_by_label("Spawn count").fill("2")
+        pg.get_by_role("button", name="Add rule").click(); time.sleep(0.2)
+        pg.get_by_role("button", name="Move rule 3 up").click(); pg.get_by_role("button", name="Move rule 2 up").click(); time.sleep(0.3)
+        r1 = pg.get_by_role("group", name=re.compile("^Rule 1:"))
+        r1.get_by_label("Condition").select_option("chance")
+        pg.get_by_role("group", name=re.compile("^Rule 1:")).get_by_label("Percent per decision").fill("100")
+        pg.get_by_role("group", name=re.compile("^Rule 1:")).get_by_label("Action").select_option("say")
+        pg.get_by_role("group", name=re.compile("^Rule 1:")).get_by_label("Text").fill("oyez")
+        check("rules read back as sentences", pg.get_by_role("group", name=re.compile("^Rule 1: 100% of the time: say \"oyez\"")).count() == 1)
+        check("rule reorder buttons act on the list", pg.get_by_role("group", name=re.compile("^Rule 3: Always: patrol")).count() == 1)
+        pg.get_by_role("button", name="Apply", exact=True).click()
+        pg.wait_for_selector("text=Applied live", timeout=5000)
+        time.sleep(1.5)
+        g = api(base, "/api/game")[1]
+        guard = next(a for a in g["archetypes"] if a["name"] == "guard")
+        check("applied game has the rule, home and place", guard["rules"][0]["then"]["kind"] == "say" and guard["home"] == "place" and any(p["name"] == "place" and abs(p["x"] - 700) <= 5 for p in g["places"]), json.dumps(guard)[:300])
+        gi = [a["name"] for a in g["archetypes"]].index("guard")
+        guards = [r for r in api(base, "/api/state")[1]["e"] if r[3] == gi]
+        near = [r for r in guards if ((r[1] - 700) ** 2 + (r[2] - 650) ** 2) ** 0.5 < 80]
+        check("two guards spawned in the new place and are patrolling or standing near it", len(guards) == 2 and len(near) >= 1, f"{len(guards)} guards, {[(round(r[1]), round(r[2])) for r in guards]}")
+        lines = []
+        for _ in range(20):
+            lines = api(base, "/api/chat")[1]["lines"]
+            if any(l[3] == "oyez" for l in lines): break
+            time.sleep(0.3)
+        check("a rule made bots speak through the chat channel", any(l[3] == "oyez" for l in lines), str(lines[-3:]))
+        pg.get_by_role("tab", name="Chat", exact=True).click(); time.sleep(1.4)
+        check("the Chat tab shows what bots said", pg.locator("li:has-text('oyez')").count() >= 1)
+        pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.3)
+        pg.get_by_role("button", name="Drop test bot").click()
+        pg.mouse.click(*cpos(200, 200)); time.sleep(0.8)
+        guards2 = [r for r in api(base, "/api/state")[1]["e"] if r[3] == gi]
+        check("Drop test bot spawns the selected bot type at the click", len(guards2) == 3 and any(((r[1] - 200) ** 2 + (r[2] - 200) ** 2) ** 0.5 < 40 for r in guards2), f"{len(guards2)}")
+        # Dragging a rule row by its handle reorders it.
+        pg.get_by_role("button", name="Select and move").click()
+        h1 = pg.get_by_role("group", name=re.compile("^Rule 1:")).bounding_box()
+        h3 = pg.get_by_role("group", name=re.compile("^Rule 3:")).bounding_box()
+        if h1 and h3:
+            x0 = h1["x"] - 14; y0 = h1["y"] + 12
+            pg.mouse.move(x0, y0); pg.mouse.down(); pg.mouse.move(x0, y0 + 20, steps=4); pg.mouse.move(x0, h3["y"] + h3["height"] + 6, steps=12); pg.mouse.up(); time.sleep(0.5)
+            first = pg.get_by_role("group", name=re.compile("^Rule 1:")).get_attribute("aria-label")
+            check("dragging a rule row reorders the stack", first is not None and "oyez" not in first, str(first))
+        pg.get_by_role("button", name="Revert").click(); time.sleep(0.3)
+
         # Possession with the keyboard.
         pg.get_by_role("tab", name="Entity", exact=True).click()
         bot = next(r for r in api(base, "/api/state")[1]["e"] if r[3] == 0)
@@ -171,7 +242,7 @@ try:
         # Keyboard-only: arrow keys move between tabs (Radix roving focus).
         ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
         pg.get_by_role("tab", name="Bots", exact=True).focus(); pg.keyboard.press("ArrowRight"); pg.wait_for_timeout(300)
-        check("arrow keys switch tabs", pg.get_by_role("tab", name="Attributes", exact=True).get_attribute("data-state") == "active")
+        check("arrow keys switch tabs", pg.get_by_role("tab", name="Builder", exact=True).get_attribute("data-state") == "active")
         ctx.close()
 
         # Phone width: no horizontal scroll.

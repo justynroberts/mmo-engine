@@ -14,7 +14,7 @@ a cyberpunk city or a user-built world.
 | --- | --- |
 | `crates/proto` | Wire format, game file (attributes, actions, bot types), delta snapshots, handshake and encryption, static world, the movement step. Compiled into server and clients so they cannot drift |
 | `crates/server` | The world server: fixed tick, SoA entities, spatial grid, interest management, `recvmmsg`/`sendmmsg` UDP, snapshot lanes on spare cores, admin API |
-| `crates/bots` | N real encrypted UDP clients: handshake, random walk, zaps, delta decode, ack, latency measurement, reconnect |
+| `crates/bots` | N real encrypted UDP clients: handshake, random walk, zaps, delta decode, ack, prediction, chat (`--chat N`), latency measurement, reconnect |
 | `ui/` | The console: React, TypeScript, Tailwind, Radix, Framer Motion. Served by the server |
 | `scripts/` | `bench.sh` (pinned load test), `ui_e2e.py` (real-browser UI tests) |
 
@@ -55,8 +55,23 @@ Bot types ("archetypes") are server-side only.
 
 - **Attributes**: range, start value, bit width, replicated or not, regen per second, rule at minimum (nothing or respawn). At most 16, at most 4 replicated.
 - **Actions**: id, cooldown, range, requirement on an own attribute, effects on self or target.
-- **Bot types**: colour, spawn count, behaviour (idle, wander, chase, flee), speed multiplier, sight, attack action, starting attribute overrides.
+- **Bot types**: colour, spawn count, fallback behaviour (idle, wander, chase, flee), speed multiplier, sight, attack action, starting attribute overrides, an optional home place and an ordered rule stack.
+- **Places**: named circles (x, y, radius). Spawn points, hangouts, areas a rule can test for.
+- **Routes**: named paths of 2 to 64 points, looped or out-and-back.
+- **Rules**: first matching movement rule wins, `say` is a side effect and the rules after it still run. Conditions: always, sees a player/bot/anyone within N, attribute below/above, inside a place, chance per decision. Actions: stand still, wander (drifts back to home), chase, flee, attack (chase and use the attack action in range), patrol a route, go to a place, say or shout. Bots decide twice a second, and speak at most once every six seconds. A bot with no matching rule falls back to its plain behaviour, so files from before rules existed load unchanged.
 - Editing only bot types applies live and leaves players connected. Editing attributes, actions or settings changes the wire format, so the world restarts and clients are dropped; they get a content-mismatch rejection until they load the same file.
+
+## The visual builder
+
+The console's Builder tab edits all of the above on the map. Click "Add place" and click the map, "Draw route" and click points then finish, drag a place or a route point to move it, drag a rule by its handle (or use its up and down buttons) to reorder, move sliders for speed, sight and each starting attribute (a tick marks the default; returning to the default stores no override). "Drop test bot" spawns the selected bot type where you click so you can watch the rules run. Renaming or deleting a place, route or attribute rewrites every rule that referred to it. Edits are a draft until you press Apply, and bot-only edits apply live without dropping players.
+
+## Chat
+
+An encrypted reliable channel on top of UDP (`proto::chat`). Client to server keeps one message in flight and resends it every tick until the server's batch acknowledges it; server to client queues every line per recipient and resends the unacknowledged ones each tick until the client's inputs acknowledge them. Delivery is in order and exactly once over a link that loses and reorders packets (tested at 30 percent loss both ways, 8 seeds). `say` reaches players within 64 units (and the speaker), `shout` reaches everyone, once per 10 seconds per player. Text is cleaned on the server (control characters and bidi overrides become spaces, collapsed, 120 bytes), and each player gets a burst of three lines with one more per second. Bots and the console can speak through the same path (`POST /api/say`, `GET /api/chat`).
+
+## Client prediction
+
+`proto::predict::Predictor` applies each input locally with the same `integrate` function the server runs, then on every snapshot snaps to the server position and replays the inputs the server has not seen. The bots use it: live correction is 0.000 at p50 and about 0.06 units at p99, and a lockstep test proves exact agreement through walls over 3,000 random inputs.
 
 ## Security model
 
@@ -95,9 +110,9 @@ For comparison, before encryption the same machine did 2,000 normal-density clie
 ## Tests
 
 ```sh
-cargo test --release                 # 44 unit tests + 15 end-to-end tests (real server, real UDP and HTTP)
-(cd ui && npm test)                  # 18 unit and accessibility tests
-scripts/ui_e2e.py [--shots DIR]      # 37 real-browser checks incl. axe scans of every tab, both themes
+cargo test --release                 # 54 proto + 16 server unit tests, 19 end-to-end tests (real server, real UDP and HTTP)
+(cd ui && npm test)                  # 40 unit and accessibility tests
+scripts/ui_e2e.py [--shots DIR]      # 54 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
 ```
 
@@ -112,7 +127,6 @@ The end-to-end tests include forged, bit-flipped and replayed packets, wrong-add
 - The game file is JSON on disk. The DB and baker from the plan would produce the same `GameFile`
 - World is generated boxes. A real baker would emit heightfields, navmesh and chunks
 - Single zone. Zones and cells come next
-- Bots do not predict. Add client-side prediction using `proto::world::integrate`
 - Linux and IPv4 only (`recvmmsg`, `sendmmsg`, `sched_setaffinity`)
 - Line of sight is not checked for actions
 - Moodboard phase of the UI design was skipped; the look is an instrument-panel direction chosen from the brief

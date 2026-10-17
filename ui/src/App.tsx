@@ -2,17 +2,21 @@ import * as Tabs from '@radix-ui/react-tabs'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type GameFile, type Info, type PutResult, type State, type WorldGeom } from './api'
+import { Builder, initialBuilder, type BuilderState } from './components/Builder'
+import { ChatPanel } from './components/Chat'
 import { ActionsEditor, AttrsEditor, BotsEditor } from './components/Editors'
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
-import { needsReset } from './gameEdit'
+import { needsReset, newPlace, newRoute } from './gameEdit'
 
 const TABS: readonly (readonly [string, string])[] = [
   ['bots', 'Bots'],
+  ['builder', 'Builder'],
   ['attrs', 'Attributes'],
   ['actions', 'Actions'],
   ['entity', 'Entity'],
+  ['chat', 'Chat'],
   ['connect', 'Connect'],
   ['raw', 'JSON'],
 ]
@@ -125,6 +129,8 @@ export default function App() {
   const [follow, setFollow] = useState(false)
   const [applying, setApplying] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [b, setB] = useState<BuilderState>(initialBuilder)
+  const [note, setNote] = useState<string | null>(null)
 
   const onState = useCallback((s: State | null) => {
     stateRef.current = s
@@ -206,6 +212,28 @@ export default function App() {
       setPossessed((p) => (p === id ? null : p))
     })
 
+  const finishRoute = () => {
+    if (!draft || b.draft.length < 2) return
+    const route = newRoute(draft, b.draft)
+    setGame({ ...draft, routes: [...draft.routes, route] })
+    setB({ ...b, tool: 'select', draft: [], sel: { kind: 'route', index: draft.routes.length } })
+  }
+  const onMapClick = (x: number, y: number) => {
+    if (!draft) return
+    if (b.tool === 'place') {
+      setGame({ ...draft, places: [...draft.places, newPlace(draft, x, y)] })
+      setB({ ...b, tool: 'select', sel: { kind: 'place', index: draft.places.length } })
+    } else if (b.tool === 'route') {
+      setB({ ...b, draft: [...b.draft, [Math.round(x), Math.round(y)]] })
+    } else if (b.tool === 'spawn') {
+      const a = draft.archetypes[b.arch]
+      if (!a) return
+      void api<{ error?: string }>('/api/spawn', 'POST', { archetype: a.name, count: 1, x, y }).then((r) =>
+        setNote(r.status === 200 ? `Dropped a ${a.name} at ${Math.round(x)}, ${Math.round(y)}.` : (r.body.error ?? `server said ${r.status}`)),
+      )
+    }
+  }
+
   const firstAction = info?.actions[0]?.name
   const onLost = useCallback(() => setPossessed(null), [])
   useDrive(possessed, firstAction, onLost)
@@ -231,6 +259,26 @@ export default function App() {
       <StatusBar s={stats} online={online} dark={dark} onTheme={toggle} />
       <main className="flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_34rem] grid-rows-[min(60vh,420px)_auto] lg:grid-rows-1">
         <WorldView
+          edit={
+            tab === 'builder' && draft
+              ? {
+                  places: draft.places,
+                  routes: draft.routes,
+                  home: draft.archetypes[b.arch]?.home ?? null,
+                  sel: b.sel,
+                  tool: b.tool,
+                  draft: b.draft,
+                  onPick: (sel) => setB((cur) => ({ ...cur, sel })),
+                  onClick: onMapClick,
+                  onMovePlace: (i, x, y) => setGame({ ...draft, places: draft.places.map((p, k) => (k === i ? { ...p, x, y } : p)) }),
+                  onMovePoint: (r, k, x, y) =>
+                    setGame({
+                      ...draft,
+                      routes: draft.routes.map((rt, ri) => (ri === r ? { ...rt, points: rt.points.map((pt, j) => (j === k ? [x, y] : pt)) } : rt)),
+                    }),
+                }
+              : null
+          }
           world={world}
           stateRef={stateRef}
           colors={live?.archetypes.map((a) => a.color) ?? []}
@@ -270,6 +318,15 @@ export default function App() {
                   ),
                 )}
               </Tabs.Content>
+              <Tabs.Content value="builder" tabIndex={-1}>
+                {body(
+                  draft ? (
+                    <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} />
+                  ) : (
+                    <p className="text-fg-3 py-4">Loading game file…</p>
+                  ),
+                )}
+              </Tabs.Content>
               <Tabs.Content value="attrs" tabIndex={-1}>
                 {body(draft && <AttrsEditor game={draft} setGame={setGame} />)}
               </Tabs.Content>
@@ -291,6 +348,9 @@ export default function App() {
                     actionName={firstAction}
                   />,
                 )}
+              </Tabs.Content>
+              <Tabs.Content value="chat" tabIndex={-1}>
+                {body(<ChatPanel selected={selected} active={tab === 'chat'} />)}
               </Tabs.Content>
               <Tabs.Content value="connect" tabIndex={-1}>
                 {body(<ConnectPanel info={info} />)}

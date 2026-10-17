@@ -24,6 +24,35 @@ export interface ActionFile {
   requires: { attr: string; min: number } | null
   effects: EffectFile[]
 }
+export type Seek = 'player' | 'bot' | 'any'
+export type Cond =
+  | { kind: 'always' }
+  | { kind: 'sees'; who: Seek; within: number }
+  | { kind: 'attr_below'; attr: string; value: number }
+  | { kind: 'attr_above'; attr: string; value: number }
+  | { kind: 'in_place'; place: string }
+  | { kind: 'chance'; pct: number }
+export type Act =
+  | { kind: 'idle' | 'wander' | 'chase' | 'flee' | 'attack' }
+  | { kind: 'patrol'; route: string }
+  | { kind: 'goto'; place: string }
+  | { kind: 'say'; text: string; shout: boolean }
+export interface Rule {
+  when: Cond
+  then: Act
+}
+export interface Place {
+  name: string
+  x: number
+  y: number
+  r: number
+}
+export interface Route {
+  name: string
+  points: [number, number][]
+  loop: boolean
+}
+
 export interface Archetype {
   name: string
   color: string
@@ -33,6 +62,8 @@ export interface Archetype {
   sight: number
   attack: string | null
   attrs: Record<string, number>
+  home: string | null
+  rules: Rule[]
 }
 export interface GameFile {
   move_speed: number
@@ -42,6 +73,8 @@ export interface GameFile {
   attrs: AttrFile[]
   actions: ActionFile[]
   archetypes: Archetype[]
+  places: Place[]
+  routes: Route[]
 }
 
 export interface Perf {
@@ -131,3 +164,9 @@ export async function api<T>(path: string, method = 'GET', body?: unknown, signa
 export const KIND_BOT = 0
 export const KIND_PLAYER = 1
 export const KIND_DRIVEN = 2
+
+export interface ChatLog {
+  tick: number
+  /** [tick, speaker id, channel (0 say, 1 shout), text] */
+  lines: [number, number, number, string][]
+}

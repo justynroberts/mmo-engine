@@ -250,7 +250,7 @@ fn main() {
             net::reap(&mut sim, &mut clients, timeout_ticks, &mut nstats);
         }
         sim.step(&pending);
-        net::route_chat(&sim, &mut clients);
+        net::route_chat(&mut sim, &mut clients);
         let t2 = Instant::now();
 
         // 3. Snapshots: built, encrypted and sent by the lanes (in parallel when workers > 1).

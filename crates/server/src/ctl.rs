@@ -491,6 +491,8 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
         }
     } else {
         c.sim.archs = game.archs;
+        c.sim.places = game.places;
+        c.sim.routes = game.routes;
     }
     c.sim.populate_bots();
     *c.game = file;
