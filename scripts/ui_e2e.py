@@ -35,10 +35,11 @@ def api(base, path, method="GET", body=None):
         return e.code, json.loads(e.read() or b"{}")
 
 work = Path(tempfile.mkdtemp(prefix="ui-e2e-"))
-udp, http = free_port(True), free_port()
+udp, http, webp = free_port(True), free_port(), free_port()
+web = f"http://127.0.0.1:{webp}"
 base = f"http://127.0.0.1:{http}"
 srv = subprocess.Popen([str(SERVER), "--port", str(udp), "--admin", f"127.0.0.1:{http}", "--ui-dir", str(ROOT / "ui/dist"),
-                        "--world-size", "1024", "--quiet", "--timeout", "30"], cwd=work, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        "--world-size", "1024", "--quiet", "--timeout", "30", "--web", f"127.0.0.1:{webp}"], cwd=work, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 bots = None
 try:
     for _ in range(100):
@@ -259,6 +260,41 @@ try:
         if SHOTS: pg.screenshot(path=str(SHOTS / "3d.png"))
         pg.get_by_role("button", name="2D", exact=True).click(); pg.wait_for_timeout(300)
         check("switching back to 2D restores the map", pg.get_by_role("img", name="Top-down map").count() == 1)
+        ctx.close()
+
+        # The play page: sign in with a passphrase, walk, chat, and see the recovery code.
+        ctx = br.new_context(viewport={"width": 1280, "height": 800}); pg = ctx.new_page()
+        perr = []; pg.on("pageerror", lambda e: perr.append(str(e)))
+        pg.on("console", lambda m: perr.append(m.text) if m.type == "error" else None)
+        before = {e[0] for e in api(base, "/api/state?limit=6000")[1]["e"] if e[4] == 1}
+        pg.goto(web + "/"); pg.get_by_role("button", name="Enter the world").wait_for(timeout=8000)
+        pg.add_script_tag(path=str(AXE))
+        res = pg.evaluate("axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21aa','best-practice']}).then(r=>r.violations.map(v=>({id:v.id,n:v.nodes.length,t:v.nodes.slice(0,2).map(n=>n.target.join(' '))})))")
+        check("play page sign-in screen: no axe violations", not res, json.dumps(res)[:600])
+        pg.get_by_label("Account name").fill("e2e-walker"); pg.get_by_label("Passphrase").fill("a very long passphrase for testing")
+        pg.get_by_role("button", name="Enter the world").click()
+        pg.wait_for_selector("text=LIVE", timeout=20000)
+        time.sleep(1.0)
+        mine = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if e[4] == 1 and e[0] not in before]
+        check("signing in over the web gateway adds exactly one player", len(mine) == 1, f"new players: {len(mine)}")
+        x0 = mine[0][1]
+        pg.keyboard.down("d"); time.sleep(1.2); pg.keyboard.up("d"); time.sleep(0.5)
+        now = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if e[0] == mine[0][0]]
+        check("holding D walks the player east", bool(now) and now[0][1] - x0 > 5, f"{x0} -> {now[0][1] if now else None}")
+        pg.keyboard.press("Enter"); pg.get_by_label("Chat message").fill("hello from the browser"); pg.keyboard.press("Enter"); time.sleep(0.8)
+        lines = api(base, "/api/chat")[1]["lines"]
+        check("a chat line typed in the browser reaches the server", any(l[3] == "hello from the browser" for l in lines))
+        check("the HUD shows the player's own line back", pg.get_by_text("hello from the browser").count() >= 1)
+        pg.get_by_role("button", name="Recovery code").click(); time.sleep(0.3)
+        import re
+        code = pg.locator("code").first.inner_text()
+        check("the recovery code has the documented shape", bool(re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{8}){7}-[0-9a-f]{4}", code)), code)
+        res = pg.evaluate("axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21aa','best-practice']}).then(r=>r.violations.map(v=>({id:v.id,n:v.nodes.length,t:v.nodes.slice(0,2).map(n=>n.target.join(' '))})))")
+        check("play page in game: no axe violations", not res, json.dumps(res)[:600])
+        check("play page raised no console errors", not perr, str(perr))
+        wst = api(base, "/api/state")[1].get("web", {})
+        check("the gateway reports the connection", wst.get("open", 0) >= 1, str(wst))
+        if SHOTS: pg.screenshot(path=str(SHOTS / "play.png"))
         ctx.close()
 
         # Phone width: no horizontal scroll.

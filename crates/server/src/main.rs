@@ -8,6 +8,7 @@ mod io;
 mod net;
 mod sim;
 mod store;
+mod web;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -40,6 +41,10 @@ struct Config {
     limit_loopback: bool,
     db_expire_days: u32,
     fresh_world: bool,
+    web: Option<String>,
+    web_max_conns: usize,
+    web_per_ip: u32,
+    web_trust_proxy: bool,
     new_ids_per_hour: u32,
 }
 
@@ -65,6 +70,10 @@ fn parse_args() -> Config {
         limit_loopback: false,
         db_expire_days: 90,
         fresh_world: false,
+        web: None,
+        web_max_conns: 2000,
+        web_per_ip: 8,
+        web_trust_proxy: false,
         new_ids_per_hour: 30,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -97,6 +106,10 @@ fn parse_args() -> Config {
             "--limit-loopback" => c.limit_loopback = true,
             "--new-identities-per-hour" => c.new_ids_per_hour = val(a).parse().unwrap_or_else(|_| usage("bad --new-identities-per-hour")),
             "--fresh-world" => c.fresh_world = true,
+            "--web" => c.web = Some(val(a)),
+            "--web-max-conns" => c.web_max_conns = val(a).parse().unwrap_or_else(|_| usage("bad --web-max-conns")),
+            "--web-per-ip" => c.web_per_ip = val(a).parse().unwrap_or_else(|_| usage("bad --web-per-ip")),
+            "--web-trust-proxy" => c.web_trust_proxy = true,
             "--db-expire-days" => c.db_expire_days = val(a).parse().unwrap_or_else(|_| usage("bad --db-expire-days")),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
@@ -112,7 +125,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
@@ -211,7 +224,27 @@ fn main() {
     );
     eprintln!("server public key (pin this in clients with --server-key): {}", to_hex(&keys.public));
 
-    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store };
+    let gateway = cfg.web.as_ref().map(|a| {
+        let addr: std::net::SocketAddr = a.parse().unwrap_or_else(|_| usage("bad --web address"));
+        let gw = web::Gateway::new();
+        let ui = cfg.ui_dir.clone().or_else(|| {
+            let d = PathBuf::from("ui/dist");
+            d.is_dir().then_some(d)
+        });
+        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy };
+        match web::start(wc, gw.clone()) {
+            Ok(local) => eprintln!("web gateway: http://{local}/  (browsers play through WebSocket, at most {} at once, {} per address{})", cfg.web_max_conns, cfg.web_per_ip, if cfg.web_trust_proxy { ", trusting X-Forwarded-For" } else { "" }),
+            Err(e) => {
+                eprintln!("cannot start web gateway on {a}: {e}");
+                std::process::exit(1);
+            }
+        }
+        gw
+    });
+    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store, gateway };
+    if let Some(g) = &hs.gateway {
+        g.set_info(ctl::play_info(&sim, &hs));
+    }
     let params = ctl::Params {
         cap,
         world_size: cfg.world_size,

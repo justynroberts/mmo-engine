@@ -30,6 +30,8 @@ impl Hasher for KeyHasher {
 
 pub struct Client {
     pub addr: SocketAddrV4,
+    /// Where the player really is: differs from `addr` for web players, whose packets are relayed from this machine.
+    pub ip: [u8; 4],
     pub session: Session,
     pub client_pub: [u8; 32],
     /// Long-term player identity (`GUEST` = none). Trusted only once `proven`.
@@ -217,6 +219,18 @@ pub struct Handshake {
     pub defs_hash: u64,
     pub max_clients: usize,
     pub store: Option<std::sync::Arc<Store>>,
+    pub gateway: Option<std::sync::Arc<crate::web::Gateway>>,
+}
+
+impl Handshake {
+    /// The address to apply per-address limits to.
+    #[inline]
+    pub fn ip_of(&self, addr: &SocketAddrV4) -> [u8; 4] {
+        match &self.gateway {
+            Some(g) => g.real_ip(addr),
+            None => addr.ip().octets(),
+        }
+    }
 }
 
 pub fn handle_packet(
@@ -238,7 +252,7 @@ pub fn handle_packet(
                 prove(sim, clients, stats, hs.store.as_deref(), sid);
             }
         }
-        Some(kind::HELLO | kind::CONNECT) if !clients.limiter.as_mut().map_or(true, |l| l.allow(addr.ip().octets(), sim.tick, sim.tick_hz)) => {
+        Some(kind::HELLO | kind::CONNECT) if !clients.limiter.as_mut().map_or(true, |l| l.allow(hs.ip_of(&addr), sim.tick, sim.tick_hz)) => {
             stats.rate_limited += 1;
         }
         Some(kind::HELLO) => {
@@ -327,6 +341,7 @@ fn on_connect(
     tx.queue(addr, &accept);
     let client = Client {
         addr,
+        ip: hs.ip_of(&addr),
         session,
         client_pub: open.client_pub,
         id: open.id_pub,
@@ -561,7 +576,7 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
             }
             None => {
                 // A brand new identity: its address only gets so many per hour.
-                let ip = clients.slab[sid as usize].as_ref().map(|c| c.addr.ip().octets());
+                let ip = clients.slab[sid as usize].as_ref().map(|c| c.ip);
                 let ok = match (ip, clients.id_limiter.as_mut()) {
                     (Some(ip), Some(l)) => l.allow(ip, sim.tick, sim.tick_hz),
                     _ => true,
@@ -846,6 +861,7 @@ mod tests {
             let slot = sim.spawn(NONE).unwrap();
             let ci = clients.insert(Client {
                 addr: dest,
+                ip: dest.ip().octets(),
                 session,
                 client_pub: [0; 32],
                 id: proto::secure::GUEST,

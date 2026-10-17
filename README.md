@@ -196,3 +196,32 @@ saved; it picks up again from the nearest start.
 Fixed on the way: a world restart used to save players after replacing the
 world, writing blank characters over the good ones. It saves first now, with a
 regression test.
+
+Playing in a browser: start the server with `--web 0.0.0.0:7790` (off by default)
+and open `http://host:7790/`. Sign in with an account name and passphrase, a
+recovery code, or as a guest. Move with W A S D or the arrows, act with space (it
+hits the nearest entity in range), Enter to chat, start a line with `!` to
+shout. The page runs the same encrypted protocol as every other client, in
+TypeScript (`ui/src/play/protocol.ts`, checked against the Rust implementation:
+the Argon2id identity and recovery code match byte for byte), so:
+
+- The gateway (`crates/server/src/web.rs`) only relays WebSocket messages to the
+  UDP port, one message per datagram. It cannot read or forge anything, and the
+  passphrase never leaves the browser.
+- The public port serves the play page and `/play/info` (server key, definitions,
+  world geometry) and nothing from the admin API, which stays on loopback.
+- Every relayed connection arrives from 127.0.0.1, so the gateway tells the
+  server each connection's real address and the per-address limits (handshake
+  rate, new identities per hour) apply to that, not to the gateway. Behind a
+  TLS-terminating proxy add `--web-trust-proxy` so the address comes from
+  `X-Forwarded-For`; without a proxy leave it off, because then the header is
+  attacker-controlled. TLS itself is the proxy's job: the traffic is already
+  encrypted end to end, but browsers want `wss://` on an `https://` page.
+- Cross-site pages cannot open a connection (Origin must match Host), at most
+  `--web-per-ip` (8) connections per address and `--web-max-conns` (2000) in all,
+  and each connection is rate limited and closed after 30 seconds of silence.
+
+Limits of the browser client today: no client-side prediction (you see the
+server's position, one network round trip behind, smoothed), every other entity
+looks the same because snapshots carry position and replicated attributes but
+not which archetype an entity is, and the touch controls are basic arrows.

@@ -949,3 +949,194 @@ fn a_world_restart_from_an_attribute_edit_still_saves_the_characters_in_it() {
     let (sx, sy) = (rec["x"].as_f64().unwrap(), rec["y"].as_f64().unwrap());
     assert!((sx - x as f64).hypot(sy - y as f64) < 2.0, "saved ({sx:.1},{sy:.1}), was at ({x:.1},{y:.1})");
 }
+
+// ---------------------------------------------------------------------------
+// Web gateway
+
+type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+
+fn start_web(extra: &[&str]) -> (Srv, SocketAddr) {
+    let w: SocketAddr = format!("127.0.0.1:{}", free_tcp()).parse().unwrap();
+    let w_s = w.to_string();
+    let mut args = vec!["--web", w_s.as_str()];
+    args.extend_from_slice(extra);
+    let srv = start(&args);
+    let t = Instant::now();
+    while std::net::TcpStream::connect(w).is_err() {
+        assert!(t.elapsed() < Duration::from_secs(5), "web gateway never came up");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    (srv, w)
+}
+
+fn ws_open(web: SocketAddr, headers: &[(&str, &str)]) -> Result<Ws, tungstenite::Error> {
+    use tungstenite::client::IntoClientRequest;
+    let mut req = format!("ws://{web}/ws").into_client_request().unwrap();
+    for (k, v) in headers {
+        req.headers_mut().insert(tungstenite::http::HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap());
+    }
+    let (ws, _) = tungstenite::connect(req)?;
+    if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_ref() {
+        s.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    }
+    Ok(ws)
+}
+
+/// The browser's part of a session, played from Rust over the WebSocket: the datagrams are the same.
+struct WebClient {
+    ws: Ws,
+    sess: Session,
+    entity: u32,
+    view: ClientView,
+    seq: u32,
+}
+
+fn ws_recv(ws: &mut Ws) -> Option<Vec<u8>> {
+    match ws.read() {
+        Ok(tungstenite::Message::Binary(b)) => Some(b),
+        _ => None,
+    }
+}
+
+fn web_connect(srv: &Srv, web: SocketAddr, headers: &[(&str, &str)], identity: Option<[u8; 32]>) -> Option<WebClient> {
+    let mut ws = ws_open(web, headers).ok()?;
+    let mut hs = match identity {
+        Some(id) => ClientHs::with_identity(Some(server_key(srv)), defs().content_hash(), id),
+        None => ClientHs::new(Some(server_key(srv)), defs().content_hash()),
+    };
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(4) {
+        let out = match hs.connect_packet() {
+            Some(c) => c.to_vec(),
+            None => hs.hello(),
+        };
+        ws.send(tungstenite::Message::Binary(out)).ok()?;
+        if let Some(b) = ws_recv(&mut ws) {
+            match b.first().copied() {
+                Some(wire::kind::CHALLENGE) => {
+                    hs.on_challenge(&b).ok()?;
+                }
+                Some(wire::kind::ACCEPT) => {
+                    let (sess, w) = hs.on_accept(&b)?;
+                    let Some(wire::ServerMsg::Welcome(w)) = wire::decode_server(&w) else { return None };
+                    return Some(WebClient { ws, sess, entity: w.entity, view: ClientView::new(), seq: 0 });
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+impl WebClient {
+    fn input(&mut self, dx: i8, dy: i8) {
+        self.seq += 1;
+        let mut plain = Vec::new();
+        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0, chat_ack: 0 });
+        let mut pkt = Vec::new();
+        assert!(self.sess.seal(&plain, &mut pkt));
+        self.ws.send(tungstenite::Message::Binary(pkt)).unwrap();
+    }
+
+    fn pump(&mut self, ms: u64) -> usize {
+        let (mut ok, mut plain, d) = (0, Vec::new(), defs());
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            if let Some(b) = ws_recv(&mut self.ws) {
+                if let Some(inner) = self.sess.open(&b, &mut plain) {
+                    if inner.first() == Some(&wire::kind::SNAPSHOT) && decode_snapshot(inner, &d, &mut self.view).is_ok() {
+                        ok += 1;
+                    }
+                }
+            }
+        }
+        ok
+    }
+
+    fn pos(&self) -> (f32, f32) {
+        let e = self.view.get(self.entity).expect("own entity in snapshot");
+        (proto::world::dpos(e.x), proto::world::dpos(e.y))
+    }
+}
+
+#[test]
+fn a_browser_can_play_through_the_web_gateway() {
+    let (srv, web) = start_web(&[]);
+    // The public info page carries what a browser needs, and nothing from the admin API.
+    let (code, body) = {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(web).unwrap();
+        s.write_all(b"GET /play/info HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        let code: u16 = out[9..12].parse().unwrap();
+        (code, out.split("\r\n\r\n").nth(1).unwrap().to_string())
+    };
+    assert_eq!(code, 200);
+    let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(info["server_key"].as_str().unwrap(), proto::secure::to_hex(&server_key(&srv)));
+    assert_eq!(info["content_hash"].as_str().unwrap(), format!("{:016x}", defs().content_hash()));
+    assert!(!info["boxes"].as_array().unwrap().is_empty());
+    assert!(info.get("attrs").is_some());
+    // The admin API is not reachable on the public port.
+    {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(web).unwrap();
+        s.write_all(b"GET /api/state HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        assert!(out.starts_with("HTTP/1.1 404"), "{}", &out[..40.min(out.len())]);
+    }
+
+    // A full encrypted session over the WebSocket: handshake, inputs, snapshots, movement.
+    let id = proto::secure::identity_from_passphrase("webby", "a long passphrase for a browser test");
+    let mut c = web_connect(&srv, web, &[], Some(id)).expect("handshake over the gateway");
+    c.input(0, 0);
+    assert!(c.pump(300) > 0, "no snapshots came back");
+    let (x0, y0) = c.pos();
+    for _ in 0..25 {
+        c.input(127, 0);
+        c.pump(50);
+    }
+    let (x1, y1) = c.pos();
+    assert!((x1 - x0).hypot(y1 - y0) > 5.0, "player did not move: ({x0},{y0}) to ({x1},{y1})");
+    assert_eq!(state(&srv)["web"]["open"], 1);
+    drop(c);
+    // The identity was recognised and saved like any other player.
+    wait_for_clients(&srv, 0);
+    assert_eq!(saved_rows(&srv), 1);
+}
+
+#[test]
+fn the_gateway_refuses_cross_site_pages_and_too_many_connections_per_address() {
+    let (_srv, web) = start_web(&["--web-per-ip", "3"]);
+    let host = web.to_string();
+    // A page from another origin cannot open a game connection from a visitor's browser.
+    assert!(ws_open(web, &[("Origin", "https://evil.example")]).is_err());
+    // The page's own origin is fine.
+    let _ok = ws_open(web, &[("Origin", &format!("http://{host}"))]).expect("same origin");
+    let _b = ws_open(web, &[]).expect("second");
+    let _c = ws_open(web, &[]).expect("third");
+    assert!(ws_open(web, &[]).is_err(), "the fourth connection from one address is refused");
+}
+
+#[test]
+fn web_players_are_limited_by_their_real_address_not_the_gateways() {
+    // Behind a proxy the real address arrives in X-Forwarded-For. Two new identities per
+    // address per hour: a third from the same address is cut off, another address is not.
+    let (srv, web) = start_web(&["--web-trust-proxy", "--limit-loopback", "--new-identities-per-hour", "2", "--hello-rate", "0", "--web-per-ip", "50"]);
+    let mut keep = Vec::new();
+    for _ in 0..3 {
+        let mut c = web_connect(&srv, web, &[("X-Forwarded-For", "203.0.113.7")], Some(proto::secure::new_identity())).expect("connect");
+        c.input(0, 0);
+        c.pump(150);
+        keep.push(c);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let st = state(&srv);
+    assert_eq!(st["net"]["identity_limited"], 1, "{}", st["net"]);
+    assert_eq!(st["clients"], 2);
+    let mut other = web_connect(&srv, web, &[("X-Forwarded-For", "203.0.113.8")], Some(proto::secure::new_identity())).expect("connect");
+    other.input(0, 0);
+    assert!(other.pump(300) > 0, "a different real address is not affected");
+}

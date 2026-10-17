@@ -108,6 +108,29 @@ pub struct Params {
     pub game_path: Option<PathBuf>,
 }
 
+/// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
+/// Everything here is public by nature (a UDP client learns the same from the handshake).
+pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
+    let boxes: Vec<[f32; 4]> = sim.world.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect();
+    json!({
+        "server_key": to_hex(&hs.keys.public),
+        // A string: a u64 does not fit a JavaScript number.
+        "content_hash": format!("{:016x}", hs.defs_hash),
+        "proto": proto::wire::PROTO_VERSION,
+        "hz": sim.tick_hz,
+        "world_size": sim.world.size,
+        "seed": sim.world.seed,
+        "move_speed": sim.defs.move_speed,
+        "entity_radius": sim.defs.entity_radius,
+        "interest_radius": sim.defs.interest_radius,
+        "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
+        "replicated": sim.defs.replicated,
+        "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
+        "boxes": boxes,
+    })
+    .to_string()
+}
+
 /// Everything the sim thread lets a command touch.
 pub struct Ctl<'a> {
     pub sim: &'a mut Sim,
@@ -505,6 +528,9 @@ fn put_game(text: &str, c: &mut Ctl) -> (u16, String) {
     }
     c.sim.populate_bots();
     *c.game = file;
+    if let Some(g) = &c.hs.gateway {
+        g.set_info(play_info(c.sim, c.hs));
+    }
     let saved = match &c.params.game_path {
         Some(p) => {
             let tmp = p.with_extension("json.tmp");
@@ -546,6 +572,10 @@ fn state_json(c: &Ctl, limit: usize) -> String {
         use std::sync::atomic::Ordering::Relaxed;
         (st.stats.saved.load(Relaxed), st.stats.loaded.load(Relaxed), st.stats.errors.load(Relaxed))
     });
+    if let Some(g) = &c.hs.gateway {
+        use std::sync::atomic::Ordering::Relaxed;
+        let _ = write!(o, r#""web":{{"open":{},"total":{},"refused":{},"up_bytes":{},"down_bytes":{}}},"#, g.stats.open.load(Relaxed), g.stats.total.load(Relaxed), g.stats.refused.load(Relaxed), g.stats.up_bytes.load(Relaxed), g.stats.down_bytes.load(Relaxed));
+    }
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(
         o,
