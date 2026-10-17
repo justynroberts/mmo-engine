@@ -1,0 +1,23 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://assets/characters/character.gd" id="1"]
+[ext_resource type="PackedScene" path="res://assets/characters/Skeleton_Rogue.glb" id="2"]
+[ext_resource type="PackedScene" path="res://assets/characters/Rig_Medium_General.glb" id="3"]
+[ext_resource type="PackedScene" path="res://assets/characters/Rig_Medium_MovementBasic.glb" id="4"]
+[ext_resource type="PackedScene" path="res://assets/characters/Rogue.glb" id="5"]
+[ext_resource type="PackedScene" path="res://assets/characters/Skeleton_Crossbow.gltf" id="6"]
+
+[node name="Mob" type="Node3D"]
+script = ExtResource("1")
+model = ExtResource("2")
+extra_animations = Array[PackedScene]([ExtResource("3"), ExtResource("4")])
+borrowed_from = ExtResource("5")
+borrowed_name = "1H_Ranged_Shoot"
+idle = "Idle_A"
+walk = "Walking_A"
+run = "Running_A"
+attack_name = "1H_Ranged_Shoot"
+hit = "Hit_A"
+death = "Death_A"
+attachments = Array[PackedScene]([ExtResource("6")])
+attachment_bones = PackedStringArray("handslot.r")

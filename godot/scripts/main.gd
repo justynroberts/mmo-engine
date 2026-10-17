@@ -5,6 +5,7 @@ extends Node3D
 ##
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
+## Class: --class knight (default), barbarian, mage or rogue.
 ## Screenshots: --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const WALL_DRAW := 260.0
@@ -23,14 +24,14 @@ const BOULDERS := [["Rock_1_K_Color1", 3.69, 3.65, 0.0], ["Rock_1_M_Color1", 3.9
 	["Rock_2_G_Color1", 3.73, 3.2, 0.0], ["Rock_2_E_Color1", 3.31, 2.86, 0.0], ["Rock_3_Q_Color1", 4.65, 3.72, -1.62],
 	["Rock_3_R_Color1", 5.16, 3.85, -1.71], ["Rock_3_M_Color1", 3.43, 3.6, -1.64]]
 const ROCK_TINT := Color(0.72, 0.69, 0.64)
-## Scattered scenery per 128 unit chunk: [file, how many, smallest scale, largest scale].
-const PROPS := [
-	["Tree_1_A_Color1", 3, 1.4, 1.9], ["Tree_1_B_Color1", 2, 1.4, 1.9], ["Tree_2_A_Color1", 3, 1.3, 1.8],
-	["Tree_2_C_Color1", 2, 1.3, 1.8], ["Tree_3_A_Color1", 2, 1.4, 1.9], ["Tree_4_A_Color1", 3, 1.3, 1.7],
-	["Tree_Bare_1_A_Color1", 1, 1.6, 2.1], ["Rock_1_A_Color1", 3, 1.2, 2.2], ["Rock_1_J_Color1", 2, 1.2, 2.0],
-	["Rock_2_A_Color1", 2, 1.2, 2.0], ["Rock_3_A_Color1", 2, 1.4, 2.2], ["Rock_3_E_Color1", 2, 1.2, 2.0],
-	["Bush_1_A_Color1", 8, 3.0, 4.5], ["Bush_2_A_Color1", 8, 2.2, 3.4], ["Bush_4_A_Color1", 6, 2.2, 3.4],
-]
+## Every tree, bush and rock in the KayKit Forest pack (the big rocks are kept for crags and mountains).
+const TREES := ["Tree_1_A_Color1", "Tree_1_B_Color1", "Tree_1_C_Color1", "Tree_2_A_Color1", "Tree_2_B_Color1", "Tree_2_C_Color1", "Tree_2_D_Color1", "Tree_2_E_Color1", "Tree_3_A_Color1", "Tree_3_B_Color1", "Tree_3_C_Color1", "Tree_4_A_Color1", "Tree_4_B_Color1", "Tree_4_C_Color1"]
+const BARE_TREES := ["Tree_Bare_1_A_Color1", "Tree_Bare_1_B_Color1", "Tree_Bare_1_C_Color1", "Tree_Bare_2_A_Color1", "Tree_Bare_2_B_Color1", "Tree_Bare_2_C_Color1"]
+const BUSHES := ["Bush_1_A_Color1", "Bush_1_B_Color1", "Bush_1_C_Color1", "Bush_1_D_Color1", "Bush_1_E_Color1", "Bush_1_F_Color1", "Bush_1_G_Color1", "Bush_2_A_Color1", "Bush_2_B_Color1", "Bush_2_C_Color1", "Bush_2_D_Color1", "Bush_2_E_Color1", "Bush_2_F_Color1", "Bush_3_A_Color1", "Bush_3_B_Color1", "Bush_3_C_Color1", "Bush_4_A_Color1", "Bush_4_B_Color1", "Bush_4_C_Color1", "Bush_4_D_Color1", "Bush_4_E_Color1", "Bush_4_F_Color1"]
+const SMALL_ROCKS := ["Rock_1_A_Color1", "Rock_1_B_Color1", "Rock_1_C_Color1", "Rock_1_D_Color1", "Rock_1_E_Color1", "Rock_1_F_Color1", "Rock_1_G_Color1", "Rock_1_H_Color1", "Rock_1_I_Color1", "Rock_1_J_Color1", "Rock_2_A_Color1", "Rock_2_B_Color1", "Rock_2_C_Color1", "Rock_2_D_Color1", "Rock_3_A_Color1", "Rock_3_B_Color1", "Rock_3_C_Color1", "Rock_3_D_Color1", "Rock_3_E_Color1", "Rock_3_F_Color1", "Rock_3_G_Color1", "Rock_3_H_Color1", "Rock_3_I_Color1", "Rock_3_J_Color1", "Rock_3_K_Color1", "Rock_3_L_Color1"]
+## Scattered scenery per 128 unit chunk: [kind, how many, smallest scale, largest scale]. Each one picks a model of
+## its kind at random, so no two stretches of meadow look alike.
+const PROPS := [["trees", 14, 1.3, 1.9], ["bare", 1, 1.6, 2.1], ["rocks", 12, 1.2, 2.2], ["bushes", 22, 2.2, 4.0]]
 
 var args := {}
 var info := {}
@@ -298,7 +299,15 @@ func _update_ground_mesh() -> void:
 		add_child(_river_mesh(r))
 
 func _entity_node(id: int, mine: bool) -> Node3D:
-	var scene := "res://assets/characters/%s.tscn" % ("player" if mine else "mob")
+	# You are the class you asked for (--class knight|barbarian|mage|rogue); everyone else is one of four
+	# skeletons, chosen from the entity id so every client shows the same one.
+	var scene := "res://assets/characters/player.tscn"
+	if mine and args.has("class") and ResourceLoader.exists("res://assets/characters/player_%s.tscn" % args["class"]):
+		scene = "res://assets/characters/player_%s.tscn" % args["class"]
+	elif not mine:
+		scene = "res://assets/characters/%s.tscn" % ["mob", "mob_mage", "mob_minion", "mob_rogue"][id % 4]
+		if not ResourceLoader.exists(scene):
+			scene = "res://assets/characters/mob.tscn"
 	if ResourceLoader.exists(scene):
 		var c := (load(scene) as PackedScene).instantiate() as Node3D
 		c.scale = Vector3.ONE * entity_scale
@@ -410,10 +419,10 @@ func _multi(mesh: Mesh, xforms: Array, tint := Color.WHITE) -> MultiMeshInstance
 	return mmi
 
 ## Loot is a chest tinted by the item's colour, with a soft beam of the same colour so it can be found in grass.
-func _gem_node(color: String) -> Node3D:
+func _gem_node(color: String, rare := false) -> Node3D:
 	var n := Node3D.new()
 	var col := Color(color)
-	var chest := _mesh(DUNGEON + "chest.gltf")
+	var chest := _mesh(DUNGEON + ("chest_gold.gltf" if rare else "chest.gltf"))
 	if chest:
 		var mi := MeshInstance3D.new()
 		mi.mesh = chest
@@ -743,8 +752,12 @@ func _build_box(b: Array, idx: int) -> Node3D:
 	var height := 4.0 * layers
 	var node := Node3D.new()
 	node.position.y = land.base[idx]
-	var pieces := {"wall.gltf": [], "wall_cracked.gltf": [], "wall_window_closed.gltf": [], "pillar.gltf": [],
-		"banner_red.gltf": [], "banner_blue.gltf": [], "torch_mounted.gltf": []}
+	var pieces := {"torch_mounted.gltf": []}
+	var put := func(name: String, xf: Transform3D):
+		if not pieces.has(name):
+			pieces[name] = []
+		pieces[name].append(xf)
+	var gate_side := hsh % 4 # one gated entrance per keep, on a side long enough for it
 	# Sides as start, direction, length and outward normal (server x is world x, server y is world z).
 	var sides := [
 		[Vector3(x0, 0, y0), Vector3(1, 0, 0), x1 - x0, Vector3(0, 0, -1)],
@@ -765,21 +778,51 @@ func _build_box(b: Array, idx: int) -> Node3D:
 		for i in count:
 			var at := start + dir * (seg * (i + 0.5)) - out * 0.5
 			for layer in layers:
-				var v := (hsh + i * 7 + si * 3 + layer * 5) % 11
-				var piece := "wall_cracked.gltf" if v == 0 else ("wall_window_closed.gltf" if v == 1 and layer == layers - 1 else "wall.gltf")
-				pieces[piece].append(Transform3D(stretch, at + Vector3(0, 4.0 * layer, 0)))
+				var top := layer == layers - 1
+				var v := (hsh + i * 7 + si * 3 + layer * 5) % 17
+				var piece := "wall.gltf"
+				if si == gate_side and i == count / 2 and layer == 0 and length >= 12.0:
+					piece = "wall_gated.gltf" # the way in, barred (the server's wall is solid)
+				elif v == 0:
+					piece = "wall_cracked.gltf"
+				elif v == 1 and layer == 0:
+					piece = "wall_arched.gltf"
+				elif v == 2 and top:
+					piece = "wall_window_closed.gltf"
+				elif v == 3 and top:
+					piece = "wall_window_open.gltf"
+				elif v == 4 and top:
+					piece = "wall_archedwindow_gated.gltf"
+				put.call(piece, Transform3D(stretch, at + Vector3(0, 4.0 * layer, 0)))
 			if i % 2 == 0 and i > 0:
 				var joint := start + dir * (seg * i) - out * 0.75
 				for layer in layers:
-					pieces["pillar.gltf"].append(Transform3D(Basis(), joint + Vector3(0, 4.0 * layer, 0)))
+					put.call("pillar.gltf", Transform3D(Basis(), joint + Vector3(0, 4.0 * layer, 0)))
 		if length >= 16.0:
 			var mid := start + dir * (length / 2.0) - out * 0.5
-			var deco := "banner_red.gltf" if (hsh + si) % 3 == 0 else ("banner_blue.gltf" if (hsh + si) % 3 == 1 else "torch_mounted.gltf")
+			var banners := ["banner_red.gltf", "banner_blue.gltf", "banner_patternA_red.gltf", "banner_patternB_blue.gltf",
+				"banner_shield_green.gltf", "banner_triple_yellow.gltf", "banner_thin_white.gltf"]
+			var deco: String = "torch_mounted.gltf" if (hsh + si) % 3 == 2 else banners[(hsh + si * 5) % banners.size()]
 			var lift := 0.0 if deco.begins_with("banner") else 2.6
-			pieces[deco].append(Transform3D(rot, mid + out * (0.0 if deco.begins_with("banner") else 0.5) + Vector3(0, lift + 4.0 * (layers - 1), 0)))
+			put.call(deco, Transform3D(rot, mid + out * (0.0 if deco.begins_with("banner") else 0.5) + Vector3(0, lift + 4.0 * (layers - 1), 0)))
 	for c in [Vector3(x0 + 0.75, 0, y0 + 0.75), Vector3(x1 - 0.75, 0, y0 + 0.75), Vector3(x0 + 0.75, 0, y1 - 0.75), Vector3(x1 - 0.75, 0, y1 - 0.75)]:
 		for layer in layers:
-			pieces["pillar.gltf"].append(Transform3D(Basis(), c + Vector3(0, 4.0 * layer, 0)))
+			put.call("pillar_decorated.gltf" if layer == layers - 1 else "pillar.gltf", Transform3D(Basis(), c + Vector3(0, 4.0 * layer, 0)))
+	# The roof: KayKit floor tiles stretched to fit, with a few stores stood on top (out of reach of collision).
+	var tx := maxi(1, int(round((x1 - x0) / 4.0)))
+	var ty := maxi(1, int(round((y1 - y0) / 4.0)))
+	var tile := Basis.from_scale(Vector3((x1 - x0) / tx / 4.0, 1, (y1 - y0) / ty / 4.0))
+	for j in ty:
+		for i in tx:
+			var at := Vector3(x0 + (x1 - x0) * (i + 0.5) / tx, height + 0.05, y0 + (y1 - y0) * (j + 0.5) / ty)
+			put.call("floor_tile_large_rocks.gltf" if (hsh + i * 3 + j * 7) % 9 == 0 else "floor_tile_large.gltf", Transform3D(tile, at))
+	var stores := ["barrel_small.gltf", "barrel_small_stack.gltf", "box_large.gltf", "box_stacked.gltf", "crates_stacked.gltf",
+		"keg_decorated.gltf", "trunk_large_A.gltf", "barrel_large.gltf"]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hsh
+	for k in clampi(int((x1 - x0) * (y1 - y0) / 140.0), 1, 7):
+		var at := Vector3(rng.randf_range(x0 + 2.5, maxf(x0 + 2.6, x1 - 2.5)), height + 0.1, rng.randf_range(y0 + 2.5, maxf(y0 + 2.6, y1 - 2.5)))
+		put.call(stores[rng.randi() % stores.size()], Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at))
 	# Each torch gets a flame that blooms and a warm light (Forward+ handles many lights cheaply).
 	for xf in pieces["torch_mounted.gltf"]:
 		var at: Vector3 = (xf as Transform3D) * Vector3(0, 0.75, 0.35)
@@ -808,13 +851,14 @@ func _build_box(b: Array, idx: int) -> Node3D:
 		if m == null:
 			continue
 		# The dungeon stone is very pale in daylight; a warm grey keeps it from glaring against the grass.
-		node.add_child(_multi(m, pieces[p], Color(0.78, 0.74, 0.70) if not p.begins_with("banner") else Color.WHITE))
+		var stone: bool = p.begins_with("wall") or p.begins_with("pillar") or p.begins_with("floor")
+		node.add_child(_multi(m, pieces[p], Color(0.78, 0.74, 0.70) if stone else Color.WHITE))
 	# Roof: a flat slate cap so the hollow inside never shows from the camera's height.
 	var roof := MeshInstance3D.new()
 	var rb := BoxMesh.new()
 	rb.size = Vector3(x1 - x0, 0.4, y1 - y0)
 	roof.mesh = rb
-	roof.position = Vector3((x0 + x1) / 2.0, height - 0.2, (y0 + y1) / 2.0)
+	roof.position = Vector3((x0 + x1) / 2.0, height - 0.25, (y0 + y1) / 2.0) # under the tiles, filling any gap
 	var rm := StandardMaterial3D.new()
 	rm.albedo_color = Color("5a5560")
 	rm.roughness = 1.0
@@ -882,9 +926,11 @@ func _build_props(cx: int, cy: int, seed: int, size: float) -> Node3D:
 			var pick: Array = SPIRES[rng.randi() % SPIRES.size()] if out > 70.0 else BOULDERS[rng.randi() % BOULDERS.size()]
 			_add_rock(per, pick, rng.randf_range(2.5, 6.0), Vector3(x, _height(x, y) - 0.5, y), rng.randf() * TAU)
 		node.add_child(_rock_node(per))
+	var kinds := {"trees": TREES, "bare": BARE_TREES, "rocks": SMALL_ROCKS, "bushes": BUSHES}
 	for p in PROPS:
-		var xf: Array = []
-		var tree := String(p[0]).begins_with("Tree")
+		var by_model := {}
+		var models: Array = kinds[p[0]]
+		var tree := String(p[0]) == "trees" or String(p[0]) == "bare"
 		var count := int(p[1])
 		if tree and (cx < 0 or cy < 0 or (cx + 1) * PROP_CHUNK > size or (cy + 1) * PROP_CHUNK > size):
 			count *= 6 # a forest edge around the playable area
@@ -899,11 +945,14 @@ func _build_props(cx: int, cy: int, seed: int, size: float) -> Node3D:
 				continue # the extra trees only grow in the last few units inside the edge and beyond it
 			if _near_box(near, x, y, pad) or land.wet(x, y):
 				continue
-			xf.append(Transform3D(Basis(Vector3.UP, turn).scaled(Vector3.ONE * s), Vector3(x, _height(x, y) - 0.15, y)))
-		var m := _mesh(FOREST + String(p[0]) + ".gltf")
-		if m and not xf.is_empty():
-			var mmi := _multi(m, xf, Color(0.72, 0.69, 0.64) if String(p[0]).begins_with("Rock") else Color.WHITE)
-			node.add_child(mmi)
+			var model: String = models[rng.randi() % models.size()]
+			if not by_model.has(model):
+				by_model[model] = []
+			by_model[model].append(Transform3D(Basis(Vector3.UP, turn).scaled(Vector3.ONE * s), Vector3(x, _height(x, y) - 0.15, y)))
+		for model in by_model:
+			var m := _mesh(FOREST + String(model) + ".gltf")
+			if m:
+				node.add_child(_multi(m, by_model[model], ROCK_TINT if String(p[0]) == "rocks" else Color.WHITE))
 	return node
 
 func _near_box(idx: Array, x: float, y: float, pad: float) -> bool:
@@ -1170,7 +1219,12 @@ func _sync_ground() -> void:
 		var id: int = g["id"]
 		seen[id] = true
 		if not gems.has(id):
-			var n := _gem_node(str(g["color"]))
+			# Rare things (an item that stacks to 3 or fewer) lie in a gold chest.
+			var rare := false
+			for it in info.get("items", []):
+				if it["name"] == g["item"]:
+					rare = int(it.get("stack_max", 99)) <= 3
+			var n := _gem_node(str(g["color"]), rare)
 			add_child(n)
 			gems[id] = n
 		var p: Vector2 = g["position"]

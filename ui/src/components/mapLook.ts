@@ -216,7 +216,7 @@ export function rivers(seed: number, size: number, boxes: Box[]): [number, numbe
   }
   const blocked = (x: number, y: number) => boxes.some((b) => x > b[0] - 14 && x < b[2] + 14 && y > b[1] - 14 && y < b[3] + 14)
   const out: [number, number][][] = []
-  const count = Math.min(4, Math.max(1, 1 + Math.trunc(size / 2500)))
+  const count = Math.min(6, Math.max(2, 2 + Math.trunc(size / 2000)))
   const step = 10
   for (let r = 0; r < count; r++) {
     const side = Math.trunc(next() * 4)

@@ -135,7 +135,7 @@ func _make_rivers() -> void:
 	rivers.clear()
 	_river_cells.clear()
 	_s = (seed * 2654435761 + 12345) % 4294967296
-	var count := clampi(1 + int(size / 2500.0), 1, 4)
+	var count := clampi(2 + int(size / 2000.0), 2, 6)
 	var step := 10.0
 	for r in count:
 		# Start on an edge, heading roughly across the world.
