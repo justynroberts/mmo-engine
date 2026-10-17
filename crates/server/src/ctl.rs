@@ -564,7 +564,7 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     let _ = write!(
         o,
         r#"{{"tick":{},"hz":{},"live":{},"clients":{},"hash":"{:016x}","#,
-        s.tick, s.tick_hz, s.ents.live, c.clients.count, c.hs.defs_hash
+        s.tick, s.tick_hz, s.ents.live - s.ghost_count(), c.clients.count, c.hs.defs_hash
     );
     let _ = write!(
         o,
@@ -586,7 +586,7 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     }
     if let Some(z) = &c.hs.zone {
         use std::sync::atomic::Ordering::Relaxed;
-        let _ = write!(o, r#""zone":{{"index":{},"count":{},"lo":{},"hi":{},"out":{},"in":{},"failed":{},"rejected":{}}},"#, z.index, z.count, z.lo, z.hi, z.stats.handoffs_out.load(Relaxed), z.stats.handoffs_in.load(Relaxed), z.stats.failed.load(Relaxed), z.stats.rejected.load(Relaxed));
+        let _ = write!(o, r#""zone":{{"index":{},"count":{},"lo":{},"hi":{},"out":{},"in":{},"failed":{},"rejected":{},"ghosts":{},"feeds_out":{},"feeds_in":{}}},"#, z.index, z.count, z.lo, z.hi, z.stats.handoffs_out.load(Relaxed), z.stats.handoffs_in.load(Relaxed), z.stats.failed.load(Relaxed), z.stats.rejected.load(Relaxed), z.stats.ghosts.load(Relaxed), z.stats.feeds_out.load(Relaxed), z.stats.feeds_in.load(Relaxed));
     }
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(
@@ -618,6 +618,7 @@ fn state_json(c: &Ctl, limit: usize) -> String {
         let kind = match s.ents.owner[slot] {
             NONE => 0,
             DRIVEN => 2,
+            crate::sim::GHOST => 3,
             _ => 1,
         };
         let arch = if s.ents.arch[slot] == NO_ARCH { -1 } else { s.ents.arch[slot] as i32 };

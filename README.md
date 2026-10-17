@@ -165,15 +165,23 @@ so a dead neighbour means a failed handoff that retries after 2 s, not a stalled
 Browsers follow the redirect too: set `--zone-web http://a:8080,http://b:8080`
 so the play page knows each zone's gateway.
 
+Seeing across a border: every tick each zone sends its neighbours the entities within interest range of the shared
+border (a second TCP connection, same MAC and replay protection, latest frame wins so a slow link drops frames instead
+of queueing them). The neighbour mirrors them as inert ghosts: they take part in interest management, so a player
+beside a border sees the other side, but they are not simulated, cannot be targeted, are never saved or counted, and
+vanish when the next frame omits them or the neighbour goes quiet for a second. The admin map draws them hollow.
+
 Limits, stated plainly:
 
 - Guests have no identity to hand over, so they are stopped at their zone's border.
-- Bots do not cross borders, and a player near a border does not see entities in the other strip.
+- Bots do not cross borders, and nothing crosses a border except players (handoff) and what you see (ghosts):
+  you cannot hit, or be hit by, something in the next strip until you are in it.
+- Only adjacent zones see each other, so every strip must be wider than the interest radius.
 - Zones are a static even split along x; nothing rebalances them.
 - The handoff link is plain TCP with a MAC: keep it on a private network. A leaked
   secret lets someone inject characters.
 - The admin console is per process; there is no combined view.
-- Not measured at scale: the tests run two processes on one machine.
+- Not measured at scale: the tests run two processes on one machine. The feed costs one pass over the entities per neighbour per tick.
 
 ## Measured results
 

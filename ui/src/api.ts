@@ -167,6 +167,8 @@ export async function api<T>(path: string, method = 'GET', body?: unknown, signa
 export const KIND_BOT = 0
 export const KIND_PLAYER = 1
 export const KIND_DRIVEN = 2
+/** A mirror of an entity in a neighbouring zone (inert). */
+export const KIND_GHOST = 3
 
 export interface ChatLog {
   tick: number

@@ -393,6 +393,9 @@ fn main() {
                 net::save_all(&sim, &clients, hs.store.as_deref());
             }
         }
+        if let Some(z) = zone.as_mut() {
+            z.ingest(&mut sim);
+        }
         sim.step(&pending);
         if let Some(z) = zone.as_mut() {
             z.tick(&mut sim, &mut clients, &mut tx, &mut scratch);
@@ -455,7 +458,7 @@ fn main() {
                     "[{:>4}s] clients {:>5} ents {:>5} | tick avg {} p99 {} max {} ms (recv {} sim {} snap+send {}) | in {:.1}k/s out {:.1}k/s {:.1} Mbit/s | late {} over {} drops {}",
                     (t4 - start).as_secs(),
                     clients.count,
-                    sim.ents.live,
+                    sim.ents.live - sim.ghost_count(),
                     ms(avg),
                     ms(pct(&w, 0.99) as f64),
                     ms(*w.last().unwrap_or(&0) as f64),

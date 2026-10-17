@@ -1158,6 +1158,11 @@ struct Zones {
 
 /// Two zone processes sharing one server key, each with its own database.
 fn start_zones() -> Zones {
+    start_zones_with(false)
+}
+
+/// `open` = no walls at all, so movement in a test is never blocked.
+fn start_zones_with(open: bool) -> Zones {
     let n = 2;
     let udp: Vec<u16> = (0..n).map(|_| free_udp()).collect();
     let listen: Vec<u16> = (0..n).map(|_| free_tcp()).collect();
@@ -1170,6 +1175,11 @@ fn start_zones() -> Zones {
         let dir = std::env::temp_dir().join(format!("mmo-e2e-zone{i}-{}-{}", std::process::id(), free_udp()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("server.key"), &key_hex).unwrap();
+        if open {
+            let mut g = GameFile::default_game();
+            g.walls = Some(vec![]);
+            std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+        }
         let h = free_tcp();
         let child = Command::new(env!("CARGO_BIN_EXE_server"))
             .current_dir(&dir)
@@ -1297,21 +1307,26 @@ fn the_handoff_link_refuses_forged_and_replayed_frames() {
     };
     // Wrong secret: refused, and the connection is closed.
     let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(b"H").unwrap();
     s.write_all(&zone_frame("some-other-secret-value", 1, 10, &id)).unwrap();
     assert_eq!(ack(&mut s), 0);
     // Right secret: taken.
     let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(b"H").unwrap();
     s.write_all(&zone_frame(ZONE_SECRET, 1, 1_000_000_000_000_000_000, &id)).unwrap();
     assert_eq!(ack(&mut s), 1);
     // The same frame again (a replay) and an older one: refused.
     let mut s2 = TcpStream::connect(addr).unwrap();
+    s2.write_all(b"H").unwrap();
     s2.write_all(&zone_frame(ZONE_SECRET, 1, 1_000_000_000_000_000_000, &id)).unwrap();
     assert_eq!(ack(&mut s2), 0);
     let mut s3 = TcpStream::connect(addr).unwrap();
+    s3.write_all(b"H").unwrap();
     s3.write_all(&zone_frame(ZONE_SECRET, 1, 5, &id)).unwrap();
     assert_eq!(ack(&mut s3), 0);
     // A frame claiming to come from ourselves: refused.
     let mut s4 = TcpStream::connect(addr).unwrap();
+    s4.write_all(b"H").unwrap();
     s4.write_all(&zone_frame(ZONE_SECRET, 0, 2_000_000_000_000_000_000, &id)).unwrap();
     assert_eq!(ack(&mut s4), 0);
     let z = state(&zs.z[0])["zone"].clone();
@@ -1543,4 +1558,99 @@ fn hand_placed_walls_survive_a_restart() {
     let srv = start_in(dir, &[]);
     let (_, w) = json(&srv, "GET", "/api/world", "");
     assert_eq!(w["boxes"], serde_json::json!([[100.0, 100.0, 140.0, 120.0], [200.0, 50.0, 210.0, 300.0]]));
+}
+
+fn act(c: &mut Client, action: u8, target: u32) {
+    c.seq += 1;
+    let mut plain = Vec::new();
+    wire::encode_input(&mut plain, &Input { seq: c.seq, ack_tick: c.view.last_tick, dir_x: 0, dir_y: 0, action, target, chat_ack: c.chat.ack() });
+    let mut pkt = Vec::new();
+    assert!(c.sess.seal(&plain, &mut pkt));
+    c.sock.send(&pkt).unwrap();
+}
+
+/// The entity in `c`'s view nearest to a point, other than `c` itself, and how far away it is.
+fn nearest_other(c: &Client, x: f32, y: f32) -> Option<(u32, f32)> {
+    c.view
+        .entries()
+        .iter()
+        .filter(|e| e.id != c.entity)
+        .map(|e| (e.id, (proto::world::dpos(e.x) - x).hypot(proto::world::dpos(e.y) - y)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+#[test]
+fn players_see_across_a_zone_border_and_cannot_hit_across_it() {
+    let zs = start_zones_with(true);
+    // Guests are stopped at their own zone's border, which puts them right beside each other.
+    let mut a = connect(&zs.z[0]);
+    let mut b = connect(&zs.z[1]);
+    a.send_input(0, 0);
+    b.send_input(0, 0);
+    a.pump(200);
+    b.pump(200);
+    let t = Instant::now();
+    loop {
+        assert!(t.elapsed() < Duration::from_secs(40), "never lined up: {:?} {:?}", a.pos(), b.pos());
+        let (pa, pb) = (a.pos(), b.pos());
+        if pa.0 > 236.0 && pb.0 < 276.0 && (pa.1 - pb.1).abs() < 12.0 {
+            break;
+        }
+        let vy = |from: f32, to: f32| if (to - from).abs() < 6.0 { 0 } else if to > from { 127 } else { -127 };
+        a.send_input(127, vy(pa.1, pb.1));
+        b.send_input(-127, vy(pb.1, pa.1));
+        a.pump(40);
+        b.pump(40);
+    }
+    a.send_input(0, 0);
+    b.send_input(0, 0);
+    a.pump(500);
+    b.pump(500);
+    let (pa, pb) = (a.pos(), b.pos());
+    let (seen_by_a, da) = nearest_other(&a, pb.0, pb.1).expect("a sees nothing");
+    let (seen_by_b, db) = nearest_other(&b, pa.0, pa.1).expect("b sees nothing");
+    assert!(da < 3.0, "a should see b's ghost where b is: {pb:?}, nearest is {da} away");
+    assert!(db < 3.0, "b should see a's ghost where a is: {pa:?}, nearest is {db} away");
+    assert_ne!(seen_by_a, b.entity, "what a sees is a mirror with its own id");
+    let s0 = state(&zs.z[0]);
+    assert!(s0["zone"]["ghosts"].as_u64().unwrap() >= 1, "{}", s0["zone"]);
+    assert!(s0["e"].as_array().unwrap().iter().any(|r| r[4] == 3), "the admin map marks ghosts as kind 3");
+    assert_eq!(s0["live"].as_u64().unwrap() as usize, s0["e"].as_array().unwrap().iter().filter(|r| r[4] != 3).count(), "ghosts are not counted as live entities");
+
+    // A zap at the mirror does nothing to the real player on the other side.
+    let health = |c: &Client| c.view.get(c.entity).unwrap().attrs[0];
+    let before = health(&b);
+    for _ in 0..30 {
+        act(&mut a, proto::defs::ACTION_ZAP, seen_by_a);
+        a.pump(40);
+        b.pump(10);
+    }
+    b.pump(300);
+    assert_eq!(health(&b), before, "damage crossed the border");
+    assert!(state(&zs.z[0])["game"]["rejected_actions"].as_u64().unwrap() >= 1);
+    // Ghosts are never written to the database.
+    assert_eq!(saved_rows(&zs.z[0]), 0);
+}
+
+#[test]
+fn ghosts_disappear_when_the_neighbour_goes_away() {
+    let mut zs = start_zones_with(true);
+    let mut a = connect(&zs.z[0]);
+    let mut b = connect(&zs.z[1]);
+    a.send_input(0, 0);
+    b.send_input(0, 0);
+    // Zone 1's bots near the border are mirrored into zone 0 without anyone doing anything.
+    let t = Instant::now();
+    while state(&zs.z[0])["zone"]["ghosts"].as_u64() == Some(0) {
+        assert!(t.elapsed() < Duration::from_secs(10), "no ghosts ever arrived");
+        a.pump(100);
+    }
+    let _ = &mut b;
+    zs.z[1].child.kill().unwrap();
+    let t = Instant::now();
+    while state(&zs.z[0])["zone"]["ghosts"].as_u64() != Some(0) {
+        assert!(t.elapsed() < Duration::from_secs(6), "ghosts of a dead zone stayed: {}", state(&zs.z[0])["zone"]);
+        a.pump(100);
+    }
+    assert!(state(&zs.z[0])["e"].as_array().unwrap().iter().all(|r| r[4] != 3));
 }

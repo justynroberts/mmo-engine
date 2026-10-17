@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
-import { KIND_DRIVEN, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
+import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
 
 /** When present the map is in builder mode: it shows places and routes and edits them. */
@@ -325,6 +325,11 @@ export function WorldView(p: Props) {
             ctx.strokeStyle = accent
             ctx.lineWidth = 1.5
             ctx.strokeRect(x - px / 2 - 2, y - px / 2 - 2, px + 4, px + 4)
+          } else if (kind === KIND_GHOST) {
+            // A mirror of something in the neighbouring zone: hollow and faint.
+            ctx.strokeStyle = fg3
+            ctx.lineWidth = 1
+            ctx.strokeRect(x - px / 2 + 0.5, y - px / 2 + 0.5, px - 1, px - 1)
           } else {
             ctx.fillStyle = col
             ctx.fillRect(x - px / 2, y - px / 2, px, px)

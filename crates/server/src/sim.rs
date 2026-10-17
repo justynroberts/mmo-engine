@@ -11,6 +11,8 @@ use proto::{Entry, Rng};
 pub const NONE: u32 = u32::MAX;
 /// Owned by the admin UI ("possessed"): the NPC AI leaves it alone.
 pub const DRIVEN: u32 = u32::MAX - 1;
+/// A mirror of an entity that lives in a neighbouring zone: it is seen and nothing more.
+pub const GHOST: u32 = u32::MAX - 2;
 /// Archetype of entities that are not bots (players, plain NPCs).
 pub const NO_ARCH: u8 = u8::MAX;
 const SLOT_MASK: u32 = 0x00FF_FFFF;
@@ -333,6 +335,28 @@ impl Sim {
         }
     }
 
+    /// An inert copy of a neighbour zone's entity. It is visible to interest management and nothing else:
+    /// not simulated, not targetable, not saved, not counted as a bot.
+    pub fn spawn_ghost(&mut self, x: f32, y: f32, arch: u8) -> Option<usize> {
+        let slot = self.ents.alloc()?;
+        let e = &mut self.ents;
+        e.alive[slot] = true;
+        e.x[slot] = x;
+        e.y[slot] = y;
+        e.dir_x[slot] = 0;
+        e.dir_y[slot] = 0;
+        e.owner[slot] = GHOST;
+        e.arch[slot] = arch;
+        e.speed[slot] = 0.0;
+        e.live += 1;
+        Some(slot)
+    }
+
+    /// Entities that are mirrors of a neighbour's.
+    pub fn ghost_count(&self) -> usize {
+        (0..self.ents.high).filter(|&s| self.ents.alive[s] && self.ents.owner[s] == GHOST).count()
+    }
+
     /// Swap in a new set of walls without disconnecting anyone. Anything that is now inside a wall
     /// (or outside the world) is moved to a free spot. Returns how many entities were moved.
     pub fn replace_world(&mut self, world: World) -> usize {
@@ -483,6 +507,9 @@ impl Sim {
                 let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                 let d2 = dx * dx + dy * dy;
                 if d2 > scan * scan {
+                    return;
+                }
+                if e.owner[t] == GHOST {
                     return;
                 }
                 let cat = if e.owner[t] < DRIVEN { 0 } else if e.arch[t] == me_arch && me_arch != NO_ARCH { return } else { 1 };
@@ -721,7 +748,7 @@ impl Sim {
                     continue;
                 }
             }
-            let Some(t) = e.resolve(p.target) else {
+            let Some(t) = e.resolve(p.target).filter(|&t| e.owner[t] != GHOST) else {
                 self.stats.rejected_actions += 1;
                 continue;
             };
@@ -758,7 +785,7 @@ impl Sim {
             }
             let min = self.defs.attrs[a].min;
             for s in 0..self.ents.high {
-                if self.ents.alive[s] && self.ents.attrs[a][s] <= min {
+                if self.ents.alive[s] && self.ents.owner[s] != GHOST && self.ents.attrs[a][s] <= min {
                     let (x, y) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
                     self.ents.x[s] = x;
                     self.ents.y[s] = y;
