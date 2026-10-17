@@ -1,0 +1,75 @@
+@import '@fontsource/martian-mono/400.css';
+@import '@fontsource/martian-mono/500.css';
+@import '@fontsource/martian-mono/700.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --radius-sm: 2px;
+  --color-bg: #e9e6df;
+  --color-bg-2: #e0ddd5;
+  --color-line: #c5c1b6;
+  --color-fg: #17160f;
+  --color-fg-2: #3d3b33;
+  --color-fg-3: #5f5c52;
+  --color-accent: #c2410c;
+  --color-accent-ink: #fff7f0;
+}
+.dark {
+  --color-bg: #0b0c0f;
+  --color-bg-2: #111318;
+  --color-line: #262a32;
+  --color-fg: #e8e8e4;
+  --color-fg-2: #b4b7be;
+  --color-fg-3: #8a8e97;
+  --color-accent: #ff7a2e;
+  --color-accent-ink: #1a0b02;
+}
+
+html, body, #root { min-height: 100%; }
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: 'Martian Mono', ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 24px;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  :focus-visible { outline: 1px solid var(--color-accent); outline-offset: 2px; }
+  button, select, input { font: inherit; color: inherit; }
+  select { background: transparent; }
+  ::selection { background: var(--color-accent); color: var(--color-accent-ink); }
+}
+
+@layer components {
+  .lbl { @apply text-label uppercase tracking-[0.08em] text-fg-3; }
+  .cell { @apply border-b border-line; }
+  /* Inputs are underlines on the grid, not boxes. */
+  .field {
+    @apply w-full min-w-0 bg-transparent border-0 border-b border-line px-0 py-0 h-6 text-fg rounded-none;
+    transition: border-color 150ms ease-out;
+  }
+  .field:hover { border-color: var(--color-fg-3); }
+  .field:focus { outline: none; border-color: var(--color-accent); }
+  .field[aria-invalid='true'] { border-color: var(--color-accent); }
+  .num { @apply text-right; }
+  .btn {
+    @apply inline-flex items-center gap-2 h-6 px-2 border border-line rounded-sm text-fg-2 bg-transparent cursor-pointer select-none;
+    transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--color-fg-3); color: var(--color-fg); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn-primary { background: var(--color-accent); color: var(--color-accent-ink); border-color: var(--color-accent); }
+  .btn-primary:hover:not(:disabled) { color: var(--color-accent-ink); border-color: var(--color-accent); filter: brightness(1.08); }
+  .tab { @apply lbl h-8 px-2 border-b-2 border-transparent bg-transparent cursor-pointer; transition: color 150ms ease-out; }
+  .tab:hover { color: var(--color-fg); }
+  .tab[data-state='active'] { color: var(--color-fg); border-bottom-color: var(--color-accent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}

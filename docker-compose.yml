@@ -1,0 +1,8 @@
+services:
+  server:
+    build: .
+    network_mode: host      # admin UI is loopback-only: http://127.0.0.1:7780/
+    volumes:
+      - ./data:/data        # game.json and server.key persist here
+    command: ["server", "--ui-dir", "/opt/ui", "--workers", "2"]
+    restart: unless-stopped
