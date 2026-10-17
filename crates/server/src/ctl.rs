@@ -35,6 +35,16 @@ pub enum Cmd {
     Kill(KillReq),
     Drive(DriveReq),
     Release { id: u32 },
+    ChatLog,
+    Say(SayReq),
+}
+
+#[derive(Deserialize)]
+pub struct SayReq {
+    pub id: u32,
+    #[serde(default)]
+    pub shout: bool,
+    pub text: String,
 }
 
 #[derive(Deserialize)]
@@ -254,6 +264,8 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
             }
             serde_json::from_slice::<R>(&req.body).ok().map(|r| Cmd::Release { id: r.id })
         }
+        ("GET", "/api/chat") => Some(Cmd::ChatLog),
+        ("POST", "/api/say") => serde_json::from_slice(&req.body).ok().map(Cmd::Say),
         _ => None,
     };
     if let Some(cmd) = cmd {
@@ -269,7 +281,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -429,6 +441,17 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
                 }
             }
             (200, json!({ "ok": true, "target": used }).to_string())
+        }
+        Cmd::ChatLog => {
+            let rows: Vec<_> = c.clients.chat_log.iter().map(|(t, from, ch, text)| json!([t, from, ch, text])).collect();
+            (200, json!({ "tick": c.sim.tick, "lines": rows }).to_string())
+        }
+        Cmd::Say(r) => {
+            let Some(s) = c.sim.ents.resolve(r.id) else { return err(404, "no such entity") };
+            let Some(text) = proto::chat::sanitize(&r.text) else { return err(400, "empty message") };
+            let ch = if r.shout { proto::chat::channel::SHOUT } else { proto::chat::channel::SAY };
+            crate::net::say_from(c.sim, c.clients, s, ch, &text);
+            (200, json!({ "ok": true, "text": text }).to_string())
         }
         Cmd::Release { id } => {
             let Some(s) = c.sim.ents.resolve(id) else { return err(404, "no such entity") };

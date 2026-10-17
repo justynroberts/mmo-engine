@@ -12,7 +12,9 @@ use proto::game::GameFile;
 use proto::secure::{from_hex32, ClientHs, HsError, Session};
 use proto::wire::{self, kind, Input, ServerMsg};
 use proto::world::dpos;
-use proto::{decode_snapshot, ClientView, DecodeError, Rng};
+use proto::world::World;
+use proto::{decode_snapshot, ClientView, DecodeError, Predictor, Rng};
+use std::rc::Rc;
 
 struct Config {
     server: String,
@@ -24,6 +26,7 @@ struct Config {
     quiet: bool,
     game: String,
     server_key: Option<[u8; 32]>,
+    chat: f64,
 }
 
 fn usage(msg: &str) -> ! {
@@ -31,7 +34,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -47,6 +50,7 @@ fn parse_args() -> Config {
         quiet: false,
         game: "game.json".into(),
         server_key: None,
+        chat: 0.0,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -67,6 +71,7 @@ fn parse_args() -> Config {
             "--server-key" => {
                 c.server_key = Some(from_hex32(&val(a)).unwrap_or_else(|| usage("--server-key must be 64 hex characters")))
             }
+            "--chat" => c.chat = val(a).parse().unwrap_or_else(|_| usage("bad --chat")),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -95,12 +100,16 @@ struct Bot {
     last_hello: Instant,
     entity: u32,
     view: ClientView,
+    pred: Option<Predictor>,
     seq: u32,
     dir: (i8, i8),
     dir_left: u32,
     rng: Rng,
     sent_at: [(u32, Instant); 128],
     rtt_seq: u32,
+    chat: proto::chat::ChatClient,
+    chat_n: u32,
+    chat_buf: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -115,11 +124,15 @@ struct Totals {
     welcomes: u64,
     rejects: u64,
     reconnects: u64,
+    teleports: u64,
     untrusted: u64,
     auth_fail: u64,
     inputs_sent: u64,
     zaps_sent: u64,
     send_errors: u64,
+    chat_sent: u64,
+    chat_rx: u64,
+    chat_bad: u64,
 }
 
 fn main() {
@@ -155,12 +168,16 @@ fn main() {
             last_hello: now,
             entity: 0,
             view: ClientView::new(),
+            pred: None,
             seq: 0,
             dir: (0, 0),
             dir_left: 0,
             rng: Rng::new(cfg.seed.wrapping_mul(1_000_003).wrapping_add(i as u64)),
             sent_at: [(u32::MAX, now); 128],
             rtt_seq: 0,
+            chat: Default::default(),
+            chat_n: 0,
+            chat_buf: Vec::new(),
         });
     }
 
@@ -180,6 +197,8 @@ fn main() {
     let mut activated = 0usize;
     let mut late_ticks = 0u64;
     let mut tick = 0u64;
+    let mut world: Option<Rc<World>> = None;
+    let mut pred_err: Vec<u32> = Vec::new(); // corrections in 1/1000 unit
 
     eprintln!(
         "bots: {} -> {} ({} Hz inputs, ramp {}/s, {}s), content hash {:016x}",
@@ -235,6 +254,10 @@ fn main() {
                                             b.state = State::Playing;
                                             b.entity = w.entity;
                                             b.view = ClientView::new();
+                                            b.pred = None;
+                                            if world.is_none() {
+                                                world = Some(Rc::new(World::generate(w.world_size, w.world_seed)));
+                                            }
                                             tot.welcomes += 1;
                                         }
                                     } else {
@@ -255,6 +278,20 @@ fn main() {
                                     tot.auth_fail += 1;
                                     continue;
                                 };
+                                if inner.first() == Some(&proto::chat::kind::BATCH) {
+                                    match proto::chat::decode_batch(inner) {
+                                        Some((ack, msgs)) => {
+                                            for m in b.chat.on_batch(ack, msgs) {
+                                                if m.text.is_empty() || m.from == 0 && m.channel > 1 {
+                                                    tot.chat_bad += 1;
+                                                }
+                                                tot.chat_rx += 1;
+                                            }
+                                        }
+                                        None => tot.chat_bad += 1,
+                                    }
+                                    continue;
+                                }
                                 if inner.first() != Some(&kind::SNAPSHOT) {
                                     tot.decode_err += 1;
                                     continue;
@@ -266,8 +303,25 @@ fn main() {
                                         tot.visible += b.view.entries().len() as u64;
                                         w_snaps += 1;
                                         w_bytes += n as u64;
-                                        if b.view.get(b.entity).is_none() {
-                                            tot.self_missing += 1;
+                                        match (b.view.get(b.entity), world.as_ref()) {
+                                            (None, _) => tot.self_missing += 1,
+                                            (Some(me), Some(wd)) => {
+                                                let (mx, my) = (dpos(me.x), dpos(me.y));
+                                                match b.pred.as_mut() {
+                                                    None => {
+                                                        b.pred = Some(Predictor::new(mx, my, defs.move_speed, cfg.hz, defs.entity_radius));
+                                                    }
+                                                    Some(pr) => {
+                                                        let err = pr.reconcile(wd, mx, my, info.last_input_seq);
+                                                        if err > 5.0 {
+                                                            tot.teleports += 1; // respawn or similar: the server did something we cannot predict
+                                                        } else {
+                                                            pred_err.push((err * 1000.0) as u32);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                         // Input-to-ack latency, once per input seq.
                                         let s = info.last_input_seq;
@@ -310,6 +364,7 @@ fn main() {
                     if b.last_rx.elapsed() > Duration::from_secs(3) {
                         b.hs = ClientHs::new(cfg.server_key, hash);
                         b.session = None;
+                        b.chat = Default::default();
                         b.state = State::Connecting;
                         b.last_hello = Instant::now() - Duration::from_secs(10);
                         tot.reconnects += 1;
@@ -349,7 +404,23 @@ fn main() {
                         tot.zaps_sent += 1;
                     }
 
+                    if cfg.chat > 0.0 && (b.rng.f32() as f64) < cfg.chat / 60.0 / cfg.hz as f64 {
+                        b.chat_n += 1;
+                        let ch = if b.chat_n % 10 == 0 { proto::chat::channel::SHOUT } else { proto::chat::channel::SAY };
+                        b.chat.say(ch, &format!("bot {} line {}", b.entity & 0xFFFFFF, b.chat_n));
+                        tot.chat_sent += 1;
+                    }
+                    if b.chat.outgoing(&mut b.chat_buf) {
+                        if let Some(sess) = b.session.as_mut() {
+                            if sess.seal(&b.chat_buf, &mut sealed) {
+                                let _ = b.sock.send(&sealed);
+                            }
+                        }
+                    }
                     b.seq += 1;
+                    if let (Some(pr), Some(wd)) = (b.pred.as_mut(), world.as_ref()) {
+                        pr.apply_input(wd, b.seq, b.dir.0, b.dir.1);
+                    }
                     b.sent_at[b.seq as usize % 128] = (b.seq, Instant::now());
                     wire::encode_input(
                         &mut out,
@@ -360,6 +431,7 @@ fn main() {
                             dir_y: b.dir.1,
                             action,
                             target,
+                            chat_ack: b.chat.ack(),
                         },
                     );
                     if let Some(sess) = b.session.as_mut() {
@@ -445,6 +517,19 @@ fn main() {
         "integrity: decode errors {}, missing baseline {}, stale {}, own entity missing from snapshot {}, failed decryption {}",
         tot.decode_err, tot.missing_baseline, tot.stale, tot.self_missing, tot.auth_fail
     );
+    pred_err.sort_unstable();
+    println!(
+        "prediction: {} reconciliations, correction p50 {:.3} p99 {:.3} max {:.3} units, {} teleports (respawns) excluded",
+        pred_err.len(),
+        pct(&pred_err, 0.5) as f64 / 1000.0,
+        pct(&pred_err, 0.99) as f64 / 1000.0,
+        pred_err.last().copied().unwrap_or(0) as f64 / 1000.0,
+        tot.teleports
+    );
+    if cfg.chat > 0.0 {
+        let pending: usize = bots.iter().map(|b| b.chat.unsent()).sum();
+        println!("chat: lines sent {}, lines received {} (say is heard nearby, shout by all), malformed {}, still unacknowledged {}", tot.chat_sent, tot.chat_rx, tot.chat_bad, pending);
+    }
     println!("tester late ticks {late_ticks} of {tick} (if high, the load generator, not the server, is the bottleneck)");
 }
 

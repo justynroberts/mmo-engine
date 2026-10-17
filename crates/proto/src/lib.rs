@@ -4,8 +4,10 @@
 //! real client later), so the wire format, the attribute schema and the
 //! collision maths cannot drift apart.
 
+pub mod chat;
 pub mod defs;
 pub mod game;
+pub mod predict;
 pub mod rng;
 pub mod secure;
 pub mod snapshot;
@@ -14,6 +16,7 @@ pub mod world;
 
 pub use game::{Archetype, Behaviour, Game, GameFile};
 pub use defs::{ActionDef, AttrDef, Defs, Effect, OnZero};
+pub use predict::Predictor;
 pub use rng::Rng;
 pub use snapshot::{decode_snapshot, encode_snapshot, ClientView, DecodeError, Entry, SnapshotInfo};
 pub use world::{Aabb, World};

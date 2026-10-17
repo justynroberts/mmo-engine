@@ -42,6 +42,7 @@ pub struct Client {
     pub target: u32,
     pub baseline_tick: u32,
     pub baseline: Vec<Entry>,
+    pub chat: proto::chat::ChatServer,
     ring: Vec<(u32, Vec<Entry>)>,
 }
 
@@ -51,6 +52,10 @@ pub struct Clients {
     free: Vec<u32>,
     by_key: HashMap<u64, u32, BuildHasherDefault<KeyHasher>>,
     pub count: usize,
+    /// Chat lines accepted this tick, waiting to be routed: (speaker slot, channel, text).
+    pub chat_in: Vec<(usize, u8, String)>,
+    /// Recent chat for the console: (tick, speaker id, channel, text).
+    pub chat_log: std::collections::VecDeque<(u32, u32, u8, String)>,
 }
 
 #[inline]
@@ -105,6 +110,8 @@ pub struct NetStats {
     pub auth_fail: u64,
     pub rejected: u64,
     pub timeouts: u64,
+    pub chat_in: u64,
+    pub chat_dropped: u64,
 }
 
 pub struct Handshake {
@@ -222,6 +229,7 @@ fn on_connect(
         slot,
         last_seen: sim.tick,
         in_seq: 0,
+        chat: Default::default(),
         ack_tick: 0,
         action: 0,
         target: 0,
@@ -251,11 +259,29 @@ fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: Soc
         stats.auth_fail += 1;
         return;
     };
+    if body.first() == Some(&proto::chat::kind::SEND) {
+        let Some((cseq, ch, text)) = proto::chat::decode_send(body) else {
+            stats.bad += 1;
+            return;
+        };
+        c.accept = None;
+        c.last_seen = sim.tick;
+        match c.chat.accept(cseq, ch, &text, sim.tick, sim.tick_hz) {
+            proto::chat::Accept::Route { channel, text } => {
+                stats.chat_in += 1;
+                clients.chat_in.push((c.slot, channel, text));
+            }
+            proto::chat::Accept::Dropped => stats.chat_dropped += 1,
+            proto::chat::Accept::Duplicate => {}
+        }
+        return;
+    }
     let Some(ClientMsg::Input(i)) = wire::decode_client(body) else {
         stats.bad += 1;
         return;
     };
     stats.inputs += 1;
+    c.chat.on_client_ack(i.chat_ack);
     c.accept = None;
     c.last_seen = sim.tick;
     // Newest-wins; wrapping compare so seq overflow is harmless.
@@ -278,6 +304,50 @@ fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: Soc
             c.baseline_tick = i.ack_tick;
         }
     }
+}
+
+/// Radius within which `say` is heard.
+pub const SAY_RADIUS: f32 = 64.0;
+
+/// Deliver one line from an entity to everyone who should hear it, and log it.
+pub fn say_from(sim: &Sim, clients: &mut Clients, slot: usize, channel: u8, text: &str) {
+    let from = sim.ents.id_of(slot);
+    let (sx, sy) = (sim.ents.x[slot], sim.ents.y[slot]);
+    let r2 = SAY_RADIUS * SAY_RADIUS;
+    for c in clients.slab.iter_mut().flatten() {
+        let heard = channel == proto::chat::channel::SHOUT || {
+            let (dx, dy) = (sim.ents.x[c.slot] - sx, sim.ents.y[c.slot] - sy);
+            dx * dx + dy * dy <= r2
+        };
+        if heard {
+            c.chat.deliver(from, channel, text);
+        }
+    }
+    clients.log_chat(sim.tick, from, channel, text);
+}
+
+impl Clients {
+    pub fn log_chat(&mut self, tick: u32, from: u32, channel: u8, text: &str) {
+        if self.chat_log.len() >= 200 {
+            self.chat_log.pop_front();
+        }
+        self.chat_log.push_back((tick, from, channel, text.to_string()));
+    }
+}
+
+/// Route chat accepted during the input phase and refill rate limits once a second.
+pub fn route_chat(sim: &Sim, clients: &mut Clients) {
+    if sim.tick % sim.tick_hz == 0 {
+        for c in clients.slab.iter_mut().flatten() {
+            c.chat.refill(1.0);
+        }
+    }
+    let events = std::mem::take(&mut clients.chat_in);
+    for (slot, ch, text) in &events {
+        say_from(sim, clients, *slot, *ch, text);
+    }
+    clients.chat_in = events;
+    clients.chat_in.clear();
 }
 
 /// Collect queued action requests (at most one per client per tick).
@@ -321,6 +391,7 @@ pub struct SnapScratch {
 #[derive(Default, Clone, Copy)]
 pub struct SnapStats {
     pub snapshots: u64,
+    pub chat_batches: u64,
     pub full: u64,
     pub entries_visible: u64,
     pub entries_changed: u64,
@@ -423,6 +494,10 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
             st.full += 1;
         }
         st.entries_changed += u16::from_le_bytes([sc.buf[13], sc.buf[14]]) as u64;
+        if c.chat.build(&mut sc.buf) && c.session.seal(&sc.buf, &mut sc.out) {
+            tx.queue(c.addr, &sc.out);
+            st.chat_batches += 1;
+        }
 
         // Remember what we sent so a future ack can become the new baseline.
         let slot = &mut c.ring[tick as usize % RING];
@@ -475,6 +550,7 @@ mod tests {
                 slot,
                 last_seen: 0,
                 in_seq: 0,
+                chat: Default::default(),
                 ack_tick: 0,
                 action: 0,
                 target: 0,
@@ -511,6 +587,26 @@ mod tests {
             }
             assert!(ok >= 150, "only {ok} of 200 packets arrived ({lanes_n} lanes)");
         }
+    }
+
+    #[test]
+    fn say_is_heard_only_within_the_radius_and_shout_by_everyone() {
+        let (mut sim, mut clients, _peers, _sink, _out) = fixture(3, 512);
+        let slots: Vec<usize> = clients.slab.iter().flatten().map(|c| c.slot).collect();
+        let place = |sim: &mut Sim, s: usize, x: f32, y: f32| {
+            sim.ents.x[s] = x;
+            sim.ents.y[s] = y;
+        };
+        place(&mut sim, slots[0], 100.0, 100.0);
+        place(&mut sim, slots[1], 100.0 + SAY_RADIUS - 1.0, 100.0);
+        place(&mut sim, slots[2], 100.0 + SAY_RADIUS + 1.0, 100.0);
+        say_from(&sim, &mut clients, slots[0], proto::chat::channel::SAY, "psst");
+        let pending: Vec<usize> = clients.slab.iter().flatten().map(|c| c.chat.pending()).collect();
+        assert_eq!(pending, [1, 1, 0], "speaker and the near listener hear it, the far one does not");
+        say_from(&sim, &mut clients, slots[0], proto::chat::channel::SHOUT, "HEY");
+        let pending: Vec<usize> = clients.slab.iter().flatten().map(|c| c.chat.pending()).collect();
+        assert_eq!(pending, [2, 2, 1]);
+        assert_eq!(clients.chat_log.len(), 2);
     }
 
     /// Run with: cargo test -p server --release lane_scaling -- --ignored --nocapture

@@ -597,4 +597,50 @@ mod tests {
         // 20 ticks at 20 Hz is one second at 20 units/s.
         assert!((s.ents.x[a] - 120.0).abs() < 0.01, "{}", s.ents.x[a]);
     }
+
+    /// The collision-parity gate: the client's predictor and the real server step
+    /// must agree through a maze of obstacles, for thousands of ticks of random input.
+    #[test]
+    fn client_prediction_matches_the_server_in_a_dense_world() {
+        use proto::world::Aabb;
+        use proto::Predictor;
+        let mut rng = proto::Rng::new(77);
+        let boxes: Vec<Aabb> = (0..220)
+            .map(|_| {
+                let (w, h) = (rng.range(4.0, 30.0), rng.range(4.0, 30.0));
+                let (x0, y0) = (rng.range(0.0, 480.0 - w), rng.range(0.0, 480.0 - h));
+                Aabb { x0, y0, x1: x0 + w, y1: y0 + h }
+            })
+            .collect();
+        let game = proto::game::GameFile::default_game().build().unwrap();
+        let (speed, radius) = (game.defs.move_speed, game.defs.entity_radius);
+        let mut s = Sim::new(game, World::from_boxes(480.0, 3, boxes), 8, 20, 1);
+        for a in s.archs.iter_mut() {
+            a.count = 0;
+        }
+        let p_slot = s.spawn(0).unwrap();
+        let mut pred = Predictor::new(s.ents.x[p_slot], s.ents.y[p_slot], speed, 20, radius);
+        let (mut blocked_ticks, mut moved) = (0u32, 0u32);
+        let mut dir = (0i8, 0i8);
+        for seq in 1..=6000u32 {
+            if seq % 15 == 1 {
+                const D: [i8; 3] = [-127, 0, 127];
+                dir = (D[rng.below(3) as usize], D[rng.below(3) as usize]);
+            }
+            let before = (s.ents.x[p_slot], s.ents.y[p_slot]);
+            s.ents.dir_x[p_slot] = dir.0;
+            s.ents.dir_y[p_slot] = dir.1;
+            s.step(&[]);
+            pred.apply_input(&s.world, seq, dir.0, dir.1);
+            let after = (s.ents.x[p_slot], s.ents.y[p_slot]);
+            assert_eq!((pred.x, pred.y), after, "diverged at tick {seq}");
+            if after == before && dir != (0, 0) {
+                blocked_ticks += 1;
+            } else if after != before {
+                moved += 1;
+            }
+        }
+        // The test only means something if the walls were actually hit.
+        assert!(blocked_ticks > 100 && moved > 1000, "blocked {blocked_ticks}, moved {moved}");
+    }
 }

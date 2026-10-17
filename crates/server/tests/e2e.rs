@@ -103,6 +103,8 @@ struct Client {
     view: ClientView,
     seq: u32,
     defs: Defs,
+    chat: proto::chat::ChatClient,
+    heard: Vec<proto::chat::ChatMsg>,
 }
 
 enum Outcome {
@@ -139,6 +141,8 @@ fn connect_with(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64) -> Outcome {
                             view: ClientView::new(),
                             seq: 0,
                             defs: defs(),
+                            chat: Default::default(),
+                            heard: Vec::new(),
                         }));
                     }
                 }
@@ -161,7 +165,7 @@ impl Client {
     fn send_input(&mut self, dx: i8, dy: i8) -> Vec<u8> {
         self.seq += 1;
         let mut plain = Vec::new();
-        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0 });
+        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0, chat_ack: self.chat.ack() });
         let mut pkt = Vec::new();
         assert!(self.sess.seal(&plain, &mut pkt));
         self.sock.send(&pkt).unwrap();
@@ -177,6 +181,12 @@ impl Client {
         while t.elapsed() < Duration::from_millis(ms) {
             if let Ok(n) = self.sock.recv(&mut buf) {
                 if let Some(inner) = self.sess.open(&buf[..n], &mut plain) {
+                    if inner.first() == Some(&proto::chat::kind::BATCH) {
+                        let (ack, msgs) = proto::chat::decode_batch(inner).expect("valid batch");
+                        let fresh = self.chat.on_batch(ack, msgs);
+                        self.heard.extend(fresh);
+                        continue;
+                    }
                     if decode_snapshot(inner, &self.defs, &mut self.view).is_ok() {
                         n_ok += 1;
                     }
@@ -184,6 +194,23 @@ impl Client {
             }
         }
         n_ok
+    }
+
+    /// Queue a line and resend it (as a client would) until the server acknowledges it.
+    fn say(&mut self, channel: u8, text: &str) {
+        self.chat.say(channel, text);
+    }
+
+    /// One client tick: resend any unacked chat, send an input (which carries the chat ack).
+    fn tick(&mut self) {
+        let mut b = Vec::new();
+        if self.chat.outgoing(&mut b) {
+            let mut pkt = Vec::new();
+            assert!(self.sess.seal(&b, &mut pkt));
+            self.sock.send(&pkt).unwrap();
+        }
+        self.send_input(0, 0);
+        self.pump(50);
     }
 
     fn pos(&self) -> (f32, f32) {
@@ -223,7 +250,7 @@ fn traffic_on_the_wire_is_ciphertext() {
     let mut c = connect(&srv);
     let mut pkt = Vec::new();
     let mut plain = Vec::new();
-    wire::encode_input(&mut plain, &Input { seq: 7, ack_tick: 0, dir_x: 99, dir_y: 99, action: 0, target: 0 });
+    wire::encode_input(&mut plain, &Input { seq: 7, ack_tick: 0, dir_x: 99, dir_y: 99, action: 0, target: 0, chat_ack: 0 });
     c.sess.seal(&plain, &mut pkt);
     assert_eq!(pkt.len(), plain.len() + proto::secure::DATA_OVERHEAD);
     assert_ne!(&pkt[proto::secure::DATA_HEADER..proto::secure::DATA_HEADER + 2], &plain[..2]);
@@ -394,7 +421,7 @@ fn many_clients_each_get_only_their_own_session() {
     let pkt = {
         let mut p = Vec::new();
         let mut plain = Vec::new();
-        wire::encode_input(&mut plain, &Input { seq: 1, ack_tick: 0, dir_x: 0, dir_y: 0, action: 0, target: 0 });
+        wire::encode_input(&mut plain, &Input { seq: 1, ack_tick: 0, dir_x: 0, dir_y: 0, action: 0, target: 0, chat_ack: 0 });
         cs[0].sess.seal(&plain, &mut p);
         p
     };
@@ -544,4 +571,70 @@ fn bot_archetypes_behave_as_defined() {
     let civ_health = st["e"].as_array().unwrap().iter().filter(|e| e[3] == 1).map(|e| e[5].as_f64().unwrap()).next();
     // Either it is hurt, or it already died and respawned (that is counted).
     assert!(civ_health.map_or(false, |h| h < 100.0) || st["game"]["respawns"].as_u64().unwrap() > 0, "{st}");
+}
+
+#[test]
+fn shouts_reach_everyone_in_order_and_text_is_sanitised() {
+    let srv = start(&[]);
+    let mut a = connect(&srv);
+    let mut b = connect(&srv);
+    a.say(proto::chat::channel::SHOUT, "  hello\u{7}   world ");
+    for _ in 0..20 {
+        a.tick();
+        b.tick();
+    }
+    let texts: Vec<_> = b.heard.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["hello world"], "heard by the other player exactly once, cleaned up");
+    assert_eq!(b.heard[0].from, a.entity);
+    assert_eq!(a.heard.len(), 1, "the speaker hears themselves too");
+    assert_eq!(a.chat.unsent(), 0, "server acknowledged the line");
+    let s = state(&srv);
+    assert_eq!(s["clients"], 2);
+}
+
+#[test]
+fn chat_is_rate_limited_and_garbage_chat_packets_are_counted() {
+    let srv = start(&[]);
+    let mut a = connect(&srv);
+    let mut b = connect(&srv);
+    // Ten lines queued at once: a burst of three plus about a line a second of refill passes, the rest are dropped (all acknowledged).
+    for i in 0..10 {
+        a.say(proto::chat::channel::SAY, &format!("spam {i}"));
+    }
+    for _ in 0..60 {
+        a.tick();
+        b.tick();
+    }
+    assert!(a.heard.len() <= 6, "burst limit not applied: {}", a.heard.len());
+    assert!(a.heard.len() >= 3, "burst of three should pass: {}", a.heard.len());
+    assert_eq!(a.chat.unsent(), 0, "dropped lines are still acknowledged so the client moves on");
+    // Malformed chat inside a valid encrypted packet is counted, not crashed on.
+    let mut plain = vec![proto::chat::kind::SEND, 1, 0, 0, 0, 9, 3, b'a'];
+    let mut pkt = Vec::new();
+    assert!(a.sess.seal(&plain, &mut pkt));
+    a.sock.send(&pkt).unwrap();
+    plain = vec![proto::chat::kind::SEND, 9, 0, 0, 0, 0, 2, 0xFF, 0xFE];
+    assert!(a.sess.seal(&plain, &mut pkt));
+    a.sock.send(&pkt).unwrap();
+    a.tick();
+    assert_eq!(state(&srv)["clients"], 2, "still serving after malformed chat");
+}
+
+#[test]
+fn admin_can_make_a_bot_speak_and_read_the_chat_log() {
+    let srv = start(&[]);
+    let mut p = connect(&srv);
+    json(&srv, "POST", "/api/spawn", r#"{"archetype":"drifter","count":1}"#);
+    let st = state(&srv);
+    let bot = st["e"].as_array().unwrap().iter().find(|e| e[4] == 0).map(|e| e[0].as_u64().unwrap()).expect("a bot exists");
+    let (code, _) = json(&srv, "POST", "/api/say", &format!(r#"{{"id":{bot},"shout":true,"text":"beep   boop"}}"#));
+    assert_eq!(code, 200);
+    for _ in 0..10 {
+        p.tick();
+    }
+    assert_eq!(p.heard.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["beep boop"]);
+    assert_eq!(p.heard[0].from as u64, bot);
+    let (_, log) = json(&srv, "GET", "/api/chat", "");
+    assert_eq!(log["lines"][0][3], "beep boop");
+    assert_eq!(json(&srv, "POST", "/api/say", r#"{"id":1,"text":"   "}"#).0, 400);
 }
