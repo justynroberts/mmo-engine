@@ -257,7 +257,7 @@ fn main() {
     match store.as_ref().filter(|_| !cfg.fresh_world).and_then(|st| st.load_world()) {
         Some(w) => {
             sim.populate_from(&w);
-            eprintln!("restored {} saved bot(s)", w.bots.len());
+            eprintln!("restored {} of {} saved bot(s)", sim.ents.bots, w.bots.len());
         }
         None => sim.populate_bots(),
     }
