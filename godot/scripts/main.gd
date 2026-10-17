@@ -22,7 +22,9 @@ const FOREST := "res://assets/forest/"
 const SPIRES := [["Rock_1_O_Color1", 2.11, 4.58, 0.0], ["Rock_1_N_Color1", 2.3, 4.5, 0.0], ["Rock_1_P_Color1", 2.21, 4.01, 0.0], ["Rock_1_Q_Color1", 2.8, 4.28, 0.0]]
 const BOULDERS := [["Rock_1_K_Color1", 3.69, 3.65, 0.0], ["Rock_1_M_Color1", 3.91, 3.52, 0.0], ["Rock_1_L_Color1", 3.29, 3.4, 0.0],
 	["Rock_2_G_Color1", 3.73, 3.2, 0.0], ["Rock_2_E_Color1", 3.31, 2.86, 0.0], ["Rock_3_Q_Color1", 4.65, 3.72, -1.62],
-	["Rock_3_R_Color1", 5.16, 3.85, -1.71], ["Rock_3_M_Color1", 3.43, 3.6, -1.64]]
+	["Rock_3_R_Color1", 5.16, 3.85, -1.71], ["Rock_3_M_Color1", 3.43, 3.6, -1.64], ["Rock_2_F_Color1", 4.14, 2.86, 0.0],
+	["Rock_2_H_Color1", 3.7, 2.76, 0.0], ["Rock_3_N_Color1", 3.42, 3.53, -1.59], ["Rock_3_O_Color1", 3.48, 3.47, -1.43],
+	["Rock_3_P_Color1", 3.29, 3.68, -1.74]]
 const ROCK_TINT := Color(0.72, 0.69, 0.64)
 ## Every tree, bush and rock in the KayKit Forest pack (the big rocks are kept for crags and mountains).
 const TREES := ["Tree_1_A_Color1", "Tree_1_B_Color1", "Tree_1_C_Color1", "Tree_2_A_Color1", "Tree_2_B_Color1", "Tree_2_C_Color1", "Tree_2_D_Color1", "Tree_2_E_Color1", "Tree_3_A_Color1", "Tree_3_B_Color1", "Tree_3_C_Color1", "Tree_4_A_Color1", "Tree_4_B_Color1", "Tree_4_C_Color1"]
@@ -505,6 +507,27 @@ func _gem_node(color: String, rare := false) -> Node3D:
 	n.add_child(l)
 	return n
 
+## A flame that blooms (brighter than white, so glow picks it up) and the warm light it casts.
+func _flame(node: Node3D, at: Vector3, r: float) -> void:
+	var flame := MeshInstance3D.new()
+	var fs := SphereMesh.new()
+	fs.radius = r
+	fs.height = r * 2.3
+	flame.mesh = fs
+	var fm := StandardMaterial3D.new()
+	fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fm.albedo_color = Color(3.0, 1.5, 0.45)
+	flame.material_override = fm
+	flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	flame.position = at
+	node.add_child(flame)
+	var tl := OmniLight3D.new()
+	tl.light_color = Color("ffb35c")
+	tl.light_energy = 1.6
+	tl.omni_range = 9.0
+	tl.position = at + Vector3(0, 0.2, 0)
+	node.add_child(tl)
+
 ## A crag: rock rising from cliffs at the wall line to a peak, so the box you cannot walk into is a mountain.
 ## Drawn with the ground's material, so its steep faces come out as rock and a tall one gets a snowy top.
 func _build_crag(b: Array, idx: int) -> Node3D:
@@ -862,27 +885,13 @@ func _build_box(b: Array, idx: int) -> Node3D:
 	for k in clampi(int((x1 - x0) * (y1 - y0) / 140.0), 1, 7):
 		var at := Vector3(rng.randf_range(x0 + 2.5, maxf(x0 + 2.6, x1 - 2.5)), height + 0.1, rng.randf_range(y0 + 2.5, maxf(y0 + 2.6, y1 - 2.5)))
 		put.call(stores[rng.randi() % stores.size()], Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at))
-	# Each torch gets a flame that blooms and a warm light (Forward+ handles many lights cheaply).
+	# Standing torches at the roof's corners, twice life size so they read from the camera.
+	for c in [Vector3(x0 + 1.4, 0, y0 + 1.4), Vector3(x1 - 1.4, 0, y0 + 1.4), Vector3(x0 + 1.4, 0, y1 - 1.4), Vector3(x1 - 1.4, 0, y1 - 1.4)]:
+		put.call("torch_lit.gltf", Transform3D(Basis.from_scale(Vector3.ONE * 2.0), c + Vector3(0, height + 0.85, 0)))
+		_flame(node, c + Vector3(0, height + 0.85 + 1.5, 0), 0.22)
+	# Each wall torch gets a flame that blooms and a warm light (Forward+ handles many lights cheaply).
 	for xf in pieces["torch_mounted.gltf"]:
-		var at: Vector3 = (xf as Transform3D) * Vector3(0, 0.75, 0.35)
-		var flame := MeshInstance3D.new()
-		var fs := SphereMesh.new()
-		fs.radius = 0.14
-		fs.height = 0.32
-		flame.mesh = fs
-		var fm := StandardMaterial3D.new()
-		fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		fm.albedo_color = Color(3.0, 1.5, 0.45)
-		flame.material_override = fm
-		flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		flame.position = at
-		node.add_child(flame)
-		var tl := OmniLight3D.new()
-		tl.light_color = Color("ffb35c")
-		tl.light_energy = 1.6
-		tl.omni_range = 9.0
-		tl.position = at + Vector3(0, 0.2, 0)
-		node.add_child(tl)
+		_flame(node, (xf as Transform3D) * Vector3(0, 0.75, 0.35), 0.14)
 	for p in pieces:
 		if pieces[p].is_empty():
 			continue
