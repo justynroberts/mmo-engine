@@ -28,7 +28,20 @@ impl Hasher for KeyHasher {
     }
 }
 
+/// Where a client stands in a zone handoff (always `Here` on a single-process server).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ZState {
+    Here,
+    /// The character has been sent to zone `to`; waiting for its acknowledgement.
+    Handing { to: u8 },
+    /// Acknowledged. The client is told to reconnect; the character is no longer ours.
+    Moved { to: u8, since: u32 },
+    /// The neighbour did not take it; try again at this tick.
+    Retry { at: u32 },
+}
+
 pub struct Client {
+    pub zstate: ZState,
     pub addr: SocketAddrV4,
     /// Where the player really is: differs from `addr` for web players, whose packets are relayed from this machine.
     pub ip: [u8; 4],
@@ -61,6 +74,8 @@ pub struct Clients {
     /// Proven identities that are online right now.
     by_id: HashMap<[u8; 32], u32>,
     pub count: usize,
+    /// Characters handed over by a neighbouring zone, waiting for their client: identity -> (character, tick parked).
+    pub incoming: HashMap<[u8; 32], (crate::store::Record, u32)>,
     /// Chat lines accepted this tick, waiting to be routed: (speaker slot, channel, text).
     pub chat_in: Vec<(usize, u8, String)>,
     pub limiter: Option<RateLimiter>,
@@ -75,6 +90,10 @@ fn key(a: &SocketAddrV4) -> u64 {
 }
 
 impl Clients {
+    pub fn by_id_get(&self, id: &[u8; 32]) -> Option<&u32> {
+        self.by_id.get(id)
+    }
+
     pub fn find(&self, a: &SocketAddrV4) -> Option<u32> {
         self.by_key.get(&key(a)).copied()
     }
@@ -220,6 +239,10 @@ pub struct Handshake {
     pub max_clients: usize,
     pub store: Option<std::sync::Arc<Store>>,
     pub gateway: Option<std::sync::Arc<crate::web::Gateway>>,
+    /// Set when this process is one zone of several.
+    pub zone: Option<std::sync::Arc<crate::zone::ZoneShared>>,
+    /// Public web base URL of every zone, for browser clients (may be empty).
+    pub zone_web: Vec<String>,
 }
 
 impl Handshake {
@@ -340,6 +363,7 @@ fn on_connect(
     };
     tx.queue(addr, &accept);
     let client = Client {
+        zstate: ZState::Here,
         addr,
         ip: hs.ip_of(&addr),
         session,
@@ -568,7 +592,11 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
             stats.takeovers += 1;
         }
     }
-    if let Some(store) = store {
+    if let Some((rec, _)) = clients.incoming.remove(&id) {
+        // Handed over by the zone the player just left: newer than anything we saved.
+        sim.restore(slot, &rec);
+        stats.restored += 1;
+    } else if let Some(store) = store {
         match store.load(&id) {
             Some(rec) => {
                 sim.restore(slot, &rec);
@@ -598,7 +626,7 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
 /// End a session: save its character if it has a proven identity, free its entity.
 pub fn drop_client(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, idx: u32) -> bool {
     let Some(c) = clients.remove(idx) else { return false };
-    if let (Some(store), true) = (store, c.proven && c.id != GUEST) {
+    if let (Some(store), true) = (store, c.proven && c.id != GUEST && !matches!(c.zstate, ZState::Moved { .. })) {
         store.save(vec![(c.id, sim.record_of(c.slot))]);
     }
     sim.ents.despawn(c.slot);
@@ -608,7 +636,7 @@ pub fn drop_client(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, 
 /// Save every proven player (autosave, shutdown, world restart).
 pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
     let Some(store) = store else { return };
-    let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST).map(|c| (c.id, sim.record_of(c.slot))).collect();
+    let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST && !matches!(c.zstate, ZState::Moved { .. })).map(|c| (c.id, sim.record_of(c.slot))).collect();
     store.save(recs);
     store.save_world(&sim.bot_records());
 }
@@ -860,6 +888,7 @@ mod tests {
             peers.push(peer);
             let slot = sim.spawn(NONE).unwrap();
             let ci = clients.insert(Client {
+                zstate: ZState::Here,
                 addr: dest,
                 ip: dest.ip().octets(),
                 session,

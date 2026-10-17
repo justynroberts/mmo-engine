@@ -125,6 +125,45 @@ Measured in-process (no network, no load generator competing, 2,000 clients, eve
 
 Receiving inputs is split the same way: the sim thread reads each batch off the socket and handles handshakes in order, then with `--workers` above 1 the lanes authenticate and decrypt the DATA packets in parallel (each lane owns a slice of clients, so no locks) and the sim thread applies the results. At 2,000 bots with 2 lanes essentially every input is decrypted on a lane, with zero failed decryptions, and tick p50 went from 17.7 to 15.8 ms (the bots share the second core on this VM, so that understates it).
 
+## Scale out (zones)
+
+One process is one core's worth of sim. To go past that, cut the world into
+vertical strips and run one server per strip:
+
+```
+export MMO_ZONE_SECRET='at least sixteen random bytes'
+cp server.key zone1/server.key   # every zone must share one identity key and game file
+server --zone 0/2 --port 7777 --zone-listen 10.0.0.1:9000 \
+       --zone-peers 10.0.0.1:9000,10.0.0.2:9000 \
+       --zone-public 203.0.113.1:7777,203.0.113.2:7777 --db z0/world.db
+server --zone 1/2 --port 7777 --zone-listen 10.0.0.2:9000 (same peers/public) --db z1/world.db
+```
+
+Each zone runs the whole world's geometry but owns only its strip: its bots are
+kept inside it (`count` in the game file is per zone), and a player who walks
+6 units past a border is handed over. The old zone sends the character
+(position and attributes) to the new one over TCP, MAC'd with the shared secret
+and carrying an increasing sequence number so a captured frame cannot be replayed.
+The new zone parks it and acknowledges, and only then does the old zone send
+`REDIRECT` (protocol v5, inside the encrypted session, repeated for 3 s in case a
+datagram is lost). The client reconnects with the same identity key and the new
+zone restores the parked character instead of reading its own database. The old
+zone never saves a player it handed over. Network I/O is on background threads,
+so a dead neighbour means a failed handoff that retries after 2 s, not a stalled tick.
+
+Browsers follow the redirect too: set `--zone-web http://a:8080,http://b:8080`
+so the play page knows each zone's gateway.
+
+Limits, stated plainly:
+
+- Guests have no identity to hand over, so they are stopped at their zone's border.
+- Bots do not cross borders, and a player near a border does not see entities in the other strip.
+- Zones are a static even split along x; nothing rebalances them.
+- The handoff link is plain TCP with a MAC: keep it on a private network. A leaked
+  secret lets someone inject characters.
+- The admin console is per process; there is no combined view.
+- Not measured at scale: the tests run two processes on one machine.
+
 ## Measured results
 
 Environment: a 2 vCPU VM, over loopback. Server pinned to core 0, bots on core 1, all traffic encrypted. Loopback charges the receiver's kernel work to the sender, so server numbers are pessimistic, and the load generator shares the machine.

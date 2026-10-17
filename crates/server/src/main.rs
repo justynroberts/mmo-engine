@@ -9,6 +9,7 @@ mod net;
 mod sim;
 mod store;
 mod web;
+mod zone;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -46,6 +47,12 @@ struct Config {
     web_per_ip: u32,
     web_trust_proxy: bool,
     new_ids_per_hour: u32,
+    zone: Option<(u8, u8)>,
+    zone_listen: Option<String>,
+    zone_peers: Vec<String>,
+    zone_public: Vec<String>,
+    zone_web: Vec<String>,
+    zone_secret: Option<String>,
 }
 
 fn parse_args() -> Config {
@@ -75,6 +82,12 @@ fn parse_args() -> Config {
         web_per_ip: 8,
         web_trust_proxy: false,
         new_ids_per_hour: 30,
+        zone: None,
+        zone_listen: None,
+        zone_peers: Vec::new(),
+        zone_public: Vec::new(),
+        zone_web: Vec::new(),
+        zone_secret: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -111,6 +124,20 @@ fn parse_args() -> Config {
             "--web-per-ip" => c.web_per_ip = val(a).parse().unwrap_or_else(|_| usage("bad --web-per-ip")),
             "--web-trust-proxy" => c.web_trust_proxy = true,
             "--db-expire-days" => c.db_expire_days = val(a).parse().unwrap_or_else(|_| usage("bad --db-expire-days")),
+            "--zone" => {
+                let v = val(a);
+                let (i, n) = v.split_once('/').unwrap_or_else(|| usage("--zone wants INDEX/COUNT, like 0/2"));
+                let (i, n): (u8, u8) = (i.parse().unwrap_or_else(|_| usage("bad --zone")), n.parse().unwrap_or_else(|_| usage("bad --zone")));
+                if n < 2 || i >= n {
+                    usage("--zone INDEX/COUNT needs COUNT >= 2 and INDEX < COUNT");
+                }
+                c.zone = Some((i, n));
+            }
+            "--zone-listen" => c.zone_listen = Some(val(a)),
+            "--zone-peers" => c.zone_peers = val(a).split(',').map(|s| s.trim().to_string()).collect(),
+            "--zone-public" => c.zone_public = val(a).split(',').map(|s| s.trim().to_string()).collect(),
+            "--zone-web" => c.zone_web = val(a).split(',').map(|s| s.trim().to_string()).collect(),
+            "--zone-secret" => c.zone_secret = Some(val(a)),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -131,6 +158,12 @@ fn usage(msg: &str) -> ! {
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
   --hello-rate N    handshake packets per second allowed from one address, 0 = unlimited (100)
   --limit-loopback  apply that limit to 127.x too (off so local load tests work)
+  --zone I/N        run as zone I of N: this process owns the I-th vertical strip of the world (off)
+  --zone-listen ADDR  where this zone accepts handoffs from its neighbours (TCP), private network only
+  --zone-peers A,B,..  handoff address of every zone in index order
+  --zone-public A,B,.. public UDP address (ip:port) of every zone in index order, given to clients on handoff
+  --zone-web U,V,..  public web base URL of every zone, for browser clients (optional)
+  --zone-secret S   shared secret for the handoff link, or set MMO_ZONE_SECRET (at least 16 bytes)
   --quiet           only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
@@ -176,6 +209,24 @@ fn main() {
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
+    let mut zone: Option<zone::Zone> = cfg.zone.map(|(index, count)| {
+        let secret = cfg.zone_secret.clone().or_else(|| std::env::var("MMO_ZONE_SECRET").ok()).unwrap_or_default();
+        if secret.len() < 16 {
+            usage("zones need a shared secret of at least 16 bytes: --zone-secret or MMO_ZONE_SECRET");
+        }
+        let listen = cfg.zone_listen.as_deref().unwrap_or_else(|| usage("--zone needs --zone-listen")).parse().unwrap_or_else(|_| usage("bad --zone-listen"));
+        if cfg.zone_peers.len() != count as usize || cfg.zone_public.len() != count as usize {
+            usage("--zone-peers and --zone-public need one entry per zone");
+        }
+        let public = cfg.zone_public.iter().map(|a| a.parse().unwrap_or_else(|_| usage("bad --zone-public address, want ip:port"))).collect();
+        let z = zone::Zone::start(zone::ZoneCfg { index, count, listen, peers: cfg.zone_peers.clone(), public, secret: secret.into_bytes() }, cfg.world_size as f32).unwrap_or_else(|e| {
+            eprintln!("cannot start zone link on {listen}: {e}");
+            std::process::exit(1);
+        });
+        sim.zone = Some((z.shared.lo, z.shared.hi));
+        eprintln!("zone {index} of {count}: owns x {:.0}..{:.0}, handoffs on tcp/{listen}", z.shared.lo, z.shared.hi);
+        z
+    });
     let keys = load_keys(&cfg.key_file);
     let store = cfg.db.as_ref().map(|p| {
         let st = store::Store::open(p).unwrap_or_else(|e| {
@@ -241,7 +292,7 @@ fn main() {
         }
         gw
     });
-    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store, gateway };
+    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store, gateway, zone: zone.as_ref().map(|z| z.shared.clone()), zone_web: cfg.zone_web.clone() };
     if let Some(g) = &hs.gateway {
         g.set_info(ctl::play_info(&sim, &hs));
     }
@@ -341,6 +392,10 @@ fn main() {
             }
         }
         sim.step(&pending);
+        if let Some(z) = zone.as_mut() {
+            z.tick(&mut sim, &mut clients, &mut tx, &mut scratch);
+            tx.flush();
+        }
         net::route_chat(&mut sim, &mut clients);
         let t2 = Instant::now();
 

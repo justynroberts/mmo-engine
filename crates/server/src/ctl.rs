@@ -127,6 +127,8 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
         "boxes": boxes,
+        "zone": hs.zone.as_ref().map(|z| z.index),
+        "zones": hs.zone.as_ref().map(|z| (0..z.count).map(|i| hs.zone_web.get(i as usize).cloned()).collect::<Vec<_>>()),
     })
     .to_string()
 }
@@ -575,6 +577,10 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     if let Some(g) = &c.hs.gateway {
         use std::sync::atomic::Ordering::Relaxed;
         let _ = write!(o, r#""web":{{"open":{},"total":{},"refused":{},"up_bytes":{},"down_bytes":{}}},"#, g.stats.open.load(Relaxed), g.stats.total.load(Relaxed), g.stats.refused.load(Relaxed), g.stats.up_bytes.load(Relaxed), g.stats.down_bytes.load(Relaxed));
+    }
+    if let Some(z) = &c.hs.zone {
+        use std::sync::atomic::Ordering::Relaxed;
+        let _ = write!(o, r#""zone":{{"index":{},"count":{},"lo":{},"hi":{},"out":{},"in":{},"failed":{},"rejected":{}}},"#, z.index, z.count, z.lo, z.hi, z.stats.handoffs_out.load(Relaxed), z.stats.handoffs_in.load(Relaxed), z.stats.failed.load(Relaxed), z.stats.rejected.load(Relaxed));
     }
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(

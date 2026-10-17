@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ChatClient, ClientHs, ClientView, concat, decodeChatBatch, decodeSnapshot, decodeWelcome, encodeChatSend, encodeInput,
+  ChatClient, ClientHs, ClientView, concat, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, encodeChatSend, encodeInput,
   identityFromPassphrase, kind, parseRecoveryCode, recoveryCode, Session,
 } from './protocol'
 
@@ -131,5 +131,15 @@ describe('messages', () => {
     expect(c.onBatch(1, decoded.msgs).length).toBe(0) // a resend is not delivered twice
     expect(c.ack()).toBe(1)
     expect(c.outgoing()![1]).toBe(2) // the first was acked, the second goes next
+  })
+})
+
+describe('zone redirect', () => {
+  it('reads the 8 byte message the Rust server sends and refuses anything else', () => {
+    // Rust: encode_redirect(Redirect { zone: 2, ip: [10, 0, 0, 7], port: 7779 })
+    const b = Uint8Array.of(kind.REDIRECT, 2, 10, 0, 0, 7, 7779 & 255, 7779 >> 8)
+    expect(decodeRedirect(b)).toEqual({ zone: 2, ip: '10.0.0.7', port: 7779 })
+    expect(decodeRedirect(b.slice(0, 7))).toBeNull()
+    expect(decodeRedirect(Uint8Array.of(kind.CHAT_BATCH, ...b.slice(1)))).toBeNull()
   })
 })

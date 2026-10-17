@@ -1,7 +1,7 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 4;
+pub const PROTO_VERSION: u16 = 5;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 
@@ -15,6 +15,8 @@ pub mod kind {
     pub const REJECT: u8 = 0x83;
     pub const CHALLENGE: u8 = 0x84;
     pub const ACCEPT: u8 = 0x85;
+    /// Inner (inside DATA): this zone handed you over, reconnect to the address given.
+    pub const REDIRECT: u8 = 0x87;
 }
 
 pub mod reject {
@@ -164,6 +166,29 @@ pub fn encode_welcome(out: &mut Vec<u8>, w: &Welcome) {
     put_u64(out, w.world_seed);
 }
 
+/// Where a handed-over player should reconnect: the zone's index and its public UDP address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Redirect {
+    pub zone: u8,
+    pub ip: [u8; 4],
+    pub port: u16,
+}
+
+pub fn encode_redirect(out: &mut Vec<u8>, r: &Redirect) {
+    out.clear();
+    put_u8(out, kind::REDIRECT);
+    put_u8(out, r.zone);
+    out.extend_from_slice(&r.ip);
+    put_u16(out, r.port);
+}
+
+pub fn decode_redirect(buf: &[u8]) -> Option<Redirect> {
+    if buf.len() != 8 || buf[0] != kind::REDIRECT {
+        return None;
+    }
+    Some(Redirect { zone: buf[1], ip: buf[2..6].try_into().ok()?, port: u16::from_le_bytes([buf[6], buf[7]]) })
+}
+
 pub fn encode_reject(out: &mut Vec<u8>, reason: u8) {
     out.clear();
     put_u8(out, kind::REJECT);
@@ -190,6 +215,18 @@ pub fn decode_server(buf: &[u8]) -> Option<ServerMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_round_trips_and_rejects_bad_lengths() {
+        let r = Redirect { zone: 2, ip: [10, 0, 0, 7], port: 7779 };
+        let mut b = Vec::new();
+        encode_redirect(&mut b, &r);
+        assert_eq!(b.len(), 8);
+        assert_eq!(decode_redirect(&b), Some(r));
+        assert_eq!(decode_redirect(&b[..7]), None);
+        b[0] = 0x86;
+        assert_eq!(decode_redirect(&b), None);
+    }
 
     #[test]
     fn input_roundtrip() {

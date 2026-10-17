@@ -7,7 +7,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-export const PROTO_VERSION = 4
+export const PROTO_VERSION = 5
 export const HELLO_LEN = 96
 export const CHALLENGE_LEN = 53
 export const CONNECT_LEN = 55 + 8 + 32 + 16
@@ -26,6 +26,7 @@ export const kind = {
   CHALLENGE: 0x84,
   ACCEPT: 0x85,
   CHAT_BATCH: 0x86,
+  REDIRECT: 0x87,
 } as const
 
 export const reject = { BAD_VERSION: 1, CONTENT_MISMATCH: 2, SERVER_FULL: 3 } as const
@@ -257,6 +258,18 @@ export function decodeWelcome(b: Uint8Array): Welcome | null {
   if (b.length < 20 || b[0] !== kind.WELCOME) return null
   const v = new DataView(b.buffer, b.byteOffset, b.length)
   return { entity: v.getUint32(1, true), tick: v.getUint32(5, true), hz: v.getUint8(9), worldSize: v.getUint16(10, true), seed: v.getBigUint64(12, true) }
+}
+
+export interface Redirect {
+  zone: number
+  ip: string
+  port: number
+}
+
+/** The zone that just handed us over says where to reconnect. */
+export function decodeRedirect(b: Uint8Array): Redirect | null {
+  if (b.length !== 8 || b[0] !== kind.REDIRECT) return null
+  return { zone: b[1]!, ip: `${b[2]}.${b[3]}.${b[4]}.${b[5]}`, port: b[6]! | (b[7]! << 8) }
 }
 
 export interface Input {

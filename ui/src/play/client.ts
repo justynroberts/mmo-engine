@@ -1,6 +1,6 @@
 // A game session over the web gateway: handshake, input loop, snapshots, chat, reconnect.
 import {
-  ChatClient, ClientHs, ClientView, decodeChatBatch, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
+  ChatClient, ClientHs, ClientView, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
   kind, reject, type ChatMsg, type Defs, type Session,
 } from './protocol'
 
@@ -18,6 +18,18 @@ export interface PlayInfo {
   replicated: number[]
   actions: { id: number; name: string; range: number }[]
   boxes: [number, number, number, number][]
+  /** Set when the server is one zone of several: its index, and each zone's web base URL (null if unknown). */
+  zone?: number | null
+  zones?: (string | null)[] | null
+}
+
+/** Where to open the WebSocket for a zone, from the base URL the operator configured. */
+export function zoneUrl(base: string): string {
+  const u = new URL(base)
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+  u.pathname = '/ws'
+  u.search = ''
+  return u.toString()
 }
 
 export type Status = 'connecting' | 'playing' | 'rejected' | 'closed'
@@ -191,6 +203,21 @@ export class GameClient {
         if (inner[0] === kind.CHAT_BATCH) {
           const b = decodeChatBatch(inner)
           if (b) for (const m of this.chat.onBatch(b.ack, b.msgs)) this.h.onChat(m)
+        } else if (inner[0] === kind.REDIRECT) {
+          const r = decodeRedirect(inner)
+          const base = r && this.info.zones?.[r.zone]
+          if (!r) return
+          if (!base) {
+            this.stopped = true
+            this.teardown()
+            this.set('closed', 'You crossed into another zone that has no web address.')
+            return
+          }
+          // Same identity, new server: an ordinary handshake, so the character follows us.
+          this.url = zoneUrl(base)
+          this.info = { ...this.info, zone: r.zone }
+          this.open()
+          this.set('connecting', 'moving to the next zone')
         } else if (inner[0] === kind.SNAPSHOT) {
           const r = decodeSnapshot(inner, this.defs, this.view)
           if ('info' in r && !r.info.stale) {

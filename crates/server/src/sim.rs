@@ -228,6 +228,8 @@ pub struct Sim {
     npc_actions: Vec<PendingAction>,
     /// Actions injected by the admin UI for the next tick.
     pub admin_actions: Vec<PendingAction>,
+    /// This process's strip of the world (x range) when running as one zone of several: bots stay inside it.
+    pub zone: Option<(f32, f32)>,
 }
 
 impl Sim {
@@ -252,6 +254,7 @@ impl Sim {
             npc_say: Vec::new(),
             npc_actions: Vec::new(),
             admin_actions: Vec::new(),
+            zone: None,
         }
     }
 
@@ -265,10 +268,24 @@ impl Sim {
         let r = self.defs.entity_radius;
         let slot = self.ents.alloc()?;
         let home = if owner == NONE { self.archs.get(arch as usize).and_then(|a| a.home) } else { None };
-        let (x, y) = match at {
+        let (mut x, mut y) = match at {
             Some((x, y)) if !self.world.blocked(x, y, r) => (x, y),
             _ => self.spawn_point(home, r),
         };
+        if let (Some((lo, hi)), true) = (self.zone, owner == NONE) {
+            // A zone's bots live in its strip: look for a spot there, else take the nearest edge.
+            for _ in 0..64 {
+                if x >= lo + r && x <= hi - r {
+                    break;
+                }
+                (x, y) = self.spawn_point(home, r);
+            }
+            x = x.clamp(lo + r, (hi - r).max(lo + r));
+            if self.world.blocked(x, y, r) {
+                (x, y) = self.world.random_spawn(&mut self.rng, r);
+                x = x.clamp(lo + r, (hi - r).max(lo + r));
+            }
+        }
         let speed = self.defs.move_speed * self.archs.get(arch as usize).map_or(1.0, |a| a.speed_mult);
         let e = &mut self.ents;
         e.alive[slot] = true;
@@ -653,7 +670,13 @@ impl Sim {
             if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0) {
                 continue;
             }
-            let (nx, ny) = integrate(&self.world, e.x[s], e.y[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
+            let (mut nx, ny) = integrate(&self.world, e.x[s], e.y[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
+            if let (Some((lo, hi)), true) = (self.zone, e.owner[s] == NONE) {
+                nx = nx.clamp(lo + r, (hi - r).max(lo + r));
+                if self.world.blocked(nx, ny, r) {
+                    continue;
+                }
+            }
             e.x[s] = nx;
             e.y[s] = ny;
         }

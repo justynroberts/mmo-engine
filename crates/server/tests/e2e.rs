@@ -110,6 +110,7 @@ struct Client {
     defs: Defs,
     chat: proto::chat::ChatClient,
     heard: Vec<proto::chat::ChatMsg>,
+    redirect: Option<wire::Redirect>,
 }
 
 enum Outcome {
@@ -155,6 +156,7 @@ fn connect_full(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64, identity: Option
                             defs: defs(),
                             chat: Default::default(),
                             heard: Vec::new(),
+                            redirect: None,
                         }));
                     }
                 }
@@ -201,6 +203,10 @@ impl Client {
         while t.elapsed() < Duration::from_millis(ms) {
             if let Ok(n) = self.sock.recv(&mut buf) {
                 if let Some(inner) = self.sess.open(&buf[..n], &mut plain) {
+                    if let Some(r) = wire::decode_redirect(inner) {
+                        self.redirect = Some(r);
+                        continue;
+                    }
                     if inner.first() == Some(&proto::chat::kind::BATCH) {
                         let (ack, msgs) = proto::chat::decode_batch(inner).expect("valid batch");
                         let fresh = self.chat.on_batch(ack, msgs);
@@ -1139,4 +1145,176 @@ fn web_players_are_limited_by_their_real_address_not_the_gateways() {
     let mut other = web_connect(&srv, web, &[("X-Forwarded-For", "203.0.113.8")], Some(proto::secure::new_identity())).expect("connect");
     other.input(0, 0);
     assert!(other.pump(300) > 0, "a different real address is not affected");
+}
+
+// ---------------------------------------------------------------- scale out
+
+const ZONE_SECRET: &str = "test-zone-secret-0123456789";
+
+struct Zones {
+    z: Vec<Srv>,
+    listen: Vec<u16>,
+}
+
+/// Two zone processes sharing one server key, each with its own database.
+fn start_zones() -> Zones {
+    let n = 2;
+    let udp: Vec<u16> = (0..n).map(|_| free_udp()).collect();
+    let listen: Vec<u16> = (0..n).map(|_| free_tcp()).collect();
+    let peers = listen.iter().map(|p| format!("127.0.0.1:{p}")).collect::<Vec<_>>().join(",");
+    let public = udp.iter().map(|p| format!("127.0.0.1:{p}")).collect::<Vec<_>>().join(",");
+    let mut z = Vec::new();
+    let key = proto::secure::new_identity(); // any 32 random bytes will do as a server secret
+    let key_hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    for i in 0..n {
+        let dir = std::env::temp_dir().join(format!("mmo-e2e-zone{i}-{}-{}", std::process::id(), free_udp()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("server.key"), &key_hex).unwrap();
+        let h = free_tcp();
+        let child = Command::new(env!("CARGO_BIN_EXE_server"))
+            .current_dir(&dir)
+            .env("MMO_ZONE_SECRET", ZONE_SECRET)
+            .args(["--port", &udp[i].to_string(), "--admin", &format!("127.0.0.1:{h}")])
+            .args(["--world-size", "512", "--quiet", "--timeout", "2"])
+            .args(["--zone", &format!("{i}/{n}"), "--zone-listen", &format!("127.0.0.1:{}", listen[i]), "--zone-peers", &peers, "--zone-public", &public])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn zone");
+        let srv = Srv { child, udp: format!("127.0.0.1:{}", udp[i]).parse().unwrap(), http: format!("127.0.0.1:{h}").parse().unwrap(), dir };
+        let t = Instant::now();
+        while !(TcpStream::connect(srv.http).is_ok() && http(&srv, "GET", "/api/info", "").0 == 200) {
+            assert!(t.elapsed() < Duration::from_secs(10), "zone {i} did not come up");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        z.push(srv);
+    }
+    Zones { z, listen }
+}
+
+fn bot_xs(srv: &Srv) -> Vec<f64> {
+    state(srv)["e"].as_array().unwrap().iter().filter(|r| r[4] == 0).map(|r| r[1].as_f64().unwrap()).collect()
+}
+
+#[test]
+fn zone_bots_stay_in_their_strip() {
+    let zs = start_zones();
+    std::thread::sleep(Duration::from_millis(1500));
+    let (a, b) = (bot_xs(&zs.z[0]), bot_xs(&zs.z[1]));
+    assert!(a.len() >= 30 && b.len() >= 30, "each zone runs its own bots: {} and {}", a.len(), b.len());
+    assert!(a.iter().all(|&x| x <= 256.0), "zone 0 bot outside its strip");
+    assert!(b.iter().all(|&x| x >= 256.0), "zone 1 bot outside its strip");
+    assert_eq!(state(&zs.z[0])["zone"]["index"], 0);
+    assert_eq!(state(&zs.z[1])["zone"]["hi"], 512.0);
+}
+
+#[test]
+fn a_player_who_crosses_the_border_is_handed_to_the_next_zone_and_keeps_their_character() {
+    let zs = start_zones();
+    let id = proto::secure::new_identity();
+    let mut a = connect_as(&zs.z[0], id);
+    a.send_input(0, 0);
+    a.pump(200);
+    // Walk east, sidestepping walls, until the old zone tells us to go.
+    let t = Instant::now();
+    let mut last = a.pos();
+    let mut detour = 0i8;
+    let mut n = 0;
+    while a.redirect.is_none() {
+        assert!(t.elapsed() < Duration::from_secs(40), "never redirected, stuck at {:?}", a.pos());
+        if n % 40 == 39 {
+            let p = a.pos();
+            detour = if (p.0 - last.0).abs() < 2.0 { if detour >= 0 { -127 } else { 127 } } else { 0 };
+            last = p;
+        }
+        n += 1;
+        a.send_input(127, detour);
+        a.pump(40);
+    }
+    let r = a.redirect.unwrap();
+    assert_eq!(r.zone, 1);
+    assert_eq!(r.port, zs.z[1].udp.port());
+    a.send_input(0, 0);
+    a.pump(200);
+    let (x, y) = a.pos();
+    assert!(x > 256.0, "the handoff starts past the border, x = {x}");
+
+    // Reconnect to the new zone with the same identity: same character, same place.
+    let mut b = connect_as(&zs.z[1], id);
+    b.send_input(0, 0);
+    b.pump(400);
+    let (bx, by) = b.pos();
+    assert!((bx - x).hypot(by - y) < 4.0, "was at ({x:.1},{y:.1}) came back at ({bx:.1},{by:.1})");
+    let s1 = state(&zs.z[1]);
+    assert_eq!(s1["zone"]["in"], 1);
+    assert_eq!(s1["net"]["restored"], 1);
+    let s0 = state(&zs.z[0]);
+    assert_eq!(s0["zone"]["out"], 1);
+
+    // The old zone lets go after its redirect window and never saves over the new owner.
+    let t = Instant::now();
+    while state(&zs.z[0])["clients"].as_u64() != Some(0) {
+        assert!(t.elapsed() < Duration::from_secs(8), "old zone kept the player");
+        a.pump(100);
+    }
+    assert_eq!(saved_rows(&zs.z[0]), 0, "a handed-over player must not be saved by the zone they left");
+}
+
+#[test]
+fn guests_are_stopped_at_the_border() {
+    let zs = start_zones();
+    let mut g = connect(&zs.z[0]);
+    g.send_input(0, 0);
+    g.pump(200);
+    for _ in 0..140 {
+        g.send_input(127, 0);
+        g.pump(30);
+    }
+    assert!(g.pos().0 <= 256.0, "a guest cannot be handed over, so it must stay in its zone");
+    assert!(g.redirect.is_none());
+}
+
+fn zone_frame(secret: &str, from: u8, seq: u64, id: &[u8; 32]) -> Vec<u8> {
+    let idhex: String = id.iter().map(|b| format!("{b:02x}")).collect();
+    let body = serde_json::to_vec(&serde_json::json!({"from": from, "seq": seq, "id": idhex, "rec": {"x": 100.0, "y": 100.0, "attrs": {}}})).unwrap();
+    let key = blake3::derive_key("mmo-engine zone link v1", secret.as_bytes());
+    let mac = blake3::keyed_hash(&key, &body);
+    let mut out = (body.len() as u32).to_le_bytes().to_vec();
+    out.extend_from_slice(&body);
+    out.extend_from_slice(mac.as_bytes());
+    out
+}
+
+#[test]
+fn the_handoff_link_refuses_forged_and_replayed_frames() {
+    let zs = start_zones();
+    let addr: SocketAddr = format!("127.0.0.1:{}", zs.listen[0]).parse().unwrap();
+    let id = proto::secure::new_identity();
+    let ack = |s: &mut TcpStream| {
+        let mut b = [9u8; 1];
+        s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        s.read_exact(&mut b).map(|_| b[0]).unwrap_or(255)
+    };
+    // Wrong secret: refused, and the connection is closed.
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(&zone_frame("some-other-secret-value", 1, 10, &id)).unwrap();
+    assert_eq!(ack(&mut s), 0);
+    // Right secret: taken.
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(&zone_frame(ZONE_SECRET, 1, 1_000_000_000_000_000_000, &id)).unwrap();
+    assert_eq!(ack(&mut s), 1);
+    // The same frame again (a replay) and an older one: refused.
+    let mut s2 = TcpStream::connect(addr).unwrap();
+    s2.write_all(&zone_frame(ZONE_SECRET, 1, 1_000_000_000_000_000_000, &id)).unwrap();
+    assert_eq!(ack(&mut s2), 0);
+    let mut s3 = TcpStream::connect(addr).unwrap();
+    s3.write_all(&zone_frame(ZONE_SECRET, 1, 5, &id)).unwrap();
+    assert_eq!(ack(&mut s3), 0);
+    // A frame claiming to come from ourselves: refused.
+    let mut s4 = TcpStream::connect(addr).unwrap();
+    s4.write_all(&zone_frame(ZONE_SECRET, 0, 2_000_000_000_000_000_000, &id)).unwrap();
+    assert_eq!(ack(&mut s4), 0);
+    let z = state(&zs.z[0])["zone"].clone();
+    assert_eq!(z["in"], 1);
+    assert_eq!(z["rejected"], 4);
 }
