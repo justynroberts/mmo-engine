@@ -5,6 +5,8 @@ compatibility_minimum = 4.6
 [libraries]
 linux.debug.x86_64 = "res://bin/libmmo_godot.so"
 linux.release.x86_64 = "res://bin/libmmo_godot.so"
+linux.debug.arm64 = "res://bin/libmmo_godot.so"
+linux.release.arm64 = "res://bin/libmmo_godot.so"
 macos.debug = "res://bin/libmmo_godot.dylib"
 macos.release = "res://bin/libmmo_godot.dylib"
 windows.debug.x86_64 = "res://bin/mmo_godot.dll"
