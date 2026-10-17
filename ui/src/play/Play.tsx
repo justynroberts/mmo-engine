@@ -69,6 +69,7 @@ export default function Play() {
         .then((r) => (r.ok ? r.json() : null))
         .then((fresh: PlayInfo | null) => {
           if (!fresh || fresh.content_hash !== info?.content_hash) return
+          if (JSON.stringify(fresh.items) !== JSON.stringify(shared.current.items)) shared.current.items = fresh.items ?? []
           const w = JSON.stringify(fresh.weather ?? null)
           if (w !== lastWeather) {
             lastWeather = w
@@ -83,6 +84,7 @@ export default function Play() {
         .catch(() => undefined)
     }, WORLD_CHECK_MS)
     shared.current.weather = info?.weather ?? null
+    shared.current.items = info?.items ?? []
     return () => clearInterval(t)
   }, [client, info?.content_hash]) // eslint-disable-line react-hooks/exhaustive-deps
 

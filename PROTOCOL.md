@@ -1,4 +1,4 @@
-# Wire protocol, version 5
+# Wire protocol, version 6
 
 Everything is UDP, little-endian, byte aligned. The reference implementations are
 `crates/proto` (Rust) and `ui/src/play/protocol.ts` (TypeScript, cross-checked against Rust).
@@ -63,6 +63,8 @@ Inner messages:
 | `0x82` SNAPSHOT | S->C | see section 3 |
 | `0x86` CHAT_BATCH | S->C | `ack_cseq u32 | n u8 | n x (seq u32 | from u32 | channel u8 | len u8 | text)` |
 | `0x87` REDIRECT | S->C | `zone u8 | ip [4] | port u16`: reconnect there (section 5) |
+| `0x88` INVENTORY | S->C | `n u8 | n x (item+1 u8, count u8)`: your bag, sent when it changes and every second (item+1 of 0 is an empty slot) |
+| `0x89` GROUND | S->C | `n u8 | n x (id u32, x u16, y u16, item u8, count u8)`: up to 40 items lying nearest you, every half second; positions quantised like entities |
 
 Send INPUT at the server's tick rate (20 Hz). `dir_x`/`dir_y` are -127..127 intent, never speed. `seq` increases;
 the server applies the newest. `ack_tick` is the newest snapshot tick you hold. `action` is an action id (0 = none) with a
@@ -108,3 +110,11 @@ Guests are never redirected (they are stopped at the border). Browsers use the z
 ## 6. Browsers
 
 The web gateway relays one WebSocket binary message as one datagram, both ways, at `/ws`. The protocol above is unchanged.
+
+## Items (version 6)
+
+Item kinds come from the game file (`items`), by index in file order, and are not part of the content hash; the play page
+fetches them from `/play/info`. There is no new client message: item actions ride the INPUT action byte. Game actions use ids
+below 200. `200 + n` uses bag slot n (0 to 7), `216 + n` drops slot n onto the ground, and `250` picks up the nearest item
+within 3 units. All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
+nothing else; a client that ignores them still plays.

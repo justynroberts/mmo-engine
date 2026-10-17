@@ -236,6 +236,14 @@ pub struct Sim {
     pub sight_mult: f32,
     /// What clients are told about the current weather, if any.
     pub weather: Option<WeatherView>,
+    /// Item kinds (from the game file) and who carries what, indexed by entity slot.
+    pub items: Vec<proto::game::ItemRt>,
+    pub inv: Vec<crate::items::Bag>,
+    /// Bumped whenever a bag changes, so the network layer knows to resend it.
+    pub inv_ver: Vec<u32>,
+    pub item_cd: Vec<u32>,
+    pub ground: Vec<crate::items::GroundItem>,
+    pub next_ground: u32,
 }
 
 /// The part of the weather that clients draw.
@@ -248,7 +256,7 @@ pub struct WeatherView {
 
 impl Sim {
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items: _ } = game;
+        let Game { defs, archs, places, routes, items } = game;
         let ents = Entities::new(cap, defs.attrs.len());
         let grid = Grid::new(world.size, defs.interest_radius, cap);
         Sim {
@@ -271,6 +279,12 @@ impl Sim {
             zone: None,
             sight_mult: 1.0,
             weather: None,
+            items,
+            inv: vec![[(0, 0); proto::game::INV_SLOTS]; cap],
+            inv_ver: vec![0; cap],
+            item_cd: vec![0; cap],
+            ground: Vec::new(),
+            next_ground: 1,
         }
     }
 
@@ -318,6 +332,8 @@ impl Sim {
         e.say_at[slot] = 0;
         e.live += 1;
         self.reset_attrs(slot);
+        self.clear_inv(slot);
+        self.item_cd[slot] = 0;
         Some(slot)
     }
 
@@ -327,6 +343,7 @@ impl Sim {
             x: self.ents.x[slot],
             y: self.ents.y[slot],
             attrs: self.defs.attrs.iter().enumerate().map(|(i, d)| (d.name.clone(), self.ents.attrs[i][slot])).collect(),
+            inv: self.inv_names(slot),
         }
     }
 
@@ -346,6 +363,9 @@ impl Sim {
                     self.ents.attrs[i][slot] = v.clamp(d.min, d.max);
                 }
             }
+        }
+        if !rec.inv.is_empty() {
+            self.restore_inv(slot, &rec.inv);
         }
     }
 
@@ -449,7 +469,7 @@ impl Sim {
             let Some(a) = self.archs.iter().position(|a| a.name == b.arch) else { continue };
             let Some(slot) = self.spawn_as(NONE, a as u8, Some((b.x, b.y))) else { return };
             // A spot that is no longer legal falls back to a fresh one inside spawn_as; attributes still apply.
-            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone() });
+            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone(), inv: Vec::new() });
             have[a] += 1;
         }
         for a in 0..self.archs.len() {
@@ -745,10 +765,16 @@ impl Sim {
     /// only said "I want to use action N on target T".
     fn system_actions(&mut self, pending: &[PendingAction]) {
         for p in pending {
-            let e = &mut self.ents;
-            if !e.alive[p.slot] {
+            if !self.ents.alive[p.slot] {
                 continue;
             }
+            if p.action >= proto::game::ACT_USE {
+                if !self.item_action(p.slot, p.action) {
+                    self.stats.rejected_actions += 1;
+                }
+                continue;
+            }
+            let e = &mut self.ents;
             let Some(def) = self.defs.action(p.action) else {
                 self.stats.rejected_actions += 1;
                 continue;
@@ -801,6 +827,9 @@ impl Sim {
             let min = self.defs.attrs[a].min;
             for s in 0..self.ents.high {
                 if self.ents.alive[s] && self.ents.owner[s] != GHOST && self.ents.attrs[a][s] <= min {
+                    if self.is_bot(s) {
+                        self.loot_from(s);
+                    }
                     let (x, y) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
                     self.ents.x[s] = x;
                     self.ents.y[s] = y;
@@ -1147,7 +1176,7 @@ mod tests {
         use crate::store::Record;
         let mut s = sim();
         let p = s.spawn(0).unwrap();
-        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default() };
+        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default(), inv: Vec::new() };
         rec.attrs.insert("health".into(), 37.0);
         rec.attrs.insert("energy".into(), 9999.0); // beyond the current max
         rec.attrs.insert("removed_attr".into(), 5.0); // no longer exists
@@ -1158,17 +1187,17 @@ mod tests {
         // Out of the world, or not a number: position is left alone, attributes still apply.
         let (x0, y0) = (s.ents.x[p], s.ents.y[p]);
         for (x, y) in [(-5.0, 10.0), (9999.0, 10.0), (f32::NAN, 1.0), (10.0, f32::INFINITY)] {
-            s.restore(p, &Record { x, y, attrs: Default::default() });
+            s.restore(p, &Record { x, y, attrs: Default::default(), inv: Vec::new() });
             assert_eq!((s.ents.x[p], s.ents.y[p]), (x0, y0), "({x}, {y})");
         }
         // A saved NaN attribute is ignored rather than poisoning the entity.
-        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default() };
+        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default(), inv: Vec::new() };
         bad.attrs.insert("health".into(), f32::NAN);
         s.restore(p, &bad);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 37.0);
         // A new attribute missing from the record keeps its default (new entities start there).
         let q = s.spawn(1).unwrap();
-        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default() });
+        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default(), inv: Vec::new() });
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][q], 100.0);
     }
 

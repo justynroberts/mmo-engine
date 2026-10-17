@@ -1,8 +1,8 @@
 import { Footprints, Pause, PersonSimpleRun, Target } from '@phosphor-icons/react'
 import { Copy, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import type { ActionFile, Archetype, AttrFile, Behaviour, GameFile } from '../api'
-import { removeArch, renameArch } from '../directorEdit'
+import type { ActionFile, Archetype, AttrFile, Behaviour, GameFile, ItemDef } from '../api'
+import { MAX_ITEMS, newItem, removeArch, removeItem, renameArch, renameItem } from '../directorEdit'
 import {
   addFromTemplate,
   BOT_TEMPLATES,
@@ -222,6 +222,75 @@ export function ActionsEditor({ game, setGame }: Edit) {
   )
 }
 
+// --------------------------------------------------------------------- items
+
+export function ItemsEditor({ game, setGame }: Edit) {
+  const items = game.items ?? []
+  const attrNames = game.attrs.map((a) => ({ value: a.name, label: a.name }))
+  const first = game.attrs[0]?.name ?? ''
+  const patch = (i: number, p: Partial<ItemDef>) => setGame({ ...game, items: items.map((a, k) => (k === i ? { ...a, ...p } : a)) })
+  const dup = (name: string, i: number) => items.some((a, k) => k !== i && a.name === name)
+  return (
+    <div>
+      {items.length === 0 && <Empty>No items. Items are carried in an 8 slot bag, used for their effects, dropped, and left behind by bots.</Empty>}
+      {items.map((it, i) => (
+        <Strip key={i}>
+          <div className="flex items-end gap-2">
+            <label className="block">
+              <span className="lbl block">Colour</span>
+              <input
+                type="color"
+                value={it.color}
+                aria-label={`Colour of ${it.name}`}
+                onChange={(e) => patch(i, { color: e.target.value })}
+                className="block h-6 w-8 cursor-pointer border border-line bg-transparent p-0 rounded-sm"
+              />
+            </label>
+            <TextField label="Item" value={it.name} invalid={dup(it.name, i)} onCommit={(n) => setGame(renameItem(game, i, n))} className="flex-1" />
+            <IconButton label={`Delete item ${it.name}`} onClick={() => setGame(removeItem(game, i))}>
+              <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+            </IconButton>
+          </div>
+          <div className="grid grid-cols-3 gap-x-2 pt-2 items-end">
+            <NumField label="Stack size" value={it.stack_max} onCommit={(n) => patch(i, { stack_max: Math.max(1, Math.min(99, Math.round(n))) })} />
+            <div className="col-span-2 pb-1">
+              <Toggle label="Used up when used" checked={it.consume} onChange={(v) => patch(i, { consume: v })} />
+            </div>
+          </div>
+          <div className="pt-1">
+            <p className="lbl">When used</p>
+            {it.uses.length === 0 && <p className="m-0 text-fg-3">Does nothing. Fine for trade goods and keepsakes.</p>}
+            {it.uses.map((u, k) => (
+              <div key={k} className="flex items-end gap-2">
+                <SelectField
+                  label="Attribute"
+                  value={u.attr}
+                  options={attrNames}
+                  onChange={(v) => patch(i, { uses: it.uses.map((x, j) => (j === k ? { ...x, attr: v } : x)) })}
+                  className="flex-1"
+                />
+                <NumField label="Add" value={u.delta} onCommit={(n) => patch(i, { uses: it.uses.map((x, j) => (j === k ? { ...x, delta: n } : x)) })} className="w-24" />
+                <IconButton label="Remove effect" onClick={() => patch(i, { uses: it.uses.filter((_, j) => j !== k) })}>
+                  <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                </IconButton>
+              </div>
+            ))}
+            <button type="button" className="btn mt-1" disabled={!first || it.uses.length >= 4} onClick={() => patch(i, { uses: [...it.uses, { attr: first, delta: 10 }] })}>
+              <Plus size={16} strokeWidth={1.5} aria-hidden />
+              Add effect
+            </button>
+          </div>
+        </Strip>
+      ))}
+      <AddButton label="Add item" onClick={() => items.length < MAX_ITEMS && setGame({ ...game, items: [...items, newItem(game)] })} />
+      <p className="m-0 pt-3 text-label text-fg-3 max-w-[40rem]">
+        Items are not part of the wire format, so adding or changing them never disconnects anyone. Give bots things to drop in the Bots tab; players pick
+        them up with E and use them with Shift and a number.
+      </p>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------- bots
 
 export function BotsEditor({
@@ -340,6 +409,32 @@ export function BotsEditor({
                   </select>
                 </label>
               )}
+            </div>
+            <div className="pt-1">
+              <p className="lbl">Leaves behind</p>
+              {(a.drops ?? []).map((d, k) => {
+                const setDrop = (p: Partial<typeof d>) => patch(i, { drops: (a.drops ?? []).map((x, j) => (j === k ? { ...x, ...p } : x)) })
+                return (
+                  <div key={k} className="flex items-end gap-2">
+                    <SelectField label="Item" value={d.item} options={(game.items ?? []).map((x) => ({ value: x.name, label: x.name }))} onChange={(v) => setDrop({ item: v })} className="flex-1" />
+                    <NumField label="Chance %" value={d.chance_pct} onCommit={(n) => setDrop({ chance_pct: Math.max(0, Math.min(100, n)) })} className="w-20" />
+                    <NumField label="Min" value={d.min} onCommit={(n) => setDrop({ min: Math.max(1, Math.min(99, Math.round(n))), max: Math.max(d.max, Math.round(n)) })} className="w-14" />
+                    <NumField label="Max" value={d.max} onCommit={(n) => setDrop({ max: Math.max(d.min, Math.min(99, Math.round(n))) })} className="w-14" />
+                    <IconButton label={`Remove drop of ${d.item}`} onClick={() => patch(i, { drops: (a.drops ?? []).filter((_, j) => j !== k) })}>
+                      <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                    </IconButton>
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                className="btn mt-1"
+                disabled={(game.items ?? []).length === 0 || (a.drops ?? []).length >= 8}
+                onClick={() => patch(i, { drops: [...(a.drops ?? []), { item: game.items?.[0]?.name ?? '', chance_pct: 50, min: 1, max: 1 }] })}
+              >
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                Add drop
+              </button>
             </div>
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn" onClick={() => onSpawn(a.name, 1)}>

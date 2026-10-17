@@ -240,7 +240,12 @@ impl Director {
                     }
                     format!("{attr} {delta:+} on {n}{}", place.as_ref().map(|p| format!(" at {p}")).unwrap_or_default())
                 }
-                Step::Drop { item, .. } => format!("drop of {item} (items not live yet)"),
+                Step::Drop { item, count, place } => {
+                    let Some(i) = sim.items.iter().position(|x| &x.name == item) else { continue };
+                    let area = place.as_ref().and_then(|p| sim.places.iter().find(|x| &x.name == p)).map(|p| (p.x, p.y, p.r));
+                    sim.scatter_ground(i, *count, area);
+                    format!("dropped {count} {item}{}", place.as_ref().map(|p| format!(" at {p}")).unwrap_or_default())
+                }
                 Step::Clear { archetype } => {
                     let Some(a) = sim.archs.iter().position(|x| &x.name == archetype) else { continue };
                     let mut n = 0;

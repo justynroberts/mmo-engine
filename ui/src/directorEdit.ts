@@ -1,15 +1,15 @@
 // Editing weather and events. They refer to attributes, bot types, places and each other by name, so renaming or
 // deleting any of those has to rewrite them, the same way the bot rules are kept honest in gameEdit.ts.
 
-import type { EventDef, GameFile, Step, WeatherDef } from './api'
+import type { Archetype, EventDef, GameFile, ItemDef, Step, WeatherDef } from './api'
 import { uniqueName } from './gameEdit'
 
-export type RefKind = 'attr' | 'arch' | 'place' | 'weather'
+export type RefKind = 'attr' | 'arch' | 'place' | 'weather' | 'item'
 
 /** Rewrite every weather and event step that mentions `from`. With `to` null the references are removed: a drain,
  * a step, and an event left with no steps. (A deleted place drops its steps rather than widening them to "everywhere".) */
 export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string | null): GameFile {
-  if (!g.weather && !g.events) return g
+  if (!g.weather && !g.events && kind !== 'item') return g
   const weather = (g.weather ?? []).map((w) =>
     kind === 'attr'
       ? { ...w, drain: w.drain.flatMap((d) => (d.attr !== from ? [d] : to === null ? [] : [{ ...d, attr: to }])) }
@@ -33,12 +33,37 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
       case 'clear':
         if (kind === 'arch' && s.archetype === from) return to === null ? null : { ...s, archetype: to }
         return s
+      case 'drop':
+        if (kind === 'item' && s.item === from) return to === null ? null : { ...s, item: to }
+        if (kind === 'place' && s.place === from) return to === null ? null : { ...s, place: to }
+        return s
     }
   }
   const events = (g.events ?? [])
     .map((e) => ({ ...e, steps: e.steps.flatMap((s) => fixStep(s) ?? []) }))
     .filter((e) => e.steps.length > 0)
-  return { ...g, weather, events }
+  // Loot tables name items too.
+  const archetypes: Archetype[] =
+    kind === 'item'
+      ? g.archetypes.map((a) => (a.drops ? { ...a, drops: a.drops.flatMap((d) => (d.item !== from ? [d] : to === null ? [] : [{ ...d, item: to }])) } : a))
+      : g.archetypes
+  return { ...g, archetypes, weather, events }
+}
+
+export const MAX_ITEMS = 32
+
+export function newItem(g: GameFile): ItemDef {
+  return { name: uniqueName('item', (g.items ?? []).map((i) => i.name)), color: '#f5d90a', stack_max: 5, uses: [], consume: true }
+}
+export function renameItem(g: GameFile, index: number, name: string): GameFile {
+  const old = g.items?.[index]?.name
+  if (old === undefined || old === name) return g
+  return rewriteRefs({ ...g, items: (g.items ?? []).map((x, i) => (i === index ? { ...x, name } : x)) }, 'item', old, name)
+}
+export function removeItem(g: GameFile, index: number): GameFile {
+  const gone = g.items?.[index]?.name
+  if (gone === undefined) return g
+  return rewriteRefs({ ...g, items: (g.items ?? []).filter((_, i) => i !== index) }, 'item', gone, null)
 }
 
 export function renameArch(g: GameFile, index: number, name: string): GameFile {
@@ -162,6 +187,7 @@ export const STEP_KINDS: readonly { kind: Step['kind']; label: string }[] = [
   { kind: 'spawn', label: 'Spawn bots' },
   { kind: 'hit', label: 'Change an attribute' },
   { kind: 'clear', label: 'Remove bots' },
+  { kind: 'drop', label: 'Drop items' },
 ]
 
 /** A new step of a kind, filled with things that exist (null where the game has none to offer). */
@@ -177,6 +203,8 @@ export function defaultStep(kind: Step['kind'], g: GameFile): Step {
       return { kind, attr: healthName(g) ?? '', delta: -10, place: null }
     case 'clear':
       return { kind, archetype: g.archetypes[0]?.name ?? '' }
+    case 'drop':
+      return { kind, item: g.items?.[0]?.name ?? '', count: 10, place: g.places[0]?.name ?? null }
   }
 }
 
@@ -192,6 +220,8 @@ export function describeStep(s: Step): string {
       return `${s.attr} ${s.delta > 0 ? '+' : ''}${s.delta}${s.place ? ` at ${s.place}` : ' everywhere'}`
     case 'clear':
       return `remove every ${s.archetype}`
+    case 'drop':
+      return `${s.count} ${s.item} on the ground${s.place ? ` at ${s.place}` : ''}`
   }
 }
 
@@ -202,13 +232,16 @@ export function directorProblems(g: GameFile): string[] {
   const arch = new Set(g.archetypes.map((a) => a.name))
   const place = new Set(g.places.map((p) => p.name))
   const wea = new Set((g.weather ?? []).map((w) => w.name))
+  const itm = new Set((g.items ?? []).map((i) => i.name))
+  for (const a of g.archetypes) for (const d of a.drops ?? []) if (!itm.has(d.item)) out.push(`${a.name}: drops “${d.item}”, which is not an item`)
   for (const e of g.events ?? []) {
     e.steps.forEach((s, i) => {
       const at = `${e.name} step ${i + 1}`
       if (s.kind === 'weather' && s.name && !wea.has(s.name)) out.push(`${at}: no weather called “${s.name}”`)
       if ((s.kind === 'spawn' || s.kind === 'clear') && !arch.has(s.archetype)) out.push(`${at}: no bot type called “${s.archetype}”`)
       if (s.kind === 'hit' && !attr.has(s.attr)) out.push(`${at}: no attribute called “${s.attr}”`)
-      if ((s.kind === 'spawn' || s.kind === 'hit') && s.place && !place.has(s.place)) out.push(`${at}: no place called “${s.place}”`)
+      if (s.kind === 'drop' && !itm.has(s.item)) out.push(`${at}: no item called “${s.item}”`)
+      if ((s.kind === 'spawn' || s.kind === 'hit' || s.kind === 'drop') && s.place && !place.has(s.place)) out.push(`${at}: no place called “${s.place}”`)
     })
   }
   return out

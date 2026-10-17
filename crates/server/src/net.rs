@@ -60,6 +60,11 @@ pub struct Client {
     pub ack_tick: u32,
     pub action: u8,
     pub target: u32,
+    /// Bag version last sent and how many more times to repeat it (a lost packet must not lose a pickup).
+    pub inv_sent: u32,
+    pub inv_burst: u8,
+    /// How many ground items the last list held, so an empty one is sent once to clear the client's.
+    pub ground_n: u16,
     pub baseline_tick: u32,
     pub baseline: Vec<Entry>,
     pub chat: proto::chat::ChatServer,
@@ -378,6 +383,9 @@ fn on_connect(
         ack_tick: 0,
         action: 0,
         target: 0,
+        inv_sent: u32::MAX,
+        inv_burst: 0,
+        ground_n: 0,
         baseline_tick: 0,
         baseline: Vec::new(),
         ring: (0..RING).map(|_| (0, Vec::new())).collect(),
@@ -726,6 +734,7 @@ pub fn reap(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, timeout
 #[derive(Default)]
 pub struct SnapScratch {
     cand: Vec<(f32, u32)>,
+    ground: Vec<wire::GroundEntry>,
     entries: Vec<Entry>,
     buf: Vec<u8>,
     out: Vec<u8>,
@@ -844,6 +853,44 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
             st.chat_batches += 1;
         }
 
+        // Your bag: when it changes (a few times over, since UDP may drop one) and once a second regardless.
+        let ver = sim.inv_ver[c.slot];
+        if c.inv_sent != ver {
+            c.inv_sent = ver;
+            c.inv_burst = 3;
+        }
+        if c.inv_burst > 0 || (tick.wrapping_add(c.slot as u32)) % 20 == 0 {
+            c.inv_burst = c.inv_burst.saturating_sub(1);
+            wire::encode_inventory(&mut sc.buf, &sim.inv[c.slot]);
+            if c.session.seal(&sc.buf, &mut sc.out) {
+                tx.queue(c.addr, &sc.out);
+            }
+        }
+        // What lies nearby, twice a second, staggered across players; an empty list once to clear, and now and then anyway.
+        let beat = tick.wrapping_add(c.slot as u32);
+        if beat % 10 == 0 && (!sim.ground.is_empty() || c.ground_n > 0 || beat % 100 == 0) {
+            sc.ground.clear();
+            let mut near: Vec<(f32, &crate::items::GroundItem)> = Vec::new();
+            for g in &sim.ground {
+                let d2 = (g.x - px).powi(2) + (g.y - py).powi(2);
+                if d2 <= r2 {
+                    near.push((d2, g));
+                }
+            }
+            if near.len() > wire::MAX_GROUND_SENT {
+                near.select_nth_unstable_by(wire::MAX_GROUND_SENT, |a, b| a.0.total_cmp(&b.0));
+                near.truncate(wire::MAX_GROUND_SENT);
+            }
+            for (_, g) in &near {
+                sc.ground.push(wire::GroundEntry { id: g.id, x: proto::world::qpos(g.x), y: proto::world::qpos(g.y), item: g.item, count: g.count });
+            }
+            c.ground_n = sc.ground.len() as u16;
+            wire::encode_ground(&mut sc.buf, &sc.ground);
+            if c.session.seal(&sc.buf, &mut sc.out) {
+                tx.queue(c.addr, &sc.out);
+            }
+        }
+
         // Remember what we sent so a future ack can become the new baseline.
         let slot = &mut c.ring[tick as usize % RING];
         slot.0 = tick;
@@ -903,6 +950,9 @@ mod tests {
                 ack_tick: 0,
                 action: 0,
                 target: 0,
+                inv_sent: u32::MAX,
+                inv_burst: 0,
+                ground_n: 0,
                 baseline_tick: 0,
                 baseline: Vec::new(),
                 ring: (0..RING).map(|_| (0, Vec::new())).collect(),
@@ -919,6 +969,10 @@ mod tests {
             let (sim, mut clients, mut peers, sink, out) = fixture(200, 256);
             sink.set_nonblocking(true).unwrap();
             let mut lanes: Vec<Worker> = (0..lanes_n).map(|_| Worker::new(out.as_raw_fd())).collect();
+            // Bags are announced on connect (a burst); this test is about snapshots, so pretend that is done.
+            for c in clients.slab.iter_mut().flatten() {
+                c.inv_sent = sim.inv_ver[c.slot];
+            }
             build_snapshots(&sim, &mut clients, &mut lanes, None);
             let snaps: u64 = lanes.iter().map(|l| l.st.snapshots).sum();
             assert_eq!(snaps, 200, "{lanes_n} lanes");
@@ -931,8 +985,8 @@ mod tests {
             while let Ok(n) = sink.recv(&mut buf) {
                 let sid = data_sid(&buf[..n]).unwrap() as usize;
                 let inner = peers[sid].open(&buf[..n], &mut scratch).expect("authentic");
-                assert_eq!(inner[0], kind::SNAPSHOT);
-                ok += 1;
+                assert!([kind::SNAPSHOT, kind::INVENTORY, kind::GROUND].contains(&inner[0]), "unexpected message {:#x}", inner[0]);
+                ok += (inner[0] == kind::SNAPSHOT) as usize;
             }
             assert!(ok >= 150, "only {ok} of 200 packets arrived ({lanes_n} lanes)");
         }

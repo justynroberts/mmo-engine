@@ -5,7 +5,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api, type GameFile, type Info, type PutResult, type State, type WorldGeom } from './api'
 import { Builder, initialBuilder, type BuilderState } from './components/Builder'
 import { ChatPanel } from './components/Chat'
-import { ActionsEditor, AttrsEditor, BotsEditor } from './components/Editors'
+import { ActionsEditor, AttrsEditor, BotsEditor, ItemsEditor } from './components/Editors'
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
@@ -18,6 +18,7 @@ const TABS: readonly (readonly [string, string])[] = [
   ['god', 'God'],
   ['attrs', 'Attributes'],
   ['actions', 'Actions'],
+  ['items', 'Items'],
   ['entity', 'Entity'],
   ['chat', 'Chat'],
   ['connect', 'Connect'],
@@ -392,6 +393,9 @@ export default function App() {
               </Tabs.Content>
               <Tabs.Content value="actions" tabIndex={-1}>
                 {body(draft && <ActionsEditor game={draft} setGame={setGame} />)}
+              </Tabs.Content>
+              <Tabs.Content value="items" tabIndex={-1}>
+                {body(draft && <ItemsEditor game={draft} setGame={setGame} />)}
               </Tabs.Content>
               <Tabs.Content value="entity" tabIndex={-1}>
                 {body(

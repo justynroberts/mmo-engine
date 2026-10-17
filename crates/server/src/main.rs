@@ -6,6 +6,7 @@
 mod botdir;
 mod ctl;
 mod director;
+mod items;
 mod io;
 mod net;
 mod sim;

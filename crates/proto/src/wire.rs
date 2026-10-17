@@ -1,7 +1,7 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 5;
+pub const PROTO_VERSION: u16 = 6;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 
@@ -17,6 +17,10 @@ pub mod kind {
     pub const ACCEPT: u8 = 0x85;
     /// Inner (inside DATA): this zone handed you over, reconnect to the address given.
     pub const REDIRECT: u8 = 0x87;
+    /// Inner: your bag, `n u8 | n x (item+1 u8, count u8)` (item+1 of 0 is an empty slot).
+    pub const INVENTORY: u8 = 0x88;
+    /// Inner: items lying near you, `n u8 | n x (id u32, x u16, y u16, item u8, count u8)`.
+    pub const GROUND: u8 = 0x89;
 }
 
 pub mod reject {
@@ -189,6 +193,60 @@ pub fn decode_redirect(buf: &[u8]) -> Option<Redirect> {
     Some(Redirect { zone: buf[1], ip: buf[2..6].try_into().ok()?, port: u16::from_le_bytes([buf[6], buf[7]]) })
 }
 
+/// One thing lying on the ground, as a client is told about it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroundEntry {
+    pub id: u32,
+    pub x: u16,
+    pub y: u16,
+    pub item: u8,
+    pub count: u8,
+}
+
+pub const MAX_GROUND_SENT: usize = 40;
+
+pub fn encode_inventory(out: &mut Vec<u8>, bag: &[(u8, u8)]) {
+    out.clear();
+    put_u8(out, kind::INVENTORY);
+    put_u8(out, bag.len().min(255) as u8);
+    for &(i, c) in bag.iter().take(255) {
+        put_u8(out, i);
+        put_u8(out, c);
+    }
+}
+
+pub fn decode_inventory(buf: &[u8]) -> Option<Vec<(u8, u8)>> {
+    if buf.len() < 2 || buf[0] != kind::INVENTORY || buf.len() != 2 + buf[1] as usize * 2 {
+        return None;
+    }
+    Some(buf[2..].chunks_exact(2).map(|c| (c[0], c[1])).collect())
+}
+
+pub fn encode_ground(out: &mut Vec<u8>, items: &[GroundEntry]) {
+    out.clear();
+    put_u8(out, kind::GROUND);
+    put_u8(out, items.len().min(MAX_GROUND_SENT) as u8);
+    for g in items.iter().take(MAX_GROUND_SENT) {
+        put_u32(out, g.id);
+        put_u16(out, g.x);
+        put_u16(out, g.y);
+        put_u8(out, g.item);
+        put_u8(out, g.count);
+    }
+}
+
+pub fn decode_ground(buf: &[u8]) -> Option<Vec<GroundEntry>> {
+    if buf.len() < 2 || buf[0] != kind::GROUND || buf.len() != 2 + buf[1] as usize * 10 {
+        return None;
+    }
+    Some(
+        buf[2..]
+            .chunks_exact(10)
+            .map(|c| GroundEntry { id: u32::from_le_bytes([c[0], c[1], c[2], c[3]]), x: u16::from_le_bytes([c[4], c[5]]), y: u16::from_le_bytes([c[6], c[7]]), item: c[8], count: c[9] })
+            .collect(),
+    )
+}
+
 pub fn encode_reject(out: &mut Vec<u8>, reason: u8) {
     out.clear();
     put_u8(out, kind::REJECT);
@@ -215,6 +273,21 @@ pub fn decode_server(buf: &[u8]) -> Option<ServerMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_and_ground_round_trip_and_reject_bad_lengths() {
+        let mut b = Vec::new();
+        encode_inventory(&mut b, &[(1, 3), (0, 0), (2, 99)]);
+        assert_eq!(decode_inventory(&b), Some(vec![(1, 3), (0, 0), (2, 99)]));
+        assert_eq!(decode_inventory(&b[..b.len() - 1]), None);
+        let g = [GroundEntry { id: 70000, x: 123, y: 65535, item: 2, count: 5 }, GroundEntry { id: 1, x: 0, y: 1, item: 0, count: 1 }];
+        encode_ground(&mut b, &g);
+        assert_eq!(decode_ground(&b), Some(g.to_vec()));
+        encode_ground(&mut b, &[]);
+        assert_eq!(decode_ground(&b), Some(vec![]));
+        b[0] = kind::INVENTORY;
+        assert_eq!(decode_ground(&b), None);
+    }
 
     #[test]
     fn redirect_round_trips_and_rejects_bad_lengths() {

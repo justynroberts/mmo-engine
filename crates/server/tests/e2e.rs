@@ -111,6 +111,8 @@ struct Client {
     chat: proto::chat::ChatClient,
     heard: Vec<proto::chat::ChatMsg>,
     redirect: Option<wire::Redirect>,
+    bag: Vec<(u8, u8)>,
+    ground: Vec<wire::GroundEntry>,
 }
 
 enum Outcome {
@@ -157,6 +159,8 @@ fn connect_full(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64, identity: Option
                             chat: Default::default(),
                             heard: Vec::new(),
                             redirect: None,
+                            bag: Vec::new(),
+                            ground: Vec::new(),
                         }));
                     }
                 }
@@ -205,6 +209,14 @@ impl Client {
                 if let Some(inner) = self.sess.open(&buf[..n], &mut plain) {
                     if let Some(r) = wire::decode_redirect(inner) {
                         self.redirect = Some(r);
+                        continue;
+                    }
+                    if let Some(b) = wire::decode_inventory(inner) {
+                        self.bag = b;
+                        continue;
+                    }
+                    if let Some(g) = wire::decode_ground(inner) {
+                        self.ground = g;
                         continue;
                     }
                     if inner.first() == Some(&proto::chat::kind::BATCH) {
@@ -1582,6 +1594,14 @@ fn nearest_other(c: &Client, x: f32, y: f32) -> Option<(u32, f32)> {
 #[test]
 fn players_see_across_a_zone_border_and_cannot_hit_across_it() {
     let zs = start_zones_with(true);
+    // No bots: nothing but the zap under test may hurt a player, whatever the dice do.
+    for z in &zs.z {
+        let (_, mut game) = json(z, "GET", "/api/game", "");
+        for a in game["archetypes"].as_array_mut().unwrap() {
+            a["count"] = 0.into();
+        }
+        assert_eq!(http(z, "PUT", "/api/game", &game.to_string()).0, 200);
+    }
     // Guests are stopped at their own zone's border, which puts them right beside each other.
     let mut a = connect(&zs.z[0]);
     let mut b = connect(&zs.z[1]);
@@ -1760,4 +1780,75 @@ fn weather_and_events_are_built_fired_and_reported_live_without_dropping_players
     // It is in the saved game file.
     let saved = std::fs::read_to_string(srv.dir.join("game.json")).unwrap();
     assert!(saved.contains("arrival") && saved.contains("fog"));
+}
+
+#[test]
+fn items_are_given_used_dropped_picked_up_and_kept_across_a_reconnect() {
+    let srv = start(&["--db", "players.db"]);
+    let id = proto::secure::new_identity();
+    let mut c = connect_as(&srv, id);
+    wait_for_clients(&srv, 1);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    for a in game["archetypes"].as_array_mut().unwrap() {
+        a["count"] = 0.into();
+    }
+    let (s, body) = http(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{body}");
+    let me = c.entity;
+    c.pump(300);
+    assert!(c.bag.iter().all(|&(t, _)| t == 0), "starts empty: {:?}", c.bag);
+
+    // The play page is told what items exist.
+    let info = {
+        let (s, b) = http(&srv, "GET", "/api/info", "");
+        assert_eq!(s, 200);
+        serde_json::from_str::<serde_json::Value>(&b).unwrap()
+    };
+    assert!(info["server_key"].is_string());
+    let names: Vec<&str> = game["items"].as_array().unwrap().iter().map(|i| i["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"medkit"), "{names:?}");
+
+    // Hurt, then given two medkits: the bag shows them and using one heals and uses it up.
+    let (s, _) = http(&srv, "POST", "/api/give", &format!(r#"{{"id":{me},"item":"medkit","count":2}}"#));
+    assert_eq!(s, 200);
+    let (s, _) = http(&srv, "POST", "/api/give", &format!(r#"{{"id":{me},"item":"nonsense"}}"#));
+    assert_eq!(s, 404);
+    c.pump(500);
+    let medkit = (names.iter().position(|n| *n == "medkit").unwrap() + 1) as u8;
+    assert_eq!(c.bag[0], (medkit, 2), "{:?}", c.bag);
+    act(&mut c, wire_use(0), 0);
+    c.pump(500);
+    assert_eq!(c.bag[0], (medkit, 1), "using one used one up");
+    act(&mut c, wire_use(3), 0); // an empty slot is refused quietly
+    c.pump(300);
+    assert_eq!(c.bag[0], (medkit, 1));
+
+    // Drop it: it is on the ground near us, then we pick it back up.
+    act(&mut c, proto::game::ACT_DROP, 0);
+    c.pump(800);
+    assert_eq!(c.bag[0].0, 0, "dropped");
+    assert_eq!(c.ground.len(), 1, "{:?}", c.ground);
+    assert_eq!(c.ground[0].item, medkit - 1);
+    std::thread::sleep(Duration::from_millis(300));
+    act(&mut c, proto::game::ACT_PICKUP, 0);
+    c.pump(800);
+    assert_eq!(c.bag[0], (medkit, 1), "picked up again");
+    assert!(c.ground.is_empty(), "{:?}", c.ground);
+
+    // Items scattered by the admin appear on the ground, but not near a player who is far from them.
+    let (s, _) = http(&srv, "POST", "/api/ground", r#"{"item":"scrap","count":5,"x":5,"y":5}"#);
+    assert_eq!(s, 200);
+    assert_eq!(state(&srv)["game"]["ground_items"], 5);
+
+    // The bag is saved with the character and comes back by name.
+    drop(c);
+    wait_for_clients(&srv, 0);
+    let mut c2 = connect_as(&srv, id);
+    c2.send_input(0, 0); // the first packet is what proves who it is
+    c2.pump(800);
+    assert_eq!(c2.bag[0], (medkit, 1), "{:?}", c2.bag);
+}
+
+fn wire_use(slot: u8) -> u8 {
+    proto::game::ACT_USE + slot
 }

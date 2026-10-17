@@ -1,7 +1,7 @@
 // A game session over the web gateway: handshake, input loop, snapshots, chat, reconnect.
 import {
   ChatClient, ClientHs, ClientView, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
-  kind, reject, type ChatMsg, type Defs, type Session,
+  kind, reject, decodeGround, decodeInventory, type BagSlot, type ChatMsg, type Defs, type GroundItem, type Session,
 } from './protocol'
 import { Interpolator } from './interp'
 import { Predictor, World, type Box } from './sim'
@@ -23,6 +23,8 @@ export interface PlayInfo {
   /** Set when the server is one zone of several: its index, and each zone's web base URL (null if unknown). */
   zone?: number | null
   zones?: (string | null)[] | null
+  /** What kinds of item exist, by index (the order in the game file). */
+  items?: { name: string; color: string; stack_max: number; usable: boolean }[]
   /** The weather right now, or null for clear sky. */
   weather?: { name: string; color: string; intensity: number } | null
 }
@@ -99,6 +101,9 @@ export class GameClient {
   private selfAttrs: Record<string, number> = {}
   /** The most recent frame computed, for readouts that do not drive the render loop. */
   last: Frame = { others: [], self: null }
+  /** Your bag (8 slots) and what lies near you, as the server last said. */
+  bag: BagSlot[] = []
+  ground: GroundItem[] = []
 
   constructor(
     private info: PlayInfo,
@@ -237,6 +242,12 @@ export class GameClient {
         if (inner[0] === kind.CHAT_BATCH) {
           const b = decodeChatBatch(inner)
           if (b) for (const m of this.chat.onBatch(b.ack, b.msgs)) this.h.onChat(m)
+        } else if (inner[0] === kind.INVENTORY) {
+          const b = decodeInventory(inner)
+          if (b) this.bag = b
+        } else if (inner[0] === kind.GROUND) {
+          const g = decodeGround(inner)
+          if (g) this.ground = g
         } else if (inner[0] === kind.REDIRECT) {
           const r = decodeRedirect(inner)
           const base = r && this.info.zones?.[r.zone]

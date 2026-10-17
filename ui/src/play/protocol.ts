@@ -7,7 +7,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-export const PROTO_VERSION = 5
+export const PROTO_VERSION = 6
 export const HELLO_LEN = 96
 export const CHALLENGE_LEN = 53
 export const CONNECT_LEN = 55 + 8 + 32 + 16
@@ -27,6 +27,8 @@ export const kind = {
   ACCEPT: 0x85,
   CHAT_BATCH: 0x86,
   REDIRECT: 0x87,
+  INVENTORY: 0x88,
+  GROUND: 0x89,
 } as const
 
 export const reject = { BAD_VERSION: 1, CONTENT_MISMATCH: 2, SERVER_FULL: 3 } as const
@@ -270,6 +272,39 @@ export interface Redirect {
 export function decodeRedirect(b: Uint8Array): Redirect | null {
   if (b.length !== 8 || b[0] !== kind.REDIRECT) return null
   return { zone: b[1]!, ip: `${b[2]}.${b[3]}.${b[4]}.${b[5]}`, port: b[6]! | (b[7]! << 8) }
+}
+
+/** One bag slot: the item index, or -1 when empty, and how many. */
+export interface BagSlot {
+  item: number
+  count: number
+}
+
+export function decodeInventory(b: Uint8Array): BagSlot[] | null {
+  if (b.length < 2 || b[0] !== kind.INVENTORY || b.length !== 2 + b[1]! * 2) return null
+  const out: BagSlot[] = []
+  for (let i = 0; i < b[1]!; i++) out.push({ item: b[2 + i * 2]! - 1, count: b[3 + i * 2]! })
+  return out
+}
+
+/** Something lying on the ground, positions in world units. */
+export interface GroundItem {
+  id: number
+  x: number
+  y: number
+  item: number
+  count: number
+}
+
+export function decodeGround(b: Uint8Array): GroundItem[] | null {
+  if (b.length < 2 || b[0] !== kind.GROUND || b.length !== 2 + b[1]! * 10) return null
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  const out: GroundItem[] = []
+  for (let i = 0; i < b[1]!; i++) {
+    const o = 2 + i * 10
+    out.push({ id: dv.getUint32(o, true), x: dpos(dv.getUint16(o + 4, true)), y: dpos(dv.getUint16(o + 6, true)), item: b[o + 8]!, count: b[o + 9]! })
+  }
+  return out
 }
 
 export interface Input {

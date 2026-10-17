@@ -1,6 +1,6 @@
-import { Check, Copy, Crosshair, Skull } from 'lucide-react'
-import { useState } from 'react'
-import { KIND_BOT, KIND_DRIVEN, KIND_PLAYER, type GameFile, type Info, type State } from '../api'
+import { Check, Copy, Crosshair, Gift, Skull } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { api, KIND_BOT, KIND_DRIVEN, KIND_PLAYER, type GameFile, type Info, type State } from '../api'
 import { BEHAVIOUR_ICON } from './Editors'
 import { Empty } from './Fields'
 
@@ -89,6 +89,7 @@ export function EntityPanel({
                 </button>
               )}
             </div>
+            {kind === KIND_PLAYER && (game?.items ?? []).length > 0 && <Bag id={row[0] ?? 0} items={(game?.items ?? []).map((i) => i.name)} />}
             {possessed === row[0] && (
               <p className="text-fg-3 pt-1">
                 WASD or arrows to walk{actionName ? `, space to use ${actionName} on the nearest entity in range` : ''}. Keys are
@@ -214,6 +215,69 @@ export function RawPanel({ text, onText, error }: { text: string; onText: (s: st
       {error && (
         <p role="alert" className="text-accent">
           {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** A player's bag as the server holds it, and a way to hand them something. */
+function Bag({ id, items }: { id: number; items: string[] }) {
+  const [bag, setBag] = useState<{ item: string; count: number }[]>([])
+  const [pick, setPick] = useState('')
+  const [n, setN] = useState(1)
+  const [note, setNote] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      void api<{ bag?: { item: string; count: number }[] }>(`/api/inventory?id=${id}`).then((r) => {
+        if (live && r.status === 200) setBag(r.body.bag ?? [])
+      })
+    load()
+    const t = setInterval(load, 1500)
+    return () => {
+      live = false
+      clearInterval(t)
+    }
+  }, [id, tick])
+  const item = items.includes(pick) ? pick : (items[0] ?? '')
+  return (
+    <div className="pt-2" role="group" aria-label="Bag">
+      <p className="lbl">Carrying</p>
+      <p className="m-0 text-fg-2">{bag.length ? bag.map((b) => `${b.item} ×${b.count}`).join(', ') : 'nothing'}</p>
+      <div className="flex items-end gap-2 pt-1">
+        <label className="block flex-1">
+          <span className="lbl block">Give</span>
+          <select className="field cursor-pointer" value={item} onChange={(e) => setPick(e.target.value)}>
+            {items.map((x) => (
+              <option key={x} value={x} className="bg-bg">
+                {x}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block w-16">
+          <span className="lbl block">How many</span>
+          <input className="field" type="number" min={1} max={99} value={n} onChange={(e) => setN(Math.max(1, Math.min(99, Number(e.target.value) || 1)))} />
+        </label>
+        <button
+          type="button"
+          className="btn"
+          onClick={() =>
+            void api<{ given?: number; dropped?: number; error?: string }>('/api/give', 'POST', { id, item, count: n }).then((r) => {
+              setNote(r.status === 200 ? `Gave ${r.body.given}${r.body.dropped ? `, ${r.body.dropped} did not fit and fell at their feet` : ''}.` : (r.body.error ?? 'refused'))
+              setTick((t) => t + 1)
+            })
+          }
+        >
+          <Gift size={16} strokeWidth={1.5} aria-hidden />
+          Give
+        </button>
+      </div>
+      {note && (
+        <p role="status" className="m-0 pt-1 text-fg-3">
+          {note}
         </p>
       )}
     </div>

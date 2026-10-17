@@ -54,7 +54,7 @@ try:
 
     with sync_playwright() as pw:
         br = pw.chromium.launch(args=["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
-        TABS = ["Bots", "Builder", "Attributes", "Actions", "Entity", "Chat", "Connect", "JSON"]
+        TABS = ["Bots", "Builder", "Attributes", "Actions", "Items", "Entity", "Chat", "Connect", "JSON"]
         for theme in ("dark", "light"):
             ctx = br.new_context(viewport={"width": 1440, "height": 900}, color_scheme=theme)
             pg = ctx.new_page()
@@ -340,6 +340,24 @@ try:
         srvpos = [e for e in api(base, "/api/state?limit=6000")[1]["e"] if e[0] == mine[0][0]][0]
         check("the predicted position agrees with the server after stopping", abs(sx - srvpos[1]) < 2 and abs(sy - srvpos[2]) < 2, f"client {sx},{sy} server {srvpos[1]},{srvpos[2]}")
         check("the minimap is on screen", pg.get_by_role("img", name="Minimap of your surroundings").count() == 1)
+        # Items: given from the console, shown in the bag, used with Shift+1, dropped and picked up with E.
+        mid = mine[0][0]
+        check("the console can give an item", api(base, "/api/give", "POST", {"id": mid, "item": "medkit", "count": 2})[0] == 200)
+        pg.wait_for_selector('button[aria-label^="medkit ×2"]', timeout=6000)
+        check("a given item shows in the bag", True)
+        if SHOTS: pg.screenshot(path=str(SHOTS / "play-bag.png"))
+        pg.keyboard.press("Shift+Digit1"); time.sleep(0.6)
+        check("Shift+1 uses the item and one is used up", pg.locator('button[aria-label^="medkit ×1"]').count() == 1)
+        api(base, "/api/ground", "POST", {"item": "battery", "count": 1, "x": srvpos[1], "y": srvpos[2]})
+        pg.wait_for_selector('button[aria-label^="Pick up 1 battery"]', timeout=6000)
+        check("an item at your feet offers a pick-up prompt", True)
+        if SHOTS: pg.screenshot(path=str(SHOTS / "play-pickup.png"))
+        pg.keyboard.press("e"); time.sleep(0.8)
+        check("E picks it up", pg.locator('button[aria-label^="battery"]').count() == 1)
+        inv = api(base, "/api/inventory?id=%d" % mid)[1]["bag"]
+        check("the server agrees about the bag", {b["item"]: b["count"] for b in inv} == {"medkit": 1, "battery": 1}, str(inv))
+        pg.keyboard.press("g"); pg.keyboard.press("Digit1"); time.sleep(0.8)
+        check("G then 1 drops the first slot", pg.locator('button[aria-label^="medkit"]').count() == 0 and pg.locator('button[aria-label^="Pick up 1 medkit"]').count() == 1)
         # Targeting and acting: an idle sentry next to the player.
         game = api(base, "/api/game")[1]
         names = [a["name"] for a in game["archetypes"]]

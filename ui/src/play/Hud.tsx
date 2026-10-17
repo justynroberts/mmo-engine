@@ -2,10 +2,11 @@ import { ArrowsOutCardinal, Crosshair, MagnifyingGlassMinus, MagnifyingGlassPlus
 import { Key, Moon, Sun } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type { GameClient, PlayInfo, Status } from './client'
+import Bag from './Bag'
 import Joystick from './Joystick'
 import Minimap from './Minimap'
 import { play as sfx, rememberSound, soundWanted } from './sfx'
-import { clampZoom, healthAttr, type Shared } from './shared'
+import { ACT_DROP, ACT_PICKUP, ACT_USE, clampZoom, healthAttr, type Shared } from './shared'
 
 export interface Line {
   key: number
@@ -57,6 +58,9 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
   const hurtCount = useRef(0)
   const prevHp = useRef<number | null>(null)
   const wasDown = useRef(false)
+  // `G` arms dropping: the next number key drops that slot instead of using it.
+  const [dropArmed, setDropArmed] = useState(false)
+  const armRef = useRef(0)
 
   const hpa = healthAttr(info)
   const beep = useCallback((k: Parameters<typeof sfx>[0]) => soundRef.current && sfx(k), [])
@@ -139,6 +143,34 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
         return
       }
       if (TYPING(e.target)) return
+      if (e.shiftKey && /^Digit[1-8]$/.test(e.code)) {
+        const i = Number(e.code.slice(5)) - 1
+        client.act(ACT_USE + i, 0)
+        beep('act')
+        e.preventDefault()
+        return
+      }
+      if (armRef.current > performance.now() && /^[1-8]$/.test(k)) {
+        client.act(ACT_DROP + Number(k) - 1, 0)
+        armRef.current = 0
+        setDropArmed(false)
+        beep('act')
+        e.preventDefault()
+        return
+      }
+      if (k === 'g') {
+        armRef.current = performance.now() + 2500
+        setDropArmed(true)
+        setTimeout(() => {
+          if (armRef.current <= performance.now()) setDropArmed(false)
+        }, 2600)
+        return
+      }
+      if (k === 'e') {
+        client.act(ACT_PICKUP, 0)
+        beep('act')
+        return
+      }
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
         down.add(k)
         move()
@@ -302,6 +334,9 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
                 ['W A S D / arrows', 'move'],
                 ['Space', info.actions[0] ? info.actions[0].name : 'act'],
                 ...(info.actions.length > 1 ? [['1 to ' + Math.min(9, info.actions.length), 'pick an action']] : []),
+                ['Shift + 1 to 8', 'use a bag item'],
+                ['G, then 1 to 8', 'drop a bag item'],
+                ['E', 'pick up what is at your feet'],
                 ['Click / tap', 'target a character'],
                 ['T', 'next target'],
                 ['Esc', 'release the target'],
@@ -358,6 +393,8 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
             </button>
           </form>
         </div>
+
+        <Bag client={client} shared={shared} onAct={() => beep('act')} dropArmed={dropArmed} />
 
         <div className="absolute right-4 bottom-4 flex items-end gap-3">
           <div className="flex flex-col gap-1 pointer-events-auto">

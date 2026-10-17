@@ -164,6 +164,23 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     pools.frustumCulled = false
     pools.count = 0
     scene.add(cores, pools)
+
+    // Things lying on the ground: spinning lit gems with a pool of light, in the item's colour.
+    const GCAP = 128
+    const gems = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.55).scale(1, 1.5, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }), GCAP)
+    gems.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(GCAP * 3), 3)
+    gems.frustumCulled = false
+    gems.count = 0
+    const gemPools = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: gtex, transparent: true, depthWrite: false, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending, opacity: dark ? 0.7 : 0.5 }),
+      GCAP,
+    )
+    gemPools.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(GCAP * 3), 3)
+    gemPools.frustumCulled = false
+    gemPools.count = 0
+    scene.add(gems, gemPools)
+    const gemSeen = new Map<number, { x: number; z: number; c: THREE.Color }>()
     others.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3)
     others.frustumCulled = false
     others.count = 0
@@ -395,6 +412,52 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         prevPos.delete(id)
       }
 
+      // Things on the ground.
+      {
+        const items = s.items
+        const seenG = new Set<number>()
+        let gn = 0
+        for (const g of c.ground) {
+          const it = items[g.item]
+          if (!it || gn >= GCAP) continue
+          const x = g.x - half
+          const z = g.y - half
+          seenG.add(g.id)
+          tint.set(it.color).multiplyScalar(glow)
+          if (!gemSeen.has(g.id)) gemSeen.set(g.id, { x, z, c: new THREE.Color(it.color) })
+          tmp.position.set(x, 1.1 + Math.sin(now / 380 + g.id) * 0.25, z)
+          tmp.rotation.set(0, now / 700 + g.id, 0)
+          tmp.scale.set(1, 1, 1)
+          tmp.updateMatrix()
+          gems.setMatrixAt(gn, tmp.matrix)
+          gems.setColorAt(gn, tint)
+          tmp.position.set(x, 0.1, z)
+          tmp.rotation.set(0, 0, 0)
+          tmp.scale.set(5.5, 1, 5.5)
+          tmp.updateMatrix()
+          gemPools.setMatrixAt(gn, tmp.matrix)
+          gemPools.setColorAt(gn, tint)
+          tmp.scale.set(1, 1, 1)
+          if (Math.random() < 0.18) sparks.emit(x + (Math.random() - 0.5) * 1.4, 0.4, z + (Math.random() - 0.5) * 1.4, 0, 1.6 + Math.random(), 0, 0.9, 0.3, tint, 0.8, 0, 0)
+          gn++
+        }
+        gems.count = gn
+        gemPools.count = gn
+        for (const m of [gems, gemPools]) {
+          m.instanceMatrix.needsUpdate = true
+          if (m.instanceColor) m.instanceColor.needsUpdate = true
+        }
+        // One that vanished near you was picked up (or fell to someone nearby): a little burst where it lay.
+        for (const [id, gv] of gemSeen) {
+          if (seenG.has(id)) continue
+          gemSeen.delete(id)
+          if (fr.self && Math.hypot(gv.x - (fr.self.x - half), gv.z - (fr.self.y - half)) < 8) {
+            sparks.burst(gv.x, 1.1, gv.z, cTmp.copy(gv.c).multiplyScalar(glow), 22, 8, 0.7, 0.45)
+            wave(gv.x, gv.z, gv.c.clone().multiplyScalar(glow), 3)
+          }
+        }
+      }
+
       // Others.
       world = []
       let n = 0
@@ -623,7 +686,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       ringMat.dispose()
       rainGeo.dispose()
       rainMat.dispose()
-      for (const o of [others, cores, pools, me, ring, bars]) {
+      for (const o of [others, cores, pools, gems, gemPools, me, ring, bars]) {
         o.geometry.dispose()
         ;(o.material as THREE.Material).dispose()
       }

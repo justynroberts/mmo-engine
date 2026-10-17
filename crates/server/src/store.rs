@@ -26,6 +26,9 @@ pub struct Record {
     pub x: f32,
     pub y: f32,
     pub attrs: BTreeMap<String, f32>,
+    /// Carried items by name, so a changed item list never scrambles a bag.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inv: Vec<(String, u8)>,
 }
 
 pub type PlayerId = [u8; 32];
@@ -267,7 +270,7 @@ mod tests {
     }
 
     fn rec(x: f32, hp: f32) -> Record {
-        Record { x, y: x * 2.0, attrs: BTreeMap::from([("health".to_string(), hp), ("energy".to_string(), 50.0)]) }
+        Record { x, y: x * 2.0, attrs: BTreeMap::from([("health".to_string(), hp), ("energy".to_string(), 50.0)]), inv: Vec::new() }
     }
 
     #[test]

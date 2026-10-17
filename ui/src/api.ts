@@ -53,6 +53,24 @@ export interface Route {
   loop: boolean
 }
 
+export interface UseEffect {
+  attr: string
+  delta: number
+}
+export interface ItemDef {
+  name: string
+  color: string
+  stack_max: number
+  uses: UseEffect[]
+  consume: boolean
+}
+export interface DropDef {
+  item: string
+  chance_pct: number
+  min: number
+  max: number
+}
+
 export interface Archetype {
   name: string
   color: string
@@ -64,6 +82,7 @@ export interface Archetype {
   attrs: Record<string, number>
   home: string | null
   rules: Rule[]
+  drops?: DropDef[]
 }
 export interface Drain {
   attr: string
@@ -82,6 +101,7 @@ export type Step =
   | { kind: 'spawn'; archetype: string; count: number; place: string | null }
   | { kind: 'hit'; attr: string; delta: number; place: string | null }
   | { kind: 'clear'; archetype: string }
+  | { kind: 'drop'; item: string; count: number; place: string | null }
 export interface EventDef {
   name: string
   every_secs: number
@@ -108,6 +128,7 @@ export interface GameFile {
   routes: Route[]
   /** Hand-placed walls [x0, y0, x1, y1]; absent means generated from the world seed. */
   walls?: [number, number, number, number][]
+  items?: ItemDef[]
   weather?: WeatherDef[]
   events?: EventDef[]
 }
@@ -144,7 +165,7 @@ export interface State {
   hash: string
   perf: Perf
   net: NetCounters
-  game: { zaps: number; respawns: number; rejected_actions: number }
+  game: { zaps: number; respawns: number; rejected_actions: number; ground_items?: number }
   attrs: string[]
   e: EntityRow[]
   shown: number

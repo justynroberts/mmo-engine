@@ -525,6 +525,26 @@ pub struct Game {
 /// Most walls a game file may place.
 pub const MAX_WALLS: usize = 2000;
 
+/// A usable item with the given effects (none makes it a keepsake or trade good).
+fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true }
+}
+
+/// What the sample bots leave behind.
+fn sample_drops(name: &str) -> Vec<DropDef> {
+    let d = |item: &str, chance_pct: f32, min: u8, max: u8| DropDef { item: item.into(), chance_pct, min, max };
+    match name {
+        "drifter" => vec![d("scrap", 35.0, 1, 2)],
+        "civilian" => vec![d("ration", 50.0, 1, 2), d("scrap", 20.0, 1, 1)],
+        "drone" => vec![d("battery", 60.0, 1, 1), d("scrap", 40.0, 1, 3), d("power core", 8.0, 1, 1)],
+        "hound" => vec![d("medkit", 40.0, 1, 1), d("toxin vial", 15.0, 1, 1)],
+        "guard" => vec![d("stim", 30.0, 1, 1), d("ration", 30.0, 1, 1)],
+        "merchant" => vec![d("scrap", 80.0, 2, 5), d("data chip", 25.0, 1, 1)],
+        "sentry" => vec![d("power core", 35.0, 1, 1), d("data chip", 20.0, 1, 1)],
+        _ => Vec::new(),
+    }
+}
+
 impl GameFile {
     /// The world this file describes: its own walls, or the ones generated from `seed`.
     pub fn world(&self, size: u16, seed: u64) -> Result<crate::world::World, String> {
@@ -565,7 +585,7 @@ impl GameFile {
             attack: attack.map(Into::into),
             attrs: BTreeMap::new(),
             home: None,
-            drops: Vec::new(),
+            drops: sample_drops(name),
             rules: Vec::new(),
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
@@ -603,7 +623,16 @@ impl GameFile {
                 Route { name: "market loop".into(), points: vec![[390.0, 130.0], [450.0, 130.0], [450.0, 190.0], [390.0, 190.0]], looped: true },
             ],
             walls: None,
-            items: Vec::new(),
+            items: vec![
+                item("medkit", "#ff4d6d", 5, &[("health", 40.0)]),
+                item("battery", "#f5d90a", 5, &[("energy", 50.0)]),
+                item("ration", "#c98b4a", 8, &[("health", 10.0), ("energy", 10.0)]),
+                item("stim", "#35e0c2", 3, &[("health", 25.0), ("energy", 25.0)]),
+                item("power core", "#8f7bff", 2, &[("energy", 100.0)]),
+                item("toxin vial", "#9be22b", 3, &[("health", -30.0)]),
+                item("scrap", "#9aa3ad", 20, &[]),
+                item("data chip", "#4fc3ff", 5, &[]),
+            ],
             weather: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
@@ -1267,6 +1296,43 @@ mod tests {
         .unwrap();
         let guard = g.archs.iter().find(|a| a.name == "guard").unwrap();
         assert!(matches!(&guard.rules[0].then, ActRt::Say { text, shout: true } if text == "hi there"));
+    }
+
+    #[test]
+    fn items_and_drops_are_validated_by_name_and_old_files_still_load() {
+        let mut g = GameFile::default_game();
+        assert!(g.build().is_ok());
+        let ok = g.clone();
+        let bad = |f: &dyn Fn(&mut GameFile), needle: &str| {
+            let mut x = ok.clone();
+            f(&mut x);
+            let e = x.build().err().unwrap_or_default();
+            assert!(e.contains(needle), "wanted '{needle}' in '{e}'");
+        };
+        bad(&|x| x.items[0].uses[0].attr = "mana".into(), "unknown attribute");
+        bad(&|x| x.items[0].stack_max = 0, "stack_max");
+        bad(&|x| x.items[1].name = x.items[0].name.clone(), "unique");
+        bad(&|x| x.items[0].color = "red".into(), "color");
+        bad(&|x| x.archetypes[0].drops = vec![DropDef { item: "nope".into(), chance_pct: 10.0, min: 1, max: 1 }], "unknown item");
+        bad(&|x| x.archetypes[0].drops = vec![DropDef { item: "medkit".into(), chance_pct: 101.0, min: 1, max: 1 }], "chance");
+        bad(&|x| x.archetypes[0].drops = vec![DropDef { item: "medkit".into(), chance_pct: 10.0, min: 3, max: 2 }], "amounts");
+        bad(&|x| x.actions[0].id = ACT_USE, "reserved for items");
+        // A file from before items existed has none and still builds; items never change the wire hash.
+        let old: GameFile = serde_json::from_str(&{
+            let mut v: serde_json::Value = serde_json::from_str(&ok.to_json()).unwrap();
+            v.as_object_mut().unwrap().remove("items");
+            for a in v["archetypes"].as_array_mut().unwrap() {
+                a.as_object_mut().unwrap().remove("drops");
+            }
+            v.to_string()
+        })
+        .unwrap();
+        assert!(old.build().is_ok());
+        let mut more = ok.clone();
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true });
+        assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
+        g.items.clear();
+        assert!(g.build().is_err(), "drops of items that no longer exist are caught");
     }
 
     #[test]

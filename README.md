@@ -80,6 +80,21 @@ The console's God tab is the game master's panel. Everything on it is data in th
 
 Presets give a start (fog, acid rain, bot wave, strike, storm front, cleanup). Renaming or deleting an attribute, bot type, place or weather rewrites or drops the steps that used it, and a deleted place never turns a local strike into a global one. API: `POST /api/weather {"name": "fog", "duration_secs": 60}` (`name: null` clears), `POST /api/events/fire {"name": "wave"}`, and `/api/state` carries `director` (current weather, event counters, log). `POST /api/spawn` takes an optional `radius` to scatter around `x, y`. With several zones each zone runs its own timers.
 
+## Items and loot
+
+Items are data, like bots. The game file has an `items` list and each bot type can have `drops`:
+
+```json
+"items": [{ "name": "medkit", "color": "#ff4d6d", "stack_max": 5, "uses": [{ "attr": "health", "delta": 40 }], "consume": true }],
+"archetypes": [{ "name": "hound", "drops": [{ "item": "medkit", "chance_pct": 40, "min": 1, "max": 1 }] }]
+```
+
+Every player has an 8 slot bag held on the server. Using, dropping and picking up ride the ordinary input action byte (`200 + slot` uses, `216 + slot` drops, `250` picks up what is within 3 units; game actions must stay below 200), so there is no new client message. The server tells you about your bag (`INVENTORY`) and what lies near you (`GROUND`); see PROTOCOL.md. A bot's drops are rolled where it falls. Things on the ground fade after five minutes, and at most 1,000 exist at once. Bags are saved with the character, by item name, so editing the item list never scrambles one (an item that no longer exists is dropped from bags and the ground).
+
+Items are not part of the wire hash: add, edit or remove them in the **Items** tab and press Apply, and nobody is disconnected. In the God tab you can scatter items anywhere or at a place, and an event can drop them as a step. In the Entity tab you can see what a player carries and give them something. The default game ships eight, from medkits to a data chip, and every bot type leaves something behind.
+
+In the browser: **E** picks up, **Shift + 1 to 8** uses a slot, **G then a number** drops one, and the bag buttons do the same by click or tap. The C SDK and Godot extension have no item getters yet (protocol 6 clients that ignore the two new messages still play fine).
+
 ## Browser client
 
 The play page (`--web ADDR`, then open the address) is a full client, not a demo. It is the only client that needs no install.
@@ -202,7 +217,7 @@ kept inside it (`count` in the game file is per zone), and a player who walks
 (position and attributes) to the new one over TCP, MAC'd with the shared secret
 and carrying an increasing sequence number so a captured frame cannot be replayed.
 The new zone parks it and acknowledges, and only then does the old zone send
-`REDIRECT` (protocol v5, inside the encrypted session, repeated for 3 s in case a
+`REDIRECT` (protocol v5 and later, inside the encrypted session, repeated for 3 s in case a
 datagram is lost). The client reconnects with the same identity key and the new
 zone restores the parked character instead of reading its own database. The old
 zone never saves a player it handed over. Network I/O is on background threads,
@@ -250,7 +265,7 @@ For comparison, before encryption the same machine did 2,000 normal-density clie
 ```sh
 cargo test --release                 # 59 proto + 27 server unit tests, 26 end-to-end tests (real server, real UDP and HTTP)
 (cd ui && npm test)                  # 40 unit and accessibility tests
-scripts/ui_e2e.py [--shots DIR]      # 97 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
+scripts/ui_e2e.py [--shots DIR]      # 106 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
 ```
 

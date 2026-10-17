@@ -38,6 +38,32 @@ pub enum Cmd {
     Say(SayReq),
     SetWeather(WeatherReq),
     FireEvent(FireReq),
+    Give(GiveReq),
+    PutItems(PutItemsReq),
+    Inventory { id: u32 },
+}
+
+#[derive(Deserialize)]
+pub struct GiveReq {
+    pub id: u32,
+    pub item: String,
+    #[serde(default = "one")]
+    pub count: u32,
+}
+
+#[derive(Deserialize)]
+pub struct PutItemsReq {
+    pub item: String,
+    /// How many piles of one item each.
+    #[serde(default = "one")]
+    pub count: u32,
+    pub place: Option<String>,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+}
+
+fn one() -> u32 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -72,9 +98,6 @@ pub struct SpawnReq {
     /// With x and y: scatter the bots within this distance of the point instead of stacking them on it.
     #[serde(default)]
     pub radius: Option<f32>,
-}
-fn one() -> u32 {
-    1
 }
 
 #[derive(Deserialize)]
@@ -145,6 +168,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
         "boxes": boxes,
+        "items": sim.items.iter().map(|i| json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty()})).collect::<Vec<_>>(),
         "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
         "zone": hs.zone.as_ref().map(|z| z.index),
         "zones": hs.zone.as_ref().map(|z| (0..z.count).map(|i| hs.zone_web.get(i as usize).cloned()).collect::<Vec<_>>()),
@@ -313,6 +337,9 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
         ("GET", "/api/chat") => Some(Cmd::ChatLog),
         ("POST", "/api/say") => serde_json::from_slice(&req.body).ok().map(Cmd::Say),
         ("POST", "/api/weather") => serde_json::from_slice(&req.body).ok().map(Cmd::SetWeather),
+        ("POST", "/api/give") => serde_json::from_slice(&req.body).ok().map(Cmd::Give),
+        ("POST", "/api/ground") => serde_json::from_slice(&req.body).ok().map(Cmd::PutItems),
+        ("GET", "/api/inventory") => req.query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(|v| v.parse().ok()).map(|id| Cmd::Inventory { id }),
         ("POST", "/api/events/fire") => serde_json::from_slice(&req.body).ok().map(Cmd::FireEvent),
         _ => None,
     };
@@ -329,7 +356,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -522,6 +549,43 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             Ok(()) => (200, json!({ "ok": true, "queued": r.name }).to_string()),
             Err(e) => err(404, e),
         },
+        Cmd::Give(r) => {
+            let Some(s) = c.sim.ents.resolve(r.id) else { return err(404, "no such entity") };
+            let Some(i) = c.sim.items.iter().position(|x| x.name == r.item) else { return err(404, "no such item") };
+            if r.count == 0 || r.count > 9999 {
+                return err(400, "count must be 1..9999");
+            }
+            let left = c.sim.give(s, i, r.count);
+            if left > 0 {
+                // What does not fit in the bag lands at their feet.
+                let (x, y) = (c.sim.ents.x[s], c.sim.ents.y[s]);
+                let stack = c.sim.items[i].stack_max as u32;
+                for n in (0..left.div_ceil(stack)).map(|k| (left - k * stack).min(stack)) {
+                    c.sim.put_ground(x, y, i, n as u8);
+                }
+            }
+            (200, json!({ "ok": true, "given": r.count - left, "dropped": left }).to_string())
+        }
+        Cmd::PutItems(r) => {
+            let Some(i) = c.sim.items.iter().position(|x| x.name == r.item) else { return err(404, "no such item") };
+            if r.count == 0 || r.count > 500 {
+                return err(400, "count must be 1..500");
+            }
+            let area = match (&r.place, r.x, r.y) {
+                (Some(p), _, _) => match c.sim.places.iter().find(|x| &x.name == p) {
+                    Some(p) => Some((p.x, p.y, p.r)),
+                    None => return err(404, "no such place"),
+                },
+                (None, Some(x), Some(y)) => Some((x, y, 1.0)),
+                _ => None,
+            };
+            c.sim.scatter_ground(i, r.count, area);
+            (200, json!({ "ok": true, "ground": c.sim.ground.len() }).to_string())
+        }
+        Cmd::Inventory { id } => {
+            let Some(s) = c.sim.ents.resolve(id) else { return err(404, "no such entity") };
+            (200, json!({ "id": id, "bag": c.sim.inv_names(s).into_iter().map(|(n, k)| json!({"item": n, "count": k})).collect::<Vec<_>>() }).to_string())
+        }
         Cmd::Release { id } => {
             let Some(s) = c.sim.ents.resolve(id) else { return err(404, "no such entity") };
             if c.sim.ents.owner[s] == DRIVEN {
@@ -573,6 +637,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         }
     } else {
         c.sim.archs = game.archs;
+        c.sim.set_items(game.items);
         c.sim.places = game.places;
         c.sim.routes = game.routes;
         if world.boxes != c.sim.world.boxes {
@@ -653,8 +718,8 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
     let _ = write!(
         o,
-        r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{}}},"attrs":["#,
-        s.stats.zaps, s.stats.respawns, s.stats.rejected_actions
+        r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{},"ground_items":{}}},"attrs":["#,
+        s.stats.zaps, s.stats.respawns, s.stats.rejected_actions, s.ground.len()
     );
     for (i, a) in s.defs.attrs.iter().enumerate() {
         if i > 0 {

@@ -58,12 +58,17 @@ export default function God({ game, live, setGame, director, drop, setDrop, note
   const [count, setCount] = useState(10)
   const [where, setWhere] = useState('') // '' anywhere, '@map' click the map, else a place name
   const [secs, setSecs] = useState(120)
+  const [item, setItem] = useState('')
+  const [itemCount, setItemCount] = useState(10)
+  const [itemWhere, setItemWhere] = useState('')
 
   const liveBots = live?.archetypes.map((a) => a.name) ?? []
   const livePlaces = live?.places ?? []
   const liveWeather = new Set((live?.weather ?? []).map((w) => w.name))
   const liveEvents = new Set((live?.events ?? []).map((e) => e.name))
   const botName = liveBots.includes(bot) ? bot : (liveBots[0] ?? '')
+  const liveItems = (live?.items ?? []).map((i) => i.name)
+  const itemName = liveItems.includes(item) ? item : (liveItems[0] ?? '')
   const problems = directorProblems(game)
   const weather = game.weather ?? []
   const events = game.events ?? []
@@ -130,6 +135,32 @@ export default function God({ game, live, setGame, director, drop, setDrop, note
                   </button>
                 </>
               )}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section aria-label="Scatter items" className="cell py-2">
+        <h2 className="lbl pb-1">Items on the ground</h2>
+        {liveItems.length === 0 ? (
+          <Empty>No items are running yet. Add one in Items and press Apply.</Empty>
+        ) : (
+          <>
+            <div className="grid grid-cols-[1fr_5rem_1fr] gap-2 items-end">
+              <SelectField label="Item" value={itemName} options={opts(liveItems)} onChange={setItem} />
+              <NumField label="How many" value={itemCount} onCommit={(n) => setItemCount(clamp(Math.round(n), 1, 500))} />
+              <SelectField label="Where" value={itemWhere} options={withNone(livePlaces.map((p) => p.name), 'anywhere')} onChange={setItemWhere} />
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void post('/api/ground', { item: itemName, count: itemCount, ...(itemWhere ? { place: itemWhere } : {}) }, `Scattered ${itemCount} ${itemName}${itemWhere ? ` at ${itemWhere}` : ''}.`)}
+              >
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                Scatter
+              </button>
+              <span className="text-fg-3">They fade after five minutes.</span>
             </div>
           </>
         )}
@@ -263,7 +294,7 @@ export default function God({ game, live, setGame, director, drop, setDrop, note
                         <Trash2 size={16} strokeWidth={1.5} aria-hidden />
                       </IconButton>
                     </div>
-                    <StepFields step={s} onChange={(n) => setEvent(i, { ...e, steps: e.steps.map((x, j) => (j === k ? n : x)) })} weather={weather.map((w) => w.name)} bots={botNames} places={placeNames} attrs={attrNames} />
+                    <StepFields step={s} onChange={(n) => setEvent(i, { ...e, steps: e.steps.map((x, j) => (j === k ? n : x)) })} weather={weather.map((w) => w.name)} bots={botNames} places={placeNames} attrs={attrNames} items={(game.items ?? []).map((i) => i.name)} />
                   </li>
                 ))}
               </ol>
@@ -321,7 +352,7 @@ function swap<T>(a: T[], i: number, j: number): T[] {
   return b
 }
 
-function StepFields({ step, onChange, weather, bots, places, attrs }: { step: Step; onChange: (s: Step) => void; weather: string[]; bots: string[]; places: string[]; attrs: string[] }) {
+function StepFields({ step, onChange, weather, bots, places, attrs, items }: { step: Step; onChange: (s: Step) => void; weather: string[]; bots: string[]; places: string[]; attrs: string[]; items: string[] }) {
   switch (step.kind) {
     case 'announce':
       return <TextField label="Message to everyone" value={step.text} onCommit={(text) => onChange({ ...step, text: text.slice(0, 120) })} />
@@ -350,6 +381,14 @@ function StepFields({ step, onChange, weather, bots, places, attrs }: { step: St
       )
     case 'clear':
       return <SelectField label="Remove every" value={step.archetype} options={opts(bots)} onChange={(archetype) => onChange({ ...step, archetype })} />
+    case 'drop':
+      return (
+        <div className="grid grid-cols-[1fr_4.5rem_1fr] gap-2">
+          <SelectField label="Item" value={step.item} options={opts(items)} onChange={(item) => onChange({ ...step, item })} />
+          <NumField label="How many" value={step.count} onCommit={(n) => onChange({ ...step, count: clamp(Math.round(n), 1, 500) })} />
+          <SelectField label="Where" value={step.place ?? ''} options={withNone(places, 'anywhere')} onChange={(place) => onChange({ ...step, place: place || null })} />
+        </div>
+      )
   }
 }
 
