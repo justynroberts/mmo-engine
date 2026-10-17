@@ -61,6 +61,7 @@ pub struct Clients {
     pub count: usize,
     /// Chat lines accepted this tick, waiting to be routed: (speaker slot, channel, text).
     pub chat_in: Vec<(usize, u8, String)>,
+    pub limiter: Option<RateLimiter>,
     /// Recent chat for the console: (tick, speaker id, channel, text).
     pub chat_log: std::collections::VecDeque<(u32, u32, u8, String)>,
 }
@@ -106,8 +107,54 @@ impl Clients {
     }
 }
 
+/// Per-source-address token buckets for the handshake packets (HELLO and CONNECT),
+/// the only ones a stranger can send. Direct-mapped table: two addresses that
+/// collide share a bucket, which can only make the limit stricter, never looser,
+/// and memory is fixed no matter how many addresses a flood uses.
+pub struct RateLimiter {
+    slots: Vec<(u32, f32, u32)>,
+    /// Handshake packets per second per address, 0 = unlimited.
+    pub rate: f32,
+    pub burst: f32,
+    pub exempt_loopback: bool,
+}
+
+impl RateLimiter {
+    pub fn new(rate: u32, exempt_loopback: bool) -> Self {
+        RateLimiter { slots: vec![(0, 0.0, 0); 4096], rate: rate as f32, burst: (rate * 2).max(1) as f32, exempt_loopback }
+    }
+
+    pub fn allow(&mut self, ip: [u8; 4], tick: u32, hz: u32) -> bool {
+        if self.rate <= 0.0 || (self.exempt_loopback && ip[0] == 127) {
+            return true;
+        }
+        let tag = u32::from_be_bytes(ip);
+        let i = (tag.wrapping_mul(0x9E37_79B1) >> 20) as usize % self.slots.len();
+        let (t, tokens, last) = &mut self.slots[i];
+        if *t != tag {
+            // A different address took this slot over; it starts with a full bucket.
+            *t = tag;
+            *tokens = self.burst;
+            *last = tick;
+        }
+        let dt = tick.wrapping_sub(*last) as f32 / hz as f32;
+        *last = tick;
+        *tokens = (*tokens + dt * self.rate).min(self.burst);
+        if *tokens >= 1.0 {
+            *tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct NetStats {
+    /// Handshake packets dropped by the per-address rate limit.
+    pub rate_limited: u64,
+    /// DATA packets authenticated on a lane instead of the sim thread.
+    pub lane_decoded: u64,
     pub in_pkts: u64,
     pub hellos: u64,
     pub connects: u64,
@@ -152,6 +199,9 @@ pub fn handle_packet(
             if let Some(sid) = on_data(sim, clients, stats, addr, data, plain) {
                 prove(sim, clients, stats, hs.store.as_deref(), sid);
             }
+        }
+        Some(kind::HELLO | kind::CONNECT) if !clients.limiter.as_mut().map_or(true, |l| l.allow(addr.ip().octets(), sim.tick, sim.tick_hz)) => {
+            stats.rate_limited += 1;
         }
         Some(kind::HELLO) => {
             stats.hellos += 1;
@@ -260,7 +310,95 @@ fn on_connect(
     sim.ents.owner[slot] = ci;
 }
 
+/// What a DATA packet turned out to be after authentication and decryption. Producing
+/// this touches only the one client's session (its replay window), so it can run on any
+/// lane; applying it touches the sim and runs on the sim thread.
+pub enum Dec {
+    /// Not a DATA packet we can place (unknown session).
+    Bad,
+    /// Wrong address, failed decryption or replay.
+    AuthFail,
+    /// Authenticated, but the inner message is malformed.
+    Malformed,
+    Input(wire::Input),
+    Chat(u32, u8, String),
+}
+
+fn decode_data(c: &mut Client, addr: SocketAddrV4, data: &[u8], plain: &mut Vec<u8>) -> Dec {
+    if c.addr != addr {
+        return Dec::AuthFail;
+    }
+    let Some(body) = c.session.open(data, plain) else { return Dec::AuthFail };
+    if body.first() == Some(&proto::chat::kind::SEND) {
+        return match proto::chat::decode_send(body) {
+            Some((cseq, ch, text)) => Dec::Chat(cseq, ch, text),
+            None => Dec::Malformed,
+        };
+    }
+    match wire::decode_client(body) {
+        Some(ClientMsg::Input(i)) => Dec::Input(i),
+        None => Dec::Malformed,
+    }
+}
+
 /// Returns the session id when this was the session's first authenticated packet.
+fn apply_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, sid: u32, dec: Dec) -> Option<u32> {
+    match dec {
+        Dec::Bad => {
+            stats.bad += 1;
+            return None;
+        }
+        Dec::AuthFail => {
+            stats.auth_fail += 1;
+            return None;
+        }
+        _ => {}
+    }
+    let Some(Some(c)) = clients.slab.get_mut(sid as usize) else { return None };
+    let first = c.accept.take().is_some().then_some(sid);
+    match dec {
+        Dec::Malformed => stats.bad += 1,
+        Dec::Chat(cseq, ch, text) => {
+            c.last_seen = sim.tick;
+            match c.chat.accept(cseq, ch, &text, sim.tick, sim.tick_hz) {
+                proto::chat::Accept::Route { channel, text } => {
+                    stats.chat_in += 1;
+                    clients.chat_in.push((c.slot, channel, text));
+                }
+                proto::chat::Accept::Dropped => stats.chat_dropped += 1,
+                proto::chat::Accept::Duplicate => {}
+            }
+        }
+        Dec::Input(i) => {
+            stats.inputs += 1;
+            c.chat.on_client_ack(i.chat_ack);
+            c.last_seen = sim.tick;
+            // Newest-wins; wrapping compare so seq overflow is harmless.
+            if (i.seq.wrapping_sub(c.in_seq) as i32) > 0 {
+                c.in_seq = i.seq;
+                sim.ents.dir_x[c.slot] = i.dir_x;
+                sim.ents.dir_y[c.slot] = i.dir_y;
+                if i.action != 0 {
+                    c.action = i.action;
+                    c.target = i.target;
+                }
+            }
+            if i.ack_tick > c.ack_tick && i.ack_tick <= sim.tick {
+                c.ack_tick = i.ack_tick;
+                let (t, v) = &c.ring[i.ack_tick as usize % RING];
+                if *t == i.ack_tick {
+                    // The client confirmed it holds this snapshot: delta against it from now on.
+                    c.baseline.clear();
+                    c.baseline.extend_from_slice(v);
+                    c.baseline_tick = i.ack_tick;
+                }
+            }
+        }
+        Dec::Bad | Dec::AuthFail => unreachable!(),
+    }
+    first
+}
+
 fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: SocketAddrV4, data: &[u8], plain: &mut Vec<u8>) -> Option<u32> {
     let Some(sid) = data_sid(data) else {
         stats.bad += 1;
@@ -270,59 +408,94 @@ fn on_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, addr: Soc
         stats.bad += 1;
         return None;
     };
-    if c.addr != addr {
-        stats.auth_fail += 1;
-        return None;
+    let dec = decode_data(c, addr, data, plain);
+    apply_data(sim, clients, stats, sid, dec)
+}
+
+/// Handle everything one `recvmmsg` returned. Handshake packets run in order on the sim
+/// thread. DATA packets, whose cost is the AEAD open, are decrypted on the snapshot lanes
+/// (each lane owns a contiguous slice of clients, so no locks) when the batch is big
+/// enough to be worth the thread hand-off, then applied on the sim thread in lane order.
+#[allow(clippy::too_many_arguments)]
+pub fn handle_batch(
+    sim: &mut Sim,
+    clients: &mut Clients,
+    tx: &mut Tx,
+    hs: &Handshake,
+    stats: &mut NetStats,
+    pkts: &[(SocketAddrV4, &[u8])],
+    lanes: &mut [Worker],
+    pin_base: Option<usize>,
+    scratch: &mut Vec<u8>,
+    plain: &mut Vec<u8>,
+    now: u32,
+) {
+    let n_lanes = lanes.len().max(1);
+    let n_data = pkts.iter().filter(|p| p.1.first() == Some(&kind::DATA)).count();
+    if n_lanes == 1 || n_data < 128 {
+        for (addr, data) in pkts {
+            handle_packet(sim, clients, tx, hs, stats, *addr, data, scratch, plain, now);
+        }
+        return;
     }
-    let Some(body) = c.session.open(data, plain) else {
-        stats.auth_fail += 1;
-        return None;
-    };
-    let first = c.accept.take().is_some().then_some(sid);
-    if body.first() == Some(&proto::chat::kind::SEND) {
-        let Some((cseq, ch, text)) = proto::chat::decode_send(body) else {
-            stats.bad += 1;
-            return first;
-        };
-        c.last_seen = sim.tick;
-        match c.chat.accept(cseq, ch, &text, sim.tick, sim.tick_hz) {
-            proto::chat::Accept::Route { channel, text } => {
-                stats.chat_in += 1;
-                clients.chat_in.push((c.slot, channel, text));
+    let mut data_pkts: Vec<(u32, SocketAddrV4, &[u8])> = Vec::with_capacity(n_data);
+    for (addr, data) in pkts {
+        if data.first() == Some(&kind::DATA) {
+            stats.in_pkts += 1;
+            match data_sid(data) {
+                Some(sid) => data_pkts.push((sid, *addr, data)),
+                None => stats.bad += 1,
             }
-            proto::chat::Accept::Dropped => stats.chat_dropped += 1,
-            proto::chat::Accept::Duplicate => {}
-        }
-        return first;
-    }
-    let Some(ClientMsg::Input(i)) = wire::decode_client(body) else {
-        stats.bad += 1;
-        return first;
-    };
-    stats.inputs += 1;
-    c.chat.on_client_ack(i.chat_ack);
-    c.last_seen = sim.tick;
-    // Newest-wins; wrapping compare so seq overflow is harmless.
-    if (i.seq.wrapping_sub(c.in_seq) as i32) > 0 {
-        c.in_seq = i.seq;
-        sim.ents.dir_x[c.slot] = i.dir_x;
-        sim.ents.dir_y[c.slot] = i.dir_y;
-        if i.action != 0 {
-            c.action = i.action;
-            c.target = i.target;
+        } else {
+            handle_packet(sim, clients, tx, hs, stats, *addr, data, scratch, plain, now);
         }
     }
-    if i.ack_tick > c.ack_tick && i.ack_tick <= sim.tick {
-        c.ack_tick = i.ack_tick;
-        let (t, v) = &c.ring[i.ack_tick as usize % RING];
-        if *t == i.ack_tick {
-            // The client confirmed it holds this snapshot: delta against it from now on.
-            c.baseline.clear();
-            c.baseline.extend_from_slice(v);
-            c.baseline_tick = i.ack_tick;
+    stats.lane_decoded += data_pkts.len() as u64;
+    let chunk = ((clients.slab.len() + n_lanes - 1) / n_lanes).max(1);
+    let mut jobs: Vec<Vec<(u32, SocketAddrV4, &[u8])>> = vec![Vec::new(); n_lanes];
+    for j in data_pkts {
+        if (j.0 as usize) < clients.slab.len() {
+            jobs[j.0 as usize / chunk].push(j);
+        } else {
+            stats.bad += 1;
         }
     }
-    first
+    std::thread::scope(|scope| {
+        let mut parts = clients.slab.chunks_mut(chunk).zip(lanes.iter_mut()).zip(jobs.iter()).enumerate();
+        let first = parts.next();
+        let run = |base: usize, shard: &mut [Option<Client>], w: &mut Worker, jobs: &[(u32, SocketAddrV4, &[u8])]| {
+            w.dec.clear();
+            for &(sid, addr, data) in jobs {
+                let dec = match &mut shard[sid as usize - base] {
+                    Some(c) => decode_data(c, addr, data, &mut w.plain),
+                    None => Dec::Bad,
+                };
+                w.dec.push((sid, dec));
+            }
+        };
+        for (i, ((shard, w), job)) in parts {
+            scope.spawn(move || {
+                if let Some(base) = pin_base {
+                    crate::io::pin_to_core(base + 1 + i - 1);
+                }
+                run(i * chunk, shard, w, job);
+            });
+        }
+        if let Some((i, ((shard, w), job))) = first {
+            run(i * chunk, shard, w, job);
+        }
+    });
+    let mut proven: Vec<u32> = Vec::new();
+    for l in lanes.iter_mut() {
+        for (sid, dec) in std::mem::take(&mut l.dec) {
+            if let Some(sid) = apply_data(sim, clients, stats, sid, dec) {
+                proven.push(sid);
+            }
+        }
+    }
+    for sid in proven {
+        prove(sim, clients, stats, hs.store.as_deref(), sid);
+    }
 }
 
 /// The session just authenticated its first packet, so its identity claim is now
@@ -468,6 +641,8 @@ pub struct SnapStats {
 /// One snapshot-building lane: its own scratch, stats and send queue, so
 /// lanes never contend. Lane 0 runs on the sim thread; the others on spare cores.
 pub struct Worker {
+    pub plain: Vec<u8>,
+    pub dec: Vec<(u32, Dec)>,
     pub tx: Tx,
     pub sc: SnapScratch,
     pub st: SnapStats,
@@ -475,7 +650,7 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(fd: i32) -> Worker {
-        Worker { tx: Tx::new(fd), sc: SnapScratch::default(), st: SnapStats::default() }
+        Worker { plain: Vec::new(), dec: Vec::new(), tx: Tx::new(fd), sc: SnapScratch::default(), st: SnapStats::default() }
     }
 }
 
@@ -511,7 +686,7 @@ pub fn build_snapshots(sim: &Sim, clients: &mut Clients, lanes: &mut [Worker], p
 }
 
 fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
-    let Worker { tx, sc, st } = w;
+    let Worker { tx, sc, st, .. } = w;
     let r2 = sim.defs.interest_radius * sim.defs.interest_radius;
     let cap = sim.defs.max_visible.saturating_sub(1);
     let tick = sim.tick;
@@ -657,6 +832,24 @@ mod tests {
             }
             assert!(ok >= 150, "only {ok} of 200 packets arrived ({lanes_n} lanes)");
         }
+    }
+
+    #[test]
+    fn rate_limiter_allows_bursts_refills_and_isolates_addresses() {
+        let mut l = RateLimiter::new(10, true);
+        let ip = [203, 0, 113, 5];
+        let ok = (0..30).filter(|_| l.allow(ip, 0, 20)).count();
+        assert_eq!(ok, 20, "burst is twice the per-second rate");
+        assert!(!l.allow(ip, 0, 20));
+        // Half a second later, five more.
+        let ok = (0..30).filter(|_| l.allow(ip, 10, 20)).count();
+        assert_eq!(ok, 5);
+        // Another address is unaffected, and loopback is exempt.
+        assert!(l.allow([198, 51, 100, 9], 10, 20));
+        assert!((0..500).all(|_| l.allow([127, 0, 0, 1], 10, 20)));
+        // Rate 0 means off.
+        let mut off = RateLimiter::new(0, false);
+        assert!((0..500).all(|_| off.allow(ip, 0, 20)));
     }
 
     #[test]

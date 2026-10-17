@@ -41,6 +41,8 @@ a Docker daemon where this was built, so it is untested.
 | Flag | Meaning |
 | --- | --- |
 | `--workers N` | Snapshot lanes. 1 = everything on the sim thread, N > 1 builds, encrypts and sends snapshots on N-1 more cores (pinned to `--pin`+1, +2, ...) |
+| `--hello-rate N` | Handshake packets per second allowed from one address (default 100, burst twice that, 0 = off). Loopback is exempt unless `--limit-loopback`, so local load tests work |
+| `--db-expire-days N` | At startup forget players not saved for N days (default 90, 0 = never) |
 | `--db FILE` / `--no-db` | Player database for returning players (default `data/world.db`, SQLite in WAL mode) |
 | `--game FILE` | Game definitions (default `game.json`, created if missing) |
 | `--key-file FILE` | Server identity key (default `server.key`, created if missing) |
@@ -75,7 +77,7 @@ A client can hold a long-term identity (an X25519 key it keeps). It travels insi
 - **Takeover**: the same identity connecting again does not kick the first session until the newcomer proves itself, so nobody can log you out by claiming your key. Then the old session is saved and ended and the character carries on in the new one.
 - Bots: `bots --persist` gives each bot a stable identity from `--seed` and its number, so rerunning with the same seed brings the same characters back.
 
-Not done: no accounts, passwords or recovery (lose the key, lose the character), no rate limiting per identity, and the database holds one row per identity forever (no expiry).
+Not done: no accounts, passwords or recovery (lose the key, lose the character), no limit on how many identities one address can mint (only the handshake rate limit), and old players are only expired at startup.
 
 ## Chat
 
@@ -89,8 +91,9 @@ An encrypted reliable channel on top of UDP (`proto::chat`). Client to server ke
 
 - **Stateless handshake.** HELLO (padded to 96 bytes) is answered with a 53 byte CHALLENGE carrying a cookie: a keyed hash of the client's address, public key and a timestamp. The server stores nothing and does no key agreement until a CONNECT returns a valid, fresh cookie from the claimed address. Spoofed sources never see the challenge, and replies are smaller than requests, so there is no amplification.
 - **Encryption.** X25519 key agreement, BLAKE3 key derivation, ChaCha20-Poly1305 per packet, one key per direction, 32-bit counter nonce, 64-packet replay window. The server's long-term key authenticates it (clients pin it); an ephemeral server key per session gives forward secrecy. Header bytes are authenticated. Cost: 25 bytes per packet.
+- **Handshake rate limit.** HELLO and CONNECT, the only packets a stranger can send, pass a per-address token bucket in a fixed-size table (a flood from many addresses cannot grow memory; colliding addresses only share a stricter limit). Established players' game traffic is not limited, and chat has its own limits.
 - **Admin interface.** Loopback only, no login. Checks the Host header (DNS rebinding) and requires `X-Admin: 1` on writes (cross-site requests). It refuses to start on a non-loopback address.
-- Not done: rekeying (a session ends before its 32-bit counter wraps, years at 20 packets/s), rate limiting per source, accounts (identity is a key the client keeps; anyone with the server public key can connect as a guest), authenticated REJECT packets (a forged reject can only make a handshake fail).
+- Not done: rekeying (a session ends before its 32-bit counter wraps, years at 20 packets/s), accounts (identity is a key the client keeps; anyone with the server public key can connect as a guest), authenticated REJECT packets (a forged reject can only make a handshake fail).
 
 ## The second core
 
@@ -103,7 +106,7 @@ Measured in-process (no network, no load generator competing, 2,000 clients, eve
 | 2048, sparse | 8.9 ms | 4.9 ms |
 | 512, dense (each sees 64) | 19.4 ms | 10.8 ms |
 
-Receiving and decrypting inputs still runs on the sim thread (about 5 ms at 2,000 clients); moving that onto lanes is the next obvious step.
+Receiving inputs is split the same way: the sim thread reads each batch off the socket and handles handshakes in order, then with `--workers` above 1 the lanes authenticate and decrypt the DATA packets in parallel (each lane owns a slice of clients, so no locks) and the sim thread applies the results. At 2,000 bots with 2 lanes essentially every input is decrypted on a lane, with zero failed decryptions, and tick p50 went from 17.7 to 15.8 ms (the bots share the second core on this VM, so that understates it).
 
 ## Measured results
 
@@ -134,9 +137,9 @@ The end-to-end tests include forged, bit-flipped and replayed packets, wrong-add
 
 ## Known limits and next steps
 
-- Move input receive and decrypt onto the lanes; share candidate lists per grid cell
+- Share candidate lists per grid cell
 - Fields are byte aligned. The schema carries bit widths, so bit packing is a protocol-only change
-- No accounts or login recovery, no rate limiting, no rekeying (see Security model)
+- No accounts or login recovery, no rekeying (see Security model)
 - The console possesses bots through the admin API, not through the UDP protocol, so it bypasses the encrypted path; bots-as-clients exercise that
 - The game file is JSON on disk. The DB and baker from the plan would produce the same `GameFile`
 - World is generated boxes. A real baker would emit heightfields, navmesh and chunks

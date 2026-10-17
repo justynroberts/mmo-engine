@@ -802,3 +802,25 @@ fn an_identity_that_never_sends_a_packet_is_never_saved() {
     assert_eq!(saved_rows(&srv), 0, "an unproven identity must not write a record");
     assert_eq!(state(&srv)["net"]["restored"], 0);
 }
+
+#[test]
+fn handshake_floods_from_one_address_are_rate_limited_but_established_players_are_not() {
+    let srv = start(&["--hello-rate", "5", "--limit-loopback"]);
+    let mut p = connect(&srv);
+    p.send_input(0, 0);
+    let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+    s.connect(srv.udp).unwrap();
+    let hello = ClientHs::new(None, 0).hello();
+    for _ in 0..200 {
+        s.send(&hello).unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    let st = state(&srv);
+    assert!(st["net"]["rate_limited"].as_u64().unwrap() >= 150, "{}", st["net"]);
+    assert!(st["net"]["hellos"].as_u64().unwrap() <= 60, "{}", st["net"]);
+    // Gameplay traffic is not subject to it.
+    for _ in 0..50 {
+        p.send_input(127, 0);
+    }
+    assert!(p.pump(500) > 0, "an established player keeps getting snapshots");
+}

@@ -44,6 +44,7 @@ pub struct StoreStats {
 }
 
 pub struct Store {
+    path: std::path::PathBuf,
     tx: Sender<Msg>,
     read: Mutex<Connection>,
     /// Records queued for the writer but not yet committed, so a load right after a
@@ -129,7 +130,7 @@ impl Store {
                 }
             })
             .map_err(|e| e.to_string())?;
-        Ok(Store { tx, read: Mutex::new(read), recent, stats })
+        Ok(Store { path: path.to_path_buf(), tx, read: Mutex::new(read), recent, stats })
     }
 
     /// Queue records for the writer thread. Never blocks.
@@ -169,6 +170,13 @@ impl Store {
             self.stats.loaded.fetch_add(1, Ordering::Relaxed);
         }
         rec
+    }
+
+    /// Delete players not saved for `max_age_secs`. Returns how many went. Runs before
+    /// the tick loop starts, so it may take its time.
+    pub fn expire(&self, max_age_secs: i64) -> usize {
+        let Ok(conn) = Connection::open(&self.path) else { return 0 };
+        conn.execute("DELETE FROM players WHERE updated < ?1", params![now_secs() - max_age_secs]).unwrap_or(0)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -297,6 +305,19 @@ mod tests {
         }
         s.flush();
         assert_eq!(s.load(&[9; 32]).map(|r| r.x), Some(299.0));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn old_players_expire_and_recent_ones_stay() {
+        let path = tmp("expire");
+        let s = Store::open(&path).unwrap();
+        s.save(vec![([1; 32], rec(1.0, 1.0)), ([2; 32], rec(2.0, 2.0))]);
+        s.flush();
+        Connection::open(&path).unwrap().execute("UPDATE players SET updated = updated - 100 * 86400 WHERE id = ?1", params![&[1u8; 32][..]]).unwrap();
+        assert_eq!(s.expire(90 * 86400), 1);
+        assert_eq!(s.load(&[1; 32]), None);
+        assert!(s.load(&[2; 32]).is_some());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

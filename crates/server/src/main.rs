@@ -36,6 +36,9 @@ struct Config {
     admin: Option<String>,
     ui_dir: Option<PathBuf>,
     db: Option<PathBuf>,
+    hello_rate: u32,
+    limit_loopback: bool,
+    db_expire_days: u32,
 }
 
 fn parse_args() -> Config {
@@ -56,6 +59,9 @@ fn parse_args() -> Config {
         admin: Some("127.0.0.1:7780".into()),
         ui_dir: None,
         db: Some(PathBuf::from("data/world.db")),
+        hello_rate: 100,
+        limit_loopback: false,
+        db_expire_days: 90,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -83,6 +89,9 @@ fn parse_args() -> Config {
             "--ui-dir" => c.ui_dir = Some(PathBuf::from(val(a))),
             "--db" => c.db = Some(PathBuf::from(val(a))),
             "--no-db" => c.db = None,
+            "--hello-rate" => c.hello_rate = val(a).parse().unwrap_or_else(|_| usage("bad --hello-rate")),
+            "--limit-loopback" => c.limit_loopback = true,
+            "--db-expire-days" => c.db_expire_days = val(a).parse().unwrap_or_else(|_| usage("bad --db-expire-days")),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -99,6 +108,9 @@ fn usage(msg: &str) -> ! {
     eprintln!(
         "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..4095 (2048)\n  --seed N          world seed (1)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player database for returning players (data/world.db)
   --no-db           do not remember players
+  --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
+  --hello-rate N    handshake packets per second allowed from one address, 0 = unlimited (100)
+  --limit-loopback  apply that limit to 127.x too (off so local load tests work)
   --quiet           only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
@@ -150,10 +162,17 @@ fn main() {
     }
     let keys = load_keys(&cfg.key_file);
     let store = cfg.db.as_ref().map(|p| {
-        std::sync::Arc::new(store::Store::open(p).unwrap_or_else(|e| {
+        let st = store::Store::open(p).unwrap_or_else(|e| {
             eprintln!("cannot open player database: {e}");
             std::process::exit(1);
-        }))
+        });
+        if cfg.db_expire_days > 0 {
+            let n = st.expire(cfg.db_expire_days as i64 * 86_400);
+            if n > 0 {
+                eprintln!("forgot {n} player(s) not seen for {} days", cfg.db_expire_days);
+            }
+        }
+        std::sync::Arc::new(st)
     });
 
     let sock = io::bind(cfg.port, 8 << 20, 8 << 20).unwrap_or_else(|e| {
@@ -207,6 +226,7 @@ fn main() {
         rx
     });
     let mut clients = Clients::default();
+    clients.limiter = Some(net::RateLimiter::new(cfg.hello_rate, !cfg.limit_loopback));
     let mut nstats = NetStats::default();
     let mut scratch: Vec<u8> = Vec::with_capacity(1500);
     let mut plain: Vec<u8> = Vec::with_capacity(256);
@@ -243,10 +263,8 @@ fn main() {
         let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
         loop {
             let n = rx.recv();
-            for i in 0..n {
-                let (addr, data) = rx.packet(i);
-                net::handle_packet(&mut sim, &mut clients, &mut tx, &hs, &mut nstats, addr, data, &mut scratch, &mut plain, now_secs);
-            }
+            let pkts: Vec<_> = (0..n).map(|i| rx.packet(i)).collect();
+            net::handle_batch(&mut sim, &mut clients, &mut tx, &hs, &mut nstats, &pkts, &mut lanes, cfg.pin, &mut scratch, &mut plain, now_secs);
             if n < io::RBATCH {
                 break;
             }
@@ -393,8 +411,8 @@ fn main() {
         (user + sys) / wall * 100.0
     );
     println!(
-        "packets in {} (hello {}, connect {}, input {}), unparseable {}, bad cookie {}, failed authentication {}, rejected handshakes {}, timeouts {}",
-        nstats.in_pkts, nstats.hellos, nstats.connects, nstats.inputs, nstats.bad, nstats.bad_cookie, nstats.auth_fail, nstats.rejected, nstats.timeouts
+        "packets in {} (hello {}, connect {}, input {}), unparseable {}, bad cookie {}, failed authentication {}, rejected handshakes {}, timeouts {}, decrypted on lanes {}, rate limited {}",
+        nstats.in_pkts, nstats.hellos, nstats.connects, nstats.inputs, nstats.bad, nstats.bad_cookie, nstats.auth_fail, nstats.rejected, nstats.timeouts, nstats.lane_decoded, nstats.rate_limited
     );
     let (t_sent, t_bytes, t_drop) = totals(&tx, &lanes);
     println!("packets out {} ({:.1} MiB), send drops {}, snapshot lanes {}", t_sent, t_bytes as f64 / 1048576.0, t_drop, lanes_n);
