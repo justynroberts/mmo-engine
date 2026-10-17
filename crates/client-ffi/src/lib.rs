@@ -640,7 +640,8 @@ pub unsafe extern "C" fn mmo_ground_count(c: *const Client) -> usize {
 pub unsafe extern "C" fn mmo_ground(c: *const Client, i: usize, out: *mut MmoGround) -> i32 {
     let (Some(c), Some(out)) = (c.as_ref(), out.as_mut()) else { return 0 };
     let Some(g) = c.ground.get(i) else { return 0 };
-    *out = MmoGround { id: g.id, x: proto::world::dpos(g.x), y: proto::world::dpos(g.y), item: g.item, count: g.count };
+    // GROUND carries the plain item index; this API (like bag slots) is 1-based so 0 can mean "nothing".
+    *out = MmoGround { id: g.id, x: proto::world::dpos(g.x), y: proto::world::dpos(g.y), item: g.item.saturating_add(1), count: g.count };
     1
 }
 
