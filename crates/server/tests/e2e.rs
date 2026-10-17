@@ -678,10 +678,10 @@ fn a_bot_rule_can_make_bots_talk_and_new_places_apply_live() {
     }
     assert!(p.heard.iter().any(|m| m.text == "oyez oyez"), "heard: {:?}", p.heard);
     let st = state(&srv);
-    let near_dock = st["e"].as_array().unwrap().iter().filter(|e| e[3] == 4 && (e[1].as_f64().unwrap() - 50.0).hypot(e[2].as_f64().unwrap() - 60.0) < 12.0).count();
+    let near_dock = st["e"].as_array().unwrap().iter().filter(|e| e[3] == 7 && (e[1].as_f64().unwrap() - 50.0).hypot(e[2].as_f64().unwrap() - 60.0) < 12.0).count();
     assert_eq!(near_dock, 2, "both criers spawned at the dock");
     // A rule naming a place that does not exist is refused and changes nothing.
-    game["archetypes"][4]["home"] = "atlantis".into();
+    game["archetypes"][7]["home"] = "atlantis".into();
     let (code, body) = json(&srv, "PUT", "/api/game", &game.to_string());
     assert_eq!(code, 400);
     assert!(body["error"].as_str().unwrap().contains("unknown place"), "{body}");

@@ -349,16 +349,38 @@ impl GameFile {
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
-        // An example of the rule builder: a guard who patrols and warns players away. None spawn by default.
-        let mut guard = bot("guard", "#6c8ef5", 0, Behaviour::Wander, 0.7, None);
+        // Examples of the rule builder: guards who patrol and warn players away, merchants who work a market loop and call out to passers-by, hounds that hunt fast, and sentries that hold a watchtower and attack whoever comes close.
+        let mut guard = bot("guard", "#6c8ef5", 3, Behaviour::Wander, 0.7, None);
         guard.home = Some("plaza".into());
         guard.rules = vec![
             Rule { when: Cond::Sees { who: Seek::Player, within: 30.0 }, then: Act::Say { text: "Move along, citizen.".into(), shout: false } },
             Rule { when: Cond::Always, then: Act::Patrol { route: "ring road".into() } },
         ];
+        let mut merchant = bot("merchant", "#d98f2b", 6, Behaviour::Wander, 0.6, None);
+        merchant.home = Some("market".into());
+        merchant.rules = vec![
+            Rule { when: Cond::Sees { who: Seek::Player, within: 25.0 }, then: Act::Say { text: "Fresh wares, friend!".into(), shout: false } },
+            Rule { when: Cond::Always, then: Act::Patrol { route: "market loop".into() } },
+        ];
+        let mut hound = bot("hound", "#b5e853", 3, Behaviour::Chase, 1.3, Some("zap"));
+        hound.attrs.insert("health".into(), 40.0);
+        hound.sight = 60.0;
+        let mut sentry = bot("sentry", "#9b6cf5", 4, Behaviour::Idle, 0.9, Some("zap"));
+        sentry.home = Some("watchtower".into());
+        sentry.rules = vec![
+            Rule { when: Cond::Sees { who: Seek::Player, within: 35.0 }, then: Act::Attack },
+            Rule { when: Cond::Always, then: Act::Goto { place: "watchtower".into() } },
+        ];
         GameFile {
-            places: vec![Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0 }],
-            routes: vec![Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true }],
+            places: vec![
+                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0 },
+                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0 },
+                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0 },
+            ],
+            routes: vec![
+                Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true },
+                Route { name: "market loop".into(), points: vec![[390.0, 130.0], [450.0, 130.0], [450.0, 190.0], [390.0, 190.0]], looped: true },
+            ],
             move_speed: 20.0,
             entity_radius: 0.5,
             interest_radius: 128.0,
@@ -383,6 +405,9 @@ impl GameFile {
                 bot("civilian", "#c9a227", 8, Behaviour::Flee, 0.8, None),
                 drone,
                 guard,
+                merchant,
+                hound,
+                sentry,
             ],
         }
     }
@@ -691,7 +716,7 @@ mod tests {
     fn default_file_matches_builtin_defs() {
         let g = GameFile::default_game().build().unwrap();
         assert_eq!(g.defs.content_hash(), Defs::default_game().content_hash());
-        assert_eq!(g.archs.len(), 4);
+        assert_eq!(g.archs.len(), 7);
         assert_eq!(g.archs[2].start[0], 60.0);
         assert_eq!(g.archs[2].attack, Some(1));
     }

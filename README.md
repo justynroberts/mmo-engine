@@ -144,7 +144,7 @@ For comparison, before encryption the same machine did 2,000 normal-density clie
 ## Tests
 
 ```sh
-cargo test --release                 # 57 proto + 24 server unit tests, 23 end-to-end tests (real server, real UDP and HTTP)
+cargo test --release                 # 59 proto + 27 server unit tests, 26 end-to-end tests (real server, real UDP and HTTP)
 (cd ui && npm test)                  # 40 unit and accessibility tests
 scripts/ui_e2e.py [--shots DIR]      # 54 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
@@ -172,3 +172,10 @@ Bots are octahedra, players are white cones, walls and places are wireframes,
 and digits fall in the background (static if you prefer reduced motion). It
 reads the same `/api/state` feed as the 2D map and falls back to a message
 when WebGL is unavailable.
+
+Default population (40 bots): 12 drifters and 8 civilians (wander and flee),
+4 drones and 3 hounds (chase and zap), 3 guards patrolling the ring road,
+6 merchants working the market loop who call out to players, and 4 sentries
+holding the watchtower who attack anyone who comes close. The last four are
+built entirely from the rule builder, so they are good examples to edit.
+Existing `game.json` files are not touched; delete yours to get the new defaults.
