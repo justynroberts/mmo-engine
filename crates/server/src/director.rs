@@ -240,6 +240,7 @@ impl Director {
                     }
                     format!("{attr} {delta:+} on {n}{}", place.as_ref().map(|p| format!(" at {p}")).unwrap_or_default())
                 }
+                Step::Drop { item, .. } => format!("drop of {item} (items not live yet)"),
                 Step::Clear { archetype } => {
                     let Some(a) = sim.archs.iter().position(|x| &x.name == archetype) else { continue };
                     let mut n = 0;

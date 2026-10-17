@@ -1,5 +1,10 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import * as THREE from 'three'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
+import { glowTexture, Particles, windowTexture } from './fx'
 import type { GameClient, PlayInfo } from './client'
 import { css, readPalette, type Palette } from './palette'
 import { clampZoom, healthAttr, type Shared, type Target } from './shared'
@@ -16,6 +21,15 @@ const CAP = 2048
 const PICK_RADIUS = 5
 const MAX_FLOATERS = 24
 const FLOAT_LIFE = 0.9
+const MAX_WAVES = 8
+const WAVE_LIFE = 0.7
+
+interface Wave {
+  mesh: THREE.Mesh
+  age: number
+  max: number
+  size: number
+}
 
 /** A square grid of thin strips on the ground; every fourth line is brighter. */
 function thinGrid(size: number, step: number, w: number, minor: THREE.Color, major: THREE.Color): THREE.Mesh {
@@ -75,6 +89,17 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     scene.fog = new THREE.Fog(pal.bg, 50, 150)
     const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 900)
 
+    // Post: bloom makes everything bright glow. Off on the light theme, where glow on a pale page only muddies it.
+    const target = new THREE.WebGLRenderTarget(64, 64, { type: THREE.HalfFloatType, samples: 4 })
+    const composer = new EffectComposer(renderer, target)
+    composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    composer.addPass(new RenderPass(scene, camera))
+    const bloom = new UnrealBloomPass(new THREE.Vector2(64, 64), 0.8, 0.55, 0.22)
+    bloom.enabled = dark
+    composer.addPass(bloom)
+    composer.addPass(new OutputPass())
+    const glow = dark ? 1.8 : 1
+
     // The grid follows the player, snapped to its spacing so it never appears to slide. Drawn as thin quads, not GL
     // lines: line rasterisation is the least consistent part of WebGL (software renderers drop steep lines).
     const STEP = 8
@@ -84,28 +109,119 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     scene.add(grid)
 
     const geoms: THREE.BufferGeometry[] = []
-    const wallMat = new THREE.LineBasicMaterial({ color: pal.line })
+    const disposables: { dispose(): void }[] = []
+    const wallMat = new THREE.LineBasicMaterial({ color: new THREE.Color(pal.line).multiplyScalar(glow) })
+    disposables.push(wallMat)
     const edge = new THREE.EdgesGeometry(new THREE.BoxGeometry(info.world_size, 4, info.world_size))
     edge.translate(0, 2, 0)
-    scene.add(new THREE.LineSegments(edge, new THREE.LineBasicMaterial({ color: pal.hot })))
+    scene.add(new THREE.LineSegments(edge, new THREE.LineBasicMaterial({ color: new THREE.Color(pal.hot).multiplyScalar(glow) })))
     geoms.push(edge)
-    for (const [x0, y0, x1, y1] of info.boxes) {
-      const g = new THREE.EdgesGeometry(new THREE.BoxGeometry(x1 - x0, 10, y1 - y0))
-      g.translate((x0 + x1) / 2 - half, 5, (y0 + y1) / 2 - half)
-      geoms.push(g)
-      scene.add(new THREE.LineSegments(g, wallMat))
-    }
+
+    // Buildings: dark slabs with lit windows and a glowing outline, each a different height.
+    const winBg = dark ? '#0b0a1a' : '#cdc5e0'
+    const winTex = windowTexture(winBg, [css(pal.line), css(pal.hot), css(pal.accent)])
+    disposables.push(winTex)
+    const plain = new THREE.MeshBasicMaterial({ color: dark ? 0x0d0b1e : 0xc3badb })
+    disposables.push(plain)
+    info.boxes.forEach(([x0, y0, x1, y1], i) => {
+      const w = x1 - x0
+      const d = y1 - y0
+      const h = 7 + ((i * 7919) % 9)
+      const face = (across: number) => {
+        const t = winTex.clone()
+        t.needsUpdate = true
+        t.repeat.set(Math.max(1, Math.round(across / 5)), Math.max(1, Math.round(h / 4)))
+        const m = new THREE.MeshBasicMaterial({ map: t, color: dark ? 0xffffff : 0xdcd4ee })
+        disposables.push(t, m)
+        return m
+      }
+      const sideX = face(d)
+      const sideZ = face(w)
+      const g = new THREE.BoxGeometry(w, h, d)
+      const mesh = new THREE.Mesh(g, [sideX, sideX, plain, plain, sideZ, sideZ])
+      mesh.position.set((x0 + x1) / 2 - half, h / 2, (y0 + y1) / 2 - half)
+      scene.add(mesh)
+      const eg = new THREE.EdgesGeometry(g)
+      eg.translate(mesh.position.x, mesh.position.y, mesh.position.z)
+      geoms.push(g, eg)
+      scene.add(new THREE.LineSegments(eg, wallMat))
+    })
 
     // Everyone else: instanced octahedra, tinted toward the warning colour as they get hurt.
     const others = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.9), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true }), CAP)
+    const cores = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.5), new THREE.MeshBasicMaterial({ color: 0xffffff }), CAP)
+    cores.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3)
+    cores.frustumCulled = false
+    cores.count = 0
+    const gtex = glowTexture()
+    disposables.push(gtex)
+    const pools = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: gtex, transparent: true, depthWrite: false, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending, opacity: dark ? 0.55 : 0.4 }),
+      CAP,
+    )
+    pools.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3)
+    pools.frustumCulled = false
+    pools.count = 0
+    scene.add(cores, pools)
     others.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3)
     others.frustumCulled = false
     others.count = 0
-    const me = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.6, 4), new THREE.MeshBasicMaterial({ color: pal.hot, wireframe: true }))
+    const me = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.6, 4), new THREE.MeshBasicMaterial({ color: new THREE.Color(pal.hot).multiplyScalar(glow), wireframe: true }))
+    const meCore = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.6, 4), new THREE.MeshBasicMaterial({ color: new THREE.Color(pal.hot).multiplyScalar(glow) }))
+    const mePool = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: gtex, color: pal.hot, transparent: true, depthWrite: false, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending, opacity: dark ? 0.5 : 0.35 }),
+    )
+    mePool.scale.set(14, 1, 14)
+    const lightPool = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: gtex, color: pal.line, transparent: true, depthWrite: false, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending, opacity: dark ? 0.16 : 0.1 }),
+    )
+    lightPool.scale.set(90, 1, 90)
+    scene.add(meCore, mePool, lightPool)
+    for (const o of [me, meCore, mePool, lightPool]) disposables.push(o.geometry, o.material as THREE.Material)
     const ringMat = new THREE.MeshBasicMaterial({ color: pal.accent, side: THREE.DoubleSide })
     const ring = new THREE.Mesh(new THREE.RingGeometry(1.4, 1.6, 32).rotateX(-Math.PI / 2), ringMat)
     ring.visible = false
     scene.add(others, me, ring)
+
+    // Target beam, shockwaves, particles.
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.07, 18, 6, 1, true),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(pal.accent).multiplyScalar(glow), transparent: true, opacity: 0.5, depthWrite: false, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending }),
+    )
+    beam.visible = false
+    scene.add(beam)
+    disposables.push(beam.geometry, beam.material as THREE.Material)
+    const waveGeo = new THREE.RingGeometry(0.86, 1, 48).rotateX(-Math.PI / 2)
+    disposables.push(waveGeo)
+    const waves: Wave[] = []
+    const wave = (x: number, z: number, color: THREE.Color, size: number) => {
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending })
+      const mesh = new THREE.Mesh(waveGeo, mat)
+      mesh.position.set(x, 0.15, z)
+      scene.add(mesh)
+      waves.push({ mesh, age: 0, max: WAVE_LIFE, size })
+      if (waves.length > MAX_WAVES) {
+        const o = waves.shift()!
+        scene.remove(o.mesh)
+        ;(o.mesh.material as THREE.Material).dispose()
+      }
+    }
+    const sparks = new Particles(3000, dark)
+    const motes = new Particles(520, dark)
+    const MOTE_SPAN = 100
+    const MOTE_H = 30
+    motes.seedMotes(0, 0, MOTE_SPAN, MOTE_H, new THREE.Color(dark ? pal.line : pal.hot), dark ? 0.35 : 0.3)
+    scene.add(motes.points, sparks.points)
+    const cHot = new THREE.Color(pal.hot).multiplyScalar(glow)
+    const cAcc = new THREE.Color(pal.accent).multiplyScalar(glow)
+    const cTmp = new THREE.Color()
+    let shake = 0
+    const shakeV = new THREE.Vector3()
+    const prevPos = new Map<number, { x: number; z: number; hp: number | null; c: THREE.Color }>()
+    let selfPrev: { x: number; z: number } | null = null
 
     const bars = new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP * 12), 3)),
@@ -170,8 +286,13 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       const w = Math.max(50, host.clientWidth)
       const h = Math.max(50, host.clientHeight)
       renderer.setSize(w, h, false)
+      composer.setSize(w, h)
+      bloom.setSize(w, h)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
+      const pr = Math.min(window.devicePixelRatio || 1, 1.5)
+      sparks.setScale(h * pr, camera.fov)
+      motes.setScale(h * pr, camera.fov)
     }
     fit()
     const ro = new ResizeObserver(fit)
@@ -218,6 +339,8 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     let camReady = false
     let last = performance.now()
     let fpsAt = last
+    let slow = 0
+    let post = dark
     let frames = 0
     let raf = 0
     const rangeOf = () => ref.current.info.actions[0]?.range ?? 8
@@ -233,6 +356,12 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         frames = 0
         fpsAt = now
       }
+      // A slow device sheds the expensive parts (bloom, supersampled target) rather than stuttering.
+      slow = dt > 0.07 ? slow + 1 : Math.max(0, slow - 1)
+      if (slow >= 6 && post) {
+        post = false
+        target.dispose()
+      }
       const fr = c.frame(now)
       const hpa = healthAttr(inf)
       const hpOf = (attrs: Record<string, number>) => (hpa && attrs[hpa.name] !== undefined ? attrs[hpa.name]! : undefined)
@@ -245,10 +374,26 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         const v = hpOf(e.attrs)
         if (v === undefined) continue
         const p = hpPrev.get(e.id)
-        if (p !== undefined && v < p - 0.5) floatAt(e.x - half, e.y - half, `-${Math.round(p - v)}`, e.id === c.entity ? pal.hot : pal.accent)
+        if (p !== undefined && v < p - 0.5) {
+          floatAt(e.x - half, e.y - half, `-${Math.round(p - v)}`, e.id === c.entity ? pal.hot : pal.accent)
+          const mine = e.id === c.entity
+          sparks.burst(e.x - half, 1.4, e.y - half, mine ? cHot : cAcc, mine ? 26 : 14, mine ? 14 : 10, 0.6, 0.55)
+          wave(e.x - half, e.y - half, (mine ? cHot : cAcc).clone(), mine ? 5 : 3.2)
+          if (mine) shake = Math.min(1.2, shake + 0.55)
+        }
         hpPrev.set(e.id, v)
       }
       for (const id of hpPrev.keys()) if (!seen.has(id)) hpPrev.delete(id)
+      // Something that was nearly dead and is gone: a death, not just walking out of range.
+      for (const [id, pv] of prevPos) {
+        if (seen.has(id)) continue
+        if (pv.hp !== null && pv.hp < 0.35) {
+          sparks.burst(pv.x, 1.2, pv.z, cTmp.copy(pv.c).multiplyScalar(1.4), 60, 18, 1.0, 0.7)
+          sparks.burst(pv.x, 1.2, pv.z, cAcc, 20, 9, 0.8, 0.5)
+          wave(pv.x, pv.z, pv.c.clone().multiplyScalar(1.4), 11)
+        }
+        prevPos.delete(id)
+      }
 
       // Others.
       world = []
@@ -269,7 +414,24 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
           tmp.updateMatrix()
           others.setMatrixAt(n, tmp.matrix)
           tint.copy(cLine).lerp(cWarn, hp === null ? 0 : (1 - hp) * 0.9)
+          tint.multiplyScalar(glow)
           others.setColorAt(n, tint)
+          prevPos.set(e.id, { x, z, hp, c: prevPos.get(e.id)?.c ?? new THREE.Color() })
+          prevPos.get(e.id)!.c.copy(tint).multiplyScalar(1 / glow)
+          const pulse = 0.8 + Math.sin(now / 260 + e.id) * 0.25
+          tmp.scale.set(pulse, pulse, pulse)
+          tmp.updateMatrix()
+          cores.setMatrixAt(n, tmp.matrix)
+          cores.setColorAt(n, tint)
+          tmp.scale.set(1, 1, 1)
+          tmp.position.set(x, 0.08, z)
+          tmp.rotation.set(0, 0, 0)
+          tmp.scale.set(6.5, 1, 6.5)
+          tmp.updateMatrix()
+          pools.setMatrixAt(n, tmp.matrix)
+          pools.setColorAt(n, tint)
+          tmp.scale.set(1, 1, 1)
+          if (n < 60 && Math.random() < 0.35) sparks.emit(x + (Math.random() - 0.5), 0.6, z + (Math.random() - 0.5), 0, 0.8 + Math.random(), 0, 0.7, 0.35, tint, 0.55, 0, 0.5)
           n++
         }
         if (hp !== null && hp < 0.995 && nb < CAP) {
@@ -288,8 +450,12 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         }
       }
       others.count = n
-      others.instanceMatrix.needsUpdate = true
-      if (others.instanceColor) others.instanceColor.needsUpdate = true
+      cores.count = n
+      pools.count = n
+      for (const m of [others, cores, pools]) {
+        m.instanceMatrix.needsUpdate = true
+        if (m.instanceColor) m.instanceColor.needsUpdate = true
+      }
       bars.geometry.setDrawRange(0, nb * 4)
       bp.needsUpdate = true
 
@@ -328,6 +494,22 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         me.visible = true
         me.position.set(sx, 1.3, sz)
         me.rotation.y = now / 1200
+        meCore.visible = mePool.visible = lightPool.visible = true
+        meCore.position.copy(me.position)
+        meCore.rotation.y = -now / 900
+        mePool.position.set(sx, 0.09, sz)
+        lightPool.position.set(sx, 0.05, sz)
+        if (selfPrev) {
+          const mv = Math.hypot(sx - selfPrev.x, sz - selfPrev.z)
+          if (mv > 0.02) {
+            const k = Math.min(4, 1 + Math.floor(mv * 14))
+            for (let i = 0; i < k; i++) {
+              const t = Math.random()
+              sparks.emit(sx - (sx - selfPrev.x) * t + (Math.random() - 0.5) * 0.6, 0.4 + Math.random() * 0.8, sz - (sz - selfPrev.z) * t + (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 1.2, 0.5 + Math.random() * 1.5, (Math.random() - 0.5) * 1.2, 0.55 + Math.random() * 0.4, 0.5, cHot, 0.8, 0, 1.2)
+            }
+          }
+        }
+        selfPrev = { x: sx, z: sz }
         const k = clampZoom(s.zoom)
         const h = 34 * k
         const back = 30 * k
@@ -339,12 +521,18 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         cam.x += (sx - cam.x) * f
         cam.z += (sz + back - cam.z) * f
         cam.y += (h - cam.y) * f
+        shake *= Math.exp(-dt * 7)
         grid.position.set(Math.round(sx / STEP) * STEP, 0, Math.round(sz / STEP) * STEP)
         camera.position.copy(cam)
+        if (shake > 0.01) camera.position.add(shakeV.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake))
         camLook.set(sx, 0, sz)
         camera.lookAt(camLook)
         ring.visible = !!tgt
+        beam.visible = !!tgt
         if (tgt) {
+          beam.position.set(tx, 9, tz)
+          ;(beam.material as THREE.MeshBasicMaterial).opacity = (tgt.inRange ? 0.55 : 0.2) + Math.sin(now / 200) * 0.1
+          if (Math.random() < 0.5) sparks.emit(tx + Math.cos(now / 300) * 1.6, 0.2, tz + Math.sin(now / 300) * 1.6, 0, 3 + Math.random() * 2, 0, 0.6, 0.4, cAcc, 0.8, 0, 0)
           ring.position.set(tx, 0.2, tz)
           ringMat.color.setHex(tgt.inRange ? pal.accent : pal.dim)
           const sc = tgt.locked ? 1.25 + Math.sin(now / 160) * 0.08 : 1
@@ -352,7 +540,10 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         }
       } else {
         me.visible = false
+        meCore.visible = mePool.visible = lightPool.visible = false
         ring.visible = false
+        beam.visible = false
+        selfPrev = null
       }
       const wx = s.weather
       if (wx && self) {
@@ -389,7 +580,27 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         fog.near = 50
         fog.far = 150
       }
-      renderer.render(scene, camera)
+      for (let i = waves.length - 1; i >= 0; i--) {
+        const w = waves[i]!
+        w.age += dt
+        const t = w.age / w.max
+        if (t >= 1) {
+          scene.remove(w.mesh)
+          ;(w.mesh.material as THREE.Material).dispose()
+          waves.splice(i, 1)
+          continue
+        }
+        const r = 1 + (w.size - 1) * (1 - (1 - t) ** 3)
+        w.mesh.scale.set(r, 1, r)
+        const m = w.mesh.material as THREE.MeshBasicMaterial
+        m.opacity = (1 - t) * 0.9
+      }
+      sparks.update(dt)
+      const mx = self ? self.x - half : 0
+      const mz = self ? self.y - half : 0
+      motes.drift(now / 1000, mx, mz, MOTE_SPAN, MOTE_H, dark ? 0.7 : 0.5)
+      if (post) composer.render(dt)
+      else renderer.render(scene, camera)
     }
     raf = requestAnimationFrame(frame)
 
@@ -401,13 +612,18 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       for (const f of floaters) drop(f)
       for (const t of textures.values()) t.dispose()
       for (const g of geoms) g.dispose()
-      wallMat.dispose()
+      for (const d of disposables) d.dispose()
+      for (const w of waves) (w.mesh.material as THREE.Material).dispose()
+      sparks.dispose()
+      motes.dispose()
+      composer.dispose()
+      target.dispose()
       grid.geometry.dispose()
       ;(grid.material as THREE.Material).dispose()
       ringMat.dispose()
       rainGeo.dispose()
       rainMat.dispose()
-      for (const o of [others, me, ring, bars]) {
+      for (const o of [others, cores, pools, me, ring, bars]) {
         o.geometry.dispose()
         ;(o.material as THREE.Material).dispose()
       }

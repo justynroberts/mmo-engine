@@ -223,6 +223,9 @@ pub struct Archetype {
     /// Checked in order, first movement rule that matches wins. With none, `behaviour` applies.
     #[serde(default)]
     pub rules: Vec<Rule>,
+    /// What it may leave behind when it dies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drops: Vec<DropDef>,
 }
 fn d_color() -> String {
     "#888888".into()
@@ -258,6 +261,8 @@ pub struct GameFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub walls: Option<Vec<[f32; 4]>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<ItemDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub weather: Vec<WeatherDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<EventDef>,
@@ -275,6 +280,87 @@ fn d_visible() -> u32 {
     64
 }
 
+
+// ---------------------------------------------------------------- items
+
+pub const MAX_ITEMS: usize = 32;
+/// Inventory slots per player.
+pub const INV_SLOTS: usize = 8;
+/// Action ids the client uses for items, so no wire change is needed for them: use slot N is ACT_USE + N, drop
+/// slot N is ACT_DROP + N, and ACT_PICKUP takes the nearest thing on the ground in reach. Game actions stay below.
+pub const ACT_USE: u8 = 200;
+pub const ACT_DROP: u8 = 216;
+pub const ACT_PICKUP: u8 = 250;
+/// How close you must be to pick something up, in world units.
+pub const PICKUP_RANGE: f32 = 3.0;
+
+/// A change to one of the user's attributes when an item is used.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UseEffect {
+    pub attr: String,
+    pub delta: f32,
+}
+
+/// A kind of item: what it looks like on the ground and in the bag, how many fit in a slot, and what using it does.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ItemDef {
+    pub name: String,
+    #[serde(default = "d_item_color")]
+    pub color: String,
+    /// How many share a slot (1..99).
+    #[serde(default = "d_stack")]
+    pub stack_max: u8,
+    /// Changes applied to whoever uses it. An item with none can be carried and dropped but does nothing.
+    #[serde(default)]
+    pub uses: Vec<UseEffect>,
+    /// Whether using it uses one up.
+    #[serde(default = "d_true")]
+    pub consume: bool,
+}
+fn d_item_color() -> String {
+    "#cccc66".into()
+}
+fn d_stack() -> u8 {
+    10
+}
+fn d_true() -> bool {
+    true
+}
+fn d_one_u8() -> u8 {
+    1
+}
+
+/// A chance that a bot of this type leaves an item behind when it dies.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DropDef {
+    pub item: String,
+    #[serde(default = "d_chance")]
+    pub chance_pct: f32,
+    #[serde(default = "d_one_u8")]
+    pub min: u8,
+    #[serde(default = "d_one_u8")]
+    pub max: u8,
+}
+
+#[derive(Clone, Debug)]
+pub struct ItemRt {
+    pub name: String,
+    pub color: String,
+    pub stack_max: u8,
+    pub uses: Vec<(usize, f32)>,
+    pub consume: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct DropRt {
+    pub item: usize,
+    pub chance_pct: f32,
+    pub min: u8,
+    pub max: u8,
+}
 
 // ---------------------------------------------------------------- weather and events
 
@@ -355,6 +441,14 @@ pub enum Step {
     },
     /// Remove every live bot of a type.
     Clear { archetype: String },
+    /// Put items on the ground, scattered over a place or anywhere.
+    Drop {
+        item: String,
+        #[serde(default = "d_spawn_count")]
+        count: u32,
+        #[serde(default)]
+        place: Option<String>,
+    },
 }
 
 /// Something that happens: on demand from the console, or on a timer.
@@ -388,6 +482,7 @@ pub struct ArchRt {
     pub rules: Vec<RuleRt>,
     /// Farthest any `sees` condition or chase reaches, for one neighbour scan.
     pub reach: f32,
+    pub drops: Vec<DropRt>,
 }
 
 #[derive(Clone, Debug)]
@@ -422,6 +517,7 @@ pub struct RuleRt {
 pub struct Game {
     pub defs: Defs,
     pub archs: Vec<ArchRt>,
+    pub items: Vec<ItemRt>,
     pub places: Vec<Place>,
     pub routes: Vec<Route>,
 }
@@ -469,6 +565,7 @@ impl GameFile {
             attack: attack.map(Into::into),
             attrs: BTreeMap::new(),
             home: None,
+            drops: Vec::new(),
             rules: Vec::new(),
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
@@ -506,6 +603,7 @@ impl GameFile {
                 Route { name: "market loop".into(), points: vec![[390.0, 130.0], [450.0, 130.0], [450.0, 190.0], [390.0, 190.0]], looped: true },
             ],
             walls: None,
+            items: Vec::new(),
             weather: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
@@ -631,6 +729,9 @@ impl GameFile {
             if a.id == 0 {
                 return Err(format!("action '{}': id 0 is reserved for 'no action'", a.name));
             }
+            if a.id >= ACT_USE {
+                return Err(format!("action '{}': ids from {ACT_USE} up are reserved for items", a.name));
+            }
             if !ids.insert(a.id) {
                 return Err(format!("duplicate action id {}", a.id));
             }
@@ -711,6 +812,36 @@ impl GameFile {
         let route_ix = |n: &str, ctx: &str| {
             self.routes.iter().position(|p| p.name == n).ok_or_else(|| format!("{ctx}: unknown route '{n}'"))
         };
+        let mut item_names = HashSet::new();
+        let mut items: Vec<ItemRt> = Vec::new();
+        if self.items.len() > MAX_ITEMS {
+            return Err(format!("at most {MAX_ITEMS} items"));
+        }
+        for it in &self.items {
+            let ctx = format!("item '{}'", it.name);
+            if it.name.trim().is_empty() || it.name.len() > 32 || it.name.trim() != it.name || !item_names.insert(it.name.clone()) {
+                return Err(format!("item names must be unique, 1..32 characters, no edge spaces ('{}')", it.name));
+            }
+            let c = it.color.as_bytes();
+            if !(c.len() == 7 && c[0] == b'#' && c[1..].iter().all(|b| b.is_ascii_hexdigit())) {
+                return Err(format!("{ctx}: color must look like #aabbcc"));
+            }
+            if it.stack_max == 0 || it.stack_max > 99 {
+                return Err(format!("{ctx}: stack_max must be 1..99"));
+            }
+            if it.uses.len() > 4 {
+                return Err(format!("{ctx}: at most 4 effects"));
+            }
+            let mut uses = Vec::new();
+            for u in &it.uses {
+                if !u.delta.is_finite() || u.delta.abs() > 100_000.0 {
+                    return Err(format!("{ctx}: effect delta must be a number"));
+                }
+                let a = self.attrs.iter().position(|x| x.name == u.attr).ok_or_else(|| format!("{ctx}: unknown attribute '{}'", u.attr))?;
+                uses.push((a, u.delta));
+            }
+            items.push(ItemRt { name: it.name.clone(), color: it.color.clone(), stack_max: it.stack_max, uses, consume: it.consume });
+        }
         let mut seen = HashSet::new();
         let mut archs = Vec::new();
         for a in &self.archetypes {
@@ -809,7 +940,22 @@ impl GameFile {
                 };
                 rules.push(RuleRt { when, then });
             }
+            let mut drops = Vec::new();
+            if a.drops.len() > 8 {
+                return Err(format!("{ctx}: at most 8 drops"));
+            }
+            for d in &a.drops {
+                let item = items.iter().position(|x| x.name == d.item).ok_or_else(|| format!("{ctx}: drop of unknown item '{}'", d.item))?;
+                if !(d.chance_pct.is_finite() && (0.0..=100.0).contains(&d.chance_pct)) {
+                    return Err(format!("{ctx}: drop chance must be 0..100"));
+                }
+                if d.min == 0 || d.min > d.max || d.max > 99 {
+                    return Err(format!("{ctx}: drop amounts need 1 <= min <= max <= 99"));
+                }
+                drops.push(DropRt { item, chance_pct: d.chance_pct, min: d.min, max: d.max });
+            }
             archs.push(ArchRt {
+                drops,
                 home,
                 rules,
                 reach,
@@ -824,7 +970,7 @@ impl GameFile {
             });
         }
         self.check_director()?;
-        Ok(Game { defs, archs, places: self.places.clone(), routes: self.routes.clone() })
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone() })
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {
@@ -943,6 +1089,19 @@ impl GameFile {
                     Step::Clear { archetype } => {
                         if !arch(archetype) {
                             return Err(format!("{ctx}: unknown bot type '{archetype}'"));
+                        }
+                    }
+                    Step::Drop { item, count, place: pl } => {
+                        if !self.items.iter().any(|i| &i.name == item) {
+                            return Err(format!("{ctx}: unknown item '{item}'"));
+                        }
+                        if *count == 0 || *count > MAX_EVENT_SPAWN {
+                            return Err(format!("{ctx}: count must be 1..{MAX_EVENT_SPAWN}"));
+                        }
+                        if let Some(p) = pl {
+                            if !place(p) {
+                                return Err(format!("{ctx}: unknown place '{p}'"));
+                            }
                         }
                     }
                 }

@@ -248,7 +248,7 @@ pub struct WeatherView {
 
 impl Sim {
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes } = game;
+        let Game { defs, archs, places, routes, items: _ } = game;
         let ents = Entities::new(cap, defs.attrs.len());
         let grid = Grid::new(world.size, defs.interest_radius, cap);
         Sim {
@@ -993,6 +993,7 @@ mod tests {
             attrs: Default::default(),
             home: None,
             rules,
+            drops: Vec::new(),
         }
     }
 
