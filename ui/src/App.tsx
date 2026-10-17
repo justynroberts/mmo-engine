@@ -226,8 +226,8 @@ export default function App() {
   }
   const onMapClick = (x: number, y: number) => {
     if (tab === 'god' && drop) {
-      void api<{ error?: string }>('/api/spawn', 'POST', { archetype: drop.arch, count: drop.count, x, y, radius: 6 }).then((r) =>
-        setNote(r.status === 200 ? `Dropped ${drop.count} ${drop.arch} at ${Math.round(x)}, ${Math.round(y)}.` : (r.body.error ?? `server said ${r.status}`)),
+      void api<{ error?: string; note?: string }>('/api/spawn', 'POST', { archetype: drop.arch, count: drop.count, x, y, radius: 6 }).then((r) =>
+        setNote(r.status === 200 ? r.body.note ?? `Dropped ${drop.count} ${drop.arch} at ${Math.round(x)}, ${Math.round(y)}.` : (r.body.error ?? `server said ${r.status}`)),
       )
       return
     }
@@ -240,8 +240,8 @@ export default function App() {
     } else if (b.tool === 'spawn') {
       const a = draft.archetypes[b.arch]
       if (!a) return
-      void api<{ error?: string }>('/api/spawn', 'POST', { archetype: a.name, count: 1, x, y }).then((r) =>
-        setNote(r.status === 200 ? `Dropped a ${a.name} at ${Math.round(x)}, ${Math.round(y)}.` : (r.body.error ?? `server said ${r.status}`)),
+      void api<{ error?: string; note?: string }>('/api/spawn', 'POST', { archetype: a.name, count: 1, x, y }).then((r) =>
+        setNote(r.status === 200 ? r.body.note ?? `Dropped a ${a.name} at ${Math.round(x)}, ${Math.round(y)}.` : (r.body.error ?? `server said ${r.status}`)),
       )
     }
   }

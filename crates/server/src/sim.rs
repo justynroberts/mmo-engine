@@ -45,6 +45,10 @@ pub struct Entities {
     free: Vec<u32>,
     pub high: usize,
     pub live: usize,
+    /// Bots alive (entities spawned with an archetype), kept below `cap - player_reserve` so bots never take
+    /// the slots that players need to join.
+    pub bots: usize,
+    counted: Vec<bool>,
 }
 
 impl Entities {
@@ -59,6 +63,8 @@ impl Entities {
             dir_y: vec![0; cap],
             cooldown_until: vec![0; cap],
             god: vec![false; cap],
+            counted: vec![false; cap],
+            bots: 0,
             air: vec![0; cap],
             owner: vec![NONE; cap],
             arch: vec![NO_ARCH; cap],
@@ -107,6 +113,10 @@ impl Entities {
 
     pub fn despawn(&mut self, slot: usize) {
         if self.alive[slot] {
+            if self.counted[slot] {
+                self.counted[slot] = false;
+                self.bots -= 1;
+            }
             self.alive[slot] = false;
             self.gen[slot] = self.gen[slot].wrapping_add(1);
             self.owner[slot] = NONE;
@@ -254,6 +264,8 @@ pub struct Sim {
     /// Bumped whenever a bag changes, so the network layer knows to resend it.
     pub inv_ver: Vec<u32>,
     pub item_cd: Vec<u32>,
+    /// Slots bots may not take, so players can always join (the server's --max-clients).
+    pub player_reserve: usize,
     pub ground: Vec<crate::items::GroundItem>,
     pub next_ground: u32,
 }
@@ -295,6 +307,7 @@ impl Sim {
             inv: vec![[(0, 0); proto::game::INV_SLOTS]; cap],
             inv_ver: vec![0; cap],
             item_cd: vec![0; cap],
+            player_reserve: 0,
             ground: Vec::new(),
             next_ground: 1,
         }
@@ -308,7 +321,14 @@ impl Sim {
     /// given spot if it is free, otherwise at a random free spot.
     pub fn spawn_as(&mut self, owner: u32, arch: u8, at: Option<(f32, f32)>) -> Option<usize> {
         let r = self.defs.entity_radius;
+        if arch != NO_ARCH && self.ents.bots + self.player_reserve >= self.ents.cap() {
+            return None; // the rest of the table is kept for players
+        }
         let slot = self.ents.alloc()?;
+        if arch != NO_ARCH {
+            self.ents.counted[slot] = true;
+            self.ents.bots += 1;
+        }
         let home = if owner == NONE { self.archs.get(arch as usize).and_then(|a| a.home) } else { None };
         let (mut x, mut y) = match at {
             Some((x, y)) if !self.world.blocked(x, y, r) => (x, y),
@@ -479,9 +499,13 @@ impl Sim {
             }
         }
         let mut have = vec![0u32; self.archs.len()];
-        for b in saved.map_or(&[][..], |w| &w.bots[..]) {
+        let all = saved.map_or(&[][..], |w| &w.bots[..]);
+        for (k, b) in all.iter().enumerate() {
             let Some(a) = self.archs.iter().position(|a| a.name == b.arch) else { continue };
-            let Some(slot) = self.spawn_as(NONE, a as u8, Some((b.x, b.y))) else { return };
+            let Some(slot) = self.spawn_as(NONE, a as u8, Some((b.x, b.y))) else {
+                eprintln!("{} saved bot(s) did not fit: the rest of the entity table is kept for players", all.len() - k);
+                return;
+            };
             // A spot that is no longer legal falls back to a fresh one inside spawn_as; attributes still apply.
             self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone(), inv: Vec::new() });
             have[a] += 1;
@@ -978,6 +1002,20 @@ mod tests {
         // Landed: the zap connects.
         s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
+    }
+
+    #[test]
+    fn bots_cannot_take_the_slots_kept_for_players() {
+        let mut s = sim(); // 64 slots
+        s.player_reserve = 60;
+        let n = (0..10).filter(|_| s.spawn_as(NONE, 0, None).is_some()).count();
+        assert_eq!(n, 4);
+        assert!(s.spawn(NONE).is_some(), "a player still gets in");
+        // Freeing a bot frees its place in the bot budget.
+        let bot = (0..s.ents.high).find(|&i| s.ents.alive[i] && s.ents.arch[i] != NO_ARCH).unwrap();
+        s.ents.despawn(bot);
+        assert!(s.spawn_as(NONE, 0, None).is_some());
+        assert!(s.spawn_as(NONE, 0, None).is_none());
     }
 
     #[test]

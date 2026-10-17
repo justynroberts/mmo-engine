@@ -218,6 +218,7 @@ fn main() {
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
+    sim.player_reserve = cfg.max_clients;
     let mut director = director::Director::new();
     director.sync(&game_file, 0, cfg.hz);
     let mut botdir = cfg.bots_dir.as_deref().map(botdir::BotDir::open);
@@ -316,6 +317,7 @@ fn main() {
         port: cfg.port,
         plain_npcs: cfg.npcs,
         game_path: Some(cfg.game.clone()),
+        max_clients: cfg.max_clients,
     };
     let mut live = ctl::LiveStats { snap_lanes: lanes_n, ..Default::default() };
     let admin_rx = cfg.admin.as_ref().map(|a| {

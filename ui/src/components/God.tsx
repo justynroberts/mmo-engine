@@ -77,8 +77,8 @@ export default function God({ game, live, setGame, director, drop, setDrop, note
   const attrNames = game.attrs.map((a) => a.name)
 
   const post = async (path: string, body: unknown, ok: string) => {
-    const r = await api<{ error?: string }>(path, 'POST', body)
-    setMsg(r.status === 200 ? ok : (r.body.error ?? `the server said ${r.status}`))
+    const r = await api<{ error?: string; note?: string }>(path, 'POST', body)
+    setMsg(r.status === 200 ? (r.body.note ?? ok) : (r.body.error ?? `the server said ${r.status}`))
   }
 
   const spawn = () => {

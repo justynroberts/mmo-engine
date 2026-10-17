@@ -159,6 +159,7 @@ pub struct Params {
     pub port: u16,
     pub plain_npcs: usize,
     pub game_path: Option<PathBuf>,
+    pub max_clients: usize,
 }
 
 /// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
@@ -485,7 +486,11 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
                 }
                 n += 1;
             }
-            (200, json!({ "ok": true, "spawned": n }).to_string())
+            let mut out = json!({ "ok": true, "spawned": n });
+            if n < r.count.min(5000) {
+                out["note"] = json!(format!("only {n} fitted: there are {} bots, and the rest of the entity table is kept for players", c.sim.ents.bots));
+            }
+            (200, out.to_string())
         }
         Cmd::Kill(r) => {
             let mut n = 0;
@@ -646,6 +651,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         // Characters survive a world restart: save them from the world they are in, before it is replaced.
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
+        c.sim.player_reserve = c.params.max_clients;
         // The saved bots belong to the old definitions; the new world starts from its own counts.
         if let Some(st) = &c.hs.store {
             st.clear_world();
