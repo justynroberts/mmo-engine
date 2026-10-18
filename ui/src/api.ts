@@ -170,6 +170,8 @@ export interface State {
   e: EntityRow[]
   shown: number
   director?: DirectorState
+  /** The world file's version, when the server has one (refetch /api/worldfile when it changes). */
+  world_ver?: string
 }
 export interface Info {
   server_key: string

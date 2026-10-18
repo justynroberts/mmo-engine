@@ -9,6 +9,7 @@ import { ActionsEditor, AttrsEditor, BotsEditor, ItemsEditor } from './component
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
+import { parseWorld, type WorldData } from './world'
 const Scene3D = lazy(() => import('./components/Scene3D'))
 import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
 
@@ -124,6 +125,8 @@ export default function App() {
   const [online, setOnline] = useState(false)
   const [info, setInfo] = useState<Info | null>(null)
   const [world, setWorld] = useState<WorldGeom | null>(null)
+  /** The world file (terrain, water, objects), when the server has one; fetched again when its version changes. */
+  const [land, setLand] = useState<WorldData | null>(null)
   const [live, setLive] = useState<GameFile | null>(null)
   const [draft, setDraft] = useState<GameFile | null>(null)
   const [raw, setRaw] = useState<{ text: string; error: string | null } | null>(null)
@@ -162,6 +165,25 @@ export default function App() {
     void loadGame()
     void loadStatic()
   }, [loadGame, loadStatic])
+
+  const worldVer = stats?.world_ver
+  useEffect(() => {
+    if (!worldVer) {
+      setLand(null)
+      return
+    }
+    let cancelled = false
+    void fetch('/api/worldfile')
+      .then((r) => (r.ok ? r.text() : ''))
+      .then((t) => {
+        if (!cancelled) setLand(t ? parseWorld(t) : null)
+      })
+      .catch(() => undefined)
+    void loadStatic() // a reloaded world file can bring new walls
+    return () => {
+      cancelled = true
+    }
+  }, [worldVer, loadStatic])
 
   // After a server restart the hash changes; pick up the new game and world.
   const hash = stats?.hash
@@ -314,7 +336,7 @@ export default function App() {
             healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
             healthMax={healthDef?.max ?? 100}
             themeKey={dark ? 'dark' : 'light'}
-            seed={info?.seed}
+            land={land}
           />
           ) : (
             <Suspense fallback={<div className="h-full bg-[#a9c3d6]" />}>
@@ -324,7 +346,7 @@ export default function App() {
                 routes={live?.routes ?? []}
                 archetypes={live?.archetypes.map((a) => a.name) ?? []}
                 colors={live?.archetypes.map((a) => a.color) ?? []}
-                seed={info?.seed}
+                land={land}
                 airIdx={live?.attrs.findIndex((a) => a.name === 'airborne') ?? -1}
                 airMax={live?.attrs.find((a) => a.name === 'airborne')?.max ?? 100}
                 healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}

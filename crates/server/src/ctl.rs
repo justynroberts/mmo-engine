@@ -785,6 +785,10 @@ fn state_json(c: &Ctl, limit: usize) -> String {
         );
     }
     let _ = write!(o, r#""store":{{"enabled":{},"saved":{},"loaded":{},"errors":{}}},"#, c.hs.store.is_some(), sv, ld, er);
+    // The world file's version, so the console can refetch it after a reload.
+    if let Some(w) = &c.hs.world {
+        let _ = write!(o, r#""world_ver":"{:016x}","#, w.ver);
+    }
     let _ = write!(
         o,
         r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{},"jumps":{},"dodges":{},"ground_items":{}}},"attrs":["#,
