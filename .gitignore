@@ -13,3 +13,5 @@ ui/dist/
 /*.zip
 .DS_Store
 __pycache__/
+/world.json
+/world.*.json

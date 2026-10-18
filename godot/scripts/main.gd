@@ -56,6 +56,16 @@ var next_swing := 0.0
 var notice_until := 0.0
 var notice := ""
 var smoke_log: Array[String] = []
+# Building: blocks on a grid (/play/info "build"), stacked into columns, fetched from /play/blocks.
+var build := {}           # /play/info "build"; empty if the server does not offer it
+var building := false     # build mode (B)
+var build_kind := 0
+var blocks := {}          # column key (cy << 15 | cx) -> materials from the bottom up, e.g. "013"
+var blocks_ver := 0
+var blocks_poll := 0.0
+var blocks_busy := false
+var ghost := MeshInstance3D.new()
+var aim_cell := Vector2i(-1, -1)
 
 func _ready() -> void:
 	args = _parse_args()
@@ -159,6 +169,18 @@ func _start() -> void:
 	if info.get("actions", []).size() > 0:
 		attack_id = int(info["actions"][0]["id"])
 		action_range = float(info["actions"][0].get("range", 8.0))
+	build = info.get("build", {})
+	if not build.is_empty():
+		var gm := BoxMesh.new()
+		var bs := float(build["block"])
+		gm.size = Vector3(bs, bs, bs) * 1.04
+		ghost.mesh = gm
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		ghost.material_override = mat
+		ghost.visible = false
+		add_child(ghost)
 	if not ClassDB.class_exists("MmoClient"):
 		return _fail("the mmo_godot extension is not loaded (build it: scripts/build_godot.sh)")
 	net = ClassDB.instantiate("MmoClient")
@@ -287,6 +309,8 @@ func _process(delta: float) -> void:
 			c[0].queue_free()
 			corpses.erase(c)
 	_sync_ground()
+	_poll_blocks(delta)
+	_aim()
 	hud.set_bag(net.bag())
 	_camera()
 	_weather(delta)
@@ -325,7 +349,88 @@ func _process(delta: float) -> void:
 	var cap := int(info.get("max_visible", 0))
 	var crowd := "   nearest %d shown, more around" % cap if cap > 0 and list.size() >= cap else ""
 	var sky := "   %s" % String(weather["name"]).to_upper() if not weather.is_empty() else ""
-	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, sky, "   GOD" if god else ""]
+	var mode := "   BUILD %s (1-4)" % theme.block_name(build_kind).to_upper() if building else ""
+	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, sky, "   GOD" if god else "", mode]
+
+# ---------------------------------------------------------------- building
+
+## Fetch what changed in the built blocks: every second, and right after you build or break.
+func _poll_blocks(delta: float) -> void:
+	if build.is_empty() or blocks_busy:
+		return
+	blocks_poll -= delta
+	if blocks_poll > 0.0:
+		return
+	blocks_poll = 1.0
+	blocks_busy = true
+	var text := await _fetch("http://%s/play/blocks?since=%d" % [args["web"], blocks_ver])
+	blocks_busy = false
+	var d = JSON.parse_string(text) if text != "" else null
+	if not d is Dictionary:
+		return
+	var changed := {}
+	if d.get("full", false):
+		for k in blocks:
+			changed[k] = true
+			net.set_block(k & 0x7fff, k >> 15, false)
+		blocks.clear()
+	for c in d.get("cols", []):
+		var cx := int(c[0])
+		var cy := int(c[1])
+		var k := cy << 15 | cx
+		var kinds := String(c[2])
+		changed[k] = true
+		if kinds == "":
+			blocks.erase(k)
+		else:
+			blocks[k] = kinds
+		net.set_block(cx, cy, kinds != "") # prediction stops at it, as the server does
+	blocks_ver = int(d.get("ver", blocks_ver))
+	if not changed.is_empty():
+		theme.set_blocks(blocks, changed.keys())
+
+## In build mode: the column under the mouse (the ground there, or a column the ray runs into), shown as a ghost
+## block where the next one would go, green in reach and red out of it.
+func _aim() -> void:
+	aim_cell = Vector2i(-1, -1)
+	ghost.visible = false
+	if not building or build.is_empty() or world_map.visible:
+		return
+	var bs := float(build["block"])
+	var mp := get_viewport().get_mouse_position()
+	var from := cam.project_ray_origin(mp)
+	var dir := cam.project_ray_normal(mp)
+	var t := 0.0
+	while t < 300.0:
+		var p := from + dir * t
+		var c := Vector2i(int(floor(p.x / bs)), int(floor(p.z / bs)))
+		var k := c.y << 15 | c.x
+		var in_col: bool = blocks.has(k) and p.y <= theme.block_base(c.x, c.y) + String(blocks[k]).length() * bs
+		if c.x >= 0 and c.y >= 0 and (in_col or p.y <= _height(p.x, p.z)):
+			aim_cell = c
+			break
+		t += 0.4
+	if aim_cell.x < 0:
+		return
+	var h := String(blocks.get(aim_cell.y << 15 | aim_cell.x, "")).length()
+	var centre := Vector2((aim_cell.x + 0.5) * bs, (aim_cell.y + 0.5) * bs)
+	ghost.visible = true
+	ghost.position = Vector3(centre.x, theme.block_base(aim_cell.x, aim_cell.y) + (h + 0.5) * bs, centre.y)
+	var ok := me_pos.distance_to(centre) <= float(build["reach"]) and h < int(build["max_stack"])
+	(ghost.material_override as StandardMaterial3D).albedo_color = Color(0.45, 1.0, 0.55, 0.4) if ok else Color(1.0, 0.35, 0.3, 0.4)
+
+## Put a block on the column you are aiming at, or take its top one off.
+func _build(place: bool) -> void:
+	if aim_cell.x < 0:
+		return
+	var bs := float(build["block"])
+	if me_pos.distance_to(Vector2((aim_cell.x + 0.5) * bs, (aim_cell.y + 0.5) * bs)) > float(build["reach"]):
+		notice = "too far to build there"
+		notice_until = t_total + 1.5
+		return
+	var target := aim_cell.x | aim_cell.y << 15 | build_kind << 30
+	net.act(int(build["act_build"] if place else build["act_break"]), target)
+	blocks_poll = minf(blocks_poll, 0.12)
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,
@@ -580,6 +685,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 			zoom = clampf(zoom - 2.0, 8.0, 60.0)
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom = clampf(zoom + 2.0, 8.0, 60.0)
+		elif ev.button_index == MOUSE_BUTTON_LEFT and building:
+			_build(true)
+		elif ev.button_index == MOUSE_BUTTON_RIGHT and building:
+			_build(false)
 		elif ev.button_index == MOUSE_BUTTON_LEFT:
 			_pick(ev.position)
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
@@ -596,6 +705,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 			net.act(ACT_JUMP, 0)
 		elif k == KEY_M:
 			_toggle_map()
+		elif k == KEY_B and not build.is_empty():
+			building = not building
+		elif k == KEY_ESCAPE and building:
+			building = false
+		elif building and k >= KEY_1 and k <= KEY_4:
+			build_kind = k - KEY_1
 		elif k == KEY_ESCAPE and world_map.visible:
 			world_map.visible = false
 		elif k == KEY_F11:
@@ -764,6 +879,26 @@ func _smoke() -> void:
 		_check("jumps", ok, "")
 		ok = await _wait(3.0, func(): return track.get(net.get_self_id(), {}).get("air", 1.0) == 0.0)
 		_check("and lands", ok, "")
+	# Building: put a block next to us (trying a few sides, in case a wall is in the way), see it arrive and be
+	# drawn, then break it.
+	if not build.is_empty():
+		var bs := float(build["block"])
+		var built := -1
+		for off in [Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4)]:
+			var at: Vector2 = me_pos + off
+			var c := Vector2i(int(floor(at.x / bs)), int(floor(at.y / bs)))
+			net.act(int(build["act_build"]), c.x | c.y << 15 | 2 << 30)
+			blocks_poll = 0.2
+			if await _wait(3.0, func(): return blocks.has(c.y << 15 | c.x)):
+				built = c.y << 15 | c.x
+				break
+		_check("builds a block", built >= 0, "%d column(s)" % blocks.size())
+		if built >= 0:
+			_check("and the theme draws it", theme._block_nodes.size() > 0, "%d chunk(s)" % theme._block_nodes.size())
+			net.act(int(build["act_break"]), built & 0x7fff | (built >> 15) << 15)
+			blocks_poll = 0.2
+			ok = await _wait(3.0, func(): return not blocks.has(built))
+			_check("and breaks it", ok, "")
 	# Weather: define one, start it from the admin side, and the client should pick it up and make it rain.
 	var admin_url := "http://%s" % args["admin"]
 	var got := await _fetch(admin_url + "/api/game")

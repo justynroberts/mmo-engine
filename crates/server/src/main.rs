@@ -3,6 +3,7 @@
 //! One pinned thread owns the zone: drain inputs, step the simulation at a fixed
 //! rate, build interest-filtered delta snapshots, send them in batches.
 
+mod blocks;
 mod botdir;
 mod ctl;
 mod director;
@@ -249,6 +250,18 @@ fn main() {
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
     sim.player_reserve = cfg.max_clients;
+    // What players built, kept beside the world file.
+    let blocks_path = blocks::path_for(&world_path);
+    if let Ok(text) = std::fs::read_to_string(&blocks_path) {
+        match blocks::Blocks::parse(&text) {
+            Ok(cols) => {
+                let dropped = sim.set_blocks(cols);
+                eprintln!("restored {} built block(s) from {}{}", sim.blocks.total, blocks_path.display(), if dropped > 0 { format!(" ({dropped} column(s) inside walls left out)") } else { String::new() });
+                sim.blocks.unsaved = false;
+            }
+            Err(e) => eprintln!("{}: {e}; starting with no built blocks", blocks_path.display()),
+        }
+    }
     let mut director = director::Director::new();
     director.sync(&game_file, 0, cfg.hz);
     let mut botdir = cfg.bots_dir.as_deref().map(botdir::BotDir::open);
@@ -484,6 +497,17 @@ fn main() {
             tx.flush();
         }
         net::route_chat(&mut sim, &mut clients);
+        // Blocks built or broken this tick go to the clients, and are saved every few seconds.
+        let changes = sim.blocks.take_changes();
+        if !changes.is_empty() {
+            if let Some(g) = &hs.gateway {
+                g.blocks_changed(changes);
+            }
+        }
+        if sim.blocks.unsaved && sim.tick % (cfg.hz * 5).max(1) == 0 {
+            sim.blocks.unsaved = false;
+            blocks::save_in_background(blocks_path.clone(), format!(r#"{{"cols":{}}}"#, sim.blocks.cols_json()));
+        }
         let t2 = Instant::now();
 
         // 3. Snapshots: built, encrypted and sent by the lanes (in parallel when workers > 1).
@@ -568,8 +592,14 @@ fn main() {
         }
     }
 
-    // Everyone online is saved before we exit.
+    // Everyone online is saved before we exit, and so are the blocks.
     net::save_all(&sim, &clients, hs.store.as_deref());
+    if sim.blocks.unsaved {
+        let tmp = blocks_path.with_extension("tmp");
+        if let Err(e) = std::fs::write(&tmp, format!(r#"{{"cols":{}}}"#, sim.blocks.cols_json())).and_then(|_| std::fs::rename(&tmp, &blocks_path)) {
+            eprintln!("blocks: not saved to {}: {e}", blocks_path.display());
+        }
+    }
     if let Some(st) = &hs.store {
         st.flush();
     }

@@ -151,6 +151,25 @@ void fragment() {
 func ground_material() -> Material:
 	return terrain_mat
 
+## Building blocks from the Medieval Village textures: dressed stone, timber, brick and plaster, tiled so each
+## block shows one texture repeat.
+func block_name(kind: int) -> String:
+	return ["stone", "timber", "brick", "plaster"][clampi(kind, 0, 3)]
+
+func block_material(kind: int) -> Material:
+	var names := ["RockTrim", "WoodTrim", "RedBrick", "Plaster"]
+	var dir := "res://themes/fantasy/assets/village/T_%s_" % names[clampi(kind, 0, 3)]
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load(dir + "BaseColor.png")
+	if ResourceLoader.exists(dir + "Normal.png"):
+		m.normal_enabled = true
+		m.normal_texture = load(dir + "Normal.png")
+	m.uv1_triplanar = true
+	m.uv1_world_triplanar = true
+	m.uv1_scale = Vector3.ONE / block_size()
+	m.roughness = 0.9
+	return m
+
 func frame(center: Vector2, camera_zoom: float) -> void:
 	# Rain starts below the camera so no streak brushes past the lens.
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + minf(14.0, camera_zoom * 0.5), center.y)

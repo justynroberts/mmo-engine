@@ -170,6 +170,8 @@ export interface State {
   e: EntityRow[]
   shown: number
   director?: DirectorState
+  /** Blocks built by players: `ver` changes whenever they do (refetch /api/blocks). */
+  blocks?: { ver: number; total: number }
   /** The world file's version, when the server has one (refetch /api/worldfile when it changes). */
   world_ver?: string
 }

@@ -127,6 +127,23 @@ not spent). Nothing new goes on the wire. If the game file has an attribute name
 share of the current jump still to come, from its max at take-off to its min on landing; make it replicated and clients
 draw the arc from it as a parabola, `4h * p * (1 - p)` with `p = 1 - share`. The default game has one (0 to 100, 8 bits).
 
+## Building
+
+`252` builds and `253` breaks, in the INPUT action byte; nothing new goes on the wire, so the protocol version is
+unchanged. The target names a block column: `cx | cy << 15 | material << 30`, where a column is a `BLOCK` (2 unit)
+square cell, `cx = floor(x / 2)`, `cy = floor(y / 2)`, and the material is 0..3. A build puts a block of that material
+on top of the column (at most 8); a break takes the top one off. The server refuses a column more than 8 units from
+the builder's position, one inside a wall or outside the world, and a new column where anyone stands. A column with
+any block in it blocks movement exactly as a wall does (`proto::world::World::set_block`), so a client that predicts
+must mirror the columns it is told about. `/play/info` carries `build` (block size, reach, stack limit, materials,
+the two action ids) when the server offers building.
+
+The blocks travel over HTTP, not UDP: `GET /play/blocks?since=VER` returns `{"ver", "full", "cols": [[cx, cy,
+"materials"], ...]}`, with materials as digits from the bottom up. With `full: false` the list holds only the columns
+changed after `VER` (an empty string is a cleared column); with `full: true` (no `since`, a version from before a
+restart, or one too far behind) it is every column and the client drops what it had. Poll it every second or so, and
+soon after building.
+
 ## World size (version 7)
 
 Positions are 32 bit (`world units * 16`), so the wire can describe a world of 268 million units on a side. Version 7 widened

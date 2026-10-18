@@ -30,6 +30,8 @@ export interface PlayInfo {
   items?: { name: string; color: string; stack_max: number; usable: boolean }[]
   /** The weather right now, or null for clear sky. */
   weather?: { name: string; color: string; intensity: number } | null
+  /** Building, when the server offers it: blocks on a grid, listed at /play/blocks. */
+  build?: { block: number; reach: number; max_stack: number; kinds: number; act_build: number; act_break: number }
 }
 
 /** Where to open the WebSocket for a zone, from the base URL the operator configured. */
@@ -110,6 +112,11 @@ export class GameClient {
   readonly walls: WallStore
   private worldRev = -1
   ground: GroundItem[] = []
+  /** Blocks players have built (cy << 15 | cx -> materials bottom-up); `blocksRev` counts changes. */
+  readonly blocks = new Map<number, string>()
+  blocksRev = 0
+  private blocksVer = 0
+  private blocksTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
     private info: PlayInfo,
@@ -134,14 +141,45 @@ export class GameClient {
     if (this.worldRev === this.walls.rev) return
     this.worldRev = this.walls.rev
     this.world = new World(this.info.world_size, this.walls.list())
+    for (const k of this.blocks.keys()) this.world.setBlock(k & 0x7fff, k >> 15, true)
+  }
+
+  /** What changed in the built blocks since last time: kept for drawing, and put in the collision world so
+   * prediction stops at them as the server does. */
+  private async pollBlocks() {
+    try {
+      const r = await fetch(`/play/blocks?since=${this.blocksVer}`)
+      if (!r.ok) return
+      const d = (await r.json()) as { ver: number; full: boolean; cols: [number, number, string][] }
+      if (d.full) {
+        for (const k of this.blocks.keys()) this.world.setBlock(k & 0x7fff, k >> 15, false)
+        this.blocks.clear()
+      }
+      for (const [cx, cy, kinds] of d.cols) {
+        const k = (cy << 15) | cx
+        if (kinds) this.blocks.set(k, kinds)
+        else this.blocks.delete(k)
+        this.world.setBlock(cx, cy, kinds !== '')
+      }
+      if (d.full || d.cols.length) this.blocksRev++
+      this.blocksVer = d.ver
+    } catch {
+      // the next poll tries again
+    }
   }
 
   start() {
     this.stopped = false
     this.open()
+    if (this.info.build && !this.blocksTimer) {
+      void this.pollBlocks()
+      this.blocksTimer = setInterval(() => void this.pollBlocks(), 1000)
+    }
   }
 
   stop() {
+    if (this.blocksTimer) clearInterval(this.blocksTimer)
+    this.blocksTimer = null
     this.stopped = true
     this.teardown()
     this.set('closed')

@@ -197,6 +197,95 @@ func apply_weather(w: Dictionary) -> void:
 	_env.fog_light_color = Color(str(w.get("color", "#888888")))
 	_sun.light_energy = _clear["sun"] * (1.0 - 0.5 * k)
 
+# ------------------------------------------------------------------------------------------- built blocks
+
+var _block_nodes := {}    # chunk key -> Node3D of that chunk's blocks
+var _block_index := {}    # chunk key -> {column key: true}
+var _blocks := {}         # column key (cy << 15 | cx) -> materials bottom-up, e.g. "013"
+var _block_mats := {}     # material -> Material
+
+## Names of the block materials (0..3), for the HUD.
+func block_name(kind: int) -> String:
+	return ["stone", "wood", "brick", "glass"][clampi(kind, 0, 3)]
+
+## What a block of each material is drawn with.
+func block_material(kind: int) -> Material:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = [Color("8a8f96"), Color("8a5a34"), Color("a6463a"), Color(0.7, 0.9, 1.0, 0.45)][clampi(kind, 0, 3)]
+	if kind == 3:
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	return m
+
+func block_size() -> float:
+	return float(info.get("build", {}).get("block", 2.0))
+
+## Where a column's bottom block sits: the lowest corner of its cell, so it never floats on a slope.
+func block_base(cx: int, cy: int) -> float:
+	var bs := block_size()
+	var x0 := cx * bs
+	var y0 := cy * bs
+	return minf(minf(height(x0, y0), height(x0 + bs, y0)), minf(height(x0, y0 + bs), height(x0 + bs, y0 + bs)))
+
+## The client's blocks changed: `all` is every column, `changed` the column keys to redraw.
+func set_blocks(all: Dictionary, changed: Array) -> void:
+	_blocks = all
+	var bs := block_size()
+	var dirty := {}
+	for k in changed:
+		var cx: int = k & 0x7fff
+		var cy: int = k >> 15
+		var ck: int = world.key(int(floor(cx * bs / world.CELL)), int(floor(cy * bs / world.CELL)))
+		dirty[ck] = true
+		if all.has(k):
+			if not _block_index.has(ck):
+				_block_index[ck] = {}
+			_block_index[ck][k] = true
+		elif _block_index.has(ck):
+			_block_index[ck].erase(k)
+	for ck in dirty:
+		if _block_nodes.has(ck):
+			_block_nodes[ck].queue_free()
+			_block_nodes.erase(ck)
+		var cols: Array = []
+		for k in _block_index.get(ck, {}):
+			cols.append([k & 0x7fff, k >> 15, String(_blocks[k])])
+		if not cols.is_empty():
+			_block_nodes[ck] = build_blocks(cols)
+			add_child(_block_nodes[ck])
+
+## One chunk's blocks ([[cx, cy, "materials"], ...]): a MultiMesh of cubes per material.
+func build_blocks(cols: Array) -> Node3D:
+	var node := Node3D.new()
+	var bs := block_size()
+	var per_kind := {}
+	for c in cols:
+		var cx: int = c[0]
+		var cy: int = c[1]
+		var kinds: String = c[2]
+		var base := block_base(cx, cy)
+		for i in kinds.length():
+			var kind := kinds.unicode_at(i) - 48
+			if not per_kind.has(kind):
+				per_kind[kind] = []
+			per_kind[kind].append(Vector3((cx + 0.5) * bs, base + (i + 0.5) * bs, (cy + 0.5) * bs))
+	for kind in per_kind:
+		if not _block_mats.has(kind):
+			_block_mats[kind] = block_material(kind)
+		var at: Array = per_kind[kind]
+		var cube := BoxMesh.new()
+		cube.size = Vector3(bs, bs, bs)
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = cube
+		mm.instance_count = at.size()
+		for i in at.size():
+			mm.set_instance_transform(i, Transform3D(Basis(), at[i]))
+		var mi := MultiMeshInstance3D.new()
+		mi.multimesh = mm
+		mi.material_override = _block_mats[kind]
+		node.add_child(mi)
+	return node
+
 ## A picture of the whole playable world, px by px, for the map (M).
 func map_image(px: int) -> Image:
 	var img := Image.create(px, px, false, Image.FORMAT_RGB8)

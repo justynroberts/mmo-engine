@@ -7,12 +7,16 @@ export type Box = readonly [number, number, number, number]
 
 const f = Math.fround
 const CELL = 64
+/** Edge of a building block (proto::world::BLOCK); a column with any block in it is solid. */
+export const BLOCK = 2
 
 export class World {
   readonly size: number
   private boxes: Box[]
   private gw: number
   private buckets: Map<number, number[]>
+  /** Built block columns, by cy << 15 | cx. */
+  private blocks = new Set<number>()
 
   constructor(size: number, boxes: readonly Box[]) {
     this.size = f(size)
@@ -34,10 +38,38 @@ export class World {
     })
   }
 
-  /** True if a circle (treated as its bounding square) at (x, y) leaves the world or overlaps a wall. */
+  setBlock(cx: number, cy: number, solid: boolean) {
+    if (cx < 0 || cy < 0 || cx >= 1 << 15 || cy >= 1 << 15) return
+    if (solid) this.blocks.add((cy << 15) | cx)
+    else this.blocks.delete((cy << 15) | cx)
+  }
+
+  hasBlock(cx: number, cy: number): boolean {
+    return this.blocks.has((cy << 15) | cx)
+  }
+
+  private blockedByBlocks(x: number, y: number, r: number): boolean {
+    if (this.blocks.size === 0) return false
+    const cx0 = Math.max(0, Math.floor(f(x - r) / BLOCK))
+    const cx1 = Math.floor(f(x + r) / BLOCK)
+    const cy0 = Math.max(0, Math.floor(f(y - r) / BLOCK))
+    const cy1 = Math.floor(f(y + r) / BLOCK)
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        if (!this.hasBlock(cx, cy)) continue
+        const bx = cx * BLOCK
+        const by = cy * BLOCK
+        if (f(x + r) > bx && f(x - r) < bx + BLOCK && f(y + r) > by && f(y - r) < by + BLOCK) return true
+      }
+    }
+    return false
+  }
+
+  /** True if a circle (treated as its bounding square) at (x, y) leaves the world or overlaps a wall or block. */
   blocked(x: number, y: number, r: number): boolean {
     const size = this.size
     if (f(x - r) < 0 || f(y - r) < 0 || f(x + r) >= size || f(y + r) >= size) return true
+    if (this.blockedByBlocks(x, y, r)) return true
     const cx0 = Math.floor(f(x - r) / CELL)
     const cx1 = Math.min(Math.floor(f(x + r) / CELL), this.gw - 1)
     const cy0 = Math.floor(f(y - r) / CELL)

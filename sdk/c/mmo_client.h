@@ -69,6 +69,9 @@ void mmo_status_text(const MmoClient *c, char *out, size_t cap);
 
 /* Intent. Each axis is -1, 0 or 1; the server decides the speed. Sticks until changed. */
 void mmo_set_move(MmoClient *c, int dx, int dy);
+/* A built block column is solid (or not, solid = 0), as /play/blocks reports: keeps prediction in step with the
+ * server. cx, cy are block cells (multiply by /play/info build.block for world units). */
+void mmo_set_block(MmoClient *c, uint32_t cx, uint32_t cy, int solid);
 /* One action request (ids are in /play/info "actions") against a target entity id (0 = none). */
 void mmo_act(MmoClient *c, uint8_t action, uint32_t target);
 /* Say (0) or shout (1). Queued and resent until the server has it; the server rate-limits and trims. */

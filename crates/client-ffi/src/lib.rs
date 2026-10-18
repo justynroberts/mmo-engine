@@ -526,6 +526,15 @@ pub unsafe extern "C" fn mmo_set_move(c: *mut Client, dx: i32, dy: i32) {
     }
 }
 
+/// Tell prediction that a built block column is solid (or cleared), as `/play/blocks` reports them, so walking
+/// into one is stopped here as it is on the server. `cx`, `cy` are block cells (`/play/info` `build.block` units).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_set_block(c: *mut Client, cx: u32, cy: u32, solid: i32) {
+    if let Some(c) = c.as_mut() {
+        c.world.set_block(cx, cy, solid != 0);
+    }
+}
+
 /// Request an action (the ids are in `/play/info` under `actions`) against a target entity id (0 = none). One request per call.
 #[no_mangle]
 pub unsafe extern "C" fn mmo_act(c: *mut Client, action: u8, target: u32) {

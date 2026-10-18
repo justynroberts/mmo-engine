@@ -77,6 +77,14 @@ export function groundImage(w: WorldData, px = 512): HTMLCanvasElement | null {
   return cv
 }
 
+/** Built block materials 0..3 (stone, wood, brick, glass), as the plain theme draws them. */
+export const BLOCK_COLOURS = ['#8a8f96', '#8a5a34', '#a6463a', '#bfe3ee'] as const
+/** Edge of a built block, in world units (proto::world::BLOCK). */
+export const BLOCK = 2
+
+/** Built block columns as the server lists them: [cx, cy, materials bottom-up as digits]. */
+export type BlockCol = [number, number, string]
+
 export function hpColor(hp: number): string {
   return hp > 0.5 ? MAP.hpHigh : hp > 0.25 ? '#e0b53a' : MAP.hpLow
 }

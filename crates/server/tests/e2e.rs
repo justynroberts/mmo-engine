@@ -2056,3 +2056,67 @@ fn the_console_generates_a_world_previews_it_and_applies_it_live() {
     let w = json(&srv, "GET", "/api/world", "").1;
     assert_eq!((w["size"].clone(), w["boxes"].as_array().unwrap().len()), (1024.0.into(), solid));
 }
+
+/// Building over the real protocol: a client builds a block next to itself and breaks it, the web feed reports
+/// each change (and only the changes), and blocks are kept across a restart.
+#[test]
+fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
+    use proto::game::{build_target, ACT_BREAK, ACT_BUILD};
+    let (mut srv, web) = start_web(&[]);
+    let mut c = connect(&srv);
+    c.pump(400);
+    let me = c.view.entries().iter().find(|e| e.id == c.entity).map(|e| (proto::world::dpos(e.x), proto::world::dpos(e.y))).expect("in the world");
+    let feed = |since: u64| -> serde_json::Value { serde_json::from_str(&web_get(web, &format!("/play/blocks?since={since}")).1).unwrap() };
+    let total = |srv: &Srv| json(srv, "GET", "/api/blocks", "").1["total"].as_u64().unwrap();
+    let start = feed(0);
+    assert_eq!((start["full"].clone(), start["cols"].as_array().unwrap().len()), (true.into(), 0));
+
+    // A few units away in some direction there is open ground (a wall may be in the way of one or two).
+    let mut cell = None;
+    for (dx, dy) in [(4.0, 0.0), (-4.0, 0.0), (0.0, 4.0), (0.0, -4.0), (3.0, 3.0), (-3.0, -3.0)] {
+        let (cx, cy) = (((me.0 + dx) / 2.0).floor() as u32, ((me.1 + dy) / 2.0).floor() as u32);
+        act(&mut c, ACT_BUILD, build_target(cx, cy, 1));
+        c.pump(250);
+        if total(&srv) == 1 {
+            cell = Some((cx, cy));
+            break;
+        }
+    }
+    let (cx, cy) = cell.expect("could not build anywhere near");
+    act(&mut c, ACT_BUILD, build_target(cx, cy, 3));
+    c.pump(250);
+    let f = feed(start["ver"].as_u64().unwrap());
+    assert_eq!(f["full"], false);
+    assert_eq!(f["cols"], serde_json::json!([[cx, cy, "13"]]));
+    // Out of reach is refused.
+    act(&mut c, ACT_BUILD, build_target(cx + 40, cy, 0));
+    c.pump(250);
+    assert_eq!(total(&srv), 2);
+    let state = json(&srv, "GET", "/api/state?limit=1", "").1;
+    assert_eq!(state["game"]["builds"], 2);
+    assert_eq!(state["blocks"]["total"], 2);
+    assert!(play_info(web).contains(r#""act_build":252"#));
+
+    // Break the top one: the feed reports the column as it now is.
+    let v = f["ver"].as_u64().unwrap();
+    act(&mut c, ACT_BREAK, build_target(cx, cy, 0));
+    c.pump(250);
+    assert_eq!(feed(v)["cols"], serde_json::json!([[cx, cy, "1"]]));
+    assert_eq!(feed(feed(0)["ver"].as_u64().unwrap())["cols"], serde_json::json!([]), "nothing new");
+
+    // Saved within a few seconds, and back after a restart.
+    std::thread::sleep(Duration::from_millis(5600));
+    let dir = std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep"));
+    drop(c);
+    drop(srv);
+    assert!(dir.join("world.blocks.json").is_file());
+    let srv = start_in(dir, &[]);
+    assert_eq!(total(&srv), 1);
+    // The admin can place whole columns (not on a wall or a player) and clear them all.
+    let (s, r) = json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"0123"],[4,3,"2"],[3,3,"1"]]}"#);
+    assert_eq!((s, r["set"].clone(), r["total"].clone()), (200, 3.into(), 3.into()), "{r}");
+    assert_eq!(json(&srv, "POST", "/api/blocks", r#"{"cols":[[4,3,""]]}"#).1["total"], 2);
+    assert_eq!(json(&srv, "POST", "/api/blocks", "nope").0, 400);
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", "").1["removed"], 2);
+    assert_eq!(total(&srv), 0);
+}

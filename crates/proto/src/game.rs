@@ -294,6 +294,25 @@ pub const ACT_PICKUP: u8 = 250;
 /// Jump: airborne for JUMP_SECS, and while airborne no action can target you (a dodge). Ignored mid-air.
 pub const ACT_JUMP: u8 = 251;
 pub const JUMP_SECS: f32 = 0.6;
+/// Build: put a block on the column in the target (see `build_target`), on top of any already there.
+pub const ACT_BUILD: u8 = 252;
+/// Break: take the top block off the column in the target.
+pub const ACT_BREAK: u8 = 253;
+/// How far from a column's centre you can build or break, in world units.
+pub const BUILD_REACH: f32 = 8.0;
+/// Most blocks in one column.
+pub const MAX_STACK: usize = 8;
+/// Block materials (the client's theme decides what each looks like).
+pub const BLOCK_KINDS: u8 = 4;
+
+/// The target of a build or break: the column's cell and, for a build, the material.
+pub fn build_target(cx: u32, cy: u32, kind: u8) -> u32 {
+    (cx & 0x7fff) | (cy & 0x7fff) << 15 | ((kind as u32) & 3) << 30
+}
+
+pub fn parse_build_target(t: u32) -> (u32, u32, u8) {
+    (t & 0x7fff, (t >> 15) & 0x7fff, (t >> 30) as u8)
+}
 /// If the game file has an attribute of this name, the server keeps it at the share of the current jump still to
 /// come (its max at take-off, falling to its min on landing). Make it replicated and every client can draw the arc.
 pub const AIRBORNE_ATTR: &str = "airborne";

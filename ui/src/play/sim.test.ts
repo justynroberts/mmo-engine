@@ -12,6 +12,22 @@ describe('prediction', () => {
     expect(p.x).toBeLessThan(100)
   })
 
+  // The same case as proto::world's built_blocks_stop_movement_like_walls_and_clearing_them_frees_the_way.
+  it('stops at built blocks like the server, and passes once one is broken', () => {
+    const w = new World(256, [])
+    for (let cy = 0; cy < 128; cy++) w.setBlock(50, cy, true)
+    const walk = () => {
+      let [x, y] = [95, 51]
+      for (let i = 0; i < 200; i++) [x, y] = integrate(w, x, y, 127, 0, 20, 0.05, 0.5)
+      return x
+    }
+    expect(walk()).toBeLessThan(100)
+    expect(w.blocked(99.5, 50, 0.5)).toBe(false)
+    expect(w.blocked(99.51, 50, 0.5)).toBe(true)
+    w.setBlock(50, 25, false)
+    expect(walk()).toBeGreaterThan(102)
+  })
+
   it('does not move faster on diagonals', () => {
     const w = new World(512, [])
     const [x, y] = integrate(w, 100, 100, 127, 127, 20, 1, 0.5)

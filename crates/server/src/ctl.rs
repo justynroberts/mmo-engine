@@ -47,6 +47,9 @@ pub enum Cmd {
     WorldReload,
     /// Put the last generated preview live.
     WorldApply,
+    Blocks,
+    BlocksClear,
+    BlocksPut(String),
 }
 
 /// What the World tab needs to make worlds: the generator, and where it writes a preview.
@@ -220,6 +223,11 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,
+        // Building: blocks on a grid, stacked into columns; clients fetch them from /play/blocks.
+        "build": {
+            "block": proto::world::BLOCK, "reach": proto::game::BUILD_REACH, "max_stack": proto::game::MAX_STACK,
+            "kinds": proto::game::BLOCK_KINDS, "act_build": proto::game::ACT_BUILD, "act_break": proto::game::ACT_BREAK,
+        },
         "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
@@ -382,6 +390,9 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
         ("GET", "/api/worldfile") => Some(Cmd::WorldFile),
         ("POST", "/api/world/reload") => Some(Cmd::WorldReload),
         ("POST", "/api/world/apply") => Some(Cmd::WorldApply),
+        ("GET", "/api/blocks") => Some(Cmd::Blocks),
+        ("POST", "/api/blocks/clear") => Some(Cmd::BlocksClear),
+        ("POST", "/api/blocks") => Some(Cmd::BlocksPut(body_str())),
         ("GET", "/api/game") => Some(Cmd::GetGame),
         ("PUT", "/api/game") => Some(Cmd::PutGame(body_str())),
         ("GET", "/api/state") => {
@@ -427,7 +438,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -539,6 +550,19 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             let path = c.params.world_path.clone();
             use_world_file(c, &path)
         }
+        Cmd::Blocks => (200, format!(r#"{{"ver":{},"total":{},"cols":{}}}"#, c.sim.blocks.ver, c.sim.blocks.total, c.sim.blocks.cols_json())),
+        Cmd::BlocksClear => {
+            let n = c.sim.blocks.total;
+            c.sim.set_blocks(Vec::new());
+            (200, json!({ "ok": true, "removed": n }).to_string())
+        }
+        Cmd::BlocksPut(text) => match crate::blocks::Blocks::parse_with_clears(&text) {
+            Ok(cols) => {
+                let (set, refused) = c.sim.put_columns(cols);
+                (200, json!({ "ok": true, "set": set, "refused": refused, "total": c.sim.blocks.total }).to_string())
+            }
+            Err(e) => err(400, format!("expected {{\"cols\": [[cx, cy, \"materials\"], ...]}}: {e}")),
+        },
         Cmd::PutGame(text) => apply_game(&text, c),
         Cmd::State { limit } => (200, state_json(c, limit)),
         Cmd::Spawn(r) => {
@@ -760,7 +784,10 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         dropped = c.clients.count;
         // Characters survive a world restart: save them from the world they are in, before it is replaced.
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
+        // So do the blocks players built.
+        let blocks: Vec<(u32, Vec<u8>)> = c.sim.blocks.cols.iter().map(|(k, v)| (*k, v.clone())).collect();
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
+        c.sim.set_blocks(blocks);
         c.sim.player_reserve = c.params.max_clients;
         let (limiter, id_limiter) = (c.clients.limiter.take(), c.clients.id_limiter.take());
         *c.clients = Clients::default();
@@ -857,8 +884,8 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     }
     let _ = write!(
         o,
-        r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{},"jumps":{},"dodges":{},"ground_items":{}}},"attrs":["#,
-        s.stats.zaps, s.stats.respawns, s.stats.rejected_actions, s.stats.jumps, s.stats.dodges, s.ground.len()
+        r#""game":{{"zaps":{},"respawns":{},"rejected_actions":{},"jumps":{},"dodges":{},"ground_items":{},"builds":{},"breaks":{}}},"blocks":{{"ver":{},"total":{}}},"attrs":["#,
+        s.stats.zaps, s.stats.respawns, s.stats.rejected_actions, s.stats.jumps, s.stats.dodges, s.ground.len(), s.stats.builds, s.stats.breaks, s.blocks.ver, s.blocks.total
     );
     for (i, a) in s.defs.attrs.iter().enumerate() {
         if i > 0 {

@@ -24,4 +24,4 @@ KEY=$(curl -s "http://127.0.0.1:$WEB/play/info" | python3 -c 'import sys,json;pr
 "$ROOT/target/release/bots" --server "127.0.0.1:$UDP" --server-key "$KEY" --bots 20 --duration 60 --quiet >/dev/null 2>&1 &
 sleep 2
 "$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 || true
-"$GODOT" --headless --path "$ROOT/godot" -- --smoke --theme "${THEME:-fantasy}" --host 127.0.0.1 --udp "$UDP" --web "127.0.0.1:$WEB" --admin "127.0.0.1:$ADMIN"
+timeout 300 "$GODOT" --headless --path "$ROOT/godot" -- --smoke --theme "${THEME:-fantasy}" --host 127.0.0.1 --udp "$UDP" --web "127.0.0.1:$WEB" --admin "127.0.0.1:$ADMIN"

@@ -70,6 +70,27 @@ guests are unaffected. Counted as `identity_limited` in stats.
 | `--ui-dir DIR` | Built UI to serve (default `ui/dist` if present) |
 | `--port --hz --world-size --seed --max-clients --npcs --pin --timeout --duration --quiet` | As before |
 
+## World tab: make the world
+
+The console's World tab makes the world from a recipe: seed, size, a walled city or not, how many villages, forts,
+crags and lakes, how many rivers, how wooded and how hilly, and hand edits on the map (drag out a house, tower, castle,
+wall, crag, lake or square; click something to remove it). Every change runs the generator and shows a preview on the
+map; Apply puts it live without disconnecting anyone, and saves it as `world.json`, which the server loads on start.
+A different size needs a restart. The recipe travels inside the world file, so the tab always opens on the world as it
+is. See [WORLD.md](WORLD.md).
+
+## Building
+
+Players build and break blocks: 2 unit cubes on a grid, stacked up to 8 high, in four materials. In the Godot client
+press B for build mode: a ghost block follows the mouse (green in reach, red out of it), click to place, right-click to
+break the top block, 1-4 to pick the material (the fantasy theme draws them in the Medieval Village stone, timber,
+brick and plaster). A built column is solid, on the server and in every client's prediction, so walls and huts you
+build really keep people out. Blocks are kept beside the world file (`world.blocks.json`), survive a restart, and stay
+when the world is regenerated except where a new wall now stands. The console shows them on both maps; the World tab
+counts them and clears them, and `POST /api/blocks` places whole columns (`{"cols": [[cx, cy, "0123"], ...]}`). The
+browser play page draws them and collides with them, but has no build controls yet. Building is open to everyone:
+anyone can break anyone's blocks. Wire details are in [PROTOCOL.md](PROTOCOL.md#building).
+
 ## God tab: spawn, weather, events
 
 The console's God tab is the game master's panel. Everything on it is data in the game file, so it is built in the console, applied live and saved, and none of it changes the wire format or drops a player.

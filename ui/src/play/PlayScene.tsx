@@ -170,6 +170,38 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     }
     syncBuildings()
 
+    // Blocks players have built: instanced cubes, one colour per material, rebuilt when they change.
+    const BS = ref.current.info.build?.block ?? 2
+    const blockColours = [pal.dim, pal.line, pal.hot, pal.accent]
+    const blockMeshes: THREE.InstancedMesh[] = []
+    let blocksRev = -1
+    const syncBlocks = () => {
+      blocksRev = client.blocksRev
+      for (const m of blockMeshes.splice(0)) {
+        scene.remove(m)
+        m.geometry.dispose()
+        ;(m.material as THREE.Material).dispose()
+      }
+      const at: [number, number, number][][] = [[], [], [], []]
+      for (const [k, kinds] of client.blocks) {
+        const cx = k & 0x7fff
+        const cy = k >> 15
+        for (let i = 0; i < kinds.length; i++) at[Number(kinds[i]) & 3]!.push([(cx + 0.5) * BS - half, (i + 0.5) * BS, (cy + 0.5) * BS - half])
+      }
+      const o = new THREE.Object3D()
+      at.forEach((list, kind) => {
+        if (!list.length) return
+        const m = new THREE.InstancedMesh(new THREE.BoxGeometry(BS, BS, BS), new THREE.MeshBasicMaterial({ color: blockColours[kind], transparent: true, opacity: 0.85 }), list.length)
+        list.forEach(([x, y, z], i) => {
+          o.position.set(x, y, z)
+          o.updateMatrix()
+          m.setMatrixAt(i, o.matrix)
+        })
+        scene.add(m)
+        blockMeshes.push(m)
+      })
+    }
+
     // Everyone else: instanced octahedra, tinted toward the warning colour as they get hurt.
     const others = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.9), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true }), CAP)
     const cores = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.5), new THREE.MeshBasicMaterial({ color: 0xffffff }), CAP)
@@ -390,6 +422,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       last = now
       frames++
       if (wallRev !== client.walls.rev) syncBuildings()
+      if (blocksRev !== client.blocksRev) syncBlocks()
       const { client: c, info: inf, shared: sh } = ref.current
       const s = sh.current
       if (now - fpsAt >= 1000) {
@@ -700,6 +733,10 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       for (const t of textures.values()) t.dispose()
       for (const g of geoms) g.dispose()
       for (const bd of buildings.values()) for (const o of bd.own) o.dispose()
+      for (const m of blockMeshes) {
+        m.geometry.dispose()
+        ;(m.material as THREE.Material).dispose()
+      }
       for (const d of disposables) d.dispose()
       for (const w of waves) (w.mesh.material as THREE.Material).dispose()
       sparks.dispose()

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
-import { MAP, OPEN, TREES, TYPE_COLOUR, groundImage, hpColor } from './mapLook'
+import { BLOCK, BLOCK_COLOURS, MAP, OPEN, TREES, TYPE_COLOUR, groundImage, hpColor, type BlockCol } from './mapLook'
 import { fromBoxes, type WorldData, type WorldEdit } from '../world'
 
 /** When present the map is in builder mode: it shows places and routes and edits them. */
@@ -46,6 +46,8 @@ interface Props {
   themeKey: string
   /** The world file, when the server has one: heights, water and objects to draw. Without it, the walls. */
   land?: WorldData | null
+  /** Blocks players have built. */
+  blocks?: BlockCol[]
 }
 
 interface View {
@@ -379,6 +381,18 @@ export function WorldView(p: Props) {
           ctx.globalAlpha = 0.35
           ctx.strokeRect(x + inset, y + inset, bw - inset * 2, bh - inset * 2)
           ctx.globalAlpha = 1
+        }
+      }
+
+      // Built blocks, coloured by the top one of each column, at least a pixel and a half so they show far out.
+      if (pr.blocks?.length) {
+        const bw = Math.max(1.5, BLOCK * v.scale)
+        for (const [cx, cy, kinds] of pr.blocks) {
+          const x = sx(cx * BLOCK)
+          const y = sy(cy * BLOCK)
+          if (x < -4 || y < -4 || x > w + 4 || y > h + 4) continue
+          ctx.fillStyle = BLOCK_COLOURS[Number(kinds[kinds.length - 1]) & 3]!
+          ctx.fillRect(x, y, bw, bw)
         }
       }
 

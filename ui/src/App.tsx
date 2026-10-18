@@ -10,6 +10,7 @@ import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
 import { WorldTab, useShaper } from './components/WorldTab'
+import type { BlockCol } from './components/mapLook'
 import { parseWorld, type WorldData } from './world'
 const Scene3D = lazy(() => import('./components/Scene3D'))
 import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
@@ -169,6 +170,19 @@ export default function App() {
   }, [loadGame, loadStatic])
 
   const shaper = useShaper(land, world?.size ?? 2048, info?.seed ?? 1)
+  // Blocks players have built, fetched again whenever they change.
+  const [blocks, setBlocks] = useState<BlockCol[]>([])
+  const blocksVer = stats?.blocks?.ver
+  useEffect(() => {
+    if (blocksVer === undefined) return
+    let cancelled = false
+    void api<{ cols: BlockCol[] }>('/api/blocks').then((r) => {
+      if (!cancelled && r.status === 200) setBlocks(r.body.cols)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [blocksVer])
   // The World tab shows its preview on the map, and takes edits there.
   const shown = (tab === 'world' && shaper.preview) || land
   const worldVer = stats?.world_ver
@@ -342,6 +356,7 @@ export default function App() {
             healthMax={healthDef?.max ?? 100}
             themeKey={dark ? 'dark' : 'light'}
             land={shown}
+            blocks={blocks}
             shape={tab === 'world' ? shaper.overlay : null}
           />
           ) : (
@@ -353,6 +368,7 @@ export default function App() {
                 archetypes={live?.archetypes.map((a) => a.name) ?? []}
                 colors={live?.archetypes.map((a) => a.color) ?? []}
                 land={shown}
+                blocks={blocks}
                 airIdx={live?.attrs.findIndex((a) => a.name === 'airborne') ?? -1}
                 airMax={live?.attrs.find((a) => a.name === 'airborne')?.max ?? 100}
                 healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
@@ -413,7 +429,7 @@ export default function App() {
                 )}
               </Tabs.Content>
               <Tabs.Content value="world" tabIndex={-1}>
-                {body(<WorldTab s={shaper} land={land} liveSize={world?.size ?? 2048} />)}
+                {body(<WorldTab s={shaper} land={land} liveSize={world?.size ?? 2048} blocks={stats?.blocks?.total ?? 0} />)}
               </Tabs.Content>
               <Tabs.Content value="god" tabIndex={-1}>
                 {body(

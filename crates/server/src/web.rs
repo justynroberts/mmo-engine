@@ -56,6 +56,8 @@ pub struct Gateway {
     walls: RwLock<Walls>,
     /// The world file's bytes, served as they are at /play/world (empty: none).
     world: RwLock<std::sync::Arc<Vec<u8>>>,
+    /// Built blocks, served at /play/blocks.
+    blocks: RwLock<crate::blocks::Feed>,
     pub stats: GwStats,
 }
 
@@ -167,7 +169,7 @@ pub struct WebCfg {
 
 impl Gateway {
     pub fn new() -> Arc<Gateway> {
-        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), walls: RwLock::new(Walls::default()), world: RwLock::default(), stats: GwStats::default() })
+        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), walls: RwLock::new(Walls::default()), world: RwLock::default(), blocks: RwLock::new(crate::blocks::Feed::new()), stats: GwStats::default() })
     }
 
     /// Publish the walls. Returns the version the clients will see.
@@ -183,6 +185,13 @@ impl Gateway {
             *g = w;
         }
         ver
+    }
+
+    /// Columns players changed this tick, as they now are.
+    pub fn blocks_changed(&self, changes: Vec<(u32, Vec<u8>)>) {
+        if let Ok(mut f) = self.blocks.write() {
+            f.apply(changes);
+        }
     }
 
     pub fn set_world(&self, bytes: std::sync::Arc<Vec<u8>>) {
@@ -344,6 +353,11 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
             } else {
                 respond(&mut conn, 200, "application/json", &body)
             }
+        }
+        "/play/blocks" => {
+            let since = head.query.split('&').find_map(|kv| kv.strip_prefix("since=")).and_then(|v| v.parse().ok()).unwrap_or(0);
+            let body = gw.blocks.read().map(|f| f.since(since)).unwrap_or_default();
+            respond(&mut conn, 200, "application/json", body.as_bytes())
         }
         "/play/walls" => {
             let body = gw.walls.read().ok().and_then(|w| w.body(&head.query));

@@ -6,7 +6,9 @@ profile="${1:-debug}"
 if [ "$profile" = release ]; then cargo build --release -p mmo-godot; else cargo build -p mmo-godot; fi
 mkdir -p godot/bin
 case "$(uname -s)" in
-  Darwin) cp "target/$profile/libmmo_godot.dylib" godot/bin/ ;;
+  # Replace, never overwrite in place: macOS caches a loaded library's signature by file, and kills any new
+  # process that loads one changed underneath it.
+  Darwin) rm -f godot/bin/libmmo_godot.dylib && cp "target/$profile/libmmo_godot.dylib" godot/bin/ ;;
   MINGW*|MSYS*|CYGWIN*) cp "target/$profile/mmo_godot.dll" godot/bin/ ;;
   *) cp "target/$profile/libmmo_godot.so" godot/bin/ ;;
 esac

@@ -228,6 +228,9 @@ pub struct SimStats {
     pub jumps: u64,
     /// Actions that missed because the target was in the air.
     pub dodges: u64,
+    /// Blocks built and broken.
+    pub builds: u64,
+    pub breaks: u64,
 }
 
 pub struct Sim {
@@ -268,6 +271,8 @@ pub struct Sim {
     pub player_reserve: usize,
     pub ground: Vec<crate::items::GroundItem>,
     pub next_ground: u32,
+    /// What players have built (mirrored into `world` as solid columns).
+    pub blocks: crate::blocks::Blocks,
 }
 
 /// The part of the weather that clients draw.
@@ -310,6 +315,7 @@ impl Sim {
             player_reserve: 0,
             ground: Vec::new(),
             next_ground: 1,
+            blocks: Default::default(),
         }
     }
 
@@ -429,6 +435,9 @@ impl Sim {
     /// (or outside the world) is moved to a free spot. Returns how many entities were moved.
     pub fn replace_world(&mut self, world: World) -> usize {
         self.world = world;
+        // Built blocks stay, except those the new world's walls now cover.
+        let cols = self.blocks.cols.iter().map(|(k, v)| (*k, v.clone())).collect();
+        self.set_blocks(cols);
         let r = self.defs.entity_radius;
         let mut moved = 0;
         for s in 0..self.ents.high {
@@ -440,6 +449,111 @@ impl Sim {
             }
         }
         moved
+    }
+
+    /// Put these block columns in the world (after a restart, a world change or a reset), keeping only those
+    /// inside the world and clear of its walls. Returns how many columns were left out.
+    pub fn set_blocks(&mut self, cols: Vec<(u32, Vec<u8>)>) -> usize {
+        use proto::world::{block_cell, BLOCK};
+        for k in self.blocks.forget_all() {
+            let (cx, cy) = block_cell(k);
+            self.world.set_block(cx, cy, false);
+        }
+        let mut dropped = 0;
+        for (k, kinds) in cols {
+            let (cx, cy) = block_cell(k);
+            let (mx, my) = ((cx as f32 + 0.5) * BLOCK, (cy as f32 + 0.5) * BLOCK);
+            // A box just inside the cell: it meets walls and the edge, never the neighbouring blocks.
+            if kinds.is_empty() || self.blocks.total + kinds.len() > crate::blocks::MAX_BLOCKS || self.world.blocked(mx, my, BLOCK / 2.0 - 0.01) {
+                dropped += 1;
+                continue;
+            }
+            for kind in kinds {
+                self.blocks.push(k, kind);
+            }
+            self.world.set_block(cx, cy, true);
+        }
+        dropped
+    }
+
+    /// Whether a new column could go in this cell: inside the world, clear of walls, and nobody standing there
+    /// (they would be stuck inside it). The grid is from the end of last tick, but it only picks the candidates:
+    /// their positions are this tick's, and nobody moves a whole grid cell in a tick.
+    fn column_free(&self, cx: u32, cy: u32) -> bool {
+        use proto::world::BLOCK;
+        let (mx, my) = ((cx as f32 + 0.5) * BLOCK, (cy as f32 + 0.5) * BLOCK);
+        if self.world.blocked(mx, my, BLOCK / 2.0 - 0.01) {
+            return false;
+        }
+        let r = self.defs.entity_radius;
+        let mut occupied = false;
+        let e = &self.ents;
+        self.grid.for_neighbours(mx, my, |t| {
+            let t = t as usize;
+            if e.alive[t] && (e.x[t] - mx).abs() < BLOCK / 2.0 + r && (e.y[t] - my).abs() < BLOCK / 2.0 + r {
+                occupied = true;
+            }
+        });
+        !occupied
+    }
+
+    /// Set whole columns at once (the admin's way to place or clear blocks): each becomes exactly the materials
+    /// given, or clear when none are. A new column goes only where a player could build one. Returns how many
+    /// columns were set and how many refused.
+    pub fn put_columns(&mut self, cols: Vec<(u32, Vec<u8>)>) -> (usize, usize) {
+        use proto::world::block_cell;
+        let (mut set, mut refused) = (0, 0);
+        for (k, kinds) in cols {
+            let (cx, cy) = block_cell(k);
+            let had = self.blocks.height(k);
+            if had == 0 && !kinds.is_empty() && (!self.column_free(cx, cy) || self.blocks.total + kinds.len() > crate::blocks::MAX_BLOCKS) {
+                refused += 1;
+                continue;
+            }
+            self.blocks.clear_col(k);
+            for &kind in &kinds {
+                self.blocks.push(k, kind);
+            }
+            self.world.set_block(cx, cy, !kinds.is_empty());
+            set += 1;
+        }
+        (set, refused)
+    }
+
+    /// Build (put a block on top of a column) or break (take the top one off), for the entity in `s`. Checked
+    /// here: in reach, inside the world, not in a wall, not on anyone, under the stack and world limits.
+    fn build_action(&mut self, s: usize, action: u8, target: u32) -> bool {
+        use proto::game::{parse_build_target, ACT_BREAK, BUILD_REACH, MAX_STACK};
+        use proto::world::{block_key, BLOCK};
+        let (cx, cy, kind) = parse_build_target(target);
+        let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
+        if bx + BLOCK > self.world.size || by + BLOCK > self.world.size {
+            return false;
+        }
+        let (mx, my) = (bx + BLOCK / 2.0, by + BLOCK / 2.0);
+        let (dx, dy) = (mx - self.ents.x[s], my - self.ents.y[s]);
+        if dx * dx + dy * dy > BUILD_REACH * BUILD_REACH {
+            return false;
+        }
+        let key = block_key(cx, cy);
+        if action == ACT_BREAK {
+            if self.blocks.height(key) == 0 {
+                return false;
+            }
+            if self.blocks.pop(key) {
+                self.world.set_block(cx, cy, false);
+            }
+            self.stats.breaks += 1;
+            return true;
+        }
+        let h = self.blocks.height(key);
+        if h >= MAX_STACK || self.blocks.total >= crate::blocks::MAX_BLOCKS || (h == 0 && !self.column_free(cx, cy)) {
+            return false;
+        }
+        self.blocks.push(key, kind);
+        self.world.set_block(cx, cy, true);
+        self.stats.builds += 1;
+        true
     }
 
     /// A free point inside the home place if there is one, else anywhere free.
@@ -819,6 +933,12 @@ impl Sim {
                 }
                 continue;
             }
+            if p.action == proto::game::ACT_BUILD || p.action == proto::game::ACT_BREAK {
+                if !self.build_action(p.slot, p.action, p.target) {
+                    self.stats.rejected_actions += 1;
+                }
+                continue;
+            }
             if p.action >= proto::game::ACT_USE {
                 if !self.item_action(p.slot, p.action) {
                     self.stats.rejected_actions += 1;
@@ -972,6 +1092,54 @@ mod tests {
         s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
         assert_eq!(s.stats.rejected_actions, 1);
+    }
+
+    #[test]
+    fn building_stacks_blocks_that_stop_movement_and_breaking_takes_them_down() {
+        use proto::game::{build_target, ACT_BREAK, ACT_BUILD, MAX_STACK};
+        let mut s = sim();
+        s.world = World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 120.0, y0: 0.0, x1: 130.0, y1: 512.0 }]);
+        let a = s.spawn(0).unwrap();
+        let b = s.spawn(1).unwrap();
+        place(&mut s, a, 100.0, 101.0);
+        place(&mut s, b, 300.0, 300.0);
+        s.grid.rebuild(&s.ents);
+        let act = |s: &mut Sim, action: u8, cx: u32, cy: u32| {
+            let before = s.stats.rejected_actions;
+            s.step(&[PendingAction { slot: a, action, target: build_target(cx, cy, 2) }]);
+            s.stats.rejected_actions == before
+        };
+        // Column (53, 50) is 6 units east: in reach. Stacks to MAX_STACK and no higher.
+        for _ in 0..MAX_STACK {
+            assert!(act(&mut s, ACT_BUILD, 53, 50));
+        }
+        assert!(!act(&mut s, ACT_BUILD, 53, 50), "over the stack limit");
+        assert_eq!(s.blocks.cols[&proto::world::block_key(53, 50)], vec![2; MAX_STACK]);
+        assert!(s.world.has_block(53, 50));
+        // Refused: out of reach, on yourself, inside a wall, outside the world.
+        assert!(!act(&mut s, ACT_BUILD, 60, 50));
+        assert!(!act(&mut s, ACT_BUILD, 50, 50));
+        place(&mut s, a, 118.0, 101.0);
+        assert!(!act(&mut s, ACT_BUILD, 61, 50), "inside the wall at x 120..130");
+        place(&mut s, a, 100.0, 101.0);
+        // Walking east stops at the column.
+        s.ents.dir_x[a] = 127;
+        for _ in 0..40 {
+            s.step(&[]);
+        }
+        assert!(s.ents.x[a] < 106.0 && s.ents.x[a] > 104.0, "stopped at the block: {}", s.ents.x[a]);
+        s.ents.dir_x[a] = 0;
+        // Breaking takes blocks off the top; the last one frees the column.
+        for _ in 0..MAX_STACK {
+            assert!(act(&mut s, ACT_BREAK, 53, 50));
+        }
+        assert!(!s.world.has_block(53, 50) && s.blocks.total == 0);
+        assert!(!act(&mut s, ACT_BREAK, 53, 50), "nothing left to break");
+        assert_eq!((s.stats.builds, s.stats.breaks), (MAX_STACK as u64, MAX_STACK as u64));
+        // A new world keeps the blocks, except where its walls now stand.
+        assert!(act(&mut s, ACT_BUILD, 53, 50) && act(&mut s, ACT_BUILD, 52, 52));
+        s.replace_world(World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 104.0, y0: 104.0, x1: 110.0, y1: 110.0 }]));
+        assert!(s.world.has_block(53, 50) && !s.world.has_block(52, 52) && s.blocks.total == 1);
     }
 
     #[test]

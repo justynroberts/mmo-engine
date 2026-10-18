@@ -118,6 +118,14 @@ impl MmoClient {
         unsafe { m::mmo_set_move(self.c, direction.x.round() as i32, direction.y.round() as i32) };
     }
 
+    /// A built block column is solid (or cleared), as /play/blocks reports, so prediction stops at it too.
+    #[func]
+    fn set_block(&mut self, cx: i64, cy: i64, solid: bool) {
+        if cx >= 0 && cy >= 0 {
+            unsafe { m::mmo_set_block(self.c, cx as u32, cy as u32, solid as i32) };
+        }
+    }
+
     /// Use an action (ids are in /play/info) on a target entity id (0 for none).
     #[func]
     fn act(&mut self, action: i64, target: i64) {

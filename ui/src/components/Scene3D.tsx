@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { KIND_DRIVEN, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
-import { MAP, OPEN, TREES, TYPE_COLOUR, groundColour, hpColor } from './mapLook'
+import { BLOCK, BLOCK_COLOURS, MAP, OPEN, TREES, TYPE_COLOUR, groundColour, hpColor, type BlockCol } from './mapLook'
 import { fromBoxes, type WorldData } from '../world'
 
 interface Props {
@@ -15,6 +15,8 @@ interface Props {
   colors?: string[]
   /** The world file, when the server has one: heights, water and objects to draw. Without it, the walls. */
   land?: WorldData | null
+  /** Blocks players have built. */
+  blocks?: BlockCol[]
   /** Index of the health attribute among the replicated ones in an entity row, or -1. */
   healthIdx: number
   healthMax: number
@@ -146,6 +148,35 @@ export default function Scene3D(p: Props) {
     const statics = new THREE.Group()
     scene.add(statics)
     let builtFor = ''
+    // Built blocks: one instanced cube per material, rebuilt when the list (or the land under it) changes.
+    const blockGroup = new THREE.Group()
+    scene.add(blockGroup)
+    let blocksFor: [BlockCol[] | undefined, WorldData | null] = [undefined, null]
+    const buildBlocks = () => {
+      const pr = props.current
+      if (blocksFor[0] === pr.blocks && blocksFor[1] === land) return
+      blocksFor = [pr.blocks, land]
+      dispose(blockGroup)
+      const at: THREE.Vector3[][] = [[], [], [], []]
+      for (const [cx, cy, kinds] of pr.blocks ?? []) {
+        const x0 = cx * BLOCK
+        const y0 = cy * BLOCK
+        const base = Math.min(land.height(x0, y0), land.height(x0 + BLOCK, y0), land.height(x0, y0 + BLOCK), land.height(x0 + BLOCK, y0 + BLOCK))
+        for (let i = 0; i < kinds.length; i++) at[Number(kinds[i]) & 3]!.push(new THREE.Vector3(x0 + BLOCK / 2 - half, base + (i + 0.5) * BLOCK, y0 + BLOCK / 2 - half))
+      }
+      at.forEach((list, k) => {
+        if (!list.length) return
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(BLOCK, BLOCK, BLOCK), new THREE.MeshLambertMaterial({ color: BLOCK_COLOURS[k] }), list.length)
+        list.forEach((p, i) => {
+          tmp.position.copy(p)
+          tmp.rotation.set(0, 0, 0)
+          tmp.scale.setScalar(1)
+          tmp.updateMatrix()
+          mesh.setMatrixAt(i, tmp.matrix)
+        })
+        blockGroup.add(mesh)
+      })
+    }
     const dispose = (g: THREE.Group) => {
       for (const c of [...g.children]) {
         g.remove(c)
@@ -341,6 +372,7 @@ export default function Scene3D(p: Props) {
       last = now
       const pr = props.current
       build()
+      buildBlocks()
       if (fitted !== half) {
         fitted = half
         camera.position.set(half * 0.55, half * 0.5, half * 0.55)
