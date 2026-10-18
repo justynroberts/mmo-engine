@@ -4,6 +4,7 @@ extends Node3D
 ## animations are used, plus those of `extra_animations` (glTF files on the same rig, like KayKit's Rig_Medium packs).
 
 @export var model: PackedScene
+@export var model_scale := 1.0
 @export var extra_animations: Array[PackedScene] = []
 ## An attack borrowed from another rig with the same bone names (the free Skeletons pack has no melee attack).
 ## Only its rotation tracks are kept, so differences in bone length do not stretch the model.
@@ -34,6 +35,7 @@ static var _libs := {} # scene path -> AnimationLibrary
 
 func _ready() -> void:
 	var m := model.instantiate()
+	m.scale = Vector3.ONE * model_scale
 	add_child(m)
 	for n in hide_meshes:
 		var h := m.find_child(n, true, false)

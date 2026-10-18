@@ -7,3 +7,9 @@ ui/dist/
 /server.key
 /data/
 /bots.d/
+
+# downloaded asset packs (the parts the game uses are copied into godot/assets/)
+/kaykit/
+/*.zip
+.DS_Store
+__pycache__/
