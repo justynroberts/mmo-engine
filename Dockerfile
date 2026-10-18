@@ -10,11 +10,11 @@ FROM rust:1-slim AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-RUN cargo build --release -p server -p bots
+RUN cargo build --release -p server -p bots -p worldgen
 
 FROM debian:stable-slim
 RUN useradd --create-home --uid 10001 app && mkdir /data && chown app /data
-COPY --from=build /src/target/release/server /src/target/release/bots /usr/local/bin/
+COPY --from=build /src/target/release/server /src/target/release/bots /src/target/release/worldgen /usr/local/bin/
 COPY --from=ui /ui/dist /opt/ui
 USER app
 WORKDIR /data

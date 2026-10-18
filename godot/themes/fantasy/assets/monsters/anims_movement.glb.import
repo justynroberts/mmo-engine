@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://brkv6v6gg8onm"
-path="res://.godot/imported/Imp.glb-91051ae76cff404d794bd83b57a51af3.scn"
+uid="uid://ia5jdybsmhsi"
+path="res://.godot/imported/anims_movement.glb-cfbfb945d9eb87e129b94b3f8f73c67e.scn"
 
 [deps]
 
-source_file="res://assets/monsters/Imp.glb"
-dest_files=["res://.godot/imported/Imp.glb-91051ae76cff404d794bd83b57a51af3.scn"]
+source_file="res://themes/fantasy/assets/monsters/anims_movement.glb"
+dest_files=["res://.godot/imported/anims_movement.glb-cfbfb945d9eb87e129b94b3f8f73c67e.scn"]
 
 [params]
 
@@ -39,8 +39,8 @@ materials/extract_format=0
 materials/extract_path=""
 _subresources={
 "nodes": {
-"PATH:Armature/Skeleton3D": {
-"retarget/bone_map": Resource("res://assets/monsters/bonemap_unreal.tres"),
+"PATH:Rig_Medium/Skeleton3D": {
+"retarget/bone_map": Resource("res://themes/fantasy/assets/monsters/bonemap_kaykit.tres"),
 "retarget/rest_fixer/fix_silhouette/enable": true
 }
 }

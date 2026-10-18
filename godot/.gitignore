@@ -2,12 +2,12 @@
 bin/
 *.import
 # extracted from the .glb files on import
-assets/characters/*_*_texture.png
+themes/fantasy/assets/characters/*_*_texture.png
 # Bestiary monsters: Quaternius Asset License, which forbids redistributing them as assets; kept local
-assets/monsters/Imp.glb
-assets/monsters/Puglin.glb
-assets/monsters/Imp_*.png
-assets/monsters/Puglin_*.png
-!assets/monsters/*.import
-assets/monsters/*_T_*.png.import
-assets/monsters/anims_knight_*.png*
+themes/fantasy/assets/monsters/Imp.glb
+themes/fantasy/assets/monsters/Puglin.glb
+themes/fantasy/assets/monsters/Imp_*.png
+themes/fantasy/assets/monsters/Puglin_*.png
+!themes/fantasy/assets/monsters/*.import
+themes/fantasy/assets/monsters/*_T_*.png.import
+themes/fantasy/assets/monsters/anims_knight_*.png*

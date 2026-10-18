@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://bhm0ik54oxiff"
-path="res://.godot/imported/Puglin.glb-c0586de374aa9a5403f8389923a11716.scn"
+uid="uid://2dkkxyvql2yh"
+path="res://.godot/imported/anims_general.glb-e9440ae7d6f44a148fc3c71c51f3f4a7.scn"
 
 [deps]
 
-source_file="res://assets/monsters/Puglin.glb"
-dest_files=["res://.godot/imported/Puglin.glb-c0586de374aa9a5403f8389923a11716.scn"]
+source_file="res://themes/fantasy/assets/monsters/anims_general.glb"
+dest_files=["res://.godot/imported/anims_general.glb-e9440ae7d6f44a148fc3c71c51f3f4a7.scn"]
 
 [params]
 
@@ -39,8 +39,8 @@ materials/extract_format=0
 materials/extract_path=""
 _subresources={
 "nodes": {
-"PATH:Armature/Skeleton3D": {
-"retarget/bone_map": Resource("res://assets/monsters/bonemap_unreal.tres"),
+"PATH:Rig_Medium/Skeleton3D": {
+"retarget/bone_map": Resource("res://themes/fantasy/assets/monsters/bonemap_kaykit.tres"),
 "retarget/rest_fixer/fix_silhouette/enable": true
 }
 }

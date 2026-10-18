@@ -1,0 +1,21 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://themes/fantasy/assets/characters/character.gd" id="1"]
+[ext_resource type="PackedScene" path="res://themes/fantasy/assets/monsters/Imp.glb" id="2"]
+[ext_resource type="PackedScene" path="res://themes/fantasy/assets/monsters/anims_general.glb" id="3"]
+[ext_resource type="PackedScene" path="res://themes/fantasy/assets/monsters/anims_movement.glb" id="4"]
+[ext_resource type="PackedScene" path="res://themes/fantasy/assets/monsters/anims_knight.glb" id="5"]
+
+[node name="Mob" type="Node3D"]
+script = ExtResource("1")
+model = ExtResource("2")
+model_scale = 1.25
+extra_animations = Array[PackedScene]([ExtResource("3"), ExtResource("4")])
+borrowed_from = ExtResource("5")
+borrowed_name = "1H_Melee_Attack_Chop"
+idle = "Idle_A"
+walk = "Walking_A"
+run = "Running_A"
+attack_name = "1H_Melee_Attack_Chop"
+hit = "Hit_A"
+death = "Death_A"
