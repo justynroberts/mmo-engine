@@ -15,8 +15,11 @@ a cyberpunk city or a user-built world.
 | `crates/proto` | Wire format, game file (attributes, actions, bot types), delta snapshots, handshake and encryption, static world, the movement step. Compiled into server and clients so they cannot drift |
 | `crates/server` | The world server: fixed tick, SoA entities, spatial grid, interest management, `recvmmsg`/`sendmmsg` UDP, snapshot lanes on spare cores, admin API |
 | `crates/bots` | N real encrypted UDP clients: handshake, random walk, zaps, delta decode, ack, prediction, chat (`--chat N`), latency measurement, reconnect |
+| `crates/worldgen` | A standalone world generator: writes a world file (heights, water, typed objects; [WORLD.md](WORLD.md)) for `server --world`. Depends on nothing in the engine |
+| `crates/client-ffi`, `crates/godot-ext`, `sdk/` | The client protocol as a C library, and a Godot extension on top of it |
+| `godot/` | The Godot client (`scripts/`) and its themes (`themes/plain`, `themes/fantasy`) |
 | `ui/` | The console: React, TypeScript, Tailwind, Radix, Framer Motion. Served by the server |
-| `scripts/` | `bench.sh` (pinned load test), `ui_e2e.py` (real-browser UI tests) |
+| `scripts/` | `bench.sh` (pinned load test), `ui_e2e.py` (real-browser UI tests), `godot_e2e.sh` and `build_godot.sh` |
 
 ## Run it
 
@@ -359,15 +362,32 @@ not which archetype an entity is, and the touch controls are basic arrows.
 
 `godot/` is a Godot 4.6 project that plays the world through the `mmo_godot` extension: sign in as a guest, camera-relative WASD, orbit and zoom, tab or click targeting, attack, an 8 slot bag, loot on the ground, chat.
 
-It ships with KayKit art (CC0, licences next to the files in `godot/assets/`): you are a Knight, Barbarian, Mage or Rogue (`--class`, Knight by default), and everyone else is one of four skeletons (Warrior, Mage, Minion, Rogue, chosen from the entity id so every client agrees; snapshots do not say which archetype an entity is). Keeps have arched, windowed and gated walls, decorated corner pillars, varied banners and a tiled roof with stores on it; the meadow uses every tree, bush and rock in the Forest pack; rare loot (an item stacking to 3 or fewer) lies in a gold chest. `assets/characters/character.gd` drives each one from the snapshots: idle, walk or run by ground speed, facing the way it moves, an attack when you act, a flinch and a floating number when health drops, a health bar once hurt. The protocol has no death event and the server respawns in the same tick, so a death is inferred: a recently hit, nearly dead character that jumps across the map or vanishes leaves a body that plays the death animation (and a game whose health can rest at 0 shows it directly). When something hits you, the nearest character in reach swings. Loot is a chest tinted with the item's colour.
+### Three separate parts: the engine, the world, the look
 
-Half the keep-sized wall boxes are village houses instead, built from Quaternius's Medieval Village MegaKit (CC0, `godot/assets/village/`): stone or plaster ground floors with round or flat doors, half-timbered upper floors (jettied over the street on some), windows with shutters, tiled roofs with gable ends, ridge caps, chimneys and dormers, a porch roof, outside stairs and balconies, and a yard with paving, fences, an arch, a wagon, crates and a wooden shed or stall. A long box becomes a terraced row. Lakes get a wooden dock. Buildings are batched per 128 unit chunk (one MultiMesh per piece type), so a town is a few dozen draws.
+The world is data, and what it looks like is a swappable theme; the engine knows nothing about either.
 
-Monsters: if the Bestiary kit's `Imp.glb` and `Puglin.glb` are in `godot/assets/monsters/` they join the skeletons. They are not in git: their licence (Quaternius Asset License) forbids redistributing them as assets, and this repository is public. Their rig is the Unreal mannequin, so they borrow the KayKit animations through Godot's humanoid retargeting (`bonemap_*.tres` and the `.import` files there, with the silhouette fixer on).
+| Part | Where | Changes when |
+|---|---|---|
+| Engine | `crates/server`, protocol, C SDK | the simulation does: it loads a world file (`--world`), makes its solid objects walls, and serves the file to clients untouched |
+| World | `crates/worldgen` writes `world.json` ([WORLD.md](WORLD.md)): heights, rivers and lakes, typed objects | you want a different world: run the generator again (another seed, size or preset), or write another generator. `POST /api/world/reload` applies it live |
+| Look | `godot/themes/<name>/` (the contract is `godot/scripts/theme.gd`) | you want a different look: write another theme. `--theme NAME` picks one |
 
-A city: `scripts/city.py [--admin 127.0.0.1:7780] [--size N] [--at X,Y]` lays a walled city into a running world as hand-placed walls (live, nobody dropped): a curtain wall with towers and four gates, avenues to a central plaza and castle, side streets, terraced houses back to back along every street, and an open market square. The plaza and market places move into it, so the merchants and guards follow. Each box is nudged a unit or two so that clients draw it as what it is meant to be (box kinds come from corner coordinates). Run it again to move or resize the city; it replaces only its own footprint.
+```
+cargo run --release -p worldgen -- --size 2048 --seed 7 --out data/world.json
+server --world data/world.json --web 127.0.0.1:8081
+godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 [--theme plain]
+```
 
-The land (`godot/scripts/terrain.gd`) is worked out the same way on every client from the world seed and the server's walls, and only ever shows something solid where the server has a wall. Each wall box is one of three things, chosen from its corner coordinates: a keep (dungeon walls, pillars, banners, torches with lit flames), a crag (a mountain of KayKit spires and boulders over a rocky mound, snow on the tall ones) or a lake (deep water with a ragged shoreline and rocks round it). All three are impassable on the server, so you cannot walk up the mountain or into the lake. Rivers meander from the seed (at least two per world), never run uphill (so they cut gorges through rises), steer round buildings and are shallow: you wade through them, as the server allows. Each runs in a flat-bedded channel with a short lip that rises just above the water, and its level is the lowest ground across both banks, so the water always sits inside its bed. Hills roll everywhere, are levelled around buildings, and past the edge of the playable area rise into mountains crowned with KayKit rocks. Trees, rocks and bushes are scattered from the seed, kept out of water. The console's 2D map and 3D view use the same box kinds and river courses (their hills are an approximation). Delete `player.tscn` or `mob.tscn` and the client falls back to primitives. The project uses the Forward+ renderer for bloom (torches with lit flames, loot beams), SSAO and volumetric fog; set `renderer/rendering_method` back to `gl_compatibility` in `project.godot` for machines without a capable GPU, and those effects are simply skipped.
+The client (`godot/scripts/main.gd`) only connects, takes input, tracks entities and runs the HUD; it fetches the world file and hands it to the theme, which draws everything. Without a world file the server's own walls are used, as plain blocks on flat ground, so any theme still works. The console's maps draw the same file.
+
+The generator lays out a walled city (curtain wall with towers and four gates, avenues to a plaza and castle, terraced streets, a market square), villages of houses round a green, forts, crags, lakes, rivers that never run uphill and cut gorges through rises, forests and meadows, and mountains past the playable edge. Every footprint is a typed object (`house`, `keep`, `tower`, `castle`, `wall`, `crag`, `lake`), and all of them are solid on the server, so you cannot walk into a house, up a mountain or into a lake; rivers are wadeable.
+
+Themes:
+
+- `plain`: grey ground from the heights, solid footprints as blocks, capsules for people. The base class; it proves the client needs nothing from a theme.
+- `fantasy`: KayKit characters (you are a Knight, Barbarian, Mage or Rogue with `--class`; everyone else is one of the skeletons, picked by entity id), dungeon keeps, towers and curtain walls, Medieval Village houses (stone or plaster ground floors, half-timbered and sometimes jettied upper floors, tiled roofs with gables, chimneys and dormers, porches, outside stairs, yards), crags of KayKit rocks, docks on lakes, every tree, bush and rock of the Forest pack picked by each object's variant, water with depth and foam, rain, a daylight sky. Forward+ (bloom, SSAO, volumetric fog); set `renderer/rendering_method` to `gl_compatibility` in `project.godot` for weaker GPUs and those effects are skipped. Its assets and licences are in `godot/themes/fantasy/assets/`. The Bestiary monsters (Imp, Puglin) join the mobs when their models are present there; they are not in git, since their licence (Quaternius Asset License) forbids redistributing them as assets and this repository is public. They borrow the KayKit animations through Godot's humanoid retargeting.
+
+`character.gd` (in the fantasy theme) drives each character from the snapshots: idle, walk or run by ground speed, facing the way it moves, an attack when you act, a flinch and a floating number when health drops, a health bar once hurt. The protocol has no death event and the server respawns in the same tick, so a death is inferred: a recently hit, nearly dead character that jumps across the map or vanishes leaves a body that plays the death animation. When something hits you, the nearest character in reach swings.
 
 Spawned bots carry over every edit of the game file, bot-only or not (matched by archetype and attribute name, as a save and restore does); an archetype whose `count` the edit changes starts again at its new count. A client is sent the nearest `max_visible` entities within `interest_radius` (64 and 128 by default; one snapshot must fit a datagram, so with two replicated 8 bit attributes the most `max_visible` can be is 77), and the Godot HUD says when it is showing only the nearest ones.
 
@@ -378,7 +398,7 @@ Space attacks your target when it is in reach, otherwise the nearest thing withi
 ```
 scripts/build_godot.sh                     # builds the extension into godot/bin
 godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
-scripts/godot_e2e.sh                       # headless scripted session against a real server (GODOT=/path/to/godot)
+scripts/godot_e2e.sh                       # generate a world, boot the server on it, run a scripted session headless (GODOT=, WORLD=, THEME=, NO_WORLD=1)
 godot --path godot -- ... --walk near --zoom 40 --shot out.png --shot_after 10   # screenshot beside the nearest building
 ```
 
