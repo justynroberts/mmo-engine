@@ -17,6 +17,10 @@ const FLAT_PAD := 10.0       # ground levels out this far around a building
 const EDGE_CHUNKS := 2       # scenery chunks drawn past the world's edge
 const HudScript := preload("res://scripts/hud.gd")
 const DUNGEON := "res://assets/dungeon/"
+const VILLAGE := "res://assets/village/"
+const VS := 1.4 # Quaternius builds in metres; this brings the village up to the chibi characters' size
+## Roofs by footprint [width along x, length along z], ridge along z, in kit units.
+const ROOFS := [[4, 4], [4, 6], [4, 8], [6, 4], [6, 6], [6, 8], [6, 10], [6, 12], [6, 14], [8, 8], [8, 10], [8, 12], [8, 14]]
 const FOREST := "res://assets/forest/"
 ## KayKit rocks for crags and mountains: [file, width, height, how far below its origin it reaches] at scale 1.
 const SPIRES := [["Rock_1_O_Color1", 2.11, 4.58, 0.0], ["Rock_1_N_Color1", 2.3, 4.5, 0.0], ["Rock_1_P_Color1", 2.21, 4.01, 0.0], ["Rock_1_Q_Color1", 2.8, 4.28, 0.0]]
@@ -50,6 +54,8 @@ var props := {}     # chunk key -> Node3D
 var terrain := {}   # chunk key -> MeshInstance3D
 var terrain_mat: ShaderMaterial
 const TerrainScript := preload("res://scripts/terrain.gd")
+const MapScript := preload("res://scripts/map.gd")
+var world_map: Control
 var land: TerrainScript = TerrainScript.new() # hills, rivers, lakes and crags, from the seed and the walls
 var water_mat: ShaderMaterial
 var env_res: Environment
@@ -59,6 +65,7 @@ var weather := {}         # what /play/info says now: {name, color, intensity}, 
 var weather_poll := 0.0
 var clear_sky := {}       # the environment's own values, to return to when the weather clears
 var boxes: Array = []
+var box_home := {}  # chunk key -> boxes whose centre is in it (built together)
 var box_grid := {}  # chunk key -> box indices overlapping it, to keep scenery out of buildings
 var meshes := {}    # path -> Mesh, pulled out of the glTF pieces once
 var track := {}     # entity id -> {hp, pos, vel, face_until}
@@ -80,6 +87,10 @@ var last_wall_sync := Vector2(-1e9, -1e9)
 var wall_t := 0.0
 var t_total := 0.0
 var smoke := false
+var walk_from := Vector2.ZERO
+var walk_check := 0.0
+var walk_dodge := 0.0
+var walk_side := 1.0
 var god := false
 var next_swing := 0.0
 var notice_until := 0.0
@@ -96,6 +107,9 @@ func _ready() -> void:
 	_build_scene()
 	hud = HudScript.new()
 	add_child(hud)
+	world_map = MapScript.new()
+	world_map.visible = false
+	hud.add_child(world_map)
 	hud.slot_pressed.connect(func(i: int): net.use_slot(i))
 	hud.chat_submitted.connect(_on_chat)
 	if smoke:
@@ -185,6 +199,8 @@ func _start() -> void:
 		return _fail(err)
 	if smoke:
 		_smoke()
+	if args.has("map"):
+		_toggle_map.call_deferred()
 	if args.has("shot"):
 		await get_tree().create_timer(float(args.get("shot_after", "5"))).timeout
 		get_viewport().get_texture().get_image().save_png(String(args["shot"]))
@@ -346,9 +362,8 @@ func _entity_node(id: int, mine: bool) -> Node3D:
 	if mine and args.has("class") and ResourceLoader.exists("res://assets/characters/player_%s.tscn" % args["class"]):
 		scene = "res://assets/characters/player_%s.tscn" % args["class"]
 	elif not mine:
-		scene = "res://assets/characters/%s.tscn" % ["mob", "mob_mage", "mob_minion", "mob_rogue"][id % 4]
-		if not ResourceLoader.exists(scene):
-			scene = "res://assets/characters/mob.tscn"
+		var kinds := _mob_scenes()
+		scene = kinds[id % kinds.size()] if not kinds.is_empty() else "res://assets/characters/mob.tscn"
 	if ResourceLoader.exists(scene):
 		var c := (load(scene) as PackedScene).instantiate() as Node3D
 		c.scale = Vector3.ONE * entity_scale
@@ -460,6 +475,18 @@ func _multi(mesh: Mesh, xforms: Array, tint := Color.WHITE) -> MultiMeshInstance
 	return mmi
 
 ## Loot is a chest tinted by the item's colour, with a soft beam of the same colour so it can be found in grass.
+## Every mob scene that is present: the four skeletons, and the Bestiary monsters when their (local only,
+## not redistributable) models are there.
+var _mobs: Array = []
+func _mob_scenes() -> Array:
+	if _mobs.is_empty():
+		for p in ["res://assets/characters/mob.tscn", "res://assets/characters/mob_mage.tscn", "res://assets/characters/mob_minion.tscn",
+				"res://assets/characters/mob_rogue.tscn", "res://assets/monsters/mob_imp.tscn", "res://assets/monsters/mob_puglin.tscn"]:
+			var model: String = String(p).replace("mob_", "").replace(".tscn", ".glb").replace("imp.glb", "Imp.glb").replace("puglin.glb", "Puglin.glb")
+			if ResourceLoader.exists(p) and (not p.contains("/monsters/") or ResourceLoader.exists(model)):
+				_mobs.append(p)
+	return _mobs
+
 func _gem_node(color: String, rare := false) -> Node3D:
 	var n := Node3D.new()
 	var col := Color(color)
@@ -506,6 +533,266 @@ func _gem_node(color: String, rare := false) -> Node3D:
 	l.position.y = 1.4
 	n.add_child(l)
 	return n
+
+## Which keeps are houses: short side 6 to 26 and an even parity of the corner (scripts/city.py relies on this).
+func _is_house(b: Array) -> bool:
+	var w: float = b[2] - b[0]
+	var d: float = b[3] - b[1]
+	return land.box_kind(b) == land.KEEP and minf(w, d) >= 6.0 and minf(w, d) <= 26.0 and (int(b[0]) * 3 + int(b[1]) * 5) % 2 == 0
+
+## A village house from the Medieval Village kit: a stone ground floor (with the door) and half-timbered upper
+## floors, corner posts, windows with shutters, a tiled roof with gable ends, chimney and dormers, vines, a
+## balcony now and then, and a paved yard with a fence, a wagon and crates out front. The walls fill the box
+## exactly, so the house is what the server's wall is.
+func _build_house(b: Array, idx: int, batch: Dictionary = {}) -> Node3D:
+	var x0: float = b[0]
+	var y0: float = b[1]
+	var x1: float = b[2]
+	var y1: float = b[3]
+	var hsh := absi(int(x0) * 92821 + int(y0) * 68917)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hsh
+	var node := Node3D.new()
+	node.position.y = land.base[idx]
+	var parts := {}
+	var put := func(name: String, xf: Transform3D):
+		if not parts.has(name):
+			parts[name] = []
+		parts[name].append(xf)
+	var tall := 3.12 * VS
+	var w := x1 - x0
+	var d := y1 - y0
+	var tower := absf(w - d) < 2.5 and maxf(w, d) <= 14.0
+	var floors := 3 if tower else 1 + hsh % 2
+	var door_side := rng.randi() % 4
+	# Style, all from the corner: a plaster or stone ground floor, round or flat door in a brick or timber frame,
+	# and on two-storey houses sometimes a jettied upper floor that overhangs the street.
+	var stone := (hsh / 7) % 3 != 0
+	var round_door := (hsh / 3) % 2 == 0
+	var timber_frame := (hsh / 5) % 2 == 0
+	var jetty := floors == 2 and (hsh / 11) % 3 == 0
+	var shape := "Round" if round_door else "Flat"
+	var door_wall: String = ("Wall_UnevenBrick_Door_%s" % shape) if stone else (["Wall_Plaster_Door_Round", "Wall_Plaster_Door_RoundInset"][(hsh / 13) % 2] if round_door else "Wall_Plaster_Door_Flat")
+	var frame := "DoorFrame_%s_%s" % [shape, "WoodDark" if timber_frame else "Brick"]
+	var door := "Door_%d_%s" % [[1, 2, 4, 8][hsh % 4], shape]
+	var plaster := ["Wall_Plaster_Straight", "Wall_Plaster_WoodGrid", "Wall_Plaster_Straight_L", "Wall_Plaster_Straight_R", "Wall_Plaster_Straight_Base"]
+	var shutters := ["WindowShutters_Wide_Round_Open", "WindowShutters_Wide_Round_Closed", "WindowShutters_Wide_Flat_Open", "WindowShutters_Wide_Flat_Closed"]
+	var sides := [
+		[Vector3(x0, 0, y0), Vector3(1, 0, 0), w, Vector3(0, 0, -1)],
+		[Vector3(x1, 0, y1), Vector3(-1, 0, 0), w, Vector3(0, 0, 1)],
+		[Vector3(x0, 0, y1), Vector3(0, 0, -1), d, Vector3(-1, 0, 0)],
+		[Vector3(x1, 0, y0), Vector3(0, 0, 1), d, Vector3(1, 0, 0)],
+	]
+	var door_at := Vector3.ZERO
+	var door_out := Vector3.ZERO
+	for si in sides.size():
+		var sd: Array = sides[si]
+		var start: Vector3 = sd[0]
+		var dir: Vector3 = sd[1]
+		var length: float = sd[2]
+		var out: Vector3 = sd[3]
+		var count := maxi(1, int(round(length / (2.0 * VS))))
+		var seg := length / count
+		var rot := Basis(Vector3.UP, atan2(out.x, out.z))
+		var wall := rot * Basis.from_scale(Vector3(seg / 2.0, VS, VS))
+		var plain := rot * Basis.from_scale(Vector3.ONE * VS)
+		for i in count:
+			var at := start + dir * (seg * (i + 0.5)) - out * (0.09 * VS)
+			for f in floors:
+				var lift := Vector3(0, tall * f, 0)
+				var xf := Transform3D(wall, at + lift)
+				if f == 0:
+					if si == door_side and i == count / 2:
+						put.call(door_wall, xf)
+						put.call(frame, Transform3D(plain, at))
+						put.call(door, Transform3D(plain, at - (rot * Vector3(0.55 * VS, 0, 0))))
+						door_at = at
+						door_out = out
+					elif (i + si + hsh) % 3 == 1:
+						var k := (i + si) % 3
+						if stone:
+							put.call(["Wall_UnevenBrick_Window_Thin_Round", "Wall_UnevenBrick_Window_Wide_Flat", "Wall_UnevenBrick_Window_Wide_Round"][k], xf)
+						else:
+							put.call(["Wall_Plaster_Window_Thin_Round", "Wall_Plaster_Window_Wide_Flat", "Wall_Plaster_Window_Wide_Round"][k], xf)
+						put.call(["Window_Thin_Round1", "Window_Wide_Flat1", "Window_Wide_Round1"][k], Transform3D(plain, at))
+					else:
+						put.call("Wall_UnevenBrick_Straight" if stone else plaster[(i + si) % plaster.size()], xf)
+					put.call("Wall_BottomCover", Transform3D(wall, at + Vector3(0, 0.05, 0)))
+					put.call(["Prop_ExteriorBorder_Straight1", "Prop_ExteriorBorder_Straight2"][(i + si) % 2], Transform3D(wall, at + out * (0.09 * VS)))
+				elif jetty:
+					# The jetty: the upper floor leans out over the street on overhang pieces, with soffits under.
+					var mat := "UnevenBrick" if stone and (hsh / 17) % 2 == 0 else "Plaster"
+					var ends := "_L" if i == 0 else ("_R" if i == count - 1 else "")
+					if ends != "":
+						put.call("Overhang_Side_%s_%s%s" % [mat, "Long" if seg > 2.2 * VS else "Short", ends], xf)
+					else:
+						put.call("Overhang_%s_%s" % [mat, "Long" if seg > 2.2 * VS else "Short"], xf)
+					put.call("Overhang_Roof_%s" % ("UnevenBricks" if mat == "UnevenBrick" else mat), Transform3D(wall, at + lift + out * VS))
+				elif (i + f + si + hsh) % 2 == 0:
+					var kind := (i + f * 3 + si) % 4
+					put.call(["Wall_Plaster_Window_Wide_Round", "Wall_Plaster_Window_Wide_Flat", "Wall_Plaster_Window_Wide_Flat2", "Wall_Plaster_Window_Thin_Round"][kind], xf)
+					var win: String = ["Window_Wide_Round1", "Window_Wide_Flat1", "Window_Wide_Flat1", "Window_Thin_Round1"][kind]
+					put.call(win, Transform3D(plain, at + lift))
+					if kind < 3:
+						put.call(shutters[(i + f + hsh) % shutters.size()], Transform3D(plain, at + lift))
+					else:
+						put.call(["Window_Thin_Flat1", "WindowShutters_Thin_Round_Open", "WindowShutters_Thin_Round_Closed", "WindowShutters_Thin_Flat_Open", "WindowShutters_Thin_Flat_Closed"][(i + hsh) % 5], Transform3D(plain, at + lift))
+				else:
+					put.call(plaster[(i * 7 + f + si + hsh) % plaster.size()], xf)
+				# Vines hang from the top of some walls; a balcony on the odd upper one.
+				if f == floors - 1 and (i * 5 + si + hsh) % 7 == 0:
+					put.call(["Prop_Vine1", "Prop_Vine2", "Prop_Vine4", "Prop_Vine5", "Prop_Vine6", "Prop_Vine9"][(i + si) % 6], Transform3D(plain, at + lift + Vector3(0, tall, 0) + out * 0.2))
+				if f == 1 and (i + si * 2 + hsh) % 9 == 0:
+					put.call(["Balcony_Simple_Straight", "Balcony_Cross_Straight"][(i + hsh) % 2], Transform3D(plain, at + lift))
+					put.call("Prop_Support", Transform3D(plain, at + lift - Vector3(0, tall * 0.55, 0)))
+	# Corner posts, stone below and timber above.
+	var corners := [[Vector3(x0, 0, y0), PI], [Vector3(x1, 0, y0), PI / 2.0], [Vector3(x0, 0, y1), -PI / 2.0], [Vector3(x1, 0, y1), 0.0]]
+	for cc in corners:
+		var c: Vector3 = cc[0]
+		var face := Basis(Vector3.UP, float(cc[1])) * Basis.from_scale(Vector3.ONE * VS)
+		put.call("Prop_ExteriorBorder_Corner", Transform3D(face, c))
+		for f in floors:
+			if jetty and f == 1:
+				put.call(["Overhang_Plaster_Corner", "Overhang_Plaster_Corner_Front", "Overhang_UnevenBrick_Corner", "Overhang_UnevenBrick_Corner_Front"][(hsh + int(float(cc[1]) * 2.0)) % 4], Transform3D(face, c + Vector3(0, tall, 0)))
+				put.call(["Overhang_RoofIncline_Plaster", "Overhang_RoofIncline_UnevenBricks"][hsh % 2], Transform3D(face, c + Vector3(0, tall, 0)))
+				continue
+			var post := "Corner_ExteriorWide_Brick" if f == 0 and w > 16.0 else ("Corner_Exterior_Brick" if f == 0 else ("Corner_ExteriorWide_Wood" if w > 16.0 else "Corner_Exterior_Wood"))
+			if f == floors - 1 and f > 0 and (hsh / 19) % 2 == 0:
+				post = "Corner_Exterior_TopDown"
+			put.call(post, Transform3D(Basis.from_scale(Vector3.ONE * VS), c + Vector3(0, tall * f, 0)))
+		if tower:
+			put.call(["Balcony_Simple_Corner", "Balcony_Cross_Corner"][hsh % 2], Transform3D(face, c + Vector3(0, tall * 2, 0)))
+	put.call("Corner_Exterior_TopOnly", Transform3D(Basis.from_scale(Vector3.ONE * VS), Vector3(x0, tall * floors, y0)))
+	_house_roof(put, b, tall * floors, tower, hsh)
+	_house_yard(put, rng, door_at, door_out, hsh)
+	_house_porch(put, door_at, door_out, hsh)
+	if floors == 2 and not jetty:
+		_house_stairs(put, sides[(door_side + 1) % 4], tall, hsh)
+	for name in parts:
+		_batch(batch, VILLAGE + String(name) + ".gltf", parts[name], node.position.y)
+	return node
+
+## A tiled roof chosen for the footprint's shape and stretched to fit it, gable ends, a chimney and dormers.
+func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int) -> void:
+	var w: float = b[2] - b[0]
+	var d: float = b[3] - b[1]
+	var centre := Vector3((b[0] + b[2]) / 2.0, top, (b[1] + b[3]) / 2.0)
+	if tower:
+		put.call("Roof_Tower_RoundTiles", Transform3D(Basis.from_scale(Vector3(w / 5.66, VS, d / 5.42)), centre))
+		return
+	# The ridge runs along the longer side.
+	var along_x := w > d
+	var span := d if along_x else w
+	var length := w if along_x else d
+	var best: Array = ROOFS[0]
+	for r in ROOFS:
+		if absf(float(r[1]) / float(r[0]) - length / span) < absf(float(best[1]) / float(best[0]) - length / span):
+			best = r
+	var name := "Roof_RoundTiles_%dx%d" % [best[0], best[1]]
+	# The kit roof overhangs about one unit each way; stretch it to the box plus that overhang.
+	var sx := (span + 1.0) / (float(best[0]) + 2.0)
+	var sz := (length + 1.0) / (float(best[1]) + 2.0)
+	var turn := Basis(Vector3.UP, PI / 2.0) if along_x else Basis()
+	put.call(name, Transform3D(turn * Basis.from_scale(Vector3(sx, minf(sx, VS * 1.2), sz)), centre))
+	# Gable ends, the brick triangle matching the roof's width, at both ends.
+	var gable := "Roof_Front_Brick%d" % clampi(best[0], 4, 8)
+	if best[0] == 4 or best[0] == 6 or best[0] == 8:
+		for end in [-1.0, 1.0]:
+			var face: Basis = turn * Basis(Vector3.UP, 0.0 if end > 0 else PI)
+			var at: Vector3 = centre + turn * Vector3(0, 0, end * length / 2.0)
+			put.call(gable, Transform3D(face * Basis.from_scale(Vector3(sx, minf(sx, VS * 1.2), VS)), at))
+	# A beam under each gable, and a ridge log along the top of the bigger roofs.
+	for end in [-1.0, 1.0]:
+		put.call("Roof_FrontSupports", Transform3D(turn * Basis(Vector3.UP, 0.0 if end > 0 else PI) * Basis.from_scale(Vector3(sx, VS, VS)), centre + turn * Vector3(0, 0, end * length / 2.0)))
+	if best[0] == 8:
+		put.call("Roof_Log", Transform3D(turn * Basis.from_scale(Vector3(sx, minf(sx, VS * 1.2), (length + 1.0) / 10.7)), centre))
+	# Ridge caps every couple of units along the ridge.
+	var ridge_y := 6.0 * minf(sx, VS * 1.2) * (float(best[0]) / 8.0) * 0.95
+	for k in int(length / (2.4 * VS)):
+		put.call("Roof_Modular_RoundTiles", Transform3D(turn * Basis.from_scale(Vector3.ONE * VS), centre + turn * Vector3(0, ridge_y, -length / 2.0 + 1.2 * VS + k * 2.4 * VS)))
+	# A chimney through the ridge and dormers on long roofs.
+	put.call(["Prop_Chimney", "Prop_Chimney2"][hsh % 2], Transform3D(Basis.from_scale(Vector3.ONE * VS), centre + turn * Vector3(span * 0.15, 0, length * 0.25)))
+	if length >= 12.0:
+		for k in [-0.2, 0.2]:
+			var at: Vector3 = centre + turn * Vector3(span * 0.25, 0.4, length * k)
+			put.call("Roof_Dormer_RoundTile", Transform3D(turn * Basis.from_scale(Vector3.ONE * VS), at))
+			put.call("Window_Roof_Wide" if k < 0 else "Window_Roof_Thin", Transform3D(turn * Basis(Vector3.UP, PI / 2.0) * Basis.from_scale(Vector3.ONE * VS), at + turn * Vector3(1.9 * VS, 0, 0)))
+
+## A small tiled roof on brackets over the door, its own little gable to the front.
+func _house_porch(put: Callable, door: Vector3, out: Vector3, hsh: int) -> void:
+	if out == Vector3.ZERO:
+		return
+	var face := Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3.ONE * VS)
+	var at := door + Vector3(0, 2.75 * VS, 0)
+	put.call(["Roof_RoundTile_2x1", "Roof_RoundTile_2x1_Long", "Roof_2x4_RoundTile"][hsh % 3], Transform3D(face, at))
+	put.call("Roof_Front_Brick2", Transform3D(face, at + out * (1.4 * VS)))
+	for sx in [-1.2, 1.2]:
+		put.call("Roof_Support2", Transform3D(face, at + face * Vector3(sx / VS, 0, 0)))
+
+## An outside staircase up one side of a two-storey house to a balcony: a flight of steps, its railings, and a
+## landing at the top, each picked from the kit's variants.
+func _house_stairs(put: Callable, side: Array, tall: float, hsh: int) -> void:
+	var start: Vector3 = side[0]
+	var dir: Vector3 = side[1]
+	var length: float = side[2]
+	var out: Vector3 = side[3]
+	if length < 10.0:
+		return
+	var face := Basis(Vector3.UP, atan2(dir.x, dir.z)) * Basis.from_scale(Vector3.ONE * VS)
+	var flights := ["Stairs_Exterior_Straight", "Stairs_Exterior_Straight_L", "Stairs_Exterior_Straight_R", "Stairs_Exterior_Straight_Center", "Stairs_Exterior_NoFirstStep"]
+	var rails := ["Stairs_Exterior_Sides", "Stairs_Exterior_SingleSide", "Stairs_Exterior_SingleSideThick", "Stairs_Exterior_Sides45", "Stairs_Exterior_SidesU"]
+	var tops := ["Stairs_Exterior_Platform", "Stairs_Exterior_Platform45", "Stairs_Exterior_Platform45Clean", "Stairs_Exterior_PlatformU", "Stairs_Exterior_SidePlatform"]
+	var steps := int(ceil(tall / VS))
+	var base := start + dir * (length * 0.2) + out * (1.0 * VS)
+	for k in steps:
+		var at := base + dir * (2.0 * VS * k / 2.0) + Vector3(0, VS * k, 0)
+		put.call(flights[(hsh + k) % flights.size()] if k > 0 else flights[(hsh / 3) % flights.size()], Transform3D(face, at))
+		put.call(rails[(hsh / 5) % rails.size()], Transform3D(face, at))
+	put.call(tops[(hsh / 7) % tops.size()], Transform3D(face, base + dir * (VS * steps) + Vector3(0, tall - VS, 0)))
+	put.call("Balcony_Simple_Straight", Transform3D(Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3.ONE * VS), base + dir * (VS * (steps + 1.5)) - out * (1.0 * VS) + Vector3(0, tall, 0)))
+
+## The yard in front of the door: a paved path, a fence each side, and a wagon, crates and bricks about. All
+## outside the box, so you walk through them (the server only knows the house).
+func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int) -> void:
+	if out == Vector3.ZERO:
+		return
+	var rot := Basis(Vector3.UP, atan2(out.x, out.z))
+	var side := rot * Vector3(1, 0, 0)
+	var tile := Basis.from_scale(Vector3.ONE * VS)
+	var paving: String = ["Floor_UnevenBrick", "Floor_Brick", "Floor_RedBrick"][hsh % 3]
+	for k in 3:
+		put.call(paving, Transform3D(tile, door + out * (VS * (1.0 + 2.0 * k)) + Vector3(0, 0.05, 0)))
+	for s2 in [-1.0, 1.0]:
+		for k in 3:
+			var at: Vector3 = door + out * (VS * (1.0 + 2.0 * k)) + side * s2 * (VS * 2.6)
+			var piece: String = "Prop_WoodenFence_Single" if k == 0 else ["Prop_WoodenFence_Extension1", "Prop_WoodenFence_Extension2"][k % 2]
+			put.call(piece, Transform3D(rot * Basis(Vector3.UP, PI / 2.0) * tile, at))
+	if hsh % 3 == 0:
+		put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, door + out * (VS * 6.2) + side * (VS * 1.6)))
+		put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, door + out * (VS * 6.2) - side * (VS * 1.6)))
+	put.call("Wall_Arch", Transform3D(rot * tile, door + out * (VS * 6.0)))
+	put.call("Prop_Wagon", Transform3D(rot * Basis(Vector3.UP, 0.4) * tile, door + out * (VS * 4.0) + side * (VS * 5.0)))
+	# A wooden lean-to shed, or a market stall with a roof both ways, beside the path.
+	var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
+	var shed_face := rot * Basis(Vector3.UP, PI / 2.0) * tile
+	for sx2 in [-1.0, 1.0]:
+		put.call("Prop_Support", Transform3D(shed_face, shed + side * sx2 * (VS * 2.2) + Vector3(0, -1.2 * VS, 0)))
+	if hsh % 2 == 0:
+		var run := ["Roof_Wooden_2x1_L", "Roof_Wooden_2x1_Middle", "Roof_Wooden_2x1_R"]
+		for k in run.size():
+			put.call(run[k], Transform3D(shed_face, shed + side * (VS * 2.2 * (k - 1)) + Vector3(0, 2.0 * VS, 0)))
+		put.call("Roof_Wooden_2x1_Corner", Transform3D(shed_face, shed + side * (VS * 3.4) + Vector3(0, 2.0 * VS, 0)))
+		var half: int = [4, 6, 8][hsh % 3]
+		put.call("Roof_Front_Brick%d_Half_L" % half, Transform3D(shed_face * Basis.from_scale(Vector3.ONE * 0.35), shed - side * (VS * 3.4) + Vector3(0, 0.6, 0)))
+		put.call("Roof_Front_Brick%d_Half_R" % half, Transform3D(shed_face * Basis.from_scale(Vector3.ONE * 0.35), shed + side * (VS * 3.4) + Vector3(0, 0.6, 0)))
+	else:
+		put.call("Roof_Wooden_2x1_Center", Transform3D(shed_face, shed + Vector3(0, 2.0 * VS, 0)))
+		put.call("Roof_Wooden_2x1_Center_Mirror", Transform3D(shed_face, shed + side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
+		put.call("Roof_Wooden_2x1", Transform3D(shed_face, shed - side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
+	for k in 3:
+		put.call("Prop_Crate", Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * tile, door + out * (VS * rng.randf_range(1.0, 4.0)) - side * (VS * rng.randf_range(3.6, 5.0))))
+	for k in 4:
+		put.call("Prop_Brick%d" % (k + 1), Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * tile, door + out * (VS * rng.randf_range(0.6, 5.0)) + side * (VS * rng.randf_range(-2.0, 2.0)) + Vector3(0, 0.1, 0)))
 
 ## A flame that blooms (brighter than white, so glow picks it up) and the warm light it casts.
 func _flame(node: Node3D, at: Vector3, r: float) -> void:
@@ -658,6 +945,38 @@ func _build_lake(b: Array, idx: int) -> Node3D:
 	water.position = Vector3((b[0] + b[2]) / 2.0, land.lake_level(idx), (b[1] + b[3]) / 2.0)
 	node.add_child(water)
 	node.add_child(_rim_rocks(b, land.base[idx], 5.0))
+	node.add_child(_dock(b, land.lake_level(idx), idx))
+	return node
+
+## A wooden dock from the middle of one shore out over the water: plank floor (dark or light, with half and
+## corner boards at the end) on posts. Decoration over the lake, which the server keeps you out of.
+func _dock(b: Array, water: float, idx: int) -> Node3D:
+	var hsh := absi(int(b[0]) * 7 + int(b[1]) * 31 + idx)
+	var tone := "WoodDark" if hsh % 2 == 0 else "WoodLight"
+	var sides := [[Vector3((b[0] + b[2]) / 2.0, 0, b[1]), Vector3(0, 0, 1)], [Vector3((b[0] + b[2]) / 2.0, 0, b[3]), Vector3(0, 0, -1)],
+		[Vector3(b[0], 0, (b[1] + b[3]) / 2.0), Vector3(1, 0, 0)], [Vector3(b[2], 0, (b[1] + b[3]) / 2.0), Vector3(-1, 0, 0)]]
+	var sd: Array = sides[hsh % 4]
+	var shore: Vector3 = sd[0]
+	var into: Vector3 = sd[1]
+	var face := Basis(Vector3.UP, atan2(into.x, into.z)) * Basis.from_scale(Vector3.ONE * VS)
+	var per := {}
+	var add := func(name: String, xf: Transform3D):
+		if not per.has(name):
+			per[name] = []
+		per[name].append(xf)
+	var planks := 3
+	for k in planks:
+		var at := shore + into * (VS * (1.0 + 2.0 * k)) + Vector3(0, water + 0.45, 0)
+		add.call("Floor_%s" % tone if k < planks - 1 else "Floor_%s_Half%d" % ["WoodDark", 1 + hsh % 3] if tone == "WoodDark" else "Floor_WoodLight", Transform3D(face, at))
+		add.call("Prop_Support", Transform3D(face * Basis(Vector3.UP, PI), at - Vector3(0, 2.9 * VS, 0)))
+	var end := shore + into * (VS * 2.0 * planks) + Vector3(0, water + 0.45, 0)
+	add.call("Floor_%s_OverhangCorner" % tone, Transform3D(face, end))
+	add.call("Floor_%s_OverhangCorner2" % tone, Transform3D(face * Basis(Vector3.UP, PI / 2.0), end))
+	var node := Node3D.new()
+	for name in per:
+		var m := _mesh(VILLAGE + String(name) + ".gltf")
+		if m:
+			node.add_child(_multi(m, per[name]))
 	return node
 
 ## Rocks along a box's edge, every `gap` units or so, from the box's corner so every client agrees.
@@ -788,6 +1107,13 @@ func _chunk_key(cx: int, cy: int) -> int:
 
 func _index_boxes() -> void:
 	box_grid.clear()
+	box_home.clear()
+	for i in boxes.size():
+		var bb: Array = boxes[i]
+		var hk := _chunk_key(int(floor((bb[0] + bb[2]) / 2.0 / PROP_CHUNK)), int(floor((bb[1] + bb[3]) / 2.0 / PROP_CHUNK)))
+		if not box_home.has(hk):
+			box_home[hk] = []
+		box_home[hk].append(i)
 	for i in boxes.size():
 		var b: Array = boxes[i]
 		for cx in range(int(floor((b[0] - FLAT_PAD) / PROP_CHUNK)), int(floor((b[2] + FLAT_PAD) / PROP_CHUNK)) + 1):
@@ -800,11 +1126,22 @@ func _index_boxes() -> void:
 ## Each wall box becomes a little keep: dungeon wall pieces tiled along every side (stretched slightly so a
 ## whole number fits), stone pillars at the corners and every other joint, a roof, and a banner or a torch on
 ## long sides. Everything stays inside the box, so what you see is exactly what you collide with.
-func _build_box(b: Array, idx: int) -> Node3D:
+func _build_box(b: Array, idx: int, batch: Dictionary = {}) -> Node3D:
 	if land.kinds[idx] == land.CRAG:
 		return _build_crag(b, idx)
 	if land.kinds[idx] == land.LAKE:
 		return _build_lake(b, idx)
+	# Half the keeps are village houses instead (the console draws both as roofs). A long box is a terraced
+	# row, cut along its length into houses that share their walls.
+	var w: float = b[2] - b[0]
+	var d: float = b[3] - b[1]
+	if _is_house(b) and ResourceLoader.exists(VILLAGE + "Wall_Plaster_Straight.gltf"):
+		var row := Node3D.new()
+		var n := maxi(1, int(ceil(maxf(w, d) / 18.0)))
+		for k in n:
+			var part: Array = [b[0] + w * k / n, b[1], b[0] + w * (k + 1) / n, b[3]] if w >= d else [b[0], b[1] + d * k / n, b[2], b[1] + d * (k + 1) / n]
+			row.add_child(_build_house(part, idx, batch))
+		return row
 	var x0: float = b[0]
 	var y0: float = b[1]
 	var x1: float = b[2]
@@ -893,14 +1230,8 @@ func _build_box(b: Array, idx: int) -> Node3D:
 	for xf in pieces["torch_mounted.gltf"]:
 		_flame(node, (xf as Transform3D) * Vector3(0, 0.75, 0.35), 0.14)
 	for p in pieces:
-		if pieces[p].is_empty():
-			continue
-		var m := _mesh(DUNGEON + p)
-		if m == null:
-			continue
-		# The dungeon stone is very pale in daylight; a warm grey keeps it from glaring against the grass.
-		var stone: bool = p.begins_with("wall") or p.begins_with("pillar") or p.begins_with("floor")
-		node.add_child(_multi(m, pieces[p], Color(0.78, 0.74, 0.70) if stone else Color.WHITE))
+		if not pieces[p].is_empty():
+			_batch(batch, DUNGEON + String(p), pieces[p], node.position.y)
 	# Roof: a flat slate cap so the hollow inside never shows from the camera's height.
 	var roof := MeshInstance3D.new()
 	var rb := BoxMesh.new()
@@ -914,22 +1245,49 @@ func _build_box(b: Array, idx: int) -> Node3D:
 	node.add_child(roof)
 	return node
 
+## Buildings are built a 128 unit chunk at a time (a box belongs to the chunk its centre is in), and every
+## piece of the same kind in a chunk shares one MultiMesh, so a town costs a few dozen draws, not thousands.
 func _sync_walls(center: Vector2) -> void:
 	var keep := {}
-	for i in boxes.size():
-		var b: Array = boxes[i]
-		if b[2] < center.x - WALL_DRAW or b[0] > center.x + WALL_DRAW or b[3] < center.y - WALL_DRAW or b[1] > center.y + WALL_DRAW:
-			continue
-		keep[i] = true
-		if walls.has(i):
-			continue
-		var n := _build_box(b, i)
-		add_child(n)
-		walls[i] = n
-	for i in walls.keys():
-		if not keep.has(i):
-			walls[i].queue_free()
-			walls.erase(i)
+	var r := int(ceil(WALL_DRAW / PROP_CHUNK))
+	var ccx := int(floor(center.x / PROP_CHUNK))
+	var ccy := int(floor(center.y / PROP_CHUNK))
+	for cx in range(ccx - r, ccx + r + 1):
+		for cy in range(ccy - r, ccy + r + 1):
+			var k := _chunk_key(cx, cy)
+			if not box_home.has(k):
+				continue
+			keep[k] = true
+			if walls.has(k):
+				continue
+			var node := Node3D.new()
+			var batch := {}
+			for i in box_home[k]:
+				node.add_child(_build_box(boxes[i], i, batch))
+			for path in batch:
+				var m := _mesh(path)
+				if m:
+					node.add_child(_multi(m, batch[path], _tint(path)))
+			add_child(node)
+			walls[k] = node
+	for k in walls.keys():
+		if not keep.has(k):
+			walls[k].queue_free()
+			walls.erase(k)
+
+## Add a builder's pieces to its chunk's shared batch, lifting them by the building's base height.
+func _batch(batch: Dictionary, path: String, xforms: Array, lift: float) -> void:
+	if not batch.has(path):
+		batch[path] = []
+	for xf in xforms:
+		batch[path].append(Transform3D((xf as Transform3D).basis, (xf as Transform3D).origin + Vector3(0, lift, 0)))
+
+## The dungeon stone is very pale in daylight; a warm grey keeps it from glaring against the grass.
+func _tint(path: String) -> Color:
+	var f := path.get_file()
+	if path.begins_with(DUNGEON) and (f.begins_with("wall") or f.begins_with("pillar") or f.begins_with("floor")):
+		return Color(0.78, 0.74, 0.70)
+	return Color.WHITE
 
 ## Scenery is scattered per chunk from the world seed, so every client draws the same trees in the same places.
 ## Nothing is placed in or right next to a wall box. Props are only looks: the server has no trees, so
@@ -987,7 +1345,7 @@ func _build_props(cx: int, cy: int, seed: int, size: float) -> Node3D:
 			var y := (cy + rng.randf()) * PROP_CHUNK
 			var s := rng.randf_range(p[2], p[3])
 			var turn := rng.randf() * TAU
-			var pad := 1.6 * s if tree else 2.0
+			var pad := maxf(7.0, 1.6 * s) if tree else 2.5 # trees keep out of streets (a street is 10 wide)
 			var outside := x < 0.0 or y < 0.0 or x > size or y > size
 			if tree and count > int(p[1]) and not outside and minf(minf(x, y), minf(size - x, size - y)) > 12.0:
 				continue # the extra trees only grow in the last few units inside the edge and beyond it
@@ -1060,6 +1418,12 @@ func _process(delta: float) -> void:
 	hud.set_bag(net.bag())
 	_camera()
 	_weather(delta)
+	if world_map.visible:
+		var others := []
+		for e in list:
+			if e["id"] != self_id:
+				others.append(e["position"])
+		world_map.update_markers(me_pos, yaw, others)
 	_drive()
 	wall_t += delta
 	if wall_t > 0.4 and me_pos.distance_to(last_wall_sync) > 20.0:
@@ -1352,11 +1716,26 @@ func _drive() -> void:
 			args["walk"] = _beside_nearest_building()
 		if String(args["walk"]) == "near":
 			return
-		var to := Vector2(float(String(args["walk"]).get_slice(",", 0)), float(String(args["walk"]).get_slice(",", 1)))
-		if me_pos.distance_to(to) > 1.5:
-			net.set_move((to - me_pos).normalized())
+		# Waypoints separated by ";". When it stops getting anywhere (a wall in the way), sidestep for a moment.
+		var legs := String(args["walk"]).split(";")
+		var to := Vector2(float(legs[0].get_slice(",", 0)), float(legs[0].get_slice(",", 1)))
+		if me_pos.distance_to(to) > 2.0:
+			var dir := (to - me_pos).normalized()
+			if t_total - walk_check > 0.6:
+				if me_pos.distance_to(walk_from) < 2.0:
+					walk_dodge = t_total + 1.2
+					walk_side = -walk_side
+				walk_from = me_pos
+				walk_check = t_total
+			if t_total < walk_dodge:
+				dir = (dir.orthogonal() * walk_side + dir * 0.3).normalized()
+			net.set_move(dir)
 			return
-		args.erase("walk")
+		legs.remove_at(0)
+		if legs.is_empty():
+			args.erase("walk")
+		else:
+			args["walk"] = ";".join(legs)
 		net.set_move(Vector2.ZERO)
 	var f := 0.0
 	var r := 0.0
@@ -1393,6 +1772,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_toggle_god()
 		elif k == KEY_J:
 			net.act(ACT_JUMP, 0)
+		elif k == KEY_M:
+			_toggle_map()
+		elif k == KEY_ESCAPE and world_map.visible:
+			world_map.visible = false
 		elif k == KEY_F11:
 			var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -1411,6 +1794,15 @@ func _on_chat(text: String) -> void:
 ## Attack the target if it is in reach, otherwise whatever is nearest within reach (and target that). The server
 ## checks range, cooldown and energy and ignores a request that fails, so the checks it can see are made here
 ## first and explained, instead of a swing that silently does nothing.
+## The world map (M): drawn once per world from the same land the 3D view uses; the markers update while open.
+func _toggle_map() -> void:
+	if not world_map.visible and not world_map.built:
+		var kinds := []
+		for b in boxes:
+			kinds.append("house" if _is_house(b) else ["keep", "crag", "lake"][land.box_kind(b)])
+		world_map.build(land, boxes, kinds, float(info.get("world_size", 1024)))
+	world_map.visible = not world_map.visible
+
 func _attack() -> void:
 	if attack_id < 0 or t_total < next_swing:
 		return
@@ -1533,11 +1925,15 @@ func _smoke() -> void:
 	_check("joins and sees itself", ok, "id=%d" % net.get_self_id())
 	_check("replicated attribute present", health_idx != "", health_idx)
 	_check("world drawn", boxes.size() >= 0 and ground_mesh.mesh != null, "%d boxes" % boxes.size())
+	# Walk east; if a wall happens to be in the way, try the other directions.
 	var start := me_pos
-	var t := Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t < 2500:
-		net.set_move(Vector2(1, 0))
-		await get_tree().process_frame
+	for dir in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+		var t := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - t < 1500:
+			net.set_move(dir)
+			await get_tree().process_frame
+		if me_pos.distance_to(start) > 5.0:
+			break
 	net.set_move(Vector2.ZERO)
 	_check("walks", me_pos.distance_to(start) > 5.0, "moved %.1f" % me_pos.distance_to(start))
 	_check("walls near us are built", walls.size() > 0 or boxes.size() == 0, "%d meshes" % walls.size())
@@ -1545,7 +1941,10 @@ func _smoke() -> void:
 	if ResourceLoader.exists("res://assets/characters/player.tscn"):
 		_check("player is the KayKit character", me != null and me.has_method("set_speed") and me.anim != null and me.anim.has_animation(me.run), "")
 	if not walls.is_empty() and ResourceLoader.exists(DUNGEON + "wall.gltf"):
-		_check("walls are built from dungeon pieces", walls.values()[0].get_child_count() > 1, "%d parts" % walls.values()[0].get_child_count())
+		var batched := 0
+		for chunk in walls.values():
+			batched += (chunk as Node).find_children("*", "MultiMeshInstance3D", true, false).size()
+		_check("walls are built from kit pieces", batched > 0, "%d batches" % batched)
 	_check("scenery is scattered", props.size() > 0, "%d chunks" % props.size())
 	if air_max > 0.0:
 		net.act(ACT_JUMP, 0)
