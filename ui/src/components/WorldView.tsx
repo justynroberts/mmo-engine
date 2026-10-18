@@ -2,7 +2,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react'
 import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
 import { MAP, OPEN, TREES, TYPE_COLOUR, groundImage, hpColor } from './mapLook'
-import { fromBoxes, type WorldData } from '../world'
+import { fromBoxes, type WorldData, type WorldEdit } from '../world'
 
 /** When present the map is in builder mode: it shows places and routes and edits them. */
 export interface EditOverlay {
@@ -21,8 +21,19 @@ export interface EditOverlay {
   onMovePoint: (route: number, point: number, x: number, y: number) => void
 }
 
+/** When present the map shapes the world itself (the World tab): remove what is at a point, or drag out a footprint. */
+export interface ShapeOverlay {
+  tool: 'pan' | 'remove' | 'add'
+  edits: WorldEdit[]
+  /** True while the map shows a preview rather than the live world. */
+  previewing: boolean
+  onRemove: (x: number, y: number) => void
+  onAdd: (x0: number, y0: number, x1: number, y1: number) => void
+}
+
 interface Props {
   edit?: EditOverlay | null
+  shape?: ShapeOverlay | null
   world: WorldGeom | null
   stateRef: MutableRefObject<State | null>
   colors: string[]
@@ -136,7 +147,7 @@ export function WorldView(p: Props) {
           return
         }
       }
-      if (ed && ed.tool === 'wall') {
+      if ((ed && ed.tool === 'wall') || props.current.shape?.tool === 'add') {
         const w = worldOf(l)
         wallDrag.current = { x0: w.x, y0: w.y, x1: w.x, y1: w.y }
         cv.setPointerCapture(e.pointerId)
@@ -176,7 +187,9 @@ export function WorldView(p: Props) {
         const r = wallDrag.current
         wallDrag.current = null
         cv.releasePointerCapture(e.pointerId)
-        props.current.edit?.onAddWall(r.x0, r.y0, r.x1, r.y1)
+        const sh = props.current.shape
+        if (sh?.tool === 'add') sh.onAdd(r.x0, r.y0, r.x1, r.y1)
+        else props.current.edit?.onAddWall(r.x0, r.y0, r.x1, r.y1)
         return
       }
       if (grab) {
@@ -185,7 +198,11 @@ export function WorldView(p: Props) {
         return
       }
       const ed = props.current.edit
-      if (drag && !drag.moved && ed) {
+      const sh = props.current.shape
+      if (drag && !drag.moved && sh?.tool === 'remove') {
+        const w = worldOf(l)
+        sh.onRemove(w.x, w.y)
+      } else if (drag && !drag.moved && ed) {
         if (ed.tool === 'select') {
           // A click on a hand-placed wall selects it; anywhere else clears the selection.
           const w = worldOf(l)
@@ -366,6 +383,7 @@ export function WorldView(p: Props) {
       }
 
       if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3: MAP.ink, accent, line: MAP.ink, bg: MAP.parchment }, mouse.current, wallDrag.current)
+      if (pr.shape) drawShape(ctx, pr.shape, v, w, h, accent, wallDrag.current)
 
       const s = pr.stateRef.current
       let sel: (number[] | undefined)
@@ -500,6 +518,60 @@ function inked(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
 }
 
 /** Places as dashed circles, routes as numbered polylines with direction ticks. */
+/** The World tab's hand edits over the map: added footprints outlined, removals crossed out, and a note while
+ * the map shows a preview rather than the live world. */
+function drawShape(
+  ctx: CanvasRenderingContext2D,
+  sh: ShapeOverlay,
+  v: View,
+  w: number,
+  h: number,
+  accent: string,
+  rect: { x0: number; y0: number; x1: number; y1: number } | null,
+) {
+  const sx = (x: number) => (x - v.cx) * v.scale + w / 2
+  const sy = (y: number) => (y - v.cy) * v.scale + h / 2
+  ctx.lineWidth = 1.5
+  ctx.strokeStyle = accent
+  ctx.setLineDash([4, 3])
+  for (const e of sh.edits) {
+    if ('add' in e) {
+      const [x0, y0, x1, y1] = e.add.b
+      ctx.strokeRect(sx(Math.min(x0, x1)), sy(Math.min(y0, y1)), Math.abs(x1 - x0) * v.scale, Math.abs(y1 - y0) * v.scale)
+    } else {
+      const x = sx(e.remove[0])
+      const y = sy(e.remove[1])
+      ctx.beginPath()
+      ctx.moveTo(x - 5, y - 5)
+      ctx.lineTo(x + 5, y + 5)
+      ctx.moveTo(x + 5, y - 5)
+      ctx.lineTo(x - 5, y + 5)
+      ctx.stroke()
+    }
+  }
+  ctx.setLineDash([])
+  if (rect && sh.tool === 'add') {
+    ctx.fillStyle = accent
+    ctx.globalAlpha = 0.25
+    const x = sx(Math.min(rect.x0, rect.x1))
+    const y = sy(Math.min(rect.y0, rect.y1))
+    const rw = Math.abs(rect.x1 - rect.x0) * v.scale
+    const rh = Math.abs(rect.y1 - rect.y0) * v.scale
+    ctx.fillRect(x, y, rw, rh)
+    ctx.globalAlpha = 1
+    ctx.strokeRect(x, y, rw, rh)
+  }
+  if (sh.previewing) {
+    const label = 'PREVIEW · not live until applied'
+    ctx.font = '600 11px ui-monospace, monospace'
+    const tw = ctx.measureText(label).width
+    ctx.fillStyle = MAP.ink
+    ctx.fillRect(8, 8, tw + 16, 22)
+    ctx.fillStyle = accent
+    ctx.fillText(label, 16, 23)
+  }
+}
+
 function drawEdit(
   ctx: CanvasRenderingContext2D,
   ed: EditOverlay,

@@ -14,11 +14,33 @@ cargo run --release -p worldgen -- --size 2048 --seed 7 --out data/world.json
 server --world data/world.json            # or, with the server running: POST /api/world/reload
 ```
 
+Or use the console's **World tab**: it edits a recipe (below), shows each change as a preview on the map, and
+applies it live. The server runs the generator for it (`POST /api/world/generate` with a recipe returns the
+preview; `POST /api/world/apply` makes the preview the world file and the world). The world file is `--world`,
+or `world.json` in the server's working directory, which the server loads on start when it exists.
+
 `/play/info` carries `"world": {"ver": "<hex>", "bytes": N}` when there is a world file, and clients fetch it
 from `GET /play/world` (the admin side has the same at `GET /api/worldfile`). `ver` changes whenever the file
 does. `POST /api/world/reload` rereads the file and applies it live, as a wall edit is: nobody is
 disconnected, anything left inside a new wall is moved. Changing the size needs a restart. While a world
 file is in use, the game file's `walls` are not.
+
+## Recipes
+
+worldgen's input, and written into each file it makes as `recipe`, so a world can be opened, changed and made
+again (`worldgen --recipe world.json` accepts a whole world file). Every field is optional.
+
+| Field | Meaning |
+|---|---|
+| `size`, `seed` | As the flags |
+| `city` | A walled city (worlds of 1024 and up) |
+| `villages`, `forts`, `crags`, `lakes` | How many, as a multiple of the usual number for the size (0 = none, 0..5) |
+| `rivers` | River count (0..12), or null for the usual number |
+| `forest`, `hills` | How wooded, and how tall the hills, as a multiple of usual (0..5) |
+| `edits` | Hand edits, applied in order: `{"remove": [x, y]}` takes away the smallest footprint containing the point (a whole city with everything in it, on its open ground); `{"add": {"t": type, "b": [x0, y0, x1, y1]}}` puts a footprint there and clears what it covers. Types: house, keep, tower, castle, wall, crag, lake, square, city |
+
+Edits go in before the land is shaped, so what they add stands on level ground with rivers bending round it.
+Each river and each patch of scenery has its own random stream, so an edit changes only what is near it.
 
 ## Layout
 

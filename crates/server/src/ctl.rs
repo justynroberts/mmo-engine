@@ -45,6 +45,39 @@ pub enum Cmd {
     God(GodReq),
     WorldFile,
     WorldReload,
+    /// Put the last generated preview live.
+    WorldApply,
+}
+
+/// What the World tab needs to make worlds: the generator, and where it writes a preview.
+pub struct GenCfg {
+    pub worldgen: PathBuf,
+    pub preview: PathBuf,
+}
+
+/// One world generation at a time; they share the preview file.
+static GENERATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Run the generator on a recipe, into the preview file; the file's bytes, or why not. Runs on the admin
+/// connection's own thread, never the sim's.
+fn generate(gen: &GenCfg, recipe: &[u8]) -> Result<Vec<u8>, String> {
+    let _one = GENERATING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut child = std::process::Command::new(&gen.worldgen)
+        .args(["--recipe", "-", "--out"])
+        .arg(&gen.preview)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run the world generator {}: {e} (pass --worldgen)", gen.worldgen.display()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(recipe);
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().trim_start_matches("worldgen: ").to_string());
+    }
+    std::fs::read(&gen.preview).map_err(|e| format!("{}: {e}", gen.preview.display()))
 }
 
 #[derive(Deserialize)]
@@ -163,6 +196,8 @@ pub struct Params {
     pub plain_npcs: usize,
     pub game_path: Option<PathBuf>,
     pub max_clients: usize,
+    /// Where the world file lives (or will, once the World tab applies one).
+    pub world_path: PathBuf,
 }
 
 /// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
@@ -213,7 +248,8 @@ pub struct Ctl<'a> {
     pub director: &'a mut crate::director::Director,
 }
 
-pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>) -> std::io::Result<Receiver<Request>> {
+pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg) -> std::io::Result<Receiver<Request>> {
+    let gen = std::sync::Arc::new(gen);
     if !addr.ip().is_loopback() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -228,8 +264,9 @@ pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>) -> std::io::Result<Recei
             for conn in listener.incoming().flatten() {
                 let tx = tx.clone();
                 let ui = ui_dir.clone();
+                let gen = gen.clone();
                 std::thread::spawn(move || {
-                    let _ = serve(conn, &tx, ui.as_deref());
+                    let _ = serve(conn, &tx, ui.as_deref(), &gen);
                 });
             }
         })?;
@@ -321,7 +358,7 @@ fn host_ok(host: &str) -> bool {
     matches!(name, "localhost" | "127.0.0.1" | "[::1]")
 }
 
-fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::io::Result<()> {
+fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &GenCfg) -> std::io::Result<()> {
     let Some(req) = read_request(&mut conn) else {
         return respond(&mut conn, 400, "text/plain", b"bad request");
     };
@@ -333,11 +370,18 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
         return respond(&mut conn, 403, "text/plain", b"missing X-Admin header");
     }
     let body_str = || String::from_utf8_lossy(&req.body).into_owned();
+    if (req.method.as_str(), req.path.as_str()) == ("POST", "/api/world/generate") {
+        return match generate(gen, &req.body) {
+            Ok(bytes) => respond(&mut conn, 200, "application/json", &bytes),
+            Err(e) => respond(&mut conn, 400, "application/json", json!({ "ok": false, "error": e }).to_string().as_bytes()),
+        };
+    }
     let cmd = match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/info") => Some(Cmd::Info),
         ("GET", "/api/world") => Some(Cmd::World),
         ("GET", "/api/worldfile") => Some(Cmd::WorldFile),
         ("POST", "/api/world/reload") => Some(Cmd::WorldReload),
+        ("POST", "/api/world/apply") => Some(Cmd::WorldApply),
         ("GET", "/api/game") => Some(Cmd::GetGame),
         ("PUT", "/api/game") => Some(Cmd::PutGame(body_str())),
         ("GET", "/api/state") => {
@@ -383,7 +427,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -481,21 +525,19 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             let Some(path) = c.hs.world.as_ref().map(|w| w.path.clone()) else {
                 return err(404, "this world has no world file (start the server with --world)");
             };
-            let w = match crate::worldfile::load(&path) {
-                Ok(w) => w,
-                Err(e) => return err(400, e),
-            };
-            if w.size != c.sim.world.size {
-                return err(400, format!("the new file is {} units across and this world is {}; restart the server to change size", w.size, c.sim.world.size));
+            use_world_file(c, &path)
+        }
+        Cmd::WorldApply => {
+            // The World tab's preview becomes the world file, and the world.
+            let preview = c.params.world_path.with_extension("preview.json");
+            if let Err(e) = crate::worldfile::load(&preview) {
+                return err(400, format!("nothing to apply: {e}"));
             }
-            let moved = c.sim.replace_world(World::from_boxes(w.size, c.params.seed, w.boxes.clone()));
-            let w = std::sync::Arc::new(w);
-            c.hs.world = Some(w.clone());
-            if let Some(g) = &c.hs.gateway {
-                g.set_world(w.bytes.clone());
-                g.set_info(play_info(c.sim, c.hs));
+            if let Err(e) = std::fs::rename(&preview, &c.params.world_path) {
+                return err(500, format!("{}: {e}", c.params.world_path.display()));
             }
-            (200, json!({ "ok": true, "ver": format!("{:016x}", w.ver), "walls": w.boxes.len(), "moved_entities": moved }).to_string())
+            let path = c.params.world_path.clone();
+            use_world_file(c, &path)
         }
         Cmd::PutGame(text) => apply_game(&text, c),
         Cmd::State { limit } => (200, state_json(c, limit)),
@@ -657,6 +699,30 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             (200, json!({ "ok": true }).to_string())
         }
     }
+}
+
+/// Load a world file and make it the world, live: nobody is disconnected, and anyone a new wall lands on is
+/// moved. A different size needs a restart (the file is kept and used then).
+fn use_world_file(c: &mut Ctl, path: &Path) -> (u16, String) {
+    let w = match crate::worldfile::load(path) {
+        Ok(w) => w,
+        Err(e) => return err(400, e),
+    };
+    if w.size != c.sim.world.size {
+        return (
+            200,
+            json!({ "ok": true, "restart": true, "note": format!("saved, but this world is {} units across and the new one is {}: restart the server to use it", c.sim.world.size, w.size) })
+                .to_string(),
+        );
+    }
+    let moved = c.sim.replace_world(World::from_boxes(w.size, c.params.seed, w.boxes.clone()));
+    let w = std::sync::Arc::new(w);
+    c.hs.world = Some(w.clone());
+    if let Some(g) = &c.hs.gateway {
+        g.set_world(w.bytes.clone());
+        g.set_info(play_info(c.sim, c.hs));
+    }
+    (200, json!({ "ok": true, "ver": format!("{:016x}", w.ver), "walls": w.boxes.len(), "moved_entities": moved }).to_string())
 }
 
 pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {

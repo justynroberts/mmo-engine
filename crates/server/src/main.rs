@@ -30,6 +30,8 @@ struct Config {
     world_size: u32,
     /// A world file (terrain, water and objects from worldgen); its solid objects become the walls.
     world_file: Option<PathBuf>,
+    /// The world generator the console's World tab runs.
+    worldgen: Option<PathBuf>,
     seed: u64,
     max_clients: usize,
     npcs: usize,
@@ -67,6 +69,7 @@ fn parse_args() -> Config {
         hz: 20,
         world_size: 2048,
         world_file: None,
+        worldgen: None,
         seed: 1,
         max_clients: 8192,
         npcs: 0,
@@ -110,6 +113,7 @@ fn parse_args() -> Config {
             "--hz" => c.hz = val(a).parse().unwrap_or_else(|_| usage("bad --hz")),
             "--world-size" => c.world_size = val(a).parse().unwrap_or_else(|_| usage("bad --world-size")),
             "--world" => c.world_file = Some(PathBuf::from(val(a))),
+            "--worldgen" => c.worldgen = Some(PathBuf::from(val(a))),
             "--seed" => c.seed = val(a).parse().unwrap_or_else(|_| usage("bad --seed")),
             "--max-clients" => c.max_clients = val(a).parse().unwrap_or_else(|_| usage("bad --max-clients")),
             "--npcs" => c.npcs = val(a).parse().unwrap_or_else(|_| usage("bad --npcs")),
@@ -163,7 +167,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --world FILE      a world file (worldgen): its size and solid objects make the world; served to clients at /play/world\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --world FILE      a world file (worldgen): its size and solid objects make the world; served to clients at /play/world (world.json if present)\n  --worldgen FILE   the world generator the console runs (worldgen beside this binary, else on PATH)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
@@ -215,7 +219,13 @@ fn main() {
     let mut game_file = load_game(&cfg.game);
     let game = game_file.build().expect("validated by load_game");
     let defs_hash = game.defs.content_hash();
-    // A world file, when given, decides the world's size and walls; the game file's walls are not used.
+    // A world file, when given, decides the world's size and walls; the game file's walls are not used. Without
+    // --world, a world.json here is used if there is one: that is where the console's World tab saves a world.
+    let world_path = cfg.world_file.clone().unwrap_or_else(|| PathBuf::from("world.json"));
+    if cfg.world_file.is_none() && world_path.is_file() {
+        eprintln!("using the world file {} (made in the console's World tab, or pass --world)", world_path.display());
+        cfg.world_file = Some(world_path.clone());
+    }
     let world_file = cfg.world_file.as_deref().map(|p| {
         let w = worldfile::load(p).unwrap_or_else(|e| {
             eprintln!("{e}");
@@ -341,6 +351,7 @@ fn main() {
         plain_npcs: cfg.npcs,
         game_path: Some(cfg.game.clone()),
         max_clients: cfg.max_clients,
+        world_path: world_path.clone(),
     };
     let mut live = ctl::LiveStats { snap_lanes: lanes_n, ..Default::default() };
     let admin_rx = cfg.admin.as_ref().map(|a| {
@@ -349,7 +360,13 @@ fn main() {
             let d = PathBuf::from("ui/dist");
             d.is_dir().then_some(d)
         });
-        let rx = ctl::start(addr, ui.clone()).unwrap_or_else(|e| {
+        // The generator: as given, else the worldgen built or installed beside this binary, else whatever is on PATH.
+        let worldgen = cfg.worldgen.clone().unwrap_or_else(|| {
+            let near = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("worldgen")));
+            near.filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("worldgen"))
+        });
+        let gen = ctl::GenCfg { worldgen, preview: world_path.with_extension("preview.json") };
+        let rx = ctl::start(addr, ui.clone(), gen).unwrap_or_else(|e| {
             eprintln!("cannot start admin interface on {a}: {e}");
             std::process::exit(1);
         });

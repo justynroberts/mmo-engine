@@ -7,7 +7,11 @@
 //! type to models. A different world is a different run of this tool (or a different tool writing the same
 //! format); a different look is a different theme. See WORLD.md for the format.
 //!
-//! Usage: worldgen [--size 2048] [--seed 1] [--out world.json] [--no-city]
+//! Usage: worldgen [--recipe FILE] [--size 2048] [--seed 1] [--out world.json] [--no-city]
+//!
+//! A recipe (JSON) holds everything a world is made from: the seed and size, how much of each thing to lay out,
+//! and hand edits on top of what the seed lays out (see `Params::from_recipe`). The recipe is written into the
+//! world file, so a world can be opened, edited and made again. Flags given after `--recipe` override it.
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -254,12 +258,14 @@ const FLAT_PAD: f32 = 10.0;
 struct Land {
     size: f32,
     seed: u64,
+    /// How tall the hills are (1 = as designed, 0 = flat).
+    hills: f32,
 }
 
 impl Land {
     /// Hills, rising into mountains past the playable edge.
     fn raw(&self, x: f32, y: f32) -> f32 {
-        let mut h = (fbm(x / 170.0, y / 170.0, self.seed + 31, 3) - 0.5) * 30.0 + (noise(x / 35.0, y / 35.0, self.seed + 7) - 0.5) * 1.8;
+        let mut h = ((fbm(x / 170.0, y / 170.0, self.seed + 31, 3) - 0.5) * 30.0 + (noise(x / 35.0, y / 35.0, self.seed + 7) - 0.5) * 1.8) * self.hills;
         let out = (-x).max(x - self.size).max(-y).max(y - self.size);
         if out > 0.0 {
             h += smooth(0.0, 110.0, out) * (55.0 + 30.0 * (fbm(x / 60.0, y / 60.0, self.seed + 3, 4) * 2.0 - 1.0));
@@ -274,16 +280,19 @@ struct River {
 
 /// River courses: from an edge across the land, meandering, pulled towards the far side, bending round
 /// anything solid, and never running uphill (the level only falls, so a river cuts a gorge through a rise).
-fn rivers(land: &Land, l: &Layout, rng: &mut Rng) -> Vec<River> {
+fn rivers(land: &Land, l: &Layout, rng: &mut Rng, count: Option<usize>) -> Vec<River> {
     let size = land.size;
-    let count = (2 + (size / 2000.0) as usize).min(6);
+    let count = count.unwrap_or((2 + (size / 2000.0) as usize).min(6)).min(12);
     let blocked = |x: f32, y: f32| l.things.iter().any(|s| s.solid && x > s.b[0] - 18.0 && x < s.b[2] + 18.0 && y > s.b[1] - 18.0 && y < s.b[3] + 18.0);
     let ground = |x: f32, y: f32, hd: f32| {
         let (sx, sy) = (-hd.sin() * (RIVER_HALF + RIVER_LIP + 1.0), hd.cos() * (RIVER_HALF + RIVER_LIP + 1.0));
         land.raw(x, y).min(land.raw(x + sx, y + sy)).min(land.raw(x - sx, y - sy))
     };
     let mut out = Vec::new();
-    for _ in 0..count {
+    // Each river has its own random stream, so one bending round something new leaves the others where they were.
+    let base = rng.next();
+    for k in 0..count {
+        let rng = &mut Rng(base ^ (k as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let side = (rng.f() * 4.0) as usize % 4;
         let along = (0.15 + 0.7 * rng.f()) * size;
         let (mut x, mut y) = [(along, 0.0), (size, along), (along, size), (0.0, along)][side];
@@ -450,13 +459,141 @@ pub struct Params {
     pub size: f32,
     pub seed: u64,
     pub city: bool,
+    /// How many of each thing to lay out, as a multiple of the usual amount for the size (1 = usual, 0 = none).
+    pub villages: f32,
+    pub forts: f32,
+    pub crags: f32,
+    pub lakes: f32,
+    /// River count; None for the usual number for the size.
+    pub rivers: Option<usize>,
+    /// How wooded the land is (1 = usual, 0 = open meadow) and how tall the hills are (1 = usual, 0 = flat).
+    pub forest: f32,
+    pub hills: f32,
+    /// Hand edits on top of what the seed lays out, applied in order.
+    pub edits: Vec<Edit>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Edit {
+    /// Take away what is at this point: the smallest footprint containing it (a whole city, with everything in
+    /// it, if the point is on a city's open ground).
+    Remove(f32, f32),
+    /// Put a footprint here, clearing whatever it overlaps.
+    Add(&'static str, Box4),
+}
+
+/// Footprint types an edit may add, and whether each is solid.
+const ADDABLE: [(&str, bool); 9] =
+    [("house", true), ("keep", true), ("tower", true), ("castle", true), ("wall", true), ("crag", true), ("lake", true), ("square", false), ("city", false)];
+
+impl Default for Params {
+    fn default() -> Self {
+        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, edits: Vec::new() }
+    }
+}
+
+impl Params {
+    /// Read a recipe: `{"size", "seed", "city", "villages", "forts", "crags", "lakes", "rivers", "forest", "hills",
+    /// "edits": [{"remove": [x, y]} | {"add": {"t": type, "b": [x0, y0, x1, y1]}}]}`. Anything left out is usual.
+    pub fn from_recipe(v: &Value) -> Result<Params, String> {
+        let mut p = Params::default();
+        let num = |k: &str, lo: f64, hi: f64| -> Result<Option<f64>, String> {
+            match v.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(n) => n.as_f64().filter(|n| (lo..=hi).contains(n)).map(Some).ok_or(format!("{k} must be a number from {lo} to {hi}")),
+            }
+        };
+        if let Some(n) = num("size", 64.0, 65536.0)? {
+            p.size = n as f32;
+        }
+        if let Some(n) = num("seed", 0.0, 9.0e15)? {
+            p.seed = n as u64;
+        }
+        if let Some(b) = v.get("city") {
+            p.city = b.as_bool().ok_or("city must be true or false")?;
+        }
+        for (k, f) in [("villages", &mut p.villages), ("forts", &mut p.forts), ("crags", &mut p.crags), ("lakes", &mut p.lakes), ("forest", &mut p.forest), ("hills", &mut p.hills)] {
+            if let Some(n) = num(k, 0.0, 5.0)? {
+                *f = n as f32;
+            }
+        }
+        p.rivers = num("rivers", 0.0, 12.0)?.map(|n| n as usize);
+        for (i, e) in v.get("edits").and_then(|e| e.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
+            let pt = |a: &Value, n: usize| -> Option<Vec<f32>> {
+                let a = a.as_array()?;
+                let v: Vec<f32> = a.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect();
+                (v.len() == n && a.len() == n).then_some(v)
+            };
+            if let Some(r) = e.get("remove") {
+                let q = pt(r, 2).ok_or(format!("edit {i}: remove needs [x, y]"))?;
+                p.edits.push(Edit::Remove(q[0], q[1]));
+            } else if let Some(a) = e.get("add") {
+                let t = a.get("t").and_then(|t| t.as_str()).unwrap_or("");
+                let t = ADDABLE.iter().find(|(n, _)| *n == t).map(|(n, _)| *n).ok_or(format!("edit {i}: cannot add a '{t}'"))?;
+                let b = a.get("b").and_then(|b| pt(b, 4)).ok_or(format!("edit {i}: add needs b = [x0, y0, x1, y1]"))?;
+                let b = [b[0].min(b[2]), b[1].min(b[3]), b[0].max(b[2]), b[1].max(b[3])];
+                if b[2] - b[0] < 1.0 || b[3] - b[1] < 1.0 {
+                    return Err(format!("edit {i}: footprint too small"));
+                }
+                p.edits.push(Edit::Add(t, b));
+            } else {
+                return Err(format!("edit {i}: expected remove or add"));
+            }
+        }
+        Ok(p)
+    }
+
+    /// The recipe as written into the world file.
+    pub fn recipe(&self) -> Value {
+        let edits: Vec<Value> = self
+            .edits
+            .iter()
+            .map(|e| match e {
+                Edit::Remove(x, y) => json!({ "remove": [r1(*x), r1(*y)] }),
+                Edit::Add(t, b) => json!({ "add": { "t": t, "b": [r1(b[0]), r1(b[1]), r1(b[2]), r1(b[3])] } }),
+            })
+            .collect();
+        json!({
+            "size": self.size, "seed": self.seed, "city": self.city, "villages": self.villages, "forts": self.forts, "crags": self.crags,
+            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "edits": edits,
+        })
+    }
+}
+
+impl Layout {
+    fn apply(&mut self, e: &Edit, rng: &mut Rng) {
+        match *e {
+            Edit::Remove(x, y) => {
+                let inside = |b: &Box4| x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+                let area = |b: &Box4| (b[2] - b[0]) * (b[3] - b[1]);
+                let Some(i) = (0..self.things.len()).filter(|&i| inside(&self.things[i].b)).min_by(|&a, &b| area(&self.things[a].b).total_cmp(&area(&self.things[b].b))) else {
+                    return;
+                };
+                let gone = self.things.swap_remove(i);
+                if gone.t == "city" {
+                    self.things.retain(|s| !overlaps(&gone.b, &s.b, -0.01));
+                }
+            }
+            Edit::Add(t, b) => {
+                let solid = ADDABLE.iter().any(|(n, s)| *n == t && *s);
+                let b = [b[0].clamp(0.0, self.size), b[1].clamp(0.0, self.size), b[2].clamp(0.0, self.size), b[3].clamp(0.0, self.size)];
+                // A new open area keeps what stands in it; anything else clears the ground it covers.
+                if solid {
+                    self.things.retain(|s| !s.solid || !overlaps(&s.b, &b, -0.01));
+                    self.things.retain(|s| s.solid || s.t == "city" || !overlaps(&s.b, &b, -0.01));
+                }
+                let v = rng.v();
+                self.add(t, b, v, solid);
+            }
+        }
+    }
 }
 
 /// The whole world as the JSON value written to the file.
 pub fn generate(p: &Params) -> Value {
     let size = p.size;
     let mut rng = Rng(p.seed ^ 0x5EED_0F_3A7);
-    let land = Land { size, seed: p.seed };
+    let land = Land { size, seed: p.seed, hills: p.hills };
     let mut l = Layout { size, things: Vec::new() };
     if p.city && size >= 1024.0 {
         let side = (size / 6.0).clamp(240.0, 600.0);
@@ -464,17 +601,26 @@ pub fn generate(p: &Params) -> Value {
         city(&mut l, &mut rng, cx, cy, side);
     }
     let per = size * size / 1_000_000.0;
-    for _ in 0..((per * 2.5).round() as usize).max(1) {
+    // How many of a thing: the usual number for the size times the recipe's dial (at least one when it is on).
+    let n = |usual: f32, dial: f32| if dial <= 0.0 { 0 } else { ((per * usual * dial).round() as usize).max(1) };
+    for _ in 0..n(2.5, p.villages) {
         village(&mut l, &mut rng);
     }
-    for _ in 0..((per * 2.0).round() as usize).max(1) {
+    for _ in 0..n(2.0, p.forts) {
         l.scatter(&mut rng, "keep", (18.0, 36.0), (16.0, 32.0), 24.0);
     }
-    for _ in 0..((per * 7.0).round() as usize).max(2) {
+    for _ in 0..n(7.0, p.crags) {
         l.scatter(&mut rng, "crag", (14.0, 45.0), (14.0, 45.0), 12.0);
     }
-    for _ in 0..((per * 3.5).round() as usize).max(1) {
+    for _ in 0..n(3.5, p.lakes) {
         l.scatter(&mut rng, "lake", (18.0, 48.0), (16.0, 40.0), 16.0);
+    }
+    // Hand edits go in before the land is shaped round the layout, so what they add gets level ground, a clear
+    // patch and rivers that bend round it, as anything the seed laid out does. Their own random stream keeps the
+    // rest of the world the same when an edit is added.
+    let mut erng = Rng(p.seed ^ 0xED17);
+    for e in &p.edits {
+        l.apply(e, &mut erng);
     }
     // Everything stands on the ground its middle is on; a city's buildings all stand on the city's level.
     let city_base = l.things.iter().find(|s| s.t == "city").map(|s| land.raw((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0));
@@ -485,7 +631,7 @@ pub fn generate(p: &Params) -> Value {
             _ => land.raw((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0),
         };
     }
-    let rv = rivers(&land, &l, &mut rng);
+    let rv = rivers(&land, &l, &mut rng, p.rivers);
     let ri = RiverIndex::new(&rv);
     // Things by 64 unit cell (padded), so each height sample checks only those nearby.
     let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
@@ -540,18 +686,21 @@ pub fn generate(p: &Params) -> Value {
     let span_c = ((size + 2.0 * margin) / step) as i32;
     for j in 0..span_c {
         for i in 0..span_c {
+            // Each patch has its own random stream, so an edit only changes the scenery where it is.
+            let rng = &mut Rng(p.seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ 0x5CE7);
             let (x, y) = (-margin + (i as f32 + rng.f()) * step, -margin + (j as f32 + rng.f()) * step);
             let out = (-x).max(x - size).max(-y).max(y - size);
-            let forest = smooth(0.45, 0.7, fbm(x / 260.0, y / 260.0, p.seed + 50, 3));
+            let forest = smooth(0.45, 0.7, fbm(x / 260.0, y / 260.0, p.seed + 50, 3)) * p.forest;
+            let wood = p.forest.min(1.0);
             let (t, s): (&str, f32) = if out > 70.0 {
                 if rng.f() < 0.12 { ("spire", rng.range(2.5, 6.0)) } else { continue }
             } else if out > 25.0 {
                 if rng.f() < 0.2 { ("boulder", rng.range(2.5, 6.0)) } else { continue }
-            } else if out > -12.0 && rng.f() < 0.85 {
+            } else if out > -12.0 && rng.f() < 0.85 * wood {
                 ("tree", rng.range(1.3, 1.9))
             } else {
                 let roll = rng.f();
-                if roll < 0.05 + 0.6 * forest {
+                if roll < 0.05 * wood + 0.6 * forest {
                     (if rng.f() < 0.07 { "tree_bare" } else { "tree" }, rng.range(1.3, 1.9))
                 } else if roll < 0.2 + 0.6 * forest {
                     ("bush", rng.range(2.2, 4.0))
@@ -581,6 +730,7 @@ pub fn generate(p: &Params) -> Value {
         "generator": format!("worldgen {} (fantasy)", env!("CARGO_PKG_VERSION")),
         "size": size,
         "seed": p.seed,
+        "recipe": p.recipe(),
         "heights": { "x0": -margin, "y0": -margin, "cell": cell, "w": n, "h": n, "lo": lo, "hi": hi, "u16le": base64(&bytes) },
         "water": { "rivers": rivers, "lakes": lakes },
         "objects": objects,
@@ -588,13 +738,26 @@ pub fn generate(p: &Params) -> Value {
 }
 
 fn main() {
-    let mut p = Params { size: 2048.0, seed: 1, city: true };
+    let mut p = Params::default();
     let mut out = "world.json".to_string();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
         let val = || args.get(i + 1).cloned().unwrap_or_else(|| usage());
         match args[i].as_str() {
+            "--recipe" => {
+                let path = val();
+                let text = if path == "-" {
+                    let mut t = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).map(|_| t)
+                } else {
+                    std::fs::read_to_string(&path)
+                };
+                let v: Value = text.ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| fail(&format!("{path}: not a JSON recipe")));
+                // A whole world file works as a recipe too: it carries the one it was made from.
+                let r = if v.get("format").is_some() { v.get("recipe").cloned().unwrap_or(json!({})) } else { v };
+                p = Params::from_recipe(&r).unwrap_or_else(|e| fail(&e));
+            }
             "--size" => p.size = val().parse().unwrap_or_else(|_| usage()),
             "--seed" => p.seed = val().parse().unwrap_or_else(|_| usage()),
             "--out" => out = val(),
@@ -622,8 +785,13 @@ fn main() {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: worldgen [--size 2048] [--seed 1] [--out world.json] [--no-city]");
+    eprintln!("usage: worldgen [--recipe FILE|-] [--size 2048] [--seed 1] [--out world.json] [--no-city]");
     std::process::exit(2)
+}
+
+fn fail(msg: &str) -> ! {
+    eprintln!("worldgen: {msg}");
+    std::process::exit(1)
 }
 
 #[cfg(test)]
@@ -631,7 +799,73 @@ mod tests {
     use super::*;
 
     fn world(size: f32, seed: u64) -> Value {
-        generate(&Params { size, seed, city: true })
+        generate(&Params { size, seed, ..Params::default() })
+    }
+
+    fn count(w: &Value, t: &str) -> usize {
+        w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == t).count()
+    }
+
+    #[test]
+    fn a_recipe_round_trips_through_the_world_file() {
+        let r = json!({ "size": 1024, "seed": 9, "city": false, "villages": 2, "forest": 0.5, "rivers": 3,
+            "edits": [{ "remove": [10, 10] }, { "add": { "t": "tower", "b": [500, 500, 490, 512] } }] });
+        let p = Params::from_recipe(&r).unwrap();
+        assert_eq!(p.edits[1], Edit::Add("tower", [490.0, 500.0, 500.0, 512.0]), "corners are put in order");
+        let w = generate(&p);
+        let again = Params::from_recipe(&w["recipe"]).unwrap();
+        assert_eq!(generate(&again).to_string(), w.to_string());
+        assert_eq!(w["water"]["rivers"].as_array().unwrap().len(), 3);
+        assert_eq!(count(&w, "city"), 0);
+        for bad in [json!({ "size": 10 }), json!({ "forest": -1 }), json!({ "edits": [{ "add": { "t": "spaceship", "b": [0, 0, 9, 9] } }] }), json!({ "edits": [{ "move": 1 }] })] {
+            assert!(Params::from_recipe(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn dials_change_how_much_of_each_thing_there_is() {
+        // Without the city, whose streets of houses would swamp the villages' count.
+        let base = generate(&Params { size: 2048.0, seed: 4, city: false, ..Params::default() });
+        let more = generate(&Params { size: 2048.0, seed: 4, city: false, villages: 3.0, crags: 0.0, forest: 0.0, ..Params::default() });
+        assert!(count(&more, "house") > count(&base, "house") * 2, "{} vs {}", count(&more, "house"), count(&base, "house"));
+        assert_eq!(count(&more, "crag"), 0);
+        assert!(count(&more, "tree") < count(&base, "tree") / 3, "{} vs {}", count(&more, "tree"), count(&base, "tree"));
+    }
+
+    #[test]
+    fn edits_add_and_remove_footprints_and_the_land_is_shaped_round_them() {
+        let base = world(2048.0, 6);
+        let house = base["objects"].as_array().unwrap().iter().find(|o| o["t"] == "house").unwrap().clone();
+        let b: Vec<f32> = house["b"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as f32).collect();
+        let (mx, my) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+        let p = Params {
+            size: 2048.0,
+            seed: 6,
+            edits: vec![Edit::Remove(mx, my), Edit::Add("castle", [100.0, 100.0, 160.0, 150.0])],
+            ..Params::default()
+        };
+        let w = generate(&p);
+        let objs = w["objects"].as_array().unwrap();
+        assert!(!objs.iter().any(|o| o["b"] == house["b"]), "the house is gone");
+        let castle = objs.iter().find(|o| o["t"] == "castle" && o["b"][0] == 100.0).expect("the castle is there");
+        assert_eq!(castle["solid"], true);
+        // Nothing solid overlaps it and no tree stands on it.
+        for o in objs {
+            if let Some(q) = o["p"].as_array() {
+                let (x, y) = (q[0].as_f64().unwrap(), q[1].as_f64().unwrap());
+                assert!(!(x > 100.0 && x < 160.0 && y > 100.0 && y < 150.0), "a {} at {x},{y}", o["t"]);
+            } else if o["solid"] == true && o["t"] != "castle" {
+                let ob = o["b"].as_array().unwrap();
+                let ov = ob[0].as_f64().unwrap() < 160.0 && ob[2].as_f64().unwrap() > 100.0 && ob[1].as_f64().unwrap() < 150.0 && ob[3].as_f64().unwrap() > 100.0;
+                assert!(!ov, "{} overlaps the castle", o["t"]);
+            }
+        }
+        assert_eq!(count(&w, "house"), count(&base, "house") - 1);
+        // Edits are local: rivers that do not pass the castle keep their course, and trees far from it stay put.
+        let tree_far = |w: &Value| w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == "tree" && o["p"][0].as_f64().unwrap() > 1200.0 && o["p"][1].as_f64().unwrap() > 1200.0).count();
+        assert_eq!(tree_far(&w), tree_far(&base));
+        let same = (0..w["water"]["rivers"].as_array().unwrap().len()).filter(|&k| w["water"]["rivers"][k] == base["water"]["rivers"][k]).count();
+        assert!(same >= 1, "every river moved");
     }
 
     #[test]

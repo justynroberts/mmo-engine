@@ -9,6 +9,7 @@ import { ActionsEditor, AttrsEditor, BotsEditor, ItemsEditor } from './component
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { StatusBar } from './components/StatusBar'
 import { WorldView } from './components/WorldView'
+import { WorldTab, useShaper } from './components/WorldTab'
 import { parseWorld, type WorldData } from './world'
 const Scene3D = lazy(() => import('./components/Scene3D'))
 import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
@@ -16,6 +17,7 @@ import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
 const TABS: readonly (readonly [string, string])[] = [
   ['bots', 'Bots'],
   ['builder', 'Builder'],
+  ['world', 'World'],
   ['god', 'God'],
   ['attrs', 'Attributes'],
   ['actions', 'Actions'],
@@ -166,6 +168,9 @@ export default function App() {
     void loadStatic()
   }, [loadGame, loadStatic])
 
+  const shaper = useShaper(land, world?.size ?? 2048, info?.seed ?? 1)
+  // The World tab shows its preview on the map, and takes edits there.
+  const shown = (tab === 'world' && shaper.preview) || land
   const worldVer = stats?.world_ver
   useEffect(() => {
     if (!worldVer) {
@@ -336,7 +341,8 @@ export default function App() {
             healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
             healthMax={healthDef?.max ?? 100}
             themeKey={dark ? 'dark' : 'light'}
-            land={land}
+            land={shown}
+            shape={tab === 'world' ? shaper.overlay : null}
           />
           ) : (
             <Suspense fallback={<div className="h-full bg-[#a9c3d6]" />}>
@@ -346,7 +352,7 @@ export default function App() {
                 routes={live?.routes ?? []}
                 archetypes={live?.archetypes.map((a) => a.name) ?? []}
                 colors={live?.archetypes.map((a) => a.color) ?? []}
-                land={land}
+                land={shown}
                 airIdx={live?.attrs.findIndex((a) => a.name === 'airborne') ?? -1}
                 airMax={live?.attrs.find((a) => a.name === 'airborne')?.max ?? 100}
                 healthIdx={live?.attrs.some((a) => a.name === 'health') ? healthIdx : -1}
@@ -400,11 +406,14 @@ export default function App() {
               <Tabs.Content value="builder" tabIndex={-1}>
                 {body(
                   draft ? (
-                    <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} worldBoxes={world?.boxes ?? []} worldSize={world?.size ?? 2048} />
+                    <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} worldBoxes={world?.boxes ?? []} worldSize={world?.size ?? 2048} worldFile={!!land} />
                   ) : (
                     <p className="text-fg-3 py-4">Loading game file…</p>
                   ),
                 )}
+              </Tabs.Content>
+              <Tabs.Content value="world" tabIndex={-1}>
+                {body(<WorldTab s={shaper} land={land} liveSize={world?.size ?? 2048} />)}
               </Tabs.Content>
               <Tabs.Content value="god" tabIndex={-1}>
                 {body(

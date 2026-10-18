@@ -41,7 +41,16 @@ export interface BuilderState {
 export const initialBuilder: BuilderState = { arch: 0, tool: 'select', sel: null, draft: [] }
 
 type Edit = { game: GameFile; setGame: (g: GameFile) => void }
-type Props = Edit & { b: BuilderState; setB: (b: BuilderState) => void; finishRoute: () => void; note: string | null; worldBoxes: [number, number, number, number][]; worldSize: number }
+type Props = Edit & {
+  b: BuilderState
+  setB: (b: BuilderState) => void
+  finishRoute: () => void
+  note: string | null
+  worldBoxes: [number, number, number, number][]
+  worldSize: number
+  /** True when the world comes from a world file: its walls are shaped in the World tab, not here. */
+  worldFile: boolean
+}
 
 const ICON = { size: 16, weight: 'regular' as const }
 
@@ -404,12 +413,14 @@ const TOOLS: readonly { tool: Tool; label: string; icon: ReactNode; hint: string
   { tool: 'spawn', label: 'Drop test bot', icon: <Robot {...ICON} aria-hidden />, hint: 'Click the map to spawn one of the selected bot type there. Apply your changes first.' },
 ]
 
-function Toolbar({ b, setB, finishRoute }: Pick<Props, 'b' | 'setB' | 'finishRoute'>) {
-  const cur = TOOLS.find((t) => t.tool === b.tool) ?? TOOLS[0]!
+function Toolbar({ b, setB, finishRoute, worldFile }: Pick<Props, 'b' | 'setB' | 'finishRoute' | 'worldFile'>) {
+  // With a world file the walls are the file's, so there is no wall tool here.
+  const tools = worldFile ? TOOLS.filter((t) => t.tool !== 'wall') : TOOLS
+  const cur = tools.find((t) => t.tool === b.tool) ?? tools[0]!
   return (
     <section aria-label="Map tools" className="cell py-2">
       <div role="group" aria-label="Tool" className="flex flex-wrap gap-1">
-        {TOOLS.map((t) => (
+        {tools.map((t) => (
           <button
             key={t.tool}
             type="button"
@@ -586,7 +597,7 @@ export function Builder(p: Props) {
   const a = game.archetypes[arch]
   return (
     <div>
-      <Toolbar b={b} setB={setB} finishRoute={p.finishRoute} />
+      <Toolbar b={b} setB={setB} finishRoute={p.finishRoute} worldFile={p.worldFile} />
       {p.note && (
         <p role="status" className="py-1 text-fg-2">
           {p.note}
@@ -619,7 +630,14 @@ export function Builder(p: Props) {
       )}
       <PlacesSection game={game} setGame={setGame} b={b} setB={setB} />
       <RoutesSection game={game} setGame={setGame} b={b} setB={setB} />
-      <WallsSection game={game} setGame={setGame} b={b} setB={setB} worldBoxes={p.worldBoxes} worldSize={p.worldSize} />
+      {p.worldFile ? (
+        <section aria-label="Walls" className="cell py-2">
+          <h2 className="lbl pb-1">Walls</h2>
+          <p className="text-fg-3">The walls come from the world file. Add, remove or reshape them in the World tab.</p>
+        </section>
+      ) : (
+        <WallsSection game={game} setGame={setGame} b={b} setB={setB} worldBoxes={p.worldBoxes} worldSize={p.worldSize} />
+      )}
     </div>
   )
 }

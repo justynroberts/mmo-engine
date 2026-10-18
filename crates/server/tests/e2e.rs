@@ -3,7 +3,7 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, UdpSocket};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -2005,8 +2005,54 @@ fn a_world_file_supplies_the_walls_is_served_as_is_and_reloads_live() {
     assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), 2);
     // A file of another size is refused (that needs a restart), and so is a broken one.
     std::fs::write(&path, file("").replace("1024", "2048")).unwrap();
-    assert_eq!(json(&srv, "POST", "/api/world/reload", "").0, 400);
+    let (s, r) = json(&srv, "POST", "/api/world/reload", "");
+    assert_eq!((s, r["restart"].clone()), (200, true.into()), "{r}");
+    assert_eq!(json(&srv, "GET", "/api/world", "").1["size"], 1024.0, "the size waits for a restart");
     std::fs::write(&path, "nope").unwrap();
     assert_eq!(json(&srv, "POST", "/api/world/reload", "").0, 400);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The World tab: a recipe is generated into a preview (the world is untouched), applied live, and kept for
+/// the next start, which picks up world.json without being told.
+#[test]
+fn the_console_generates_a_world_previews_it_and_applies_it_live() {
+    let worldgen = Path::new(env!("CARGO_BIN_EXE_server")).with_file_name("worldgen");
+    assert!(worldgen.is_file(), "build the generator first: cargo build --release -p worldgen");
+    let wg = worldgen.to_string_lossy().to_string();
+    let (mut srv, web) = start_web(&["--world-size", "1024", "--worldgen", &wg]);
+    let walls_before = json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len();
+    assert_eq!(json(&srv, "GET", "/api/worldfile", "").0, 404);
+
+    let recipe = r#"{"size":1024,"seed":3,"city":false,"edits":[{"add":{"t":"castle","b":[400,400,460,450]}}]}"#;
+    let (s, preview) = http(&srv, "POST", "/api/world/generate", recipe);
+    assert_eq!(s, 200, "{preview}");
+    let preview: serde_json::Value = serde_json::from_str(&preview).unwrap();
+    assert_eq!(preview["recipe"]["seed"], 3);
+    assert!(preview["objects"].as_array().unwrap().iter().any(|o| o["t"] == "castle" && o["b"][0] == 400.0));
+    // A preview changes nothing yet.
+    assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), walls_before);
+    // A bad recipe says why.
+    let (s, r) = json(&srv, "POST", "/api/world/generate", r#"{"edits":[{"add":{"t":"spaceship","b":[0,0,9,9]}}]}"#);
+    assert_eq!(s, 400);
+    assert!(r["error"].as_str().unwrap().contains("spaceship"), "{r}");
+
+    // Apply: live, served to clients, and saved as world.json. (The bad recipe did not spoil the preview.)
+    let (s, r) = json(&srv, "POST", "/api/world/apply", "");
+    assert_eq!(s, 200, "{r}");
+    let solid = preview["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true).count();
+    assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), solid);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    assert!(info["world"]["ver"].is_string());
+    assert_eq!(web_get(web, "/play/world").0, 200);
+    assert!(srv.dir.join("world.json").is_file());
+    // Nothing left to apply.
+    assert_eq!(json(&srv, "POST", "/api/world/apply", "").0, 400);
+
+    // Restarted in the same place, the server comes back on that world.
+    let dir = std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep"));
+    drop(srv);
+    let srv = start_in(dir, &["--world-size", "4096"]);
+    let w = json(&srv, "GET", "/api/world", "").1;
+    assert_eq!((w["size"].clone(), w["boxes"].as_array().unwrap().len()), (1024.0.into(), solid));
 }

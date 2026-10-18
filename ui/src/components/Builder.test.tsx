@@ -33,7 +33,7 @@ function Harness({ onChange, initial }: { onChange?: (g: GameFile) => void; init
       b={b}
       setB={setB}
       finishRoute={() => {}}
-      note={null} worldBoxes={[]} worldSize={512}
+      note={null} worldBoxes={[]} worldSize={512} worldFile={false}
     />
   )
 }
@@ -104,7 +104,7 @@ describe('builder panel', () => {
     function H() {
       const [gg, setG] = useState(g)
       const [b, setB] = useState<BuilderState>(initialBuilder)
-      return <Builder game={gg} setGame={(n) => { setG(n); seen.push(n) }} b={b} setB={setB} finishRoute={() => {}} note={null} worldBoxes={[]} worldSize={512} />
+      return <Builder game={gg} setGame={(n) => { setG(n); seen.push(n) }} b={b} setB={setB} finishRoute={() => {}} note={null} worldBoxes={[]} worldSize={512} worldFile={false} />
     }
     render(<H />)
     const name = screen.getByRole('textbox', { name: 'Place' })
