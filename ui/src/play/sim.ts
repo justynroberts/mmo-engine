@@ -7,16 +7,19 @@ export type Box = readonly [number, number, number, number]
 
 const f = Math.fround
 const CELL = 64
-/** Edge of a building block (proto::world::BLOCK); a column with any block in it is solid. */
+/** Edge of a building block (proto::world::BLOCK). */
 export const BLOCK = 2
+/** Blocks a walker steps up without help (proto::world::CLIMB); it drops off any height. */
+export const CLIMB = 1
+const LAST_CELL = (1 << 15) - 1
 
 export class World {
   readonly size: number
   private boxes: Box[]
   private gw: number
   private buckets: Map<number, number[]>
-  /** Built block columns, by cy << 15 | cx. */
-  private blocks = new Set<number>()
+  /** Heights of the built block columns, by cy << 15 | cx; never 0. */
+  private blocks = new Map<number, number>()
 
   constructor(size: number, boxes: readonly Box[]) {
     this.size = f(size)
@@ -38,38 +41,50 @@ export class World {
     })
   }
 
-  setBlock(cx: number, cy: number, solid: boolean) {
-    if (cx < 0 || cy < 0 || cx >= 1 << 15 || cy >= 1 << 15) return
-    if (solid) this.blocks.add((cy << 15) | cx)
+  /** A column's height in blocks; 0 clears it. */
+  setBlock(cx: number, cy: number, height: number) {
+    if (cx < 0 || cy < 0 || cx > LAST_CELL || cy > LAST_CELL) return
+    if (height > 0) this.blocks.set((cy << 15) | cx, Math.min(255, height))
     else this.blocks.delete((cy << 15) | cx)
   }
 
-  hasBlock(cx: number, cy: number): boolean {
-    return this.blocks.has((cy << 15) | cx)
+  blockHeight(cx: number, cy: number): number {
+    return this.blocks.get((cy << 15) | cx) ?? 0
   }
 
-  private blockedByBlocks(x: number, y: number, r: number): boolean {
-    if (this.blocks.size === 0) return false
+  /** How many blocks up a circle at (x, y) stands: the tallest column it overlaps, 0 on the ground. */
+  level(x: number, y: number, r: number): number {
+    if (this.blocks.size === 0) return 0
     const cx0 = Math.max(0, Math.floor(f(x - r) / BLOCK))
-    const cx1 = Math.floor(f(x + r) / BLOCK)
+    const cx1 = Math.min(LAST_CELL, Math.floor(f(x + r) / BLOCK))
     const cy0 = Math.max(0, Math.floor(f(y - r) / BLOCK))
-    const cy1 = Math.floor(f(y + r) / BLOCK)
+    const cy1 = Math.min(LAST_CELL, Math.floor(f(y + r) / BLOCK))
+    let top = 0
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
-        if (!this.hasBlock(cx, cy)) continue
+        const h = this.blockHeight(cx, cy)
+        if (h <= top) continue
         const bx = cx * BLOCK
         const by = cy * BLOCK
-        if (f(x + r) > bx && f(x - r) < bx + BLOCK && f(y + r) > by && f(y - r) < by + BLOCK) return true
+        if (f(x + r) > bx && f(x - r) < bx + BLOCK && f(y + r) > by && f(y - r) < by + BLOCK) top = h
       }
     }
-    return false
+    return top
   }
 
   /** True if a circle (treated as its bounding square) at (x, y) leaves the world or overlaps a wall or block. */
   blocked(x: number, y: number, r: number): boolean {
+    return this.level(x, y, r) > 0 || this.blockedByWalls(x, y, r)
+  }
+
+  /** True if something standing `level` blocks up cannot be at (x, y): a wall, or a column above its climb. */
+  blockedFrom(x: number, y: number, r: number, level: number): boolean {
+    return this.level(x, y, r) > Math.min(255, level + CLIMB) || this.blockedByWalls(x, y, r)
+  }
+
+  blockedByWalls(x: number, y: number, r: number): boolean {
     const size = this.size
     if (f(x - r) < 0 || f(y - r) < 0 || f(x + r) >= size || f(y + r) >= size) return true
-    if (this.blockedByBlocks(x, y, r)) return true
     const cx0 = Math.floor(f(x - r) / CELL)
     const cx1 = Math.min(Math.floor(f(x + r) / CELL), this.gw - 1)
     const cy0 = Math.floor(f(y - r) / CELL)
@@ -85,12 +100,14 @@ export class World {
     return false
   }
 
-  /** Axis-separated move so a character slides along a wall instead of sticking to it. */
+  /** Axis-separated move so a character slides along a wall instead of sticking to it, climbing blocks
+   *  CLIMB at a time from where the move starts. */
   step(x: number, y: number, dx: number, dy: number, r: number): [number, number] {
+    const level = this.level(x, y, r)
     const nx = f(x + dx)
-    const x1 = this.blocked(nx, y, r) ? x : nx
+    const x1 = this.blockedFrom(nx, y, r, level) ? x : nx
     const ny = f(y + dy)
-    const y1 = this.blocked(x1, ny, r) ? y : ny
+    const y1 = this.blockedFrom(x1, ny, r, level) ? y : ny
     return [x1, y1]
   }
 }

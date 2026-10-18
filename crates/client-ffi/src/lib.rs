@@ -526,13 +526,21 @@ pub unsafe extern "C" fn mmo_set_move(c: *mut Client, dx: i32, dy: i32) {
     }
 }
 
-/// Tell prediction that a built block column is solid (or cleared), as `/play/blocks` reports them, so walking
-/// into one is stopped here as it is on the server. `cx`, `cy` are block cells (`/play/info` `build.block` units).
+/// Tell prediction how high a built block column is (0 = cleared), as `/play/blocks` reports them, so walking
+/// into, onto and off one goes here as it does on the server. `cx`, `cy` are block cells (`/play/info`
+/// `build.block` units).
 #[no_mangle]
-pub unsafe extern "C" fn mmo_set_block(c: *mut Client, cx: u32, cy: u32, solid: i32) {
+pub unsafe extern "C" fn mmo_set_block(c: *mut Client, cx: u32, cy: u32, height: i32) {
     if let Some(c) = c.as_mut() {
-        c.world.set_block(cx, cy, solid != 0);
+        c.world.set_block(cx, cy, height.clamp(0, u8::MAX as i32) as u8);
     }
+}
+
+/// How many blocks up a character at `(x, y)` stands (0 = on the ground), from the blocks given to
+/// `mmo_set_block`: what to draw it at. The server decides the same way, so nothing extra is sent.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_level(c: *const Client, x: f32, y: f32) -> i32 {
+    c.as_ref().map_or(0, |c| c.world.level(x, y, c.defs.entity_radius) as i32)
 }
 
 /// Request an action (the ids are in `/play/info` under `actions`) against a target entity id (0 = none). One request per call.

@@ -337,7 +337,7 @@ impl Sim {
         }
         let home = if owner == NONE { self.archs.get(arch as usize).and_then(|a| a.home) } else { None };
         let (mut x, mut y) = match at {
-            Some((x, y)) if !self.world.blocked(x, y, r) => (x, y),
+            Some((x, y)) if !self.world.blocked_by_walls(x, y, r) => (x, y),
             _ => self.spawn_point(home, r),
         };
         if let (Some((lo, hi)), true) = (self.zone, owner == NONE) {
@@ -393,7 +393,7 @@ impl Sim {
     pub fn restore(&mut self, slot: usize, rec: &crate::store::Record) {
         let r = self.defs.entity_radius;
         let size = self.world.size;
-        if rec.x.is_finite() && rec.y.is_finite() && rec.x >= r && rec.y >= r && rec.x <= size - r && rec.y <= size - r && !self.world.blocked(rec.x, rec.y, r) {
+        if rec.x.is_finite() && rec.y.is_finite() && rec.x >= r && rec.y >= r && rec.x <= size - r && rec.y <= size - r && !self.world.blocked_by_walls(rec.x, rec.y, r) {
             self.ents.x[slot] = rec.x;
             self.ents.y[slot] = rec.y;
         }
@@ -432,7 +432,8 @@ impl Sim {
     }
 
     /// Swap in a new set of walls without disconnecting anyone. Anything that is now inside a wall
-    /// (or outside the world) is moved to a free spot. Returns how many entities were moved.
+    /// (or outside the world) is moved to a free spot; standing on blocks is fine. Returns how many entities
+    /// were moved.
     pub fn replace_world(&mut self, world: World) -> usize {
         self.world = world;
         // Built blocks stay, except those the new world's walls now cover.
@@ -441,7 +442,7 @@ impl Sim {
         let r = self.defs.entity_radius;
         let mut moved = 0;
         for s in 0..self.ents.high {
-            if self.ents.alive[s] && self.world.blocked(self.ents.x[s], self.ents.y[s], r) {
+            if self.ents.alive[s] && self.world.blocked_by_walls(self.ents.x[s], self.ents.y[s], r) {
                 let (x, y) = self.world.random_spawn(&mut self.rng, r);
                 self.ents.x[s] = x;
                 self.ents.y[s] = y;
@@ -457,32 +458,33 @@ impl Sim {
         use proto::world::{block_cell, BLOCK};
         for k in self.blocks.forget_all() {
             let (cx, cy) = block_cell(k);
-            self.world.set_block(cx, cy, false);
+            self.world.set_block(cx, cy, 0);
         }
         let mut dropped = 0;
         for (k, kinds) in cols {
             let (cx, cy) = block_cell(k);
             let (mx, my) = ((cx as f32 + 0.5) * BLOCK, (cy as f32 + 0.5) * BLOCK);
             // A box just inside the cell: it meets walls and the edge, never the neighbouring blocks.
-            if kinds.is_empty() || self.blocks.total + kinds.len() > crate::blocks::MAX_BLOCKS || self.world.blocked(mx, my, BLOCK / 2.0 - 0.01) {
+            if kinds.is_empty() || self.blocks.total + kinds.len() > crate::blocks::MAX_BLOCKS || self.world.blocked_by_walls(mx, my, BLOCK / 2.0 - 0.01) {
                 dropped += 1;
                 continue;
             }
+            let h = kinds.len() as u8;
             for kind in kinds {
                 self.blocks.push(k, kind);
             }
-            self.world.set_block(cx, cy, true);
+            self.world.set_block(cx, cy, h);
         }
         dropped
     }
 
     /// Whether a new column could go in this cell: inside the world, clear of walls, and nobody standing there
-    /// (they would be stuck inside it). The grid is from the end of last tick, but it only picks the candidates:
+    /// (a column grows under whoever is on it, but the first block would trap whoever it lands on). The grid is from the end of last tick, but it only picks the candidates:
     /// their positions are this tick's, and nobody moves a whole grid cell in a tick.
     fn column_free(&self, cx: u32, cy: u32) -> bool {
         use proto::world::BLOCK;
         let (mx, my) = ((cx as f32 + 0.5) * BLOCK, (cy as f32 + 0.5) * BLOCK);
-        if self.world.blocked(mx, my, BLOCK / 2.0 - 0.01) {
+        if self.world.blocked_by_walls(mx, my, BLOCK / 2.0 - 0.01) {
             return false;
         }
         let r = self.defs.entity_radius;
@@ -514,7 +516,7 @@ impl Sim {
             for &kind in &kinds {
                 self.blocks.push(k, kind);
             }
-            self.world.set_block(cx, cy, !kinds.is_empty());
+            self.world.set_block(cx, cy, kinds.len() as u8);
             set += 1;
         }
         (set, refused)
@@ -540,9 +542,8 @@ impl Sim {
             if self.blocks.height(key) == 0 {
                 return false;
             }
-            if self.blocks.pop(key) {
-                self.world.set_block(cx, cy, false);
-            }
+            self.blocks.pop(key);
+            self.world.set_block(cx, cy, self.blocks.height(key) as u8);
             self.stats.breaks += 1;
             return true;
         }
@@ -551,7 +552,7 @@ impl Sim {
             return false;
         }
         self.blocks.push(key, kind);
-        self.world.set_block(cx, cy, true);
+        self.world.set_block(cx, cy, (h + 1) as u8);
         self.stats.builds += 1;
         true
     }
@@ -908,7 +909,7 @@ impl Sim {
             let (mut nx, ny) = integrate(&self.world, e.x[s], e.y[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
             if let (Some((lo, hi)), true) = (self.zone, e.owner[s] == NONE) {
                 nx = nx.clamp(lo + r, (hi - r).max(lo + r));
-                if self.world.blocked(nx, ny, r) {
+                if self.world.blocked_from(nx, ny, r, self.world.level(e.x[s], e.y[s], r)) {
                     continue;
                 }
             }
@@ -1115,7 +1116,7 @@ mod tests {
         }
         assert!(!act(&mut s, ACT_BUILD, 53, 50), "over the stack limit");
         assert_eq!(s.blocks.cols[&proto::world::block_key(53, 50)], vec![2; MAX_STACK]);
-        assert!(s.world.has_block(53, 50));
+        assert_eq!(s.world.block_height(53, 50), MAX_STACK as u8);
         // Refused: out of reach, on yourself, inside a wall, outside the world.
         assert!(!act(&mut s, ACT_BUILD, 60, 50));
         assert!(!act(&mut s, ACT_BUILD, 50, 50));
@@ -1129,17 +1130,29 @@ mod tests {
         }
         assert!(s.ents.x[a] < 106.0 && s.ents.x[a] > 104.0, "stopped at the block: {}", s.ents.x[a]);
         s.ents.dir_x[a] = 0;
-        // Breaking takes blocks off the top; the last one frees the column.
-        for _ in 0..MAX_STACK {
+        // Breaking takes blocks off the top. One block high, the column is a step: walking climbs onto it.
+        for _ in 1..MAX_STACK {
             assert!(act(&mut s, ACT_BREAK, 53, 50));
         }
-        assert!(!s.world.has_block(53, 50) && s.blocks.total == 0);
+        assert_eq!(s.world.block_height(53, 50), 1);
+        s.ents.dir_x[a] = 127;
+        let r = s.defs.entity_radius;
+        let mut climbed = false;
+        for _ in 0..20 {
+            s.step(&[]);
+            climbed |= s.world.level(s.ents.x[a], s.ents.y[a], r) == 1;
+        }
+        s.ents.dir_x[a] = 0;
+        assert!(climbed && s.ents.x[a] > 108.0, "walked up onto the block and on past it: x {}", s.ents.x[a]);
+        place(&mut s, a, 100.0, 101.0);
+        assert!(act(&mut s, ACT_BREAK, 53, 50));
+        assert!(s.world.block_height(53, 50) == 0 && s.blocks.total == 0);
         assert!(!act(&mut s, ACT_BREAK, 53, 50), "nothing left to break");
         assert_eq!((s.stats.builds, s.stats.breaks), (MAX_STACK as u64, MAX_STACK as u64));
         // A new world keeps the blocks, except where its walls now stand.
         assert!(act(&mut s, ACT_BUILD, 53, 50) && act(&mut s, ACT_BUILD, 52, 52));
         s.replace_world(World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 104.0, y0: 104.0, x1: 110.0, y1: 110.0 }]));
-        assert!(s.world.has_block(53, 50) && !s.world.has_block(52, 52) && s.blocks.total == 1);
+        assert!(s.world.block_height(53, 50) == 1 && s.world.block_height(52, 52) == 0 && s.blocks.total == 1);
     }
 
     #[test]

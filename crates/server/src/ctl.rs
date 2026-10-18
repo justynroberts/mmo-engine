@@ -227,6 +227,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "build": {
             "block": proto::world::BLOCK, "reach": proto::game::BUILD_REACH, "max_stack": proto::game::MAX_STACK,
             "kinds": proto::game::BLOCK_KINDS, "act_build": proto::game::ACT_BUILD, "act_break": proto::game::ACT_BREAK,
+            "climb": proto::world::CLIMB,
         },
         "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
         "replicated": sim.defs.replicated,

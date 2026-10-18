@@ -81,6 +81,7 @@ func _ready() -> void:
 	world_map.visible = false
 	hud.add_child(world_map)
 	hud.slot_pressed.connect(func(i: int): net.use_slot(i))
+	hud.material_pressed.connect(func(i: int): build_kind = i)
 	hud.chat_submitted.connect(_on_chat)
 	if smoke:
 		hud.status.text = "smoke test"
@@ -181,6 +182,12 @@ func _start() -> void:
 		ghost.material_override = mat
 		ghost.visible = false
 		add_child(ghost)
+		var names := []
+		var swatches := []
+		for i in int(build.get("kinds", 4)):
+			names.append(theme.block_name(i))
+			swatches.append(_swatch(i))
+		hud.set_materials(names, swatches)
 	if not ClassDB.class_exists("MmoClient"):
 		return _fail("the mmo_godot extension is not loaded (build it: scripts/build_godot.sh)")
 	net = ClassDB.instantiate("MmoClient")
@@ -282,7 +289,7 @@ func _process(delta: float) -> void:
 			ents[id] = n
 		var node: Node3D = ents[id]
 		var p: Vector2 = e["position"]
-		var np := Vector3(p.x, _height(p.x, p.y), p.y)
+		var np := Vector3(p.x, _stand_height(p), p.y)
 		var hp := clampf(float(e.get(health_idx, health_max)) / health_max, 0.0, 1.0) if health_idx != "" else 1.0
 		var air := clampf(float(e.get("airborne", 0.0)) / air_max, 0.0, 1.0) if air_max > 0.0 else 0.0
 		_animate(id, node, np, hp, mine, delta, self_id, air)
@@ -350,6 +357,7 @@ func _process(delta: float) -> void:
 	var crowd := "   nearest %d shown, more around" % cap if cap > 0 and list.size() >= cap else ""
 	var sky := "   %s" % String(weather["name"]).to_upper() if not weather.is_empty() else ""
 	var mode := "   BUILD %s (1-4)" % theme.block_name(build_kind).to_upper() if building else ""
+	hud.show_materials(building, build_kind)
 	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, sky, "   GOD" if god else "", mode]
 
 # ---------------------------------------------------------------- building
@@ -372,7 +380,7 @@ func _poll_blocks(delta: float) -> void:
 	if d.get("full", false):
 		for k in blocks:
 			changed[k] = true
-			net.set_block(k & 0x7fff, k >> 15, false)
+			net.set_block(k & 0x7fff, k >> 15, 0)
 		blocks.clear()
 	for c in d.get("cols", []):
 		var cx := int(c[0])
@@ -384,7 +392,7 @@ func _poll_blocks(delta: float) -> void:
 			blocks.erase(k)
 		else:
 			blocks[k] = kinds
-		net.set_block(cx, cy, kinds != "") # prediction stops at it, as the server does
+		net.set_block(cx, cy, kinds.length()) # prediction climbs and stops as the server does
 	blocks_ver = int(d.get("ver", blocks_ver))
 	if not changed.is_empty():
 		theme.set_blocks(blocks, changed.keys())
@@ -468,6 +476,11 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 		if t["air"] <= 0.0 and node.has_method("jump"):
 			node.jump(JUMP_SECS)
 	t["air"] = air
+	# Stepping onto a block or dropping off one is a jump in height: ease it, and follow slopes as they are.
+	var y: float = t.get("y", np.y)
+	if moved.length() <= 12.0 and absf(np.y - y) > 0.5:
+		np.y = lerpf(y, np.y, minf(1.0, delta * 14.0))
+	t["y"] = np.y
 	node.position = np
 	var vel: Vector3 = t["vel"]
 	if t_total > t["face_until"] and vel.length() > 0.8:
@@ -576,6 +589,31 @@ func _apply_weather(w: Dictionary) -> void:
 func _height(x: float, y: float) -> float:
 	return theme.height(x, y) if theme else 0.0
 
+## Where a character at `p` stands: the ground, or the top of the block column it is on. The server says how many
+## blocks up (the same rule it moves by); the tallest column under the character says where that is.
+func _stand_height(p: Vector2) -> float:
+	var ground := _height(p.x, p.y)
+	var lv: int = net.level(p) if net and not blocks.is_empty() else 0
+	if lv == 0:
+		return ground
+	var bs := float(build["block"])
+	var r := float(info.get("entity_radius", 0.5))
+	var top := ground
+	for cy in range(int(floor((p.y - r) / bs)), int(floor((p.y + r) / bs)) + 1):
+		for cx in range(int(floor((p.x - r) / bs)), int(floor((p.x + r) / bs)) + 1):
+			if String(blocks.get(cy << 15 | cx, "")).length() == lv:
+				top = maxf(top, theme.block_base(cx, cy) + lv * bs)
+	return top
+
+## A small picture of a block material for the build bar: its texture, or a square of its colour.
+func _swatch(kind: int) -> Texture2D:
+	var m = theme.block_material(kind)
+	if m is StandardMaterial3D and m.albedo_texture:
+		return m.albedo_texture
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	img.fill(m.albedo_color if m is StandardMaterial3D else Color.GRAY)
+	return ImageTexture.create_from_image(img)
+
 ## A character: the theme's body, with the name and health bar on top.
 func _entity_node(id: int, mine: bool) -> Node3D:
 	var n: Node3D = theme.entity_node(id, mine, {"class": args["class"]} if args.has("class") else {})
@@ -627,7 +665,8 @@ func _sync_ground() -> void:
 			gems.erase(id)
 
 func _camera() -> void:
-	var c := Vector3(me_pos.x, _height(me_pos.x, me_pos.y) + 1.0, me_pos.y)
+	var me: Node3D = ents.get(net.get_self_id())
+	var c := Vector3(me_pos.x, (me.position.y if me else _height(me_pos.x, me_pos.y)) + 1.0, me_pos.y)
 	var pitch := deg_to_rad(42.0)
 	cam.position = c + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * zoom
 	cam.look_at(c)
@@ -895,6 +934,21 @@ func _smoke() -> void:
 		_check("builds a block", built >= 0, "%d column(s)" % blocks.size())
 		if built >= 0:
 			_check("and the theme draws it", theme._block_nodes.size() > 0, "%d chunk(s)" % theme._block_nodes.size())
+			# One block high is a step: walk onto it, stand on top, and come back down.
+			var top := Vector2(((built & 0x7fff) + 0.5) * bs, ((built >> 15) + 0.5) * bs)
+			var back := me_pos
+			net.set_move((top - me_pos).normalized())
+			ok = await _wait(3.0, func(): return net.level(me_pos) == 1)
+			net.set_move(Vector2.ZERO)
+			_check("climbs onto it", ok, "level %d at %.1f, %.1f" % [net.level(me_pos), me_pos.x, me_pos.y])
+			var drawn: Node3D = ents.get(net.get_self_id())
+			await get_tree().create_timer(0.5).timeout
+			var block_top: float = theme.block_base(built & 0x7fff, built >> 15) + bs
+			_check("and is drawn on top", drawn != null and drawn.position.y > block_top - 0.2, "y %.2f, block top %.2f" % [drawn.position.y if drawn else -1.0, block_top])
+			net.set_move((back - me_pos).normalized())
+			ok = await _wait(3.0, func(): return net.level(me_pos) == 0)
+			net.set_move(Vector2.ZERO)
+			_check("and steps off", ok, "")
 			net.act(int(build["act_break"]), built & 0x7fff | (built >> 15) << 15)
 			blocks_poll = 0.2
 			ok = await _wait(3.0, func(): return not blocks.has(built))

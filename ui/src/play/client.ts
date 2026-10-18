@@ -137,11 +137,16 @@ export class GameClient {
   }
 
   /** Rebuild the collision world if the walls we hold changed. Cheap when they did not. */
+  /** How many blocks up a character at (x, y) stands, by the same rule the server moves it with. */
+  standLevel(x: number, y: number): number {
+    return this.world.level(x, y, this.info.entity_radius)
+  }
+
   private syncWorld() {
     if (this.worldRev === this.walls.rev) return
     this.worldRev = this.walls.rev
     this.world = new World(this.info.world_size, this.walls.list())
-    for (const k of this.blocks.keys()) this.world.setBlock(k & 0x7fff, k >> 15, true)
+    for (const [k, kinds] of this.blocks) this.world.setBlock(k & 0x7fff, k >> 15, kinds.length)
   }
 
   /** What changed in the built blocks since last time: kept for drawing, and put in the collision world so
@@ -152,14 +157,14 @@ export class GameClient {
       if (!r.ok) return
       const d = (await r.json()) as { ver: number; full: boolean; cols: [number, number, string][] }
       if (d.full) {
-        for (const k of this.blocks.keys()) this.world.setBlock(k & 0x7fff, k >> 15, false)
+        for (const k of this.blocks.keys()) this.world.setBlock(k & 0x7fff, k >> 15, 0)
         this.blocks.clear()
       }
       for (const [cx, cy, kinds] of d.cols) {
         const k = (cy << 15) | cx
         if (kinds) this.blocks.set(k, kinds)
         else this.blocks.delete(k)
-        this.world.setBlock(cx, cy, kinds !== '')
+        this.world.setBlock(cx, cy, kinds.length)
       }
       if (d.full || d.cols.length) this.blocksRev++
       this.blocksVer = d.ver

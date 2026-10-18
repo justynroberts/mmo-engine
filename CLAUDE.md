@@ -59,7 +59,7 @@ The protocol is implemented twice and movement three times. A change to any of t
 - `crates/proto/src/world.rs` + `predict.rs` ↔ `ui/src/play/sim.ts` (f32 rounding via `Math.fround`; `sim.test.ts`).
 - Snapshot interpolation (same approach, not a byte-exact port): `crates/client-ffi/src/interp.rs` ↔ `ui/src/play/interp.ts`.
 - Wall streaming chunks (256 units, `/play/walls`) in `web.rs` ↔ `ui/src/play/walls.ts`.
-- Built block collision (`World::set_block`/`blocked`) in `crates/proto/src/world.rs` ↔ `ui/src/play/sim.ts` (same case tested on both sides).
+- Built block collision and climbing (`World::set_block`/`level`/`blocked_from`) in `crates/proto/src/world.rs` ↔ `ui/src/play/sim.ts` (same cases tested on both sides).
 
 ## UI
 

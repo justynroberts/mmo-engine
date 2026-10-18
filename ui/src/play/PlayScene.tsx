@@ -172,6 +172,8 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
 
     // Blocks players have built: instanced cubes, one colour per material, rebuilt when they change.
     const BS = ref.current.info.build?.block ?? 2
+    /** Height of whatever block a character stands on. */
+    const lift = (x: number, y: number) => client.standLevel(x, y) * BS
     const blockColours = [pal.dim, pal.line, pal.hot, pal.accent]
     const blockMeshes: THREE.InstancedMesh[] = []
     let blocksRev = -1
@@ -529,7 +531,8 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         world.push({ id: e.id, x, z })
         const hp = frac(hpOf(e.attrs))
         if (n < CAP) {
-          tmp.position.set(x, 1 + jumpLift(inf, e.attrs), z)
+          const up = lift(e.x, e.y)
+          tmp.position.set(x, up + 1 + jumpLift(inf, e.attrs), z)
           tmp.rotation.set(0, now / 1500 + e.id, 0)
           tmp.updateMatrix()
           others.setMatrixAt(n, tmp.matrix)
@@ -544,7 +547,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
           cores.setMatrixAt(n, tmp.matrix)
           cores.setColorAt(n, tint)
           tmp.scale.set(1, 1, 1)
-          tmp.position.set(x, 0.08, z)
+          tmp.position.set(x, up + 0.08, z)
           tmp.rotation.set(0, 0, 0)
           tmp.scale.set(6.5, 1, 6.5)
           tmp.updateMatrix()
@@ -612,13 +615,14 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         const sx = self.x - half
         const sz = self.y - half
         me.visible = true
-        me.position.set(sx, 1.3 + jumpLift(inf, self.attrs), sz)
+        const up = lift(self.x, self.y)
+        me.position.set(sx, up + 1.3 + jumpLift(inf, self.attrs), sz)
         me.rotation.y = now / 1200
         meCore.visible = mePool.visible = lightPool.visible = true
         meCore.position.copy(me.position)
         meCore.rotation.y = -now / 900
-        mePool.position.set(sx, 0.09, sz)
-        lightPool.position.set(sx, 0.05, sz)
+        mePool.position.set(sx, up + 0.09, sz)
+        lightPool.position.set(sx, up + 0.05, sz)
         if (selfPrev) {
           const mv = Math.hypot(sx - selfPrev.x, sz - selfPrev.z)
           if (mv > 0.02) {

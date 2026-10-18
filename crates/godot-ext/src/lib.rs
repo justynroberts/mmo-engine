@@ -118,12 +118,19 @@ impl MmoClient {
         unsafe { m::mmo_set_move(self.c, direction.x.round() as i32, direction.y.round() as i32) };
     }
 
-    /// A built block column is solid (or cleared), as /play/blocks reports, so prediction stops at it too.
+    /// A built block column's height (0 = cleared), as /play/blocks reports, so prediction climbs and stops as
+    /// the server does.
     #[func]
-    fn set_block(&mut self, cx: i64, cy: i64, solid: bool) {
+    fn set_block(&mut self, cx: i64, cy: i64, height: i64) {
         if cx >= 0 && cy >= 0 {
-            unsafe { m::mmo_set_block(self.c, cx as u32, cy as u32, solid as i32) };
+            unsafe { m::mmo_set_block(self.c, cx as u32, cy as u32, height.clamp(0, 255) as i32) };
         }
+    }
+
+    /// How many blocks up a character at this position stands (0 = on the ground).
+    #[func]
+    fn level(&self, position: Vector2) -> i64 {
+        unsafe { m::mmo_level(self.c, position.x, position.y) as i64 }
     }
 
     /// Use an action (ids are in /play/info) on a target entity id (0 for none).

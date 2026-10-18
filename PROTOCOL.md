@@ -133,10 +133,15 @@ draw the arc from it as a parabola, `4h * p * (1 - p)` with `p = 1 - share`. The
 unchanged. The target names a block column: `cx | cy << 15 | material << 30`, where a column is a `BLOCK` (2 unit)
 square cell, `cx = floor(x / 2)`, `cy = floor(y / 2)`, and the material is 0..3. A build puts a block of that material
 on top of the column (at most 8); a break takes the top one off. The server refuses a column more than 8 units from
-the builder's position, one inside a wall or outside the world, and a new column where anyone stands. A column with
-any block in it blocks movement exactly as a wall does (`proto::world::World::set_block`), so a client that predicts
-must mirror the columns it is told about. `/play/info` carries `build` (block size, reach, stack limit, materials,
-the two action ids) when the server offers building.
+the builder's position, one inside a wall or outside the world, and a new column where anyone stands.
+
+Columns are climbed. A character stands on the tallest column its bounding square overlaps (its *level*, 0 on the
+ground, `World::level`); a move is refused only into a column more than `CLIMB` (1) block above the level it starts
+from, so a staircase is walked up one block at a time and any height is dropped off. Nothing about height goes on the
+wire: the level follows from the position and the columns, so a client that predicts mirrors the column heights it is
+told about (`World::set_block(cx, cy, height)`, `mmo_set_block`) and draws a character `level * BLOCK` above the
+column's base (`mmo_level`). `/play/info` carries `build` (block size, reach, stack limit, materials, climb, the two
+action ids) when the server offers building.
 
 The blocks travel over HTTP, not UDP: `GET /play/blocks?since=VER` returns `{"ver", "full", "cols": [[cx, cy,
 "materials"], ...]}`, with materials as digits from the bottom up. With `full: false` the list holds only the columns

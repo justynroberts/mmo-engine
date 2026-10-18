@@ -84,8 +84,10 @@ is. See [WORLD.md](WORLD.md).
 Players build and break blocks: 2 unit cubes on a grid, stacked up to 8 high, in four materials. In the Godot client
 press B for build mode: a ghost block follows the mouse (green in reach, red out of it), click to place, right-click to
 break the top block, 1-4 to pick the material (the fantasy theme draws them in the Medieval Village stone, timber,
-brick and plaster). A built column is solid, on the server and in every client's prediction, so walls and huts you
-build really keep people out. Blocks are kept beside the world file (`world.blocks.json`), survive a restart, and stay
+brick and plaster); a bar along the bottom shows them, and clicking one picks it too. Built columns are solid ground:
+you walk up onto anything one block higher than where you stand and drop off any height, so a staircase climbs a
+tower and a wall two blocks high really keeps people out (bots included). The server decides this from the column
+heights alone, and every client's prediction does the same, so standing on top needs nothing new on the wire. Blocks are kept beside the world file (`world.blocks.json`), survive a restart, and stay
 when the world is regenerated except where a new wall now stands. The console shows them on both maps; the World tab
 counts them and clears them, and `POST /api/blocks` places whole columns (`{"cols": [[cx, cy, "0123"], ...]}`). The
 browser play page draws them and collides with them, but has no build controls yet. Building is open to everyone:

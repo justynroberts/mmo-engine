@@ -15,7 +15,7 @@ describe('prediction', () => {
   // The same case as proto::world's built_blocks_stop_movement_like_walls_and_clearing_them_frees_the_way.
   it('stops at built blocks like the server, and passes once one is broken', () => {
     const w = new World(256, [])
-    for (let cy = 0; cy < 128; cy++) w.setBlock(50, cy, true)
+    for (let cy = 0; cy < 128; cy++) w.setBlock(50, cy, 2)
     const walk = () => {
       let [x, y] = [95, 51]
       for (let i = 0; i < 200; i++) [x, y] = integrate(w, x, y, 127, 0, 20, 0.05, 0.5)
@@ -24,8 +24,27 @@ describe('prediction', () => {
     expect(walk()).toBeLessThan(100)
     expect(w.blocked(99.5, 50, 0.5)).toBe(false)
     expect(w.blocked(99.51, 50, 0.5)).toBe(true)
-    w.setBlock(50, 25, false)
+    w.setBlock(50, 25, 0)
     expect(walk()).toBeGreaterThan(102)
+  })
+
+  // The same case as proto::world's walkers_climb_a_staircase_one_block_at_a_time_and_drop_off_the_far_side.
+  it('climbs a staircase one block at a time and drops off the far side, like the server', () => {
+    const w = new World(256, [])
+    for (const [cx, h] of [[50, 1], [51, 2], [52, 3], [53, 3]] as const) w.setBlock(cx, 25, h)
+    let x = 95
+    let top = 0
+    for (let i = 0; i < 200; i++) {
+      ;[x] = integrate(w, x, 51, 127, 0, 20, 0.05, 0.5)
+      top = Math.max(top, w.level(x, 51, 0.5))
+    }
+    expect(top).toBe(3)
+    expect(x).toBeGreaterThan(108)
+    expect(w.level(x, 51, 0.5)).toBe(0)
+    expect(w.blockedFrom(102, 51, 0.5, 0)).toBe(true)
+    expect(w.blockedFrom(102, 51, 0.5, 1)).toBe(false)
+    expect(w.blocked(101, 51, 0.5)).toBe(true)
+    expect(w.blockedByWalls(101, 51, 0.5)).toBe(false)
   })
 
   it('does not move faster on diagonals', () => {
