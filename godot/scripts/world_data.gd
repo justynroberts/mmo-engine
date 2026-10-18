@@ -89,10 +89,10 @@ func cells_in_use() -> Array:
 func height(x: float, y: float) -> float:
 	if not has_heights:
 		return 0.0
-	var fx := clampf((x - _hx0) / _hcell, 0.0, float(_hw - 1) - 0.001)
-	var fy := clampf((y - _hy0) / _hcell, 0.0, float(_hh - 1) - 0.001)
-	var i := int(fx)
-	var j := int(fy)
+	var fx := clampf((x - _hx0) / _hcell, 0.0, float(_hw - 1))
+	var fy := clampf((y - _hy0) / _hcell, 0.0, float(_hh - 1))
+	var i := mini(int(fx), _hw - 2)
+	var j := mini(int(fy), _hh - 2)
 	var tx := fx - i
 	var ty := fy - j
 	var a := _heights[j * _hw + i]
