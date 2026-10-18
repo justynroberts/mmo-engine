@@ -1967,3 +1967,46 @@ fn a_big_world_streams_its_walls_by_area_instead_of_sending_them_all() {
     assert_eq!(info["walls"]["inline"], true, "one wall is small enough to send inline");
     assert_eq!(info["boxes"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn a_world_file_supplies_the_walls_is_served_as_is_and_reloads_live() {
+    let dir = std::env::temp_dir().join(format!("e2e-world-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("world.json");
+    let file = |extra: &str| {
+        format!(
+            r#"{{"format":1,"size":1024,"heights":{{"anything":true}},"objects":[
+                {{"t":"house","b":[100,100,140,120],"solid":true,"v":7}},
+                {{"t":"tree","p":[300,300],"s":1.5}}{extra}]}}"#
+        )
+    };
+    std::fs::write(&path, file("")).unwrap();
+    let p = path.to_string_lossy().to_string();
+    let (srv, web) = start_web(&["--world", &p, "--world-size", "4096"]);
+    // The file decides the size and the walls: only its one solid object.
+    let (_, world) = json(&srv, "GET", "/api/world", "");
+    assert_eq!(world["size"], 1024.0);
+    assert_eq!(world["boxes"].as_array().unwrap().len(), 1);
+    // Clients are told about it and get it byte for byte.
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let ver = info["world"]["ver"].as_str().unwrap().to_string();
+    let (s, body) = web_get(web, "/play/world");
+    assert_eq!((s, body.as_str()), (200, file("").as_str()));
+    // Regenerate (here: add a wall) and reload: applied live, new version.
+    std::fs::write(&path, file(r#",{"t":"crag","b":[500,500,540,540],"solid":true}"#)).unwrap();
+    let (s, r) = json(&srv, "POST", "/api/world/reload", "");
+    assert_eq!((s, r["walls"].clone()), (200, 2.into()));
+    assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), 2);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    assert_ne!(info["world"]["ver"].as_str().unwrap(), ver);
+    // A game file edit does not bring the generated walls back.
+    let (_, game) = json(&srv, "GET", "/api/game", "");
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), 2);
+    // A file of another size is refused (that needs a restart), and so is a broken one.
+    std::fs::write(&path, file("").replace("1024", "2048")).unwrap();
+    assert_eq!(json(&srv, "POST", "/api/world/reload", "").0, 400);
+    std::fs::write(&path, "nope").unwrap();
+    assert_eq!(json(&srv, "POST", "/api/world/reload", "").0, 400);
+    let _ = std::fs::remove_dir_all(&dir);
+}

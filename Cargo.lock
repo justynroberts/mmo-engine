@@ -1014,6 +1014,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "worldgen"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "x25519-dalek"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

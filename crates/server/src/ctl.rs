@@ -15,6 +15,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 
 use proto::game::GameFile;
+use proto::World;
 use proto::secure::to_hex;
 use serde::Deserialize;
 use serde_json::json;
@@ -42,6 +43,8 @@ pub enum Cmd {
     PutItems(PutItemsReq),
     Inventory { id: u32 },
     God(GodReq),
+    WorldFile,
+    WorldReload,
 }
 
 #[derive(Deserialize)]
@@ -187,6 +190,8 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
         "boxes": boxes,
         "walls": { "ver": format!("{ver:016x}"), "chunk": crate::web::WALL_CHUNK, "count": all.len(), "inline": inline },
+        // A world file to fetch from /play/world: terrain, water and objects for a client theme to draw.
+        "world": hs.world.as_ref().map(|w| json!({ "ver": format!("{:016x}", w.ver), "bytes": w.bytes.len() })),
         "items": sim.items.iter().map(|i| json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty()})).collect::<Vec<_>>(),
         "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
         "zone": hs.zone.as_ref().map(|z| z.index),
@@ -331,6 +336,8 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
     let cmd = match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/info") => Some(Cmd::Info),
         ("GET", "/api/world") => Some(Cmd::World),
+        ("GET", "/api/worldfile") => Some(Cmd::WorldFile),
+        ("POST", "/api/world/reload") => Some(Cmd::WorldReload),
         ("GET", "/api/game") => Some(Cmd::GetGame),
         ("PUT", "/api/game") => Some(Cmd::PutGame(body_str())),
         ("GET", "/api/state") => {
@@ -376,7 +383,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>) -> std::i
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -465,6 +472,31 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             (200, json!({ "size": c.sim.world.size, "boxes": boxes }).to_string())
         }
         Cmd::GetGame => (200, c.game.to_json()),
+        Cmd::WorldFile => match &c.hs.world {
+            Some(w) => (200, String::from_utf8_lossy(&w.bytes).into_owned()),
+            None => err(404, "this world has no world file (start the server with --world)"),
+        },
+        Cmd::WorldReload => {
+            // Read the world file again (after running worldgen) and apply it live, as a wall edit is.
+            let Some(path) = c.hs.world.as_ref().map(|w| w.path.clone()) else {
+                return err(404, "this world has no world file (start the server with --world)");
+            };
+            let w = match crate::worldfile::load(&path) {
+                Ok(w) => w,
+                Err(e) => return err(400, e),
+            };
+            if w.size != c.sim.world.size {
+                return err(400, format!("the new file is {} units across and this world is {}; restart the server to change size", w.size, c.sim.world.size));
+            }
+            let moved = c.sim.replace_world(World::from_boxes(w.size, c.params.seed, w.boxes.clone()));
+            let w = std::sync::Arc::new(w);
+            c.hs.world = Some(w.clone());
+            if let Some(g) = &c.hs.gateway {
+                g.set_world(w.bytes.clone());
+                g.set_info(play_info(c.sim, c.hs));
+            }
+            (200, json!({ "ok": true, "ver": format!("{:016x}", w.ver), "walls": w.boxes.len(), "moved_entities": moved }).to_string())
+        }
         Cmd::PutGame(text) => apply_game(&text, c),
         Cmd::State { limit } => (200, state_json(c, limit)),
         Cmd::Spawn(r) => {
@@ -636,9 +668,13 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         Ok(g) => g,
         Err(e) => return err(400, e),
     };
-    let world = match file.world(c.params.world_size, c.params.seed) {
-        Ok(w) => w,
-        Err(e) => return err(400, e),
+    // With a world file, the walls are the file's; the game file's own walls do not apply.
+    let world = match &c.hs.world {
+        Some(w) => World::from_boxes(w.size, c.params.seed, w.boxes.clone()),
+        None => match file.world(c.params.world_size, c.params.seed) {
+            Ok(w) => w,
+            Err(e) => return err(400, e),
+        },
     };
     let hash = game.defs.content_hash();
     // The bots carry over any edit, matched by archetype and attribute name like a save and restore: spawned

@@ -1,0 +1,8 @@
+[package]
+name = "worldgen"
+edition.workspace = true
+version.workspace = true
+
+# A standalone tool: it writes a world file and depends on nothing in the engine.
+[dependencies]
+serde_json = "1"

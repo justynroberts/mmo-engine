@@ -54,6 +54,8 @@ pub struct Gateway {
     per_ip: Mutex<HashMap<[u8; 4], u32>>,
     info: RwLock<String>,
     walls: RwLock<Walls>,
+    /// The world file's bytes, served as they are at /play/world (empty: none).
+    world: RwLock<std::sync::Arc<Vec<u8>>>,
     pub stats: GwStats,
 }
 
@@ -165,7 +167,7 @@ pub struct WebCfg {
 
 impl Gateway {
     pub fn new() -> Arc<Gateway> {
-        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), walls: RwLock::new(Walls::default()), stats: GwStats::default() })
+        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), walls: RwLock::new(Walls::default()), world: RwLock::default(), stats: GwStats::default() })
     }
 
     /// Publish the walls. Returns the version the clients will see.
@@ -181,6 +183,12 @@ impl Gateway {
             *g = w;
         }
         ver
+    }
+
+    pub fn set_world(&self, bytes: std::sync::Arc<Vec<u8>>) {
+        if let Ok(mut w) = self.world.write() {
+            *w = bytes;
+        }
     }
 
     pub fn set_info(&self, json: String) {
@@ -328,6 +336,14 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
         "/play/info" => {
             let body = gw.info.read().map(|s| s.clone()).unwrap_or_default();
             respond(&mut conn, 200, "application/json", body.as_bytes())
+        }
+        "/play/world" => {
+            let body = gw.world.read().map(|b| b.clone()).unwrap_or_default();
+            if body.is_empty() {
+                respond(&mut conn, 404, "text/plain", b"this world has no world file")
+            } else {
+                respond(&mut conn, 200, "application/json", &body)
+            }
         }
         "/play/walls" => {
             let body = gw.walls.read().ok().and_then(|w| w.body(&head.query));

@@ -248,6 +248,8 @@ pub struct Handshake {
     pub zone: Option<std::sync::Arc<crate::zone::ZoneShared>>,
     /// Public web base URL of every zone, for browser clients (may be empty).
     pub zone_web: Vec<String>,
+    /// The world file, when the world came from one (`--world`).
+    pub world: Option<std::sync::Arc<crate::worldfile::WorldFile>>,
 }
 
 impl Handshake {
