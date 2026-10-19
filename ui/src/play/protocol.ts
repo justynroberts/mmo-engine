@@ -314,13 +314,13 @@ export interface Input {
   dirY: number
   action: number
   target: number
-  /** The action's extra byte: a build's or break's layer (-128..127). */
+  /** The action's extra argument: for a build or break, (layer & 0xff) | material << 8. */
   arg?: number
   chatAck: number
 }
 
 export function encodeInput(i: Input): Uint8Array {
-  const b = new Uint8Array(21)
+  const b = new Uint8Array(22)
   const v = new DataView(b.buffer)
   b[0] = kind.INPUT
   v.setUint32(1, i.seq >>> 0, true)
@@ -329,8 +329,8 @@ export function encodeInput(i: Input): Uint8Array {
   v.setInt8(10, i.dirY)
   v.setUint8(11, i.action)
   v.setUint32(12, i.target >>> 0, true)
-  v.setUint8(16, (i.arg ?? 0) & 0xff)
-  v.setUint32(17, i.chatAck >>> 0, true)
+  v.setUint16(16, (i.arg ?? 0) & 0xffff, true)
+  v.setUint32(18, i.chatAck >>> 0, true)
   return b
 }
 

@@ -158,7 +158,7 @@ export default function Scene3D(p: Props) {
       if (blocksFor[0] === pr.blocks && blocksFor[1] === land) return
       blocksFor = [pr.blocks, land]
       dispose(blockGroup)
-      const at: THREE.Vector3[][] = [[], [], [], []]
+      const at: THREE.Vector3[][] = BLOCK_COLOURS.map(() => [])
       // Blocks sit on one grid for the whole world: layer z is z * BLOCK up, whatever the ground does.
       for (const [cx, cy, base, kinds] of pr.blocks ?? []) {
         const x0 = cx * BLOCK

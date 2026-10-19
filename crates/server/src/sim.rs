@@ -225,8 +225,8 @@ pub struct PendingAction {
     pub slot: usize,
     pub action: u8,
     pub target: u32,
-    /// The input's extra byte (a build's or break's layer).
-    pub arg: u8,
+    /// The input's extra argument (a build's or break's layer and material, `proto::game::build_arg`).
+    pub arg: u16,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -580,11 +580,15 @@ impl Sim {
     /// Build (put a block in a cell's layer) or break (take one out), for the entity in `s`. Checked here: in
     /// reach, inside the world, not in a wall, not on anyone, resting on the ground or against another block,
     /// under the column and world limits; and only the owner breaks a block (anyone, one nobody owns).
-    fn build_action(&mut self, s: usize, action: u8, target: u32, arg: u8) -> bool {
-        use proto::game::{parse_build_target, ACT_BREAK, BUILD_REACH};
+    fn build_action(&mut self, s: usize, action: u8, target: u32, arg: u16) -> bool {
+        use proto::game::{parse_build_arg, parse_build_target, ACT_BREAK, BLOCK_KINDS, BUILD_REACH};
         use proto::world::{block_key, BLOCK};
-        let (cx, cy, kind) = parse_build_target(target);
-        let z = arg as i8 as i16;
+        let (cx, cy) = parse_build_target(target);
+        let (z, kind) = parse_build_arg(arg);
+        let z = z as i16;
+        if kind >= BLOCK_KINDS {
+            return false;
+        }
         let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
         if bx + BLOCK > self.world.size || by + BLOCK > self.world.size {
             return false;
@@ -1183,7 +1187,7 @@ mod tests {
 
     #[test]
     fn blocks_stack_bridge_and_stop_movement_and_only_their_owner_breaks_them() {
-        use proto::game::{build_target, ACT_BREAK, ACT_BUILD, MAX_STACK};
+        use proto::game::{build_arg, build_target, ACT_BREAK, ACT_BUILD, MAX_STACK};
         use proto::world::{block_key, GROUND};
         let mut s = sim();
         s.world = World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 120.0, y0: 0.0, x1: 130.0, y1: 512.0 }]);
@@ -1196,7 +1200,7 @@ mod tests {
         s.grid.rebuild(&s.ents);
         let act = |s: &mut Sim, who: usize, action: u8, cx: u32, cy: u32, z: i8| {
             let before = s.stats.rejected_actions;
-            s.step(&[PendingAction { slot: who, action, target: build_target(cx, cy, 2), arg: z as u8 }]);
+            s.step(&[PendingAction { slot: who, action, target: build_target(cx, cy), arg: build_arg(z, 11) }]);
             s.stats.rejected_actions == before
         };
         // Column (53, 50) is 6 units east: in reach. Flat ground, so it starts in layer 0; blocks stack up to
@@ -1676,5 +1680,54 @@ mod tests {
         let (bx, by) = (s.ents.x[hurt], s.ents.y[hurt]);
         let back = (0..t.ents.high).find(|&i| t.ents.alive[i] && (t.ents.x[i] - bx).abs() < 0.01 && (t.ents.y[i] - by).abs() < 0.01).expect("the hurt drone is where it was");
         assert_eq!(t.ents.attrs[ATTR_HEALTH as usize][back], 7.0, "and still hurt");
+    }
+
+    /// What solid scenery and built blocks cost the movement step. Run with:
+    /// cargo test -p server --release movement_cost -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn movement_cost() {
+        use proto::world::{Aabb, Column};
+        let mut rng = Rng::new(7);
+        let houses: Vec<Aabb> = (0..340)
+            .map(|_| {
+                let (x, y) = (rng.range(50.0, 1990.0), rng.range(50.0, 1990.0));
+                Aabb { x0: x, y0: y, x1: x + rng.range(6.0, 16.0), y1: y + rng.range(6.0, 12.0) }
+            })
+            .collect();
+        let trees: Vec<Aabb> = (0..3600)
+            .map(|_| {
+                let (x, y, h) = (rng.range(10.0, 2030.0), rng.range(10.0, 2030.0), rng.range(0.4, 0.6));
+                Aabb { x0: x - h, y0: y - h, x1: x + h, y1: y + h }
+            })
+            .collect();
+        let run = |label: &str, boxes: Vec<Aabb>, blocks: usize| {
+            let game = proto::game::GameFile::default_game().build().unwrap();
+            let mut s = Sim::new(game, World::from_boxes(2048.0, 1, boxes), 4200, 20, 1);
+            let mut r = Rng::new(3);
+            for _ in 0..blocks {
+                let (cx, cy) = (r.below(1024), r.below(1024));
+                s.world.set_column(cx, cy, Column { base: 0, mask: (1 << (1 + r.below(4))) - 1 });
+            }
+            let slots: Vec<usize> = (0..4000).filter_map(|_| s.spawn(NONE)).collect();
+            for (i, &k) in slots.iter().enumerate() {
+                s.ents.dir_x[k] = [127, -127, 0, 90][i % 4];
+                s.ents.dir_y[k] = [0, 90, 127, -90][i % 4];
+            }
+            for _ in 0..20 {
+                s.system_movement();
+            }
+            let t = std::time::Instant::now();
+            let ticks = 400;
+            for _ in 0..ticks {
+                s.system_movement();
+            }
+            let us = t.elapsed().as_secs_f64() * 1e6 / ticks as f64;
+            println!("{label:<40} {us:>7.0} us per tick for 4000 moving ({:.1}% of a 50 ms tick)", us / 500.0);
+        };
+        run("340 houses", houses.clone(), 0);
+        run("340 houses + 3600 solid trees", houses.iter().chain(&trees).copied().collect(), 0);
+        run("houses + trees + 2000 block columns", houses.iter().chain(&trees).copied().collect(), 2000);
+        run("houses + trees + 50000 block columns", houses.iter().chain(&trees).copied().collect(), 50_000);
     }
 }

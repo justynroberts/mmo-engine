@@ -58,7 +58,7 @@ Inner messages:
 
 | Kind | Dir | Layout |
 |---|---|---|
-| `0x02` INPUT | C->S | `seq u32 | ack_tick u32 | dir_x i8 | dir_y i8 | action u8 | target u32 | arg u8 | chat_ack u32` (21 bytes) |
+| `0x02` INPUT | C->S | `seq u32 | ack_tick u32 | dir_x i8 | dir_y i8 | action u8 | target u32 | arg u16 | chat_ack u32` (22 bytes) |
 | `0x04` CHAT_SEND | C->S | `cseq u32 | channel u8 | len u8 | utf8 text` (len <= 120) |
 | `0x82` SNAPSHOT | S->C | see section 3 |
 | `0x86` CHAT_BATCH | S->C | `ack_cseq u32 | n u8 | n x (seq u32 | from u32 | channel u8 | len u8 | text)` |
@@ -136,10 +136,10 @@ floor(x / 2)`, `cy = floor(y / 2)`, and layer `z` fills heights `2z` to `2z + 2`
 up however the ground runs. A cell's column starts in its *base* layer, the one the lowest corner of its ground is in
 (`floor(lowest / 2)`; the server reads the ground from the world file's `heights`, flat at 0 without them), and spans
 16 layers up from there. Any of those layers may hold a block or not, so blocks bridge gaps and leave windows. Every
-block has a material (0..3) and an owner: the account that built it (guests' blocks belong to nobody).
+block has a material (0..11) and an owner: the account that built it (guests' blocks belong to nobody).
 
-`252` builds and `253` breaks, in the INPUT action byte. The target names the cell, `cx | cy << 15 | material << 30`,
-and INPUT's `arg` the layer, as an i8. A build needs the layer empty and inside the column, the block resting on
+`252` builds and `253` breaks, in the INPUT action byte. The target names the cell, `cx | cy << 15`, and INPUT's
+`arg` the layer (an i8, in the low byte) and, for a build, the material (the high byte). A build needs the layer empty and inside the column, the block resting on
 the column's base layer or against another block above, below or on one of its four sides, nobody's body in that
 layer of the cell, and the cell within 8 units of the builder sideways and its layer within 8 units of their feet.
 A break takes out that one block, anywhere in the column, and only its owner can (anyone, for a block nobody owns).
@@ -158,7 +158,7 @@ action ids) when the server offers building.
 
 The blocks travel over HTTP, not UDP: `GET /play/blocks?since=VER` returns `{"ver", "full", "owners": [tags],
 "cols": [[cx, cy, base, "layers", [owners]], ...]}`. `layers` has a character per layer from the base up to the
-highest block, `.` for an empty one and `0`-`3` for a material; `owners` has a number per layer, 0 for nobody,
+highest block, `.` for an empty one and a material's character (`0`-`9`, then `a`-`z`: `0`-`b` for 12 materials); `owners` has a number per layer, 0 for nobody,
 otherwise an index into the response's `owners` plus one. An owner tag is 16 hex digits of the builder's identity
 public key, so a client knows its own (`mmo_account_tag`). With `full: false` the list holds only the columns changed
 after `VER` (an empty `layers` is a cleared column); with `full: true` (no `since`, a version from before a restart,
@@ -166,7 +166,7 @@ or one too far behind) it is every column and the client drops what it had. Poll
 after building.
 
 Version 8 added `z` to snapshot entries (13 bytes plus attributes; with two 8 bit attributes `max_visible` can be at
-most 72) and `arg` to INPUT.
+most 72) and a two byte `arg` to INPUT.
 
 ## World size (version 7)
 

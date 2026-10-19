@@ -56,8 +56,9 @@ describe('handshake and sessions', () => {
 
 describe('messages', () => {
   it('encodes inputs to the exact layout the server decodes', () => {
-    const b = encodeInput({ seq: 7, ackTick: 99, dirX: -1, dirY: 127, action: 1, target: 0x01000042, arg: -2, chatAck: 5 })
-    expect(Array.from(b)).toEqual([2, 7, 0, 0, 0, 99, 0, 0, 0, 255, 127, 1, 0x42, 0, 0, 1, 254, 5, 0, 0, 0])
+    // The same input as proto::wire's input_roundtrip.
+    const b = encodeInput({ seq: 7, ackTick: 99, dirX: -1, dirY: 127, action: 1, target: 0x01000042, arg: 0x07fe, chatAck: 5 })
+    expect(Array.from(b)).toEqual([2, 7, 0, 0, 0, 99, 0, 0, 0, 255, 127, 1, 0x42, 0, 0, 1, 0xfe, 0x07, 5, 0, 0, 0])
     expect(encodeInput({ seq: 1, ackTick: 0, dirX: 0, dirY: 0, action: 0, target: 0, chatAck: 0 })[16]).toBe(0)
   })
 

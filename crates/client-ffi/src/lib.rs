@@ -84,7 +84,7 @@ pub struct Client {
     dir: (i8, i8),
     action: u8,
     target: u32,
-    arg: u8,
+    arg: u16,
     sent: Vec<(u32, Instant)>,
     rtt_ms: f32,
     last_rx: Instant,
@@ -569,13 +569,14 @@ pub unsafe extern "C" fn mmo_act(c: *mut Client, action: u8, target: u32) {
     mmo_act_arg(c, action, target, 0);
 }
 
-/// An action with its extra byte: for a build or break, the block's layer (-128..127).
+/// An action with its extra argument (0..65535): for build and break, `layer & 0xff | material << 8`, the layer
+/// -128..127 and the material 0..build.kinds-1.
 #[no_mangle]
 pub unsafe extern "C" fn mmo_act_arg(c: *mut Client, action: u8, target: u32, arg: i32) {
     if let Some(c) = c.as_mut() {
         c.action = action;
         c.target = target;
-        c.arg = arg.clamp(-128, 255) as u8;
+        c.arg = arg as u16;
     }
 }
 

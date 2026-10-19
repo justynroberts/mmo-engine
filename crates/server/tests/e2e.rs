@@ -1596,8 +1596,8 @@ fn act(c: &mut Client, action: u8, target: u32) {
     act_arg(c, action, target, 0);
 }
 
-/// An action with the input's extra byte (a build's or break's layer).
-fn act_arg(c: &mut Client, action: u8, target: u32, arg: u8) {
+/// An action with the input's extra argument (a build's or break's layer and material).
+fn act_arg(c: &mut Client, action: u8, target: u32, arg: u16) {
     c.seq += 1;
     let mut plain = Vec::new();
     wire::encode_input(&mut plain, &Input { seq: c.seq, ack_tick: c.view.last_tick, dir_x: 0, dir_y: 0, action, target, arg, chat_ack: c.chat.ack() });
@@ -2067,7 +2067,7 @@ fn the_console_generates_a_world_previews_it_and_applies_it_live() {
 /// restart.
 #[test]
 fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
-    use proto::game::{build_target, ACT_BREAK, ACT_BUILD};
+    use proto::game::{build_arg, build_target, ACT_BREAK, ACT_BUILD};
     let (mut srv, web) = start_web(&[]);
     let identity = proto::secure::new_identity();
     let tag = proto::secure::account_tag(&proto::secure::identity_public(&identity));
@@ -2084,7 +2084,7 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     let mut cell = None;
     for (dx, dy) in [(4.0, 0.0), (-4.0, 0.0), (0.0, 4.0), (0.0, -4.0), (3.0, 3.0), (-3.0, -3.0)] {
         let (cx, cy) = (((me.0 + dx) / 2.0).floor() as u32, ((me.1 + dy) / 2.0).floor() as u32);
-        act_arg(&mut c, ACT_BUILD, build_target(cx, cy, 1), 0);
+        act_arg(&mut c, ACT_BUILD, build_target(cx, cy), build_arg(0, 1));
         c.pump(250);
         if total(&srv) == 1 {
             cell = Some((cx, cy));
@@ -2092,16 +2092,16 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
         }
     }
     let (cx, cy) = cell.expect("could not build anywhere near");
-    act_arg(&mut c, ACT_BUILD, build_target(cx, cy, 3), 1);
+    act_arg(&mut c, ACT_BUILD, build_target(cx, cy), build_arg(1, 11));
     c.pump(250);
     let f = feed(start["ver"].as_u64().unwrap());
     assert_eq!(f["full"], false);
     assert_eq!(f["owners"], serde_json::json!([tag]));
-    assert_eq!(f["cols"], serde_json::json!([[cx, cy, 0, "13", [1, 1]]]));
+    assert_eq!(f["cols"], serde_json::json!([[cx, cy, 0, "1b", [1, 1]]]));
     // Refused: out of reach, and a block with nothing under it or beside it.
-    act_arg(&mut c, ACT_BUILD, build_target(cx + 40, cy, 0), 0);
+    act_arg(&mut c, ACT_BUILD, build_target(cx + 40, cy), build_arg(0, 0));
     c.pump(250);
-    act_arg(&mut c, ACT_BUILD, build_target(cx, cy, 0), 3);
+    act_arg(&mut c, ACT_BUILD, build_target(cx, cy), build_arg(3, 0));
     c.pump(250);
     assert_eq!(total(&srv), 2);
     let state = json(&srv, "GET", "/api/state?limit=1", "").1;
@@ -2111,9 +2111,9 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
 
     // Break the bottom one: the top one stays where it is, and the feed reports the column as it now is.
     let v = f["ver"].as_u64().unwrap();
-    act_arg(&mut c, ACT_BREAK, build_target(cx, cy, 0), 0);
+    act_arg(&mut c, ACT_BREAK, build_target(cx, cy), build_arg(0, 0));
     c.pump(250);
-    assert_eq!(feed(v)["cols"], serde_json::json!([[cx, cy, 0, ".3", [0, 1]]]));
+    assert_eq!(feed(v)["cols"], serde_json::json!([[cx, cy, 0, ".b", [0, 1]]]));
     assert_eq!(feed(feed(0)["ver"].as_u64().unwrap())["cols"], serde_json::json!([]), "nothing new");
 
     // Saved within a few seconds, and back after a restart, still owned.
@@ -2125,7 +2125,7 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     let srv = start_in(dir, &[]);
     assert_eq!(total(&srv), 1);
     let b = json(&srv, "GET", "/api/blocks", "").1;
-    assert_eq!((b["owners"].clone(), b["cols"][0][3].clone(), b["cols"][0][4].clone()), (serde_json::json!([tag]), ".3".into(), serde_json::json!([0, 1])));
+    assert_eq!((b["owners"].clone(), b["cols"][0][3].clone(), b["cols"][0][4].clone()), (serde_json::json!([tag]), ".b".into(), serde_json::json!([0, 1])));
     // The admin can place whole columns, counted from the ground (not on a wall or a player), and clear them all
     // (the restored block too).
     let (s, r) = json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"0123"],[4,3,"2"],[3,3,"1.1"]]}"#);

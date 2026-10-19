@@ -15,3 +15,4 @@ ui/dist/
 __pycache__/
 /world.json
 /world.*.json
+*.swp

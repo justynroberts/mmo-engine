@@ -79,7 +79,8 @@ void mmo_set_column(MmoClient *c, uint32_t cx, uint32_t cy, int base, uint32_t m
 void mmo_account_tag(const MmoClient *c, char *out, size_t cap);
 /* One action request (ids are in /play/info "actions") against a target entity id (0 = none). */
 void mmo_act(MmoClient *c, uint8_t action, uint32_t target);
-/* An action with its extra byte: for build and break (/play/info build), the block's layer, -128..127. */
+/* An action with its extra argument: for build and break (/play/info build), (layer & 0xff) | material << 8, with
+ * the layer -128..127 and the material 0..build.kinds-1. */
 void mmo_act_arg(MmoClient *c, uint8_t action, uint32_t target, int arg);
 /* Say (0) or shout (1). Queued and resent until the server has it; the server rate-limits and trims. */
 void mmo_say(MmoClient *c, uint8_t channel, const char *text);

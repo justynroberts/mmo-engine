@@ -448,6 +448,17 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// Half the side of a scenery object's solid footprint at scale `s`, for the kinds that are solid: about a trunk
+/// for a tree, most of the stone for a rock.
+fn scenery_half(t: &str, s: f32) -> Option<f32> {
+    match t {
+        "tree" | "tree_bare" => Some(0.3 * s),
+        "rock" => Some(0.35 * s),
+        "boulder" | "spire" => Some(0.6 * s),
+        _ => None,
+    }
+}
+
 fn r1(v: f32) -> f64 {
     (v as f64 * 10.0).round() / 10.0
 }
@@ -717,7 +728,17 @@ pub fn generate(p: &Params) -> Value {
             if ri.at(&rv, x, y).is_some_and(|(d, _)| d < RIVER_HALF + RIVER_LIP + 2.0) {
                 continue;
             }
-            objects.push(json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(rng.range(0.0, std::f32::consts::TAU)), "v": rng.v() }));
+            let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(rng.range(0.0, std::f32::consts::TAU)), "v": rng.v() });
+            // Trunks and stones are solid where they stand (bushes are walked through): a square footprint the
+            // size of the trunk or stone, if it is inside the world, where the engine makes it a wall.
+            if let Some(h) = scenery_half(t, s) {
+                let (x0, y0, x1, y1) = (r2(x - h), r2(y - h), r2(x + h), r2(y + h));
+                if x0 >= 0.0 && y0 >= 0.0 && x1 <= size as f64 && y1 <= size as f64 {
+                    o["solid"] = true.into();
+                    o["b"] = json!([x0, y0, x1, y1]);
+                }
+            }
+            objects.push(o);
         }
     }
     let lakes: Vec<Value> = l.things.iter().filter(|s| s.t == "lake").map(|s| json!({ "b": [r2(s.b[0]), r2(s.b[1]), r2(s.b[2]), r2(s.b[3])], "level": r2(s.base - 0.45) })).collect();
@@ -912,5 +933,20 @@ mod tests {
         assert_eq!(base64(b"Man"), "TWFu");
         assert_eq!(base64(b"Ma"), "TWE=");
         assert_eq!(base64(b"M"), "TQ==");
+    }
+
+    #[test]
+    fn trees_and_rocks_are_solid_where_they_stand_and_bushes_are_not() {
+        let w = generate(&Params { size: 1024.0, ..Params::default() });
+        let objs = w["objects"].as_array().unwrap();
+        let solid = |t: &str| objs.iter().filter(|o| o["t"] == t && o["solid"] == true).count();
+        assert!(solid("tree") > 200, "{} solid trees", solid("tree"));
+        assert!(solid("rock") > 0 && solid("bush") == 0);
+        // Each footprint is inside the world and centred on the object.
+        for o in objs.iter().filter(|o| o["t"] == "tree" && o["solid"] == true) {
+            let (b, p) = (o["b"].as_array().unwrap(), o["p"].as_array().unwrap());
+            let f = |v: &Value| v.as_f64().unwrap();
+            assert!(f(&b[0]) >= 0.0 && f(&b[2]) <= 1024.0 && f(&b[0]) < f(&p[0]) && f(&p[0]) < f(&b[2]));
+        }
     }
 }

@@ -14,6 +14,7 @@ var help := Label.new()
 var materials := HBoxContainer.new()   # the build bar, shown in build mode
 var _material_buttons: Array[Button] = []
 var _materials_shown := -2               # the chosen material as last drawn, -1 = hidden
+const KEYS := ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="]   # the keys that pick each material
 
 func _ready() -> void:
 	var root := Control.new()
@@ -68,7 +69,7 @@ func _ready() -> void:
 			chat_submitted.emit(t))
 	root.add_child(chat_in)
 
-	help.text = "WASD move   Q/E turn   wheel zoom   Tab target   Space attack (hold)   J jump   B build (click place, right-click break one of yours, 1-4 material; walk up one block at a time)   1-8 use   Shift+1-8 drop   F pick up   G god   M map   F11 full screen"
+	help.text = "WASD move   Q/E turn   wheel zoom   Tab target   Space attack (hold)   J jump   B build (click place, right-click break one of yours, 1-0 - = material; walk up one block at a time)   1-8 use   Shift+1-8 drop   F pick up   G god   M map   F11 full screen"
 	help.position = Vector2(14, 720 - 28)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	root.add_child(help)
@@ -91,17 +92,19 @@ func set_materials(names: Array, swatches: Array) -> void:
 	_material_buttons.clear()
 	for i in names.size():
 		var b := Button.new()
-		b.text = "%d  %s" % [i + 1, String(names[i]).to_upper()]
+		b.text = "%s\n%s" % [KEYS[i] if i < KEYS.size() else "", String(names[i]).to_upper()]
 		b.icon = swatches[i]
 		b.expand_icon = true
-		b.add_theme_constant_override("icon_max_width", 40)
-		b.custom_minimum_size = Vector2(150, 52)
+		b.add_theme_constant_override("icon_max_width", 30)
+		b.add_theme_font_size_override("font_size", 11)
+		b.custom_minimum_size = Vector2(98, 52)
+		b.clip_text = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.pressed.connect(func(): material_pressed.emit(i))
 		materials.add_child(b)
 		_material_buttons.append(b)
-	materials.position = Vector2(-names.size() * 78, -150)
+	materials.position = Vector2(-names.size() * 52, -150)
 
 ## Show the build bar (or not), with the chosen material marked.
 func show_materials(on: bool, chosen: int) -> void:

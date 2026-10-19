@@ -59,6 +59,7 @@ var smoke_log: Array[String] = []
 # Building: blocks on one grid in all three directions (/play/info "build"), fetched from /play/blocks. Layer z
 # fills heights z * block to (z + 1) * block everywhere, so blocks line up however the ground runs.
 const GROUND := -128      # the layer of something on the bare ground
+const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL]
 var build := {}           # /play/info "build"; empty if the server does not offer it
 var building := false     # build mode (B)
 var build_kind := 0
@@ -372,7 +373,7 @@ func _process(delta: float) -> void:
 	var cap := int(info.get("max_visible", 0))
 	var crowd := "   nearest %d shown, more around" % cap if cap > 0 and list.size() >= cap else ""
 	var sky := "   %s" % String(weather["name"]).to_upper() if not weather.is_empty() else ""
-	var mode := "   BUILD %s (1-4)" % theme.block_name(build_kind).to_upper() if building else ""
+	var mode := "   BUILD %s" % theme.block_name(build_kind).to_upper() if building else ""
 	hud.show_materials(building, build_kind)
 	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, sky, "   GOD" if god else "", mode]
 
@@ -512,9 +513,12 @@ func _build(place: bool) -> void:
 	if not place and not _breakable(cell):
 		_notice("that block is someone else's")
 		return
-	var target := cell.x | cell.y << 15 | build_kind << 30
-	net.act_arg(int(build["act_build"] if place else build["act_break"]), target, cell.z)
+	net.act_arg(int(build["act_build"] if place else build["act_break"]), cell.x | cell.y << 15, _build_arg(cell.z, build_kind))
 	blocks_poll = minf(blocks_poll, 0.12)
+
+## The input's argument for a build or break: the layer in the low byte, the material in the high one.
+func _build_arg(layer: int, kind: int) -> int:
+	return (layer & 0xff) | kind << 8
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,
@@ -816,8 +820,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			building = not building
 		elif k == KEY_ESCAPE and building:
 			building = false
-		elif building and k >= KEY_1 and k <= KEY_4:
-			build_kind = k - KEY_1
+		elif building and MATERIAL_KEYS.has(k) and MATERIAL_KEYS.find(k) < int(build.get("kinds", 4)):
+			build_kind = MATERIAL_KEYS.find(k)
 		elif k == KEY_ESCAPE and world_map.visible:
 			world_map.visible = false
 		elif k == KEY_F11:
@@ -997,7 +1001,7 @@ func _smoke() -> void:
 			var at: Vector2 = me_pos + off
 			var c := Vector2i(int(floor(at.x / bs)), int(floor(at.y / bs)))
 			base = _col_base(c.x, c.y)
-			net.act_arg(int(build["act_build"]), c.x | c.y << 15 | 2 << 30, base)
+			net.act_arg(int(build["act_build"]), c.x | c.y << 15, _build_arg(base, 2))
 			blocks_poll = 0.2
 			if await _wait(3.0, func(): return blocks.has(c.y << 15 | c.x)):
 				built = c.y << 15 | c.x
@@ -1024,15 +1028,15 @@ func _smoke() -> void:
 			ok = await _wait(3.0, func(): return my_layer == GROUND)
 			net.set_move(Vector2.ZERO)
 			_check("and steps off", ok, "layer %d" % my_layer)
-			net.act_arg(int(build["act_build"]), bx | by << 15 | 1 << 30, base + 1)
+			net.act_arg(int(build["act_build"]), bx | by << 15, _build_arg(base + 1, 11))
 			blocks_poll = 0.2
 			ok = await _wait(3.0, func(): return _solid(bx, by, base + 1))
-			_check("stacks a second block", ok, "")
-			net.act_arg(int(build["act_break"]), bx | by << 15, base)
+			_check("stacks a second block, in the last material", ok and String(blocks[built]["k"]).ends_with("b"), "%s" % [blocks.get(built, {})])
+			net.act_arg(int(build["act_break"]), bx | by << 15, _build_arg(base, 0))
 			blocks_poll = 0.2
 			ok = await _wait(3.0, func(): return not _solid(bx, by, base) and _solid(bx, by, base + 1))
 			_check("breaks the bottom one and the top one stays", ok, "%s" % [blocks.get(built, {})])
-			net.act_arg(int(build["act_break"]), bx | by << 15, base + 1)
+			net.act_arg(int(build["act_break"]), bx | by << 15, _build_arg(base + 1, 0))
 			blocks_poll = 0.2
 			ok = await _wait(3.0, func(): return not blocks.has(built))
 			_check("and breaks that too", ok, "")

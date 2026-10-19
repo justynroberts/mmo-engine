@@ -107,8 +107,12 @@ pieces). Only `solid` footprints matter to the engine; `t` is for themes. The ty
 | `lake` | footprint, solid | Deep water |
 | `city` | footprint | A city's extent (open ground inside is street) |
 | `square` | footprint | An open square: a plaza, market or village green |
-| `tree`, `tree_bare`, `bush`, `rock` | point | Scenery |
-| `boulder`, `spire` | point | Big rocks on the mountains past the edge |
+| `tree`, `tree_bare`, `rock` | point, solid | Scenery; the footprint is the trunk or the stone, so it is solid where it stands |
+| `bush` | point | Scenery you walk through |
+| `boulder`, `spire` | point, solid | Big rocks on the mountains past the edge (solid where they reach into the world) |
+
+A point object may also carry `solid` and a footprint `b`: the engine treats it like any other solid footprint, and a
+theme still draws it by its type at its point.
 
 A theme should draw an unknown type as something neutral (a plain block for a solid footprint), so new
 generators work with old themes.

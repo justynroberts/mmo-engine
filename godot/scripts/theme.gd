@@ -204,17 +204,28 @@ var _block_index := {}    # chunk key -> {column key: true}
 var _blocks := {}         # column key (cy << 15 | cx) -> {"b": base layer, "k": a character per layer, "o": owners}
 var _block_mats := {}     # material -> Material
 
-## Names of the block materials (0..3), for the HUD.
+const BLOCK_NAMES := ["stone", "timber", "red brick", "plaster", "brick", "rough brick", "roof tiles", "iron", "glass", "slate", "mossy stone", "sandstone"]
+const BLOCK_COLOURS := ["8a8f96", "8a5a34", "a6463a", "d8cfb8", "9a6a4a", "7d6b5a", "8c3b2e", "4a4d52", "bfe3ee", "4b5160", "6f7f58", "c9a66b"]
+## The material glass is: see-through in any theme.
+const GLASS := 8
+
+## Names of the block materials (0..11, as /play/info build.kinds says), for the HUD.
 func block_name(kind: int) -> String:
-	return ["stone", "wood", "brick", "glass"][clampi(kind, 0, 3)]
+	return BLOCK_NAMES[clampi(kind, 0, BLOCK_NAMES.size() - 1)]
 
 ## What a block of each material is drawn with.
 func block_material(kind: int) -> Material:
 	var m := StandardMaterial3D.new()
-	m.albedo_color = [Color("8a8f96"), Color("8a5a34"), Color("a6463a"), Color(0.7, 0.9, 1.0, 0.45)][clampi(kind, 0, 3)]
-	if kind == 3:
+	m.albedo_color = Color(BLOCK_COLOURS[clampi(kind, 0, BLOCK_COLOURS.size() - 1)])
+	if kind == GLASS:
+		m.albedo_color.a = 0.45
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return m
+
+## A material from its character in block text ("0"-"9", then "a"-"z"), or -1 for an empty layer.
+static func block_kind(ch: String) -> int:
+	var k := "0123456789abcdefghijklmnopqrstuvwxyz".find(ch)
+	return k if k >= 0 and k < BLOCK_NAMES.size() else -1
 
 func block_size() -> float:
 	return float(info.get("build", {}).get("block", 2.0))
@@ -271,8 +282,8 @@ func build_blocks(cols: Array) -> Node3D:
 		var base: int = c[2]
 		var kinds: String = c[3]
 		for i in kinds.length():
-			var kind := kinds.unicode_at(i) - 48
-			if kind < 0 or kind > 3:
+			var kind := block_kind(kinds[i])
+			if kind < 0:
 				continue
 			if not per_kind.has(kind):
 				per_kind[kind] = []

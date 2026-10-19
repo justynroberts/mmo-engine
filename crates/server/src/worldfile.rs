@@ -10,8 +10,8 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Most solid objects a world file may have.
-pub const MAX_SOLIDS: usize = 20_000;
+/// Most solid objects a world file may have (trees and stones are solid too, so a big forest has many).
+pub const MAX_SOLIDS: usize = 200_000;
 
 pub struct WorldFile {
     pub path: PathBuf,

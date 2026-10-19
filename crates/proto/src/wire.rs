@@ -111,8 +111,9 @@ pub struct Input {
     /// 0 = no action, otherwise an action id from the definitions.
     pub action: u8,
     pub target: u32,
-    /// One more byte for the action: for a build or break, the block's layer (an i8; see `world::BLOCK`).
-    pub arg: u8,
+    /// More for the action: for a build or break, the block's layer (an i8, low byte; see `world::BLOCK`) and, for a
+    /// build, its material (high byte). See `game::build_arg`.
+    pub arg: u16,
     /// Newest chat message sequence number received from the server.
     pub chat_ack: u32,
 }
@@ -126,7 +127,7 @@ pub fn encode_input(out: &mut Vec<u8>, i: &Input) {
     put_u8(out, i.dir_y as u8);
     put_u8(out, i.action);
     put_u32(out, i.target);
-    put_u8(out, i.arg);
+    put_u16(out, i.arg);
     put_u32(out, i.chat_ack);
 }
 
@@ -140,7 +141,7 @@ pub fn decode_client(buf: &[u8]) -> Option<ClientMsg> {
             dir_y: r.i8()?,
             action: r.u8()?,
             target: r.u32()?,
-            arg: r.u8()?,
+            arg: r.u16()?,
             chat_ack: r.u32()?,
         })),
         _ => None,
@@ -313,7 +314,7 @@ mod tests {
 
     #[test]
     fn input_roundtrip() {
-        let i = Input { seq: 7, ack_tick: 99, dir_x: -1, dir_y: 127, action: 1, target: 0x0100_0042, arg: 0xfe, chat_ack: 5 };
+        let i = Input { seq: 7, ack_tick: 99, dir_x: -1, dir_y: 127, action: 1, target: 0x0100_0042, arg: 0x07fe, chat_ack: 5 };
         let mut b = Vec::new();
         encode_input(&mut b, &i);
         assert_eq!(decode_client(&b), Some(ClientMsg::Input(i)));

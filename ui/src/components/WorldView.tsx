@@ -1,3 +1,4 @@
+import { kindOf } from '../play/blocks'
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
@@ -391,7 +392,7 @@ export function WorldView(p: Props) {
           const x = sx(cx * BLOCK)
           const y = sy(cy * BLOCK)
           if (x < -4 || y < -4 || x > w + 4 || y > h + 4) continue
-          ctx.fillStyle = BLOCK_COLOURS[Number(kinds[kinds.length - 1]) & 3]! // the top layer is never empty
+          ctx.fillStyle = BLOCK_COLOURS[Math.max(0, kindOf(kinds[kinds.length - 1] ?? ''))]! // the top layer is never empty
           ctx.fillRect(x, y, bw, bw)
         }
       }

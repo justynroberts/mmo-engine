@@ -81,13 +81,17 @@ is. See [WORLD.md](WORLD.md).
 
 ## Building
 
-Players build and break blocks: 2 unit cubes on one grid for the whole world, up and down as well as across, in four
-materials. Every column starts in the layer its ground is in, so blocks line up level however the ground slopes, and
+Players build and break blocks: 2 unit cubes on one grid for the whole world, up and down as well as across, in twelve
+materials (stone, timber, red brick, plaster, brick, rough brick, roof tiles, iron, glass, slate, mossy stone and
+sandstone). Every column starts in the layer its ground is in, so blocks line up level however the ground slopes, and
 any layer can hold a block or not: build a block against the side of another and you have a bridge, leave one out of
 a wall and you have a window or a doorway. In the Godot client press B for build mode: a ghost block shows where the
 next one goes (the empty cell in front of whatever the mouse is over, green in reach, red out of it), a faint box
-marks the block a right click would take out, click to place, right-click to break, 1-4 or the bar along the bottom
-to pick the material (the fantasy theme draws them in the Medieval Village stone, timber, brick and plaster).
+marks the block a right click would take out, click to place, right-click to break, 1-9, 0, - and = or the bar along the
+bottom to pick the material (the fantasy theme draws them with the Medieval Village textures).
+
+Trees, rocks, boulders and spires are solid too: worldgen gives each one a footprint the size of its trunk or stone,
+which the engine treats like any wall. Bushes are walked through.
 
 Blocks are solid ground. You walk up onto anything one block higher than where you stand and drop off any height,
 walk across bridges and under them (a body is one block tall), and a wall two blocks high really keeps people out,

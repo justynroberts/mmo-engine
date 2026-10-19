@@ -60,7 +60,7 @@ pub struct Client {
     pub ack_tick: u32,
     pub action: u8,
     pub target: u32,
-    pub arg: u8,
+    pub arg: u16,
     /// Bag version last sent and how many more times to repeat it (a lost packet must not lose a pickup).
     pub inv_sent: u32,
     pub inv_burst: u8,

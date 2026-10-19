@@ -151,15 +151,18 @@ void fragment() {
 func ground_material() -> Material:
 	return terrain_mat
 
-## Building blocks from the Medieval Village textures: dressed stone, timber, brick and plaster, tiled so each
-## block shows one texture repeat.
-func block_name(kind: int) -> String:
-	return ["stone", "timber", "brick", "plaster"][clampi(kind, 0, 3)]
+## Building blocks from the Medieval Village textures, tiled so each block shows one texture repeat: the eight
+## textures as they are, then glass, and the dressed stone tinted three ways (slate, moss, sandstone).
+const BLOCK_TEXTURES := ["RockTrim", "WoodTrim", "RedBrick", "Plaster", "Brick", "UnevenBrick", "RoundTiles", "MetalOrnaments", "", "RockTrim", "RockTrim", "RockTrim"]
+const BLOCK_TINTS := {9: Color(0.55, 0.6, 0.72), 10: Color(0.7, 0.85, 0.55), 11: Color(1.15, 0.95, 0.68)}
 
 func block_material(kind: int) -> Material:
-	var names := ["RockTrim", "WoodTrim", "RedBrick", "Plaster"]
-	var dir := "res://themes/fantasy/assets/village/T_%s_" % names[clampi(kind, 0, 3)]
+	kind = clampi(kind, 0, BLOCK_TEXTURES.size() - 1)
+	if BLOCK_TEXTURES[kind] == "":
+		return super.block_material(kind) # glass
+	var dir := "res://themes/fantasy/assets/village/T_%s_" % BLOCK_TEXTURES[kind]
 	var m := StandardMaterial3D.new()
+	m.albedo_color = BLOCK_TINTS.get(kind, Color.WHITE)
 	m.albedo_texture = load(dir + "BaseColor.png")
 	if ResourceLoader.exists(dir + "Normal.png"):
 		m.normal_enabled = true

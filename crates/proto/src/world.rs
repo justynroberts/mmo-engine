@@ -79,6 +79,50 @@ pub fn block_cell(key: u32) -> (u32, u32) {
     (key & (BLOCK_GRID - 1), key >> 15)
 }
 
+/// The columns under a body: up to 16 without allocating (a body under 3 units across), any number past that.
+#[derive(Default)]
+struct Under {
+    near: [Option<Column>; 16],
+    n: usize,
+    more: Vec<Column>,
+}
+
+impl Under {
+    fn push(&mut self, c: Column) {
+        if self.n < self.near.len() {
+            self.near[self.n] = Some(c);
+            self.n += 1;
+        } else {
+            self.more.push(c);
+        }
+    }
+
+    fn each(&self) -> impl Iterator<Item = &Column> {
+        self.near[..self.n].iter().flatten().chain(&self.more)
+    }
+
+    fn floor(&self) -> Option<i16> {
+        self.each().map(|c| c.base as i16).max()
+    }
+
+    fn solid(&self, z: i16) -> bool {
+        self.each().any(|c| c.solid(z))
+    }
+
+    /// See `World::settle`.
+    fn settle(&self, z: i8) -> i8 {
+        let Some(floor) = self.floor() else { return GROUND };
+        let mut z = if z == GROUND { floor } else { (z as i16).max(floor) };
+        while self.solid(z) && z < i8::MAX as i16 {
+            z += 1;
+        }
+        while z > floor && !self.solid(z - 1) {
+            z -= 1;
+        }
+        z as i8
+    }
+}
+
 pub struct World {
     pub size: f32,
     pub seed: u64,
@@ -108,8 +152,9 @@ impl World {
     }
 
     pub fn from_boxes(size: f32, seed: u64, boxes: Vec<Aabb>) -> World {
-        // Finer cells than 64 units buy nothing; a huge world gets coarser ones so the bucket table stays small.
-        let cell = (size / 1024.0).max(64.0);
+        // 16 unit cells keep a forest's trunks (each a box a unit or so across) to a handful per lookup; a huge world
+        // gets coarser ones so the bucket table stays small (at most about a million buckets).
+        let cell = (size / 1024.0).max(16.0);
         let gw = (size / cell).ceil() as usize + 1;
         let mut buckets = vec![Vec::new(); gw * gw];
         for (i, b) in boxes.iter().enumerate() {
@@ -147,10 +192,12 @@ impl World {
         self.blocks.len()
     }
 
-    /// The built columns a circle (by its bounding box) of radius `r` at `(x, y)` overlaps.
-    fn columns_under(&self, x: f32, y: f32, r: f32, mut f: impl FnMut(&Column)) {
+    /// The built columns a circle (by its bounding box) of radius `r` at `(x, y)` overlaps, looked up once so a
+    /// step can ask several things of them.
+    fn under(&self, x: f32, y: f32, r: f32) -> Under {
+        let mut u = Under::default();
         if self.blocks.is_empty() {
-            return;
+            return u;
         }
         let last = (BLOCK_GRID - 1) as f32;
         let (cx0, cx1) = (((x - r) / BLOCK).floor().max(0.0) as u32, ((x + r) / BLOCK).floor().min(last) as u32);
@@ -160,40 +207,29 @@ impl World {
                 if let Some(c) = self.blocks.get(&block_key(cx, cy)) {
                     let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
                     if x + r > bx && x - r < bx + BLOCK && y + r > by && y - r < by + BLOCK {
-                        f(c);
+                        u.push(*c);
                     }
                 }
             }
         }
+        u
     }
 
     /// The highest base among the columns under a circle: the ground there, as far as blocks are concerned.
     /// None away from every column, where only the bare ground counts.
     pub fn floor(&self, x: f32, y: f32, r: f32) -> Option<i16> {
-        let mut top = None;
-        self.columns_under(x, y, r, |c| top = top.max(Some(c.base as i16)));
-        top
+        self.under(x, y, r).floor()
     }
 
     /// True if any column under a circle has a block in layer `z`.
     pub fn solid_at(&self, x: f32, y: f32, r: f32, z: i16) -> bool {
-        let mut hit = false;
-        self.columns_under(x, y, r, |c| hit |= c.solid(z));
-        hit
+        self.under(x, y, r).solid(z)
     }
 
     /// Where something with its feet in layer `z` ends up standing at `(x, y)` without moving sideways: pushed up
     /// out of any block it is inside, then dropped onto whatever is below it.
     pub fn settle(&self, x: f32, y: f32, r: f32, z: i8) -> i8 {
-        let Some(floor) = self.floor(x, y, r) else { return GROUND };
-        let mut z = if z == GROUND { floor } else { (z as i16).max(floor) };
-        while self.solid_at(x, y, r, z) && z < i8::MAX as i16 {
-            z += 1;
-        }
-        while z > floor && !self.solid_at(x, y, r, z - 1) {
-            z -= 1;
-        }
-        z as i8
+        self.under(x, y, r).settle(z)
     }
 
     /// Where something with its feet in layer `z` stands if it moves to `(x, y)`, or None if it cannot: a wall,
@@ -202,18 +238,13 @@ impl World {
         if self.blocked_by_walls(x, y, r) {
             return None;
         }
-        let Some(floor) = self.floor(x, y, r) else { return Some(GROUND) };
-        let mut z = if z == GROUND { floor } else { (z as i16).max(floor) };
-        if self.solid_at(x, y, r, z) {
-            for up in 1..=CLIMB {
-                if !self.solid_at(x, y, r, z + up) {
-                    z += up;
-                    return Some(self.settle(x, y, r, z as i8));
-                }
-            }
-            return None;
+        let u = self.under(x, y, r);
+        let Some(floor) = u.floor() else { return Some(GROUND) };
+        let z = if z == GROUND { floor } else { (z as i16).max(floor) };
+        if u.solid(z) {
+            return (1..=CLIMB).find(|&up| !u.solid(z + up)).map(|up| u.settle((z + up) as i8));
         }
-        Some(self.settle(x, y, r, z as i8))
+        Some(u.settle(z as i8))
     }
 
     /// True if a circle (approximated by its bounding box) of radius `r` at `(x, y)` leaves the world, overlaps

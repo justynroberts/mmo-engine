@@ -197,8 +197,7 @@ impl Blocks {
                     .take(LAYERS)
                     .enumerate()
                     .map(|(k, b)| {
-                        let kind = b.wrapping_sub(b'0');
-                        (kind < proto::game::BLOCK_KINDS).then(|| {
+                        proto::game::block_kind(b).map(|kind| {
                             let o = own.and_then(|o| o.get(k)).and_then(|o| o.as_u64()).unwrap_or(0) as usize;
                             (kind, (o > 0).then(|| owners.get(o - 1).map(|t| t.to_string())).flatten().filter(|t| !t.is_empty()))
                         })
@@ -226,7 +225,7 @@ fn cols_json<'a>(cols: impl Iterator<Item = (u32, Option<&'a Col>)>) -> String {
         let top = c.kinds.iter().rposition(|&v| v != 0).map_or(0, |t| t + 1);
         let _ = write!(o, "[{cx},{cy},{},\"", c.base);
         for &v in &c.kinds[..top] {
-            o.push(if v == 0 { '.' } else { (b'0' + v - 1) as char });
+            o.push(if v == 0 { '.' } else { proto::game::block_char(v - 1) });
         }
         o.push_str("\",[");
         for (n, &w) in c.owners[..top].iter().enumerate() {
@@ -339,8 +338,8 @@ mod tests {
         assert!(b.get(k).is_none(), "an empty column goes");
         assert_eq!(b.take_changes(), vec![(k, None)]);
         // The console's and older files' stacks count from the ground; junk is skipped, not fatal.
-        let old = Blocks::parse(r#"{"cols":[[1,2,"019"],[1,2],[1,2,"00000000000000000000"]]}"#).unwrap();
-        assert_eq!(old[0].layers, vec![Some((0, None)), Some((1, None)), None]);
+        let old = Blocks::parse(r#"{"cols":[[1,2,"0b9z"],[1,2],[1,2,"00000000000000000000"]]}"#).unwrap();
+        assert_eq!(old[0].layers, vec![Some((0, None)), Some((11, None)), Some((9, None)), None], "materials 0-9 then a-b; z is not one");
         assert_eq!((old.len(), old[1].layers.len()), (2, LAYERS));
     }
 

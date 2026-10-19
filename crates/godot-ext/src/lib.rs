@@ -135,7 +135,7 @@ impl MmoClient {
         unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().as_ref().into()
     }
 
-    /// An action with its extra byte (a build's or break's layer).
+    /// An action with its extra argument (a build's or break's `layer & 0xff | material << 8`).
     #[func]
     fn act_arg(&mut self, action: i64, target: i64, arg: i64) {
         unsafe { m::mmo_act_arg(self.c, action as u8, target as u32, arg as i32) };

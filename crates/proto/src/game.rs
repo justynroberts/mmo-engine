@@ -294,26 +294,46 @@ pub const ACT_PICKUP: u8 = 250;
 /// Jump: airborne for JUMP_SECS, and while airborne no action can target you (a dodge). Ignored mid-air.
 pub const ACT_JUMP: u8 = 251;
 pub const JUMP_SECS: f32 = 0.6;
-/// Build: put a block in the cell in the target (see `build_target`) at the layer in the input's `arg`. It must
-/// rest on the ground or touch another block on a face, so blocks bridge gaps and leave windows.
+/// Build: put a block in the cell in the target (see `build_target`) at the layer and of the material in the
+/// input's `arg` (`build_arg`). It must rest on the ground or touch another block on a face, so blocks bridge gaps
+/// and leave windows.
 pub const ACT_BUILD: u8 = 252;
-/// Break: take out the block in the target's cell at the `arg` layer. Only its owner can (or anyone, for a
-/// block nobody owns).
+/// Break: take out the block in the target's cell at the `arg` layer (`build_arg`, any material). Only its owner
+/// can (or anyone, for a block nobody owns).
 pub const ACT_BREAK: u8 = 253;
 /// How far from a column's centre you can build or break, in world units, sideways and up or down.
 pub const BUILD_REACH: f32 = 8.0;
 /// Most blocks in one column: the layers it spans above its base.
 pub const MAX_STACK: usize = crate::world::COLUMN_LAYERS as usize;
-/// Block materials (the client's theme decides what each looks like).
-pub const BLOCK_KINDS: u8 = 4;
+/// Block materials (the client's theme decides what each looks like). Text gives each a character: `0`-`9`, then
+/// `a`-`z` (see `block_char`).
+pub const BLOCK_KINDS: u8 = 12;
 
-/// The target of a build or break: the column's cell and, for a build, the material. The layer goes in `arg`.
-pub fn build_target(cx: u32, cy: u32, kind: u8) -> u32 {
-    (cx & 0x7fff) | (cy & 0x7fff) << 15 | ((kind as u32) & 3) << 30
+/// The target of a build or break: the column's cell.
+pub fn build_target(cx: u32, cy: u32) -> u32 {
+    (cx & 0x7fff) | (cy & 0x7fff) << 15
 }
 
-pub fn parse_build_target(t: u32) -> (u32, u32, u8) {
-    (t & 0x7fff, (t >> 15) & 0x7fff, (t >> 30) as u8)
+pub fn parse_build_target(t: u32) -> (u32, u32) {
+    (t & 0x7fff, (t >> 15) & 0x7fff)
+}
+
+/// The input's `arg` for a build or break: the layer in the low byte, the material in the high one.
+pub fn build_arg(layer: i8, kind: u8) -> u16 {
+    layer as u8 as u16 | (kind as u16) << 8
+}
+
+pub fn parse_build_arg(arg: u16) -> (i8, u8) {
+    (arg as u8 as i8, (arg >> 8) as u8)
+}
+
+/// A material's character in block text (`0`-`9`, `a`-`z`), and back; None for anything else.
+pub fn block_char(kind: u8) -> char {
+    char::from_digit(kind as u32, 36).unwrap_or('?')
+}
+
+pub fn block_kind(c: u8) -> Option<u8> {
+    (c as char).to_digit(36).map(|d| d as u8).filter(|&k| k < BLOCK_KINDS)
 }
 /// If the game file has an attribute of this name, the server keeps it at the share of the current jump still to
 /// come (its max at take-off, falling to its min on landing). Make it replicated and every client can draw the arc.

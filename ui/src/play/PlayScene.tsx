@@ -1,4 +1,4 @@
-import { blocksOf } from './blocks'
+import { BLOCK_KINDS, blocksOf } from './blocks'
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
@@ -175,7 +175,8 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     const BS = ref.current.info.build?.block ?? 2
     /** Height of whatever block a character stands on. */
     const lift = (x: number, y: number, z: number) => client.standLevel(x, y, z) * BS
-    const blockColours = [pal.dim, pal.line, pal.hot, pal.accent]
+    // The neon look has four inks: the twelve materials are those four, then two paler rounds of them.
+    const blockColours = Array.from({ length: BLOCK_KINDS }, (_, k) => new THREE.Color([pal.dim, pal.line, pal.hot, pal.accent][k % 4]).lerp(new THREE.Color('#ffffff'), Math.floor(k / 4) * 0.3))
     const blockMeshes: THREE.InstancedMesh[] = []
     let blocksRev = -1
     const syncBlocks = () => {
@@ -185,7 +186,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         m.geometry.dispose()
         ;(m.material as THREE.Material).dispose()
       }
-      const at: [number, number, number][][] = [[], [], [], []]
+      const at: [number, number, number][][] = blockColours.map(() => [])
       // This page draws the ground flat, so each column stands on it from its own base.
       for (const c of client.blocks.values()) {
         for (const [k, kind] of blocksOf(c)) at[kind]!.push([(c.cx + 0.5) * BS - half, (k + 0.5) * BS, (c.cy + 0.5) * BS - half])
