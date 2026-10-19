@@ -1,3 +1,4 @@
+import { blocksOf } from './blocks'
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
@@ -173,7 +174,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     // Blocks players have built: instanced cubes, one colour per material, rebuilt when they change.
     const BS = ref.current.info.build?.block ?? 2
     /** Height of whatever block a character stands on. */
-    const lift = (x: number, y: number) => client.standLevel(x, y) * BS
+    const lift = (x: number, y: number, z: number) => client.standLevel(x, y, z) * BS
     const blockColours = [pal.dim, pal.line, pal.hot, pal.accent]
     const blockMeshes: THREE.InstancedMesh[] = []
     let blocksRev = -1
@@ -185,10 +186,9 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         ;(m.material as THREE.Material).dispose()
       }
       const at: [number, number, number][][] = [[], [], [], []]
-      for (const [k, kinds] of client.blocks) {
-        const cx = k & 0x7fff
-        const cy = k >> 15
-        for (let i = 0; i < kinds.length; i++) at[Number(kinds[i]) & 3]!.push([(cx + 0.5) * BS - half, (i + 0.5) * BS, (cy + 0.5) * BS - half])
+      // This page draws the ground flat, so each column stands on it from its own base.
+      for (const c of client.blocks.values()) {
+        for (const [k, kind] of blocksOf(c)) at[kind]!.push([(c.cx + 0.5) * BS - half, (k + 0.5) * BS, (c.cy + 0.5) * BS - half])
       }
       const o = new THREE.Object3D()
       at.forEach((list, kind) => {
@@ -531,7 +531,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         world.push({ id: e.id, x, z })
         const hp = frac(hpOf(e.attrs))
         if (n < CAP) {
-          const up = lift(e.x, e.y)
+          const up = lift(e.x, e.y, e.z)
           tmp.position.set(x, up + 1 + jumpLift(inf, e.attrs), z)
           tmp.rotation.set(0, now / 1500 + e.id, 0)
           tmp.updateMatrix()
@@ -615,7 +615,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         const sx = self.x - half
         const sz = self.y - half
         me.visible = true
-        const up = lift(self.x, self.y)
+        const up = lift(self.x, self.y, self.z)
         me.position.set(sx, up + 1.3 + jumpLift(inf, self.attrs), sz)
         me.rotation.y = now / 1200
         meCore.visible = mePool.visible = lightPool.visible = true

@@ -1,7 +1,7 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 7;
+pub const PROTO_VERSION: u16 = 8;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 
@@ -111,6 +111,8 @@ pub struct Input {
     /// 0 = no action, otherwise an action id from the definitions.
     pub action: u8,
     pub target: u32,
+    /// One more byte for the action: for a build or break, the block's layer (an i8; see `world::BLOCK`).
+    pub arg: u8,
     /// Newest chat message sequence number received from the server.
     pub chat_ack: u32,
 }
@@ -124,6 +126,7 @@ pub fn encode_input(out: &mut Vec<u8>, i: &Input) {
     put_u8(out, i.dir_y as u8);
     put_u8(out, i.action);
     put_u32(out, i.target);
+    put_u8(out, i.arg);
     put_u32(out, i.chat_ack);
 }
 
@@ -137,6 +140,7 @@ pub fn decode_client(buf: &[u8]) -> Option<ClientMsg> {
             dir_y: r.i8()?,
             action: r.u8()?,
             target: r.u32()?,
+            arg: r.u8()?,
             chat_ack: r.u32()?,
         })),
         _ => None,
@@ -309,7 +313,7 @@ mod tests {
 
     #[test]
     fn input_roundtrip() {
-        let i = Input { seq: 7, ack_tick: 99, dir_x: -1, dir_y: 127, action: 1, target: 0x0100_0042, chat_ack: 5 };
+        let i = Input { seq: 7, ack_tick: 99, dir_x: -1, dir_y: 127, action: 1, target: 0x0100_0042, arg: 0xfe, chat_ack: 5 };
         let mut b = Vec::new();
         encode_input(&mut b, &i);
         assert_eq!(decode_client(&b), Some(ClientMsg::Input(i)));
@@ -326,7 +330,7 @@ mod tests {
     #[test]
     fn truncated_packets_are_rejected_not_panicking() {
         let mut b = Vec::new();
-        encode_input(&mut b, &Input { seq: 1, ack_tick: 0, dir_x: 0, dir_y: 0, action: 0, target: 0, chat_ack: 0 });
+        encode_input(&mut b, &Input { seq: 1, ack_tick: 0, dir_x: 0, dir_y: 0, action: 0, target: 0, arg: 0, chat_ack: 0 });
         for n in 0..b.len() {
             assert_eq!(decode_client(&b[..n]), None, "len {n}");
         }

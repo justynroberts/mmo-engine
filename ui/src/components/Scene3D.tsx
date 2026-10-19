@@ -1,3 +1,4 @@
+import { blocksOf } from '../play/blocks'
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
@@ -158,11 +159,11 @@ export default function Scene3D(p: Props) {
       blocksFor = [pr.blocks, land]
       dispose(blockGroup)
       const at: THREE.Vector3[][] = [[], [], [], []]
-      for (const [cx, cy, kinds] of pr.blocks ?? []) {
+      // Blocks sit on one grid for the whole world: layer z is z * BLOCK up, whatever the ground does.
+      for (const [cx, cy, base, kinds] of pr.blocks ?? []) {
         const x0 = cx * BLOCK
         const y0 = cy * BLOCK
-        const base = Math.min(land.height(x0, y0), land.height(x0 + BLOCK, y0), land.height(x0, y0 + BLOCK), land.height(x0 + BLOCK, y0 + BLOCK))
-        for (let i = 0; i < kinds.length; i++) at[Number(kinds[i]) & 3]!.push(new THREE.Vector3(x0 + BLOCK / 2 - half, base + (i + 0.5) * BLOCK, y0 + BLOCK / 2 - half))
+        for (const [k, kind] of blocksOf({ kinds })) at[kind]!.push(new THREE.Vector3(x0 + BLOCK / 2 - half, (base + k + 0.5) * BLOCK, y0 + BLOCK / 2 - half))
       }
       at.forEach((list, k) => {
         if (!list.length) return

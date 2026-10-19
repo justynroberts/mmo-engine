@@ -81,17 +81,25 @@ is. See [WORLD.md](WORLD.md).
 
 ## Building
 
-Players build and break blocks: 2 unit cubes on a grid, stacked up to 8 high, in four materials. In the Godot client
-press B for build mode: a ghost block follows the mouse (green in reach, red out of it), click to place, right-click to
-break the top block, 1-4 to pick the material (the fantasy theme draws them in the Medieval Village stone, timber,
-brick and plaster); a bar along the bottom shows them, and clicking one picks it too. Built columns are solid ground:
-you walk up onto anything one block higher than where you stand and drop off any height, so a staircase climbs a
-tower and a wall two blocks high really keeps people out (bots included). The server decides this from the column
-heights alone, and every client's prediction does the same, so standing on top needs nothing new on the wire. Blocks are kept beside the world file (`world.blocks.json`), survive a restart, and stay
-when the world is regenerated except where a new wall now stands. The console shows them on both maps; the World tab
-counts them and clears them, and `POST /api/blocks` places whole columns (`{"cols": [[cx, cy, "0123"], ...]}`). The
-browser play page draws them and collides with them, but has no build controls yet. Building is open to everyone:
-anyone can break anyone's blocks. Wire details are in [PROTOCOL.md](PROTOCOL.md#building).
+Players build and break blocks: 2 unit cubes on one grid for the whole world, up and down as well as across, in four
+materials. Every column starts in the layer its ground is in, so blocks line up level however the ground slopes, and
+any layer can hold a block or not: build a block against the side of another and you have a bridge, leave one out of
+a wall and you have a window or a doorway. In the Godot client press B for build mode: a ghost block shows where the
+next one goes (the empty cell in front of whatever the mouse is over, green in reach, red out of it), a faint box
+marks the block a right click would take out, click to place, right-click to break, 1-4 or the bar along the bottom
+to pick the material (the fantasy theme draws them in the Medieval Village stone, timber, brick and plaster).
+
+Blocks are solid ground. You walk up onto anything one block higher than where you stand and drop off any height,
+walk across bridges and under them (a body is one block tall), and a wall two blocks high really keeps people out,
+bots included. The server sends each character's layer in its snapshot (protocol version 8), and every client's
+prediction runs the same rules. Blocks belong to whoever built them: only you can break yours, any of them, not just
+the top one (guests' blocks, and blocks built before ownership existed, belong to nobody and anyone can break them).
+
+Blocks are kept beside the world file (`world.blocks.json`), survive a restart, and stay where they are when the world
+is regenerated, except where a new wall now stands or new ground buries them. The console shows them on both maps; the
+World tab counts them and clears them, and `POST /api/blocks` places whole columns counted from the ground (`{"cols":
+[[cx, cy, "01.3"], ...]}`, `.` for an empty layer). The browser play page draws them and moves on them the same way,
+but has no build controls yet. Wire details are in [PROTOCOL.md](PROTOCOL.md#building-version-8).
 
 ## God tab: spawn, weather, events
 
@@ -229,7 +237,7 @@ their prediction used the old walls. Every zone of a scaled-out world must run t
 
 The browser does not download the whole map. Worlds with up to 600 walls send them with the join info as before. Bigger ones send only a version, and the page fetches `GET /play/walls?c=cx,cy;cx,cy` (256 unit chunks, at most 64 per request) for the 5x5 window around you, drops chunks more than three away, and builds and removes buildings to match. Editing walls in the console changes the version and open pages start over on their next 5 second poll. Native clients that cannot stream yet get a clear error from `mmo_connect`; fetch `/play/walls?all=1` once and put its `all` array into `boxes` in the info JSON.
 
-Size is not the same as players. A client only receives what is within its interest radius, and a snapshot has to fit in one 1,200 byte datagram, which caps `max_visible` at 255 and in practice at about 80 with a couple of replicated attributes. Zones (below) add CPU and players, not area: every zone runs the same geometry and owns a vertical strip of it.
+Size is not the same as players. A client only receives what is within its interest radius, and a snapshot has to fit in one 1,200 byte datagram, which caps `max_visible` at 255 and in practice at about 70 with a couple of replicated attributes. Zones (below) add CPU and players, not area: every zone runs the same geometry and owns a vertical strip of it.
 
 ## Scale out (zones)
 
@@ -412,7 +420,7 @@ Themes:
 
 `character.gd` (in the fantasy theme) drives each character from the snapshots: idle, walk or run by ground speed, facing the way it moves, an attack when you act, a flinch and a floating number when health drops, a health bar once hurt. The protocol has no death event and the server respawns in the same tick, so a death is inferred: a recently hit, nearly dead character that jumps across the map or vanishes leaves a body that plays the death animation. When something hits you, the nearest character in reach swings.
 
-Spawned bots carry over every edit of the game file, bot-only or not (matched by archetype and attribute name, as a save and restore does); an archetype whose `count` the edit changes starts again at its new count. A client is sent the nearest `max_visible` entities within `interest_radius` (64 and 128 by default; one snapshot must fit a datagram, so with two replicated 8 bit attributes the most `max_visible` can be is 77), and the Godot HUD says when it is showing only the nearest ones.
+Spawned bots carry over every edit of the game file, bot-only or not (matched by archetype and attribute name, as a save and restore does); an archetype whose `count` the edit changes starts again at its new count. A client is sent the nearest `max_visible` entities within `interest_radius` (64 and 128 by default; one snapshot must fit a datagram, so with two replicated 8 bit attributes the most `max_visible` can be is 72), and the Godot HUD says when it is showing only the nearest ones.
 
 Bots can never fill the slots kept for players: archetype spawns stop at the entity table's size minus `--max-clients`, `POST /api/spawn` says how many fitted, and a saved world bigger than that is restored only as far as it fits (the server logs how many it left out).
 

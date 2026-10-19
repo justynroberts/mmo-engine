@@ -188,9 +188,9 @@ impl Gateway {
     }
 
     /// Columns players changed this tick, as they now are.
-    pub fn blocks_changed(&self, changes: Vec<(u32, Vec<u8>)>) {
+    pub fn blocks_changed(&self, changes: Vec<(u32, Option<crate::blocks::Col>)>, owners: &[String]) {
         if let Ok(mut f) = self.blocks.write() {
-            f.apply(changes);
+            f.apply(changes, owners);
         }
     }
 

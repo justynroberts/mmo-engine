@@ -60,6 +60,7 @@ pub struct Client {
     pub ack_tick: u32,
     pub action: u8,
     pub target: u32,
+    pub arg: u8,
     /// Bag version last sent and how many more times to repeat it (a lost packet must not lose a pickup).
     pub inv_sent: u32,
     pub inv_burst: u8,
@@ -385,6 +386,7 @@ fn on_connect(
         ack_tick: 0,
         action: 0,
         target: 0,
+        arg: 0,
         inv_sent: u32::MAX,
         inv_burst: 0,
         ground_n: 0,
@@ -468,6 +470,7 @@ fn apply_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, sid: u
                 if i.action != 0 {
                     c.action = i.action;
                     c.target = i.target;
+                    c.arg = i.arg;
                 }
             }
             if i.ack_tick > c.ack_tick && i.ack_tick <= sim.tick {
@@ -596,6 +599,7 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
         return;
     }
     let slot = c.slot;
+    sim.set_account(slot, Some(&proto::secure::account_tag(&id)));
     if let Some(&old) = clients.by_id.get(&id) {
         if old != sid {
             drop_client(sim, clients, store, old);
@@ -709,7 +713,7 @@ pub fn drain_actions(clients: &mut Clients, out: &mut Vec<PendingAction>) {
     out.clear();
     for c in clients.slab.iter_mut().flatten() {
         if c.action != 0 {
-            out.push(PendingAction { slot: c.slot, action: c.action, target: c.target });
+            out.push(PendingAction { slot: c.slot, action: c.action, target: c.target, arg: c.arg });
             c.action = 0;
         }
     }
@@ -957,6 +961,7 @@ mod tests {
                 ack_tick: 0,
                 action: 0,
                 target: 0,
+                arg: 0,
                 inv_sent: u32::MAX,
                 inv_burst: 0,
                 ground_n: 0,

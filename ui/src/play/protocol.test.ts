@@ -56,8 +56,9 @@ describe('handshake and sessions', () => {
 
 describe('messages', () => {
   it('encodes inputs to the exact layout the server decodes', () => {
-    const b = encodeInput({ seq: 7, ackTick: 99, dirX: -1, dirY: 127, action: 1, target: 0x01000042, chatAck: 5 })
-    expect(Array.from(b)).toEqual([2, 7, 0, 0, 0, 99, 0, 0, 0, 255, 127, 1, 0x42, 0, 0, 1, 5, 0, 0, 0])
+    const b = encodeInput({ seq: 7, ackTick: 99, dirX: -1, dirY: 127, action: 1, target: 0x01000042, arg: -2, chatAck: 5 })
+    expect(Array.from(b)).toEqual([2, 7, 0, 0, 0, 99, 0, 0, 0, 255, 127, 1, 0x42, 0, 0, 1, 254, 5, 0, 0, 0])
+    expect(encodeInput({ seq: 1, ackTick: 0, dirX: 0, dirY: 0, action: 0, target: 0, chatAck: 0 })[16]).toBe(0)
   })
 
   it('decodes a welcome', () => {
@@ -83,12 +84,13 @@ describe('messages', () => {
     v.setUint16(13, changed.length, true)
     v.setUint16(15, removed.length, true)
     for (const [id, x, y, hp] of changed) {
-      const e = new Uint8Array(13)
+      const e = new Uint8Array(14)
       const ev = new DataView(e.buffer)
       ev.setUint32(0, id, true)
       ev.setUint32(4, x, true)
       ev.setUint32(8, y, true)
-      e[12] = hp
+      ev.setInt8(12, id === 3 ? 5 : -128) // the layer: entity 3 stands five layers up, the rest on the ground
+      e[13] = hp
       parts.push(e)
     }
     for (const id of removed) {
@@ -105,7 +107,7 @@ describe('messages', () => {
     expect('info' in decodeSnapshot(snap(1, 0, [[1, 16, 32, 255], [5, 48, 64, 128]], []), defs, view)).toBe(true)
     expect(view.entries().map((e) => e.id)).toEqual([1, 5])
     decodeSnapshot(snap(2, 1, [[3, 1, 1, 10], [1, 20, 32, 255]], [5]), defs, view)
-    expect(view.entries().map((e) => [e.id, e.x])).toEqual([[1, 20], [3, 1]])
+    expect(view.entries().map((e) => [e.id, e.x, e.z])).toEqual([[1, 20, -128], [3, 1, 5]])
     // Old and duplicate packets change nothing; a delta against a tick we lack is reported.
     const stale = decodeSnapshot(snap(2, 1, [], []), defs, view)
     expect('info' in stale && stale.info.stale).toBe(true)

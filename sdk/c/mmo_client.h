@@ -27,10 +27,12 @@ enum {
 };
 
 #define MMO_MAX_REPL 4 /* replicated attributes per entity */
+#define MMO_GROUND (-128) /* MmoEntity.z for something on the bare ground */
 
 typedef struct {
   uint32_t id;
   float x, y;                  /* world units */
+  int32_t z;                   /* block layer its feet are in: MMO_GROUND, or it stands z * build.block up */
   float attrs[MMO_MAX_REPL];   /* in mmo_attr_name order; unused slots are 0 */
 } MmoEntity;
 
@@ -69,14 +71,16 @@ void mmo_status_text(const MmoClient *c, char *out, size_t cap);
 
 /* Intent. Each axis is -1, 0 or 1; the server decides the speed. Sticks until changed. */
 void mmo_set_move(MmoClient *c, int dx, int dy);
-/* A built block column's height (0 = cleared), as /play/blocks reports: keeps prediction in step with the
- * server. cx, cy are block cells (multiply by /play/info build.block for world units). */
-void mmo_set_block(MmoClient *c, uint32_t cx, uint32_t cy, int height);
-/* How many blocks up a character at (x, y) stands, 0 on the ground: draw it at that many build.block units
- * above the column's base. Characters step up one block at a time and drop off any height. */
-int mmo_level(const MmoClient *c, float x, float y);
+/* A built block column, as /play/blocks reports it: keeps prediction in step with the server (climbing, falling,
+ * walking under). cx, cy are block cells (multiply by /play/info build.block for world units); bit k of mask is
+ * a block in layer base + k, and mask 0 clears the column. */
+void mmo_set_column(MmoClient *c, uint32_t cx, uint32_t cy, int base, uint32_t mask);
+/* The owner tag /play/blocks gives the blocks you build (out holds 17 bytes); empty for a guest. */
+void mmo_account_tag(const MmoClient *c, char *out, size_t cap);
 /* One action request (ids are in /play/info "actions") against a target entity id (0 = none). */
 void mmo_act(MmoClient *c, uint8_t action, uint32_t target);
+/* An action with its extra byte: for build and break (/play/info build), the block's layer, -128..127. */
+void mmo_act_arg(MmoClient *c, uint8_t action, uint32_t target, int arg);
 /* Say (0) or shout (1). Queued and resent until the server has it; the server rate-limits and trims. */
 void mmo_say(MmoClient *c, uint8_t channel, const char *text);
 /* Pop the next line heard. Returns 1 and fills out, or 0. */

@@ -33,6 +33,9 @@ pub struct MmoEntity {
     pub id: u32,
     pub x: f32,
     pub y: f32,
+    /// The block layer its feet are in: `MMO_GROUND` (-128) on the bare ground, otherwise it stands at
+    /// `z * build.block` world units up (the top of the block below it).
+    pub z: i32,
     /// Replicated attributes, in the order of `mmo_attr_name`. Unused slots are 0.
     pub attrs: [f32; MAX_REPL],
 }
@@ -81,6 +84,7 @@ pub struct Client {
     dir: (i8, i8),
     action: u8,
     target: u32,
+    arg: u8,
     sent: Vec<(u32, Instant)>,
     rtt_ms: f32,
     last_rx: Instant,
@@ -266,6 +270,7 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         dir: (0, 0),
         action: 0,
         target: 0,
+        arg: 0,
         sent: Vec::new(),
         rtt_ms: 0.0,
         last_rx: now,
@@ -375,9 +380,13 @@ impl Client {
                             let (mx, my) = (proto::world::dpos(me.x), proto::world::dpos(me.y));
                             match self.pred.as_mut() {
                                 Some(p) => {
-                                    p.reconcile(&self.world, mx, my, info.last_input_seq);
+                                    p.reconcile(&self.world, mx, my, me.z, info.last_input_seq);
                                 }
-                                None => self.pred = Some(Predictor::new(mx, my, self.defs.move_speed, self.hz, self.defs.entity_radius)),
+                                None => {
+                                    let mut p = Predictor::new(mx, my, self.defs.move_speed, self.hz, self.defs.entity_radius);
+                                    p.z = me.z;
+                                    self.pred = Some(p);
+                                }
                             }
                         }
                         if let Some(i) = self.sent.iter().position(|(s, _)| *s == info.last_input_seq) {
@@ -408,13 +417,14 @@ impl Client {
         }
         wire::encode_input(
             &mut plain,
-            &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: self.dir.0, dir_y: self.dir.1, action: self.action, target: self.target, chat_ack: self.chat.ack() },
+            &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: self.dir.0, dir_y: self.dir.1, action: self.action, target: self.target, arg: self.arg, chat_ack: self.chat.ack() },
         );
         if s.seal(&plain, &mut pkt) {
             let _ = self.sock.send(&pkt);
         }
         self.action = 0; // an action is one request, not a held state
         self.target = 0;
+        self.arg = 0;
     }
 
     fn ent_of(&self, e: &proto::Entry) -> interp::Ent {
@@ -422,7 +432,7 @@ impl Client {
         for (k, &a) in self.defs.replicated.iter().enumerate() {
             attrs[k] = self.defs.dequantize(a, e.attrs[k]);
         }
-        interp::Ent { id: e.id, x: proto::world::dpos(e.x), y: proto::world::dpos(e.y), attrs }
+        interp::Ent { id: e.id, x: proto::world::dpos(e.x), y: proto::world::dpos(e.y), z: e.z, attrs }
     }
 
     /// Everyone else interpolated between snapshots (drawn two ticks in the past), and
@@ -444,10 +454,13 @@ impl Client {
             }
         }
         for e in self.hist.sample(now, self.hz as f64, 2.0) {
-            let mut m = MmoEntity { id: e.id, x: e.x, y: e.y, attrs: e.attrs };
+            let mut m = MmoEntity { id: e.id, x: e.x, y: e.y, z: e.z as i32, attrs: e.attrs };
             if e.id == mine {
                 if let Some((x, y)) = self.vis {
                     (m.x, m.y) = (x, y);
+                }
+                if let Some(p) = &self.pred {
+                    m.z = p.z as i32;
                 }
             }
             self.ents.push(m);
@@ -526,29 +539,43 @@ pub unsafe extern "C" fn mmo_set_move(c: *mut Client, dx: i32, dy: i32) {
     }
 }
 
-/// Tell prediction how high a built block column is (0 = cleared), as `/play/blocks` reports them, so walking
-/// into, onto and off one goes here as it does on the server. `cx`, `cy` are block cells (`/play/info`
-/// `build.block` units).
+/// Tell prediction about a built block column, as `/play/blocks` reports them, so walking into, onto, under
+/// and off one goes here as it does on the server. `cx`, `cy` are block cells (`/play/info` `build.block`
+/// units); `base` is the column's first layer and bit k of `mask` is a block in layer `base + k` (0 clears it).
 #[no_mangle]
-pub unsafe extern "C" fn mmo_set_block(c: *mut Client, cx: u32, cy: u32, height: i32) {
+pub unsafe extern "C" fn mmo_set_column(c: *mut Client, cx: u32, cy: u32, base: i32, mask: u32) {
     if let Some(c) = c.as_mut() {
-        c.world.set_block(cx, cy, height.clamp(0, u8::MAX as i32) as u8);
+        c.world.set_column(cx, cy, proto::world::Column { base: base.clamp(-128, 127) as i8, mask: mask as u16 });
     }
 }
 
-/// How many blocks up a character at `(x, y)` stands (0 = on the ground), from the blocks given to
-/// `mmo_set_block`: what to draw it at. The server decides the same way, so nothing extra is sent.
+/// The tag `/play/blocks` gives as the owner of the blocks you build (16 hex digits, NUL-terminated; `out`
+/// holds 17 bytes). Empty for a guest, whose blocks nobody owns.
 #[no_mangle]
-pub unsafe extern "C" fn mmo_level(c: *const Client, x: f32, y: f32) -> i32 {
-    c.as_ref().map_or(0, |c| c.world.level(x, y, c.defs.entity_radius) as i32)
+pub unsafe extern "C" fn mmo_account_tag(c: *const Client, out: *mut c_char, cap: usize) {
+    let Some(c) = c.as_ref() else { return };
+    if cap == 0 {
+        return;
+    }
+    let tag = c.identity.map(|id| secure::account_tag(&secure::identity_public(&id))).unwrap_or_default();
+    let n = tag.len().min(cap - 1);
+    std::ptr::copy_nonoverlapping(tag.as_ptr(), out as *mut u8, n);
+    *out.add(n) = 0;
 }
 
 /// Request an action (the ids are in `/play/info` under `actions`) against a target entity id (0 = none). One request per call.
 #[no_mangle]
 pub unsafe extern "C" fn mmo_act(c: *mut Client, action: u8, target: u32) {
+    mmo_act_arg(c, action, target, 0);
+}
+
+/// An action with its extra byte: for a build or break, the block's layer (-128..127).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_act_arg(c: *mut Client, action: u8, target: u32, arg: i32) {
     if let Some(c) = c.as_mut() {
         c.action = action;
         c.target = target;
+        c.arg = arg.clamp(-128, 255) as u8;
     }
 }
 

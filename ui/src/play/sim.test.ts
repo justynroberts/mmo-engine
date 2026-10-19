@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Interpolator, type Pos } from './interp'
-import { integrate, Predictor, World } from './sim'
+import { GROUND, integrate, Predictor, World } from './sim'
 
 const walls = () => new World(256, [[100, 0, 110, 200], [0, 120, 90, 130]])
 
@@ -12,44 +12,98 @@ describe('prediction', () => {
     expect(p.x).toBeLessThan(100)
   })
 
+  const col = (layers: number[], base = 0) => ({ base, mask: layers.reduce((m, z) => m | (1 << z), 0) })
+  /** Walk east along row 25 from x 95, like proto::world's walk_east: where you end up, your layer, your highest. */
+  const walkEast = (w: World, ticks: number) => {
+    let [x, z, top] = [95, GROUND, GROUND]
+    for (let i = 0; i < ticks; i++) {
+      ;[x, , z] = integrate(w, x, 51, z, 127, 0, 20, 0.05, 0.5)
+      top = Math.max(top, z)
+    }
+    return { x, z, top }
+  }
+
   // The same case as proto::world's built_blocks_stop_movement_like_walls_and_clearing_them_frees_the_way.
   it('stops at built blocks like the server, and passes once one is broken', () => {
     const w = new World(256, [])
-    for (let cy = 0; cy < 128; cy++) w.setBlock(50, cy, 2)
-    const walk = () => {
-      let [x, y] = [95, 51]
-      for (let i = 0; i < 200; i++) [x, y] = integrate(w, x, y, 127, 0, 20, 0.05, 0.5)
-      return x
-    }
-    expect(walk()).toBeLessThan(100)
-    expect(w.blocked(99.5, 50, 0.5)).toBe(false)
-    expect(w.blocked(99.51, 50, 0.5)).toBe(true)
-    w.setBlock(50, 25, 0)
-    expect(walk()).toBeGreaterThan(102)
+    for (let cy = 0; cy < 128; cy++) w.setColumn(50, cy, col([0, 1]))
+    expect(walkEast(w, 200).x).toBeLessThan(100)
+    expect(w.enter(99.5, 51, 0.5, GROUND)).not.toBeNull()
+    expect(w.enter(99.51, 51, 0.5, GROUND)).toBeNull()
+    w.setColumn(50, 25, col([]))
+    expect(walkEast(w, 200).x).toBeGreaterThan(102)
   })
 
   // The same case as proto::world's walkers_climb_a_staircase_one_block_at_a_time_and_drop_off_the_far_side.
   it('climbs a staircase one block at a time and drops off the far side, like the server', () => {
     const w = new World(256, [])
-    for (const [cx, h] of [[50, 1], [51, 2], [52, 3], [53, 3]] as const) w.setBlock(cx, 25, h)
-    let x = 95
-    let top = 0
-    for (let i = 0; i < 200; i++) {
-      ;[x] = integrate(w, x, 51, 127, 0, 20, 0.05, 0.5)
-      top = Math.max(top, w.level(x, 51, 0.5))
-    }
+    for (const [cx, h] of [[50, 1], [51, 2], [52, 3], [53, 3]] as const) w.setColumn(cx, 25, col([...Array(h).keys()]))
+    const { x, z, top } = walkEast(w, 200)
     expect(top).toBe(3)
     expect(x).toBeGreaterThan(108)
-    expect(w.level(x, 51, 0.5)).toBe(0)
-    expect(w.blockedFrom(102, 51, 0.5, 0)).toBe(true)
-    expect(w.blockedFrom(102, 51, 0.5, 1)).toBe(false)
+    expect(z).toBe(GROUND)
+    expect(w.enter(102, 51, 0.5, GROUND)).toBeNull()
+    expect(w.enter(102, 51, 0.5, 1)).toBe(2)
     expect(w.blocked(101, 51, 0.5)).toBe(true)
     expect(w.blockedByWalls(101, 51, 0.5)).toBe(false)
   })
 
+  // The same case as proto::world's a_bridge_is_walked_under_from_the_ground_and_over_from_above.
+  it('walks under a bridge from the ground and over it from above, like the server', () => {
+    const w = new World(256, [])
+    w.setColumn(50, 25, col([0, 1, 2]))
+    w.setColumn(53, 25, col([0, 1, 2]))
+    w.setColumn(51, 25, col([2]))
+    w.setColumn(52, 25, col([2]))
+    expect(w.enter(104, 51, 0.5, GROUND)).toBe(0)
+    expect(w.enter(104, 51, 0.5, 3)).toBe(3)
+    let [x, z] = [101, 3]
+    for (let i = 0; i < 6; i++) {
+      ;[x, , z] = integrate(w, x, 51, z, 127, 0, 20, 0.05, 0.5)
+      expect(z).toBe(3)
+    }
+    w.setColumn(51, 25, col([]))
+    w.setColumn(52, 25, col([]))
+    expect(integrate(w, 104, 51, 3, 0, 0, 20, 0.05, 0.5)[2]).toBe(GROUND)
+  })
+
+  // The same case as proto::world's a_window_is_a_gap_in_a_wall_and_a_low_doorway_lets_you_through.
+  it('goes through a low doorway and steps into a window, like the server', () => {
+    const w = new World(256, [])
+    for (let cy = 0; cy < 128; cy++) w.setColumn(50, cy, col([1, 2, 3]))
+    expect(walkEast(w, 200).x).toBeGreaterThan(102)
+    for (let cy = 0; cy < 128; cy++) w.setColumn(50, cy, col([0, 1, 2, 3]))
+    expect(walkEast(w, 200).x).toBeLessThan(100)
+    w.setColumn(50, 25, col([0, 3]))
+    expect(w.enter(99.6, 51, 0.5, GROUND)).toBe(1)
+  })
+
+  // The same case as proto::world's columns_on_uneven_ground_share_one_grid_and_are_levelled_by_layer.
+  it('levels columns on uneven ground by layer, like the server', () => {
+    const w = new World(256, [])
+    w.setColumn(50, 25, { base: 2, mask: 0b111 })
+    w.setColumn(51, 25, { base: 3, mask: 0b11 })
+    expect(w.enter(103, 51, 0.5, 5)).toBe(5)
+    expect(w.enter(103, 51, 0.5, GROUND)).toBeNull()
+  })
+
+  it('predicts climbing and dropping exactly as the shared step does', () => {
+    const w = new World(256, [])
+    w.setColumn(50, 25, col([0]))
+    w.setColumn(51, 25, col([0, 1]))
+    const p = new Predictor(95, 51, 20, 20, 0.5)
+    let [x, y, z] = [95, 51, GROUND]
+    for (let s = 1; s <= 60; s++) {
+      p.applyInput(w, s, 127, 0)
+      ;[x, y, z] = integrate(w, x, y, z, 127, 0, 20, 0.05, 0.5)
+      expect([p.x, p.y, p.z]).toEqual([x, y, z])
+    }
+    expect(p.z).toBe(GROUND) // up two steps and off the far side
+  })
+
   it('does not move faster on diagonals', () => {
     const w = new World(512, [])
-    const [x, y] = integrate(w, 100, 100, 127, 127, 20, 1, 0.5)
+    const [x, y] = integrate(w, 100, 100, GROUND, 127, 127, 20, 1, 0.5)
     expect(Math.hypot(x - 100, y - 100)).toBeCloseTo(20, 3)
   })
 
@@ -58,7 +112,7 @@ describe('prediction', () => {
     const p = new Predictor(50, 50, 20, 20, 0.5)
     for (let s = 1; s <= 10; s++) p.applyInput(w, s, 127, 0)
     const before = p.x
-    const err = p.reconcile(w, 56, 50, 6)
+    const err = p.reconcile(w, 56, 50, GROUND, 6)
     expect(p.unacked).toBe(4)
     expect(err).toBeLessThan(1e-3)
     expect(p.x).toBeCloseTo(before, 3)
@@ -68,7 +122,7 @@ describe('prediction', () => {
     const w = walls()
     const p = new Predictor(50, 50, 20, 20, 0.5)
     p.applyInput(w, 1, 127, 0)
-    expect(p.reconcile(w, 200, 200, 1)).toBeGreaterThan(100)
+    expect(p.reconcile(w, 200, 200, GROUND, 1)).toBeGreaterThan(100)
     expect([p.x, p.y]).toEqual([200, 200])
   })
 
@@ -76,7 +130,7 @@ describe('prediction', () => {
     const w = walls()
     const p = new Predictor(10, 10, 20, 20, 0.5)
     for (const s of [0xfffffffe, 0xffffffff, 0, 1]) p.applyInput(w, s, 0, 0)
-    p.reconcile(w, 10, 10, 0xffffffff)
+    p.reconcile(w, 10, 10, GROUND, 0xffffffff)
     expect(p.unacked).toBe(2)
     for (let s = 0; s < 1000; s++) p.applyInput(w, s, 0, 0)
     expect(p.unacked).toBe(64)
@@ -84,7 +138,7 @@ describe('prediction', () => {
 
   it('analog input moves proportionally', () => {
     const w = new World(512, [])
-    const [x] = integrate(w, 100, 100, 64, 0, 20, 1, 0.5)
+    const [x] = integrate(w, 100, 100, GROUND, 64, 0, 20, 1, 0.5)
     expect(x - 100).toBeCloseTo(20 * (64 / 127), 2)
   })
 })

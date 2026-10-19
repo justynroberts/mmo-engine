@@ -201,7 +201,7 @@ func apply_weather(w: Dictionary) -> void:
 
 var _block_nodes := {}    # chunk key -> Node3D of that chunk's blocks
 var _block_index := {}    # chunk key -> {column key: true}
-var _blocks := {}         # column key (cy << 15 | cx) -> materials bottom-up, e.g. "013"
+var _blocks := {}         # column key (cy << 15 | cx) -> {"b": base layer, "k": a character per layer, "o": owners}
 var _block_mats := {}     # material -> Material
 
 ## Names of the block materials (0..3), for the HUD.
@@ -219,12 +219,18 @@ func block_material(kind: int) -> Material:
 func block_size() -> float:
 	return float(info.get("build", {}).get("block", 2.0))
 
-## Where a column's bottom block sits: the lowest corner of its cell, so it never floats on a slope.
+## The lowest corner of a cell's ground: a new column's first block goes in the layer this is in, so it never
+## floats on a slope (the server decides the same way).
 func block_base(cx: int, cy: int) -> float:
 	var bs := block_size()
 	var x0 := cx * bs
 	var y0 := cy * bs
 	return minf(minf(height(x0, y0), height(x0 + bs, y0)), minf(height(x0, y0 + bs), height(x0 + bs, y0 + bs)))
+
+## The layer a new column in this cell starts in. Layer z fills heights z * block_size() to (z + 1) * block_size(),
+## the same everywhere, so blocks line up however the ground runs.
+func block_layer(cx: int, cy: int) -> int:
+	return int(floor(block_base(cx, cy) / block_size()))
 
 ## The client's blocks changed: `all` is every column, `changed` the column keys to redraw.
 func set_blocks(all: Dictionary, changed: Array) -> void:
@@ -248,12 +254,13 @@ func set_blocks(all: Dictionary, changed: Array) -> void:
 			_block_nodes.erase(ck)
 		var cols: Array = []
 		for k in _block_index.get(ck, {}):
-			cols.append([k & 0x7fff, k >> 15, String(_blocks[k])])
+			cols.append([k & 0x7fff, k >> 15, int(_blocks[k]["b"]), String(_blocks[k]["k"])])
 		if not cols.is_empty():
 			_block_nodes[ck] = build_blocks(cols)
 			add_child(_block_nodes[ck])
 
-## One chunk's blocks ([[cx, cy, "materials"], ...]): a MultiMesh of cubes per material.
+## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer): a MultiMesh of cubes per
+## material, each in its layer.
 func build_blocks(cols: Array) -> Node3D:
 	var node := Node3D.new()
 	var bs := block_size()
@@ -261,13 +268,15 @@ func build_blocks(cols: Array) -> Node3D:
 	for c in cols:
 		var cx: int = c[0]
 		var cy: int = c[1]
-		var kinds: String = c[2]
-		var base := block_base(cx, cy)
+		var base: int = c[2]
+		var kinds: String = c[3]
 		for i in kinds.length():
 			var kind := kinds.unicode_at(i) - 48
+			if kind < 0 or kind > 3:
+				continue
 			if not per_kind.has(kind):
 				per_kind[kind] = []
-			per_kind[kind].append(Vector3((cx + 0.5) * bs, base + (i + 0.5) * bs, (cy + 0.5) * bs))
+			per_kind[kind].append(Vector3((cx + 0.5) * bs, (base + i + 0.5) * bs, (cy + 0.5) * bs))
 	for kind in per_kind:
 		if not _block_mats.has(kind):
 			_block_mats[kind] = block_material(kind)

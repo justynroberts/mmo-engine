@@ -4,7 +4,8 @@ import {
   kind, reject, decodeGround, decodeInventory, type BagSlot, type ChatMsg, type Defs, type GroundItem, type Session,
 } from './protocol'
 import { Interpolator } from './interp'
-import { Predictor, World } from './sim'
+import { GROUND, Predictor, World } from './sim'
+import { maskOf, type BlockCol } from './blocks'
 import { WallStore, type WallsMeta } from './walls'
 
 export interface PlayInfo {
@@ -49,6 +50,8 @@ export interface Ent {
   id: number
   x: number
   y: number
+  /** The block layer its feet are in (GROUND on the bare ground). */
+  z: number
   /** Decoded replicated attributes by name. */
   attrs: Record<string, number>
 }
@@ -112,8 +115,8 @@ export class GameClient {
   readonly walls: WallStore
   private worldRev = -1
   ground: GroundItem[] = []
-  /** Blocks players have built (cy << 15 | cx -> materials bottom-up); `blocksRev` counts changes. */
-  readonly blocks = new Map<number, string>()
+  /** Blocks players have built, by cy << 15 | cx; `blocksRev` counts changes. */
+  readonly blocks = new Map<number, BlockCol>()
   blocksRev = 0
   private blocksVer = 0
   private blocksTimer: ReturnType<typeof setInterval> | null = null
@@ -136,17 +139,19 @@ export class GameClient {
     this.walls.adopt(fresh.walls, fresh.boxes)
   }
 
-  /** Rebuild the collision world if the walls we hold changed. Cheap when they did not. */
-  /** How many blocks up a character at (x, y) stands, by the same rule the server moves it with. */
-  standLevel(x: number, y: number): number {
-    return this.world.level(x, y, this.info.entity_radius)
+  /** How many layers above the blocks' ground a character with its feet in layer z stands at (x, y): this page
+   *  draws the ground flat, so blocks are drawn from their column's base. */
+  standLevel(x: number, y: number, z: number): number {
+    if (z === GROUND) return 0
+    return z - (this.world.floor(x, y, this.info.entity_radius) ?? z)
   }
 
+  /** Rebuild the collision world if the walls we hold changed. Cheap when they did not. */
   private syncWorld() {
     if (this.worldRev === this.walls.rev) return
     this.worldRev = this.walls.rev
     this.world = new World(this.info.world_size, this.walls.list())
-    for (const [k, kinds] of this.blocks) this.world.setBlock(k & 0x7fff, k >> 15, kinds.length)
+    for (const c of this.blocks.values()) this.world.setColumn(c.cx, c.cy, { base: c.base, mask: maskOf(c.kinds) })
   }
 
   /** What changed in the built blocks since last time: kept for drawing, and put in the collision world so
@@ -155,16 +160,16 @@ export class GameClient {
     try {
       const r = await fetch(`/play/blocks?since=${this.blocksVer}`)
       if (!r.ok) return
-      const d = (await r.json()) as { ver: number; full: boolean; cols: [number, number, string][] }
+      const d = (await r.json()) as { ver: number; full: boolean; cols: [number, number, number, string, number[]][] }
       if (d.full) {
-        for (const k of this.blocks.keys()) this.world.setBlock(k & 0x7fff, k >> 15, 0)
+        for (const c of this.blocks.values()) this.world.setColumn(c.cx, c.cy, { base: 0, mask: 0 })
         this.blocks.clear()
       }
-      for (const [cx, cy, kinds] of d.cols) {
+      for (const [cx, cy, base, kinds, owners] of d.cols) {
         const k = (cy << 15) | cx
-        if (kinds) this.blocks.set(k, kinds)
+        if (kinds) this.blocks.set(k, { cx, cy, base, kinds, owners })
         else this.blocks.delete(k)
-        this.world.setBlock(cx, cy, kinds.length)
+        this.world.setColumn(cx, cy, { base, mask: maskOf(kinds) })
       }
       if (d.full || d.cols.length) this.blocksRev++
       this.blocksVer = d.ver
@@ -378,13 +383,14 @@ export class GameClient {
     this.selfAttrs = me.attrs
     if (!this.pred) {
       this.pred = new Predictor(me.x, me.y, this.info.move_speed, this.info.hz, this.info.entity_radius)
+      this.pred.z = me.z
       this.visual = { x: me.x, y: me.y }
       this.walls.update(me.x, me.y)
       return
     }
     this.walls.update(me.x, me.y)
     this.syncWorld()
-    const err = this.pred.reconcile(this.world, me.x, me.y, lastInputSeq)
+    const err = this.pred.reconcile(this.world, me.x, me.y, me.z, lastInputSeq)
     // A big correction is the server doing something we could not know about (respawn, zone handoff): jump.
     if (err > 8 && this.visual) this.visual = { x: this.pred.x, y: this.pred.y }
   }
@@ -400,7 +406,7 @@ export class GameClient {
       const k = 1 - Math.exp(-dt * 25)
       this.visual.x += (this.pred.x - this.visual.x) * k
       this.visual.y += (this.pred.y - this.visual.y) * k
-      self = { id: this.entity, x: this.visual.x, y: this.visual.y, attrs: this.selfAttrs }
+      self = { id: this.entity, x: this.visual.x, y: this.visual.y, z: this.pred.z, attrs: this.selfAttrs }
     }
     this.last = { others, self }
     return this.last
@@ -427,7 +433,7 @@ export class GameClient {
     return this.view.entries().map((e) => {
       const attrs: Record<string, number> = {}
       rep.forEach((a, k) => (attrs[a.name] = dequantize(a, e.attrs[k] ?? 0)))
-      return { id: e.id, x: dpos(e.x), y: dpos(e.y), attrs }
+      return { id: e.id, x: dpos(e.x), y: dpos(e.y), z: e.z, attrs }
     })
   }
 }

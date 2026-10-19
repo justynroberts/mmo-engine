@@ -387,11 +387,11 @@ export function WorldView(p: Props) {
       // Built blocks, coloured by the top one of each column, at least a pixel and a half so they show far out.
       if (pr.blocks?.length) {
         const bw = Math.max(1.5, BLOCK * v.scale)
-        for (const [cx, cy, kinds] of pr.blocks) {
+        for (const [cx, cy, , kinds] of pr.blocks) {
           const x = sx(cx * BLOCK)
           const y = sy(cy * BLOCK)
           if (x < -4 || y < -4 || x > w + 4 || y > h + 4) continue
-          ctx.fillStyle = BLOCK_COLOURS[Number(kinds[kinds.length - 1]) & 3]!
+          ctx.fillStyle = BLOCK_COLOURS[Number(kinds[kinds.length - 1]) & 3]! // the top layer is never empty
           ctx.fillRect(x, y, bw, bw)
         }
       }

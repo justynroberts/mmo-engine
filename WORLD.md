@@ -6,7 +6,7 @@ the system touch it, and none of them depends on the others:
 | Part | What it does with the file |
 |---|---|
 | A generator (`crates/worldgen`, or anything else that writes this format) | Writes it. A different world is another run, with another seed or another generator |
-| The engine (`server --world FILE`) | Reads the size and the footprints of solid objects, which become its walls. Serves the file to clients byte for byte. Knows nothing else about it |
+| The engine (`server --world FILE`) | Reads the size and the footprints of solid objects, which become its walls, and the `heights`, which say which layer each built block column starts in. Serves the file to clients byte for byte. Knows nothing else about it |
 | A client theme (`godot/themes/<name>/`) | Draws it: decides what each object type, the terrain and the water look like. A different look is another theme |
 
 ```sh

@@ -40,6 +40,10 @@ pub struct Entities {
     pub god: Vec<bool>,
     /// Ticks of the current jump still to come (0 = on the ground).
     pub air: Vec<u16>,
+    /// The block layer the feet are in (`proto::world::GROUND` on the bare ground).
+    pub z: Vec<i8>,
+    /// The account a player builds as (`Blocks::owner`), 0 for none.
+    pub account: Vec<u16>,
     /// One array per attribute, indexed by slot (structure of arrays).
     pub attrs: Vec<Vec<f32>>,
     free: Vec<u32>,
@@ -66,6 +70,8 @@ impl Entities {
             counted: vec![false; cap],
             bots: 0,
             air: vec![0; cap],
+            z: vec![proto::world::GROUND; cap],
+            account: vec![0; cap],
             owner: vec![NONE; cap],
             arch: vec![NO_ARCH; cap],
             speed: vec![0.0; cap],
@@ -120,6 +126,7 @@ impl Entities {
             self.alive[slot] = false;
             self.gen[slot] = self.gen[slot].wrapping_add(1);
             self.owner[slot] = NONE;
+            self.account[slot] = 0;
             self.free.push(slot as u32);
             self.live -= 1;
         }
@@ -218,6 +225,8 @@ pub struct PendingAction {
     pub slot: usize,
     pub action: u8,
     pub target: u32,
+    /// The input's extra byte (a build's or break's layer).
+    pub arg: u8,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -273,6 +282,8 @@ pub struct Sim {
     pub next_ground: u32,
     /// What players have built (mirrored into `world` as solid columns).
     pub blocks: crate::blocks::Blocks,
+    /// The ground's heights, which say which layer a new block column starts in.
+    pub terrain: crate::worldfile::Terrain,
 }
 
 /// The part of the weather that clients draw.
@@ -316,6 +327,7 @@ impl Sim {
             ground: Vec::new(),
             next_ground: 1,
             blocks: Default::default(),
+            terrain: Default::default(),
         }
     }
 
@@ -359,6 +371,7 @@ impl Sim {
         e.alive[slot] = true;
         e.x[slot] = x;
         e.y[slot] = y;
+        e.z[slot] = self.world.settle(x, y, r, proto::world::GROUND);
         e.dir_x[slot] = 0;
         e.dir_y[slot] = 0;
         e.cooldown_until[slot] = 0;
@@ -396,6 +409,8 @@ impl Sim {
         if rec.x.is_finite() && rec.y.is_finite() && rec.x >= r && rec.y >= r && rec.x <= size - r && rec.y <= size - r && !self.world.blocked_by_walls(rec.x, rec.y, r) {
             self.ents.x[slot] = rec.x;
             self.ents.y[slot] = rec.y;
+            // Back on top of whatever is there now (it may have been built over while away).
+            self.ents.z[slot] = self.world.settle(rec.x, rec.y, r, proto::world::GROUND);
         }
         for (i, d) in self.defs.attrs.iter().enumerate() {
             if let Some(&v) = rec.attrs.get(&d.name) {
@@ -417,6 +432,7 @@ impl Sim {
         e.alive[slot] = true;
         e.x[slot] = x;
         e.y[slot] = y;
+        e.z[slot] = proto::world::GROUND;
         e.dir_x[slot] = 0;
         e.dir_y[slot] = 0;
         e.owner[slot] = GHOST;
@@ -431,57 +447,91 @@ impl Sim {
         (0..self.ents.high).filter(|&s| self.ents.alive[s] && self.ents.owner[s] == GHOST).count()
     }
 
-    /// Swap in a new set of walls without disconnecting anyone. Anything that is now inside a wall
+    /// Swap in a new set of walls (and ground) without disconnecting anyone. Anything that is now inside a wall
     /// (or outside the world) is moved to a free spot; standing on blocks is fine. Returns how many entities
     /// were moved.
-    pub fn replace_world(&mut self, world: World) -> usize {
+    pub fn replace_world(&mut self, world: World, terrain: crate::worldfile::Terrain) -> usize {
         self.world = world;
-        // Built blocks stay, except those the new world's walls now cover.
-        let cols = self.blocks.cols.iter().map(|(k, v)| (*k, v.clone())).collect();
+        self.terrain = terrain;
+        // Built blocks stay where they are, except those the new world's walls cover or its ground buries.
+        let cols = self.block_texts();
         self.set_blocks(cols);
         let r = self.defs.entity_radius;
         let mut moved = 0;
         for s in 0..self.ents.high {
-            if self.ents.alive[s] && self.world.blocked_by_walls(self.ents.x[s], self.ents.y[s], r) {
+            if !self.ents.alive[s] {
+                continue;
+            }
+            if self.world.blocked_by_walls(self.ents.x[s], self.ents.y[s], r) {
                 let (x, y) = self.world.random_spawn(&mut self.rng, r);
                 self.ents.x[s] = x;
                 self.ents.y[s] = y;
                 moved += 1;
             }
+            self.ents.z[s] = self.world.settle(self.ents.x[s], self.ents.y[s], r, self.ents.z[s]);
         }
         moved
     }
 
-    /// Put these block columns in the world (after a restart, a world change or a reset), keeping only those
-    /// inside the world and clear of its walls. Returns how many columns were left out.
-    pub fn set_blocks(&mut self, cols: Vec<(u32, Vec<u8>)>) -> usize {
-        use proto::world::{block_cell, BLOCK};
+    /// The blocks as they are, in the form `set_blocks` takes (so they can be put back after a change).
+    pub fn block_texts(&self) -> Vec<crate::blocks::ColText> {
+        let tag = |o: u16| (o > 0).then(|| self.blocks.owners.get(o as usize - 1).cloned()).flatten();
+        self.blocks
+            .cols
+            .iter()
+            .map(|(&key, c)| crate::blocks::ColText {
+                key,
+                base: Some(c.base),
+                layers: c.kinds.iter().zip(&c.owners).map(|(&k, &o)| (k != 0).then(|| (k - 1, tag(o)))).collect(),
+            })
+            .collect()
+    }
+
+    /// Put these block columns in the world (after a restart, a world change or a reset), keeping only the
+    /// blocks inside the world, clear of its walls and above its ground. A column whose text gives no base
+    /// starts at its ground's. Returns how many columns were left out.
+    pub fn set_blocks(&mut self, cols: Vec<crate::blocks::ColText>) -> usize {
+        use proto::world::{block_cell, Column, BLOCK};
         for k in self.blocks.forget_all() {
             let (cx, cy) = block_cell(k);
-            self.world.set_block(cx, cy, 0);
+            self.world.set_column(cx, cy, Column { base: 0, mask: 0 });
         }
         let mut dropped = 0;
-        for (k, kinds) in cols {
-            let (cx, cy) = block_cell(k);
+        for c in cols {
+            let (cx, cy) = block_cell(c.key);
             let (mx, my) = ((cx as f32 + 0.5) * BLOCK, (cy as f32 + 0.5) * BLOCK);
+            let base = self.terrain.base(cx, cy);
+            let from = c.base.unwrap_or(base) as i16;
+            let mut col = crate::blocks::Col::new(base);
+            for (k, layer) in c.layers.into_iter().enumerate() {
+                let (Some((kind, owner)), Some(i)) = (layer, col.index(from + k as i16)) else { continue };
+                col.kinds[i] = kind + 1;
+                col.owners[i] = self.blocks.owner(owner.as_deref());
+            }
             // A box just inside the cell: it meets walls and the edge, never the neighbouring blocks.
-            if kinds.is_empty() || self.blocks.total + kinds.len() > crate::blocks::MAX_BLOCKS || self.world.blocked_by_walls(mx, my, BLOCK / 2.0 - 0.01) {
+            let n = col.count();
+            if n == 0 || self.blocks.total + n > crate::blocks::MAX_BLOCKS || self.world.blocked_by_walls(mx, my, BLOCK / 2.0 - 0.01) {
                 dropped += 1;
                 continue;
             }
-            let h = kinds.len() as u8;
-            for kind in kinds {
-                self.blocks.push(k, kind);
-            }
-            self.world.set_block(cx, cy, h);
+            self.blocks.set_col(c.key, Some(col));
+            self.world.set_column(cx, cy, col.column());
         }
         dropped
     }
 
-    /// Whether a new column could go in this cell: inside the world, clear of walls, and nobody standing there
-    /// (a column grows under whoever is on it, but the first block would trap whoever it lands on). The grid is from the end of last tick, but it only picks the candidates:
-    /// their positions are this tick's, and nobody moves a whole grid cell in a tick.
-    fn column_free(&self, cx: u32, cy: u32) -> bool {
+    /// The layer an entity's feet count as being in, for building next to it: on the bare ground, the base
+    /// of the column at `base`.
+    fn feet(&self, s: usize, base: i8) -> i16 {
+        let z = self.ents.z[s];
+        if z == proto::world::GROUND { base as i16 } else { z as i16 }
+    }
+
+    /// Whether a block could go in layer `z` of this cell (whose column starts at `base`) without landing on
+    /// anyone: inside the world, clear of walls, and no body in that layer there. `None` for `z` asks whether
+    /// anyone at all stands in the cell. The grid is from the end of last tick, but it only picks the
+    /// candidates: their positions are this tick's, and nobody moves a whole grid cell in a tick.
+    fn cell_free(&self, cx: u32, cy: u32, base: i8, z: Option<i16>) -> bool {
         use proto::world::BLOCK;
         let (mx, my) = ((cx as f32 + 0.5) * BLOCK, (cy as f32 + 0.5) * BLOCK);
         if self.world.blocked_by_walls(mx, my, BLOCK / 2.0 - 0.01) {
@@ -493,68 +543,101 @@ impl Sim {
         self.grid.for_neighbours(mx, my, |t| {
             let t = t as usize;
             if e.alive[t] && (e.x[t] - mx).abs() < BLOCK / 2.0 + r && (e.y[t] - my).abs() < BLOCK / 2.0 + r {
-                occupied = true;
+                occupied |= z.is_none_or(|z| self.feet(t, base) == z);
             }
         });
         !occupied
     }
 
-    /// Set whole columns at once (the admin's way to place or clear blocks): each becomes exactly the materials
-    /// given, or clear when none are. A new column goes only where a player could build one. Returns how many
-    /// columns were set and how many refused.
-    pub fn put_columns(&mut self, cols: Vec<(u32, Vec<u8>)>) -> (usize, usize) {
+    /// Set whole columns at once (the admin's way to place or clear blocks): each becomes exactly the layers
+    /// given, counted from its ground, owned by nobody, or clear when none are. A new column goes only where
+    /// nobody stands. Returns how many columns were set and how many refused.
+    pub fn put_columns(&mut self, cols: Vec<crate::blocks::ColText>) -> (usize, usize) {
         use proto::world::block_cell;
         let (mut set, mut refused) = (0, 0);
-        for (k, kinds) in cols {
-            let (cx, cy) = block_cell(k);
-            let had = self.blocks.height(k);
-            if had == 0 && !kinds.is_empty() && (!self.column_free(cx, cy) || self.blocks.total + kinds.len() > crate::blocks::MAX_BLOCKS) {
+        for c in cols {
+            let (cx, cy) = block_cell(c.key);
+            let base = self.terrain.base(cx, cy);
+            let mut col = crate::blocks::Col::new(base);
+            for (k, layer) in c.layers.iter().enumerate().take(col.kinds.len()) {
+                if let Some((kind, _)) = layer {
+                    col.kinds[k] = kind + 1;
+                }
+            }
+            let n = col.count();
+            let had = self.blocks.get(c.key).map_or(0, |c| c.count());
+            if had == 0 && n > 0 && (!self.cell_free(cx, cy, base, None) || self.blocks.total + n > crate::blocks::MAX_BLOCKS) {
                 refused += 1;
                 continue;
             }
-            self.blocks.clear_col(k);
-            for &kind in &kinds {
-                self.blocks.push(k, kind);
-            }
-            self.world.set_block(cx, cy, kinds.len() as u8);
+            self.blocks.set_col(c.key, Some(col));
+            self.world.set_column(cx, cy, col.column());
             set += 1;
         }
         (set, refused)
     }
 
-    /// Build (put a block on top of a column) or break (take the top one off), for the entity in `s`. Checked
-    /// here: in reach, inside the world, not in a wall, not on anyone, under the stack and world limits.
-    fn build_action(&mut self, s: usize, action: u8, target: u32) -> bool {
-        use proto::game::{parse_build_target, ACT_BREAK, BUILD_REACH, MAX_STACK};
+    /// Build (put a block in a cell's layer) or break (take one out), for the entity in `s`. Checked here: in
+    /// reach, inside the world, not in a wall, not on anyone, resting on the ground or against another block,
+    /// under the column and world limits; and only the owner breaks a block (anyone, one nobody owns).
+    fn build_action(&mut self, s: usize, action: u8, target: u32, arg: u8) -> bool {
+        use proto::game::{parse_build_target, ACT_BREAK, BUILD_REACH};
         use proto::world::{block_key, BLOCK};
         let (cx, cy, kind) = parse_build_target(target);
+        let z = arg as i8 as i16;
         let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
         if bx + BLOCK > self.world.size || by + BLOCK > self.world.size {
             return false;
         }
         let (mx, my) = (bx + BLOCK / 2.0, by + BLOCK / 2.0);
         let (dx, dy) = (mx - self.ents.x[s], my - self.ents.y[s]);
-        if dx * dx + dy * dy > BUILD_REACH * BUILD_REACH {
+        let key = block_key(cx, cy);
+        let base = self.blocks.get(key).map_or_else(|| self.terrain.base(cx, cy), |c| c.base);
+        let (ex, ey) = ((self.ents.x[s] / BLOCK) as u32, (self.ents.y[s] / BLOCK) as u32);
+        let my_base = self.blocks.get(block_key(ex, ey)).map_or_else(|| self.terrain.base(ex, ey), |c| c.base);
+        let dz = ((z - self.feet(s, my_base)) as f32 + 0.5) * BLOCK;
+        if dx * dx + dy * dy > BUILD_REACH * BUILD_REACH || dz.abs() > BUILD_REACH {
             return false;
         }
-        let key = block_key(cx, cy);
         if action == ACT_BREAK {
-            if self.blocks.height(key) == 0 {
-                return false;
+            let Some(col) = self.blocks.get(key) else { return false };
+            let Some(k) = col.index(z).filter(|&k| col.kinds[k] != 0) else { return false };
+            if col.owners[k] != 0 && col.owners[k] != self.ents.account[s] {
+                return false; // someone else's
             }
-            self.blocks.pop(key);
-            self.world.set_block(cx, cy, self.blocks.height(key) as u8);
+            self.blocks.take(key, z);
+            let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
+            self.world.set_column(cx, cy, mask);
             self.stats.breaks += 1;
             return true;
         }
-        let h = self.blocks.height(key);
-        if h >= MAX_STACK || self.blocks.total >= crate::blocks::MAX_BLOCKS || (h == 0 && !self.column_free(cx, cy)) {
+        let col = self.blocks.get(key).copied().unwrap_or_else(|| crate::blocks::Col::new(base));
+        if col.index(z).is_none() || col.solid(z) || self.blocks.total >= crate::blocks::MAX_BLOCKS {
             return false;
         }
-        self.blocks.push(key, kind);
-        self.world.set_block(cx, cy, (h + 1) as u8);
+        // It rests on the ground, or against a block above, below or beside it.
+        let beside = |c: Option<(u32, u32)>| c.and_then(|(x, y)| self.blocks.get(block_key(x, y))).is_some_and(|n| n.solid(z));
+        let supported = z == base as i16
+            || col.solid(z - 1)
+            || col.solid(z + 1)
+            || beside(cx.checked_sub(1).map(|x| (x, cy)))
+            || beside(Some((cx + 1, cy)))
+            || beside(cy.checked_sub(1).map(|y| (cx, y)))
+            || beside(Some((cx, cy + 1)));
+        if !supported || !self.cell_free(cx, cy, base, Some(z)) {
+            return false;
+        }
+        let owner = self.ents.account[s];
+        self.blocks.put(key, base, z, kind, owner);
+        let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
+        self.world.set_column(cx, cy, mask);
         self.stats.builds += 1;
         true
+    }
+
+    /// Who a player builds as: their account's tag, or None for a guest (whose blocks nobody owns).
+    pub fn set_account(&mut self, slot: usize, tag: Option<&str>) {
+        self.ents.account[slot] = self.blocks.owner(tag);
     }
 
     /// A free point inside the home place if there is one, else anywhere free.
@@ -762,7 +845,7 @@ impl Sim {
                     if matches!(then, ActRt::Attack) {
                         if let Some(act) = attack {
                             if d2 <= attack_range * attack_range {
-                                self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t) });
+                                self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t), arg: 0 });
                             }
                         }
                     }
@@ -879,7 +962,7 @@ impl Sim {
             self.ents.dir_y[s] = dy;
             if let (Some(act), Some((d2, t))) = (attack, near) {
                 if d2 <= attack_range * attack_range {
-                    self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t) });
+                    self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t), arg: 0 });
                 }
             }
         }
@@ -903,18 +986,21 @@ impl Sim {
         let dt = self.dt;
         let e = &mut self.ents;
         for s in 0..e.high {
-            if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0) {
+            // Standing still on the bare ground changes nothing; up on blocks it may (one broken underfoot).
+            if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0 && e.z[s] == proto::world::GROUND) {
                 continue;
             }
-            let (mut nx, ny) = integrate(&self.world, e.x[s], e.y[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
+            let (mut nx, ny, mut nz) = integrate(&self.world, e.x[s], e.y[s], e.z[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
             if let (Some((lo, hi)), true) = (self.zone, e.owner[s] == NONE) {
                 nx = nx.clamp(lo + r, (hi - r).max(lo + r));
-                if self.world.blocked_from(nx, ny, r, self.world.level(e.x[s], e.y[s], r)) {
-                    continue;
+                match self.world.enter(nx, ny, r, e.z[s]) {
+                    Some(z) => nz = z,
+                    None => continue,
                 }
             }
             e.x[s] = nx;
             e.y[s] = ny;
+            e.z[s] = nz;
         }
     }
 
@@ -935,7 +1021,7 @@ impl Sim {
                 continue;
             }
             if p.action == proto::game::ACT_BUILD || p.action == proto::game::ACT_BREAK {
-                if !self.build_action(p.slot, p.action, p.target) {
+                if !self.build_action(p.slot, p.action, p.target, p.arg) {
                     self.stats.rejected_actions += 1;
                 }
                 continue;
@@ -1057,7 +1143,7 @@ impl Sim {
         for (k, &a) in self.defs.replicated.iter().enumerate() {
             attrs[k] = self.defs.quantize(a, e.attrs[a][slot]);
         }
-        Entry { id: e.id_of(slot), x: qpos(e.x[slot]), y: qpos(e.y[slot]), attrs }
+        Entry { id: e.id_of(slot), x: qpos(e.x[slot]), y: qpos(e.y[slot]), z: e.z[slot], attrs }
     }
 }
 
@@ -1085,74 +1171,92 @@ mod tests {
         place(&mut s, a, 100.0, 100.0);
         place(&mut s, b, 105.0, 100.0);
         let tid = s.ents.id_of(b);
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
         // Full energy, minus the 5 the zap costs (regen clamps at max before the action runs).
         assert!((s.ents.attrs[ATTR_ENERGY as usize][a] - 95.0).abs() < 1e-3);
         // Cooldown blocks an immediate second zap.
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
         assert_eq!(s.stats.rejected_actions, 1);
     }
 
     #[test]
-    fn building_stacks_blocks_that_stop_movement_and_breaking_takes_them_down() {
+    fn blocks_stack_bridge_and_stop_movement_and_only_their_owner_breaks_them() {
         use proto::game::{build_target, ACT_BREAK, ACT_BUILD, MAX_STACK};
+        use proto::world::{block_key, GROUND};
         let mut s = sim();
         s.world = World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 120.0, y0: 0.0, x1: 130.0, y1: 512.0 }]);
         let a = s.spawn(0).unwrap();
         let b = s.spawn(1).unwrap();
+        s.set_account(a, Some("aaaaaaaaaaaaaaaa"));
+        s.set_account(b, Some("bbbbbbbbbbbbbbbb"));
         place(&mut s, a, 100.0, 101.0);
         place(&mut s, b, 300.0, 300.0);
         s.grid.rebuild(&s.ents);
-        let act = |s: &mut Sim, action: u8, cx: u32, cy: u32| {
+        let act = |s: &mut Sim, who: usize, action: u8, cx: u32, cy: u32, z: i8| {
             let before = s.stats.rejected_actions;
-            s.step(&[PendingAction { slot: a, action, target: build_target(cx, cy, 2) }]);
+            s.step(&[PendingAction { slot: who, action, target: build_target(cx, cy, 2), arg: z as u8 }]);
             s.stats.rejected_actions == before
         };
-        // Column (53, 50) is 6 units east: in reach. Stacks to MAX_STACK and no higher.
-        for _ in 0..MAX_STACK {
-            assert!(act(&mut s, ACT_BUILD, 53, 50));
+        // Column (53, 50) is 6 units east: in reach. Flat ground, so it starts in layer 0; blocks stack up to
+        // what reach allows (a few layers above the feet), and a block cannot float with nothing to rest on.
+        assert!(!act(&mut s, a, ACT_BUILD, 53, 50, 1), "nothing under it or beside it");
+        for z in 0..3 {
+            assert!(act(&mut s, a, ACT_BUILD, 53, 50, z), "layer {z}");
         }
-        assert!(!act(&mut s, ACT_BUILD, 53, 50), "over the stack limit");
-        assert_eq!(s.blocks.cols[&proto::world::block_key(53, 50)], vec![2; MAX_STACK]);
-        assert_eq!(s.world.block_height(53, 50), MAX_STACK as u8);
-        // Refused: out of reach, on yourself, inside a wall, outside the world.
-        assert!(!act(&mut s, ACT_BUILD, 60, 50));
-        assert!(!act(&mut s, ACT_BUILD, 50, 50));
+        assert!(!act(&mut s, a, ACT_BUILD, 53, 50, 2), "already there");
+        assert!(!act(&mut s, a, ACT_BUILD, 53, 50, 6), "out of reach upwards");
+        assert_eq!(s.world.column(53, 50).unwrap().mask, 0b111);
+        // A bridge back towards us: a block beside the top one, in the air over (52, 50), then one beyond it.
+        assert!(act(&mut s, a, ACT_BUILD, 52, 50, 2) && act(&mut s, a, ACT_BUILD, 51, 50, 2));
+        assert!(s.world.column(52, 50).unwrap().solid(2) && !s.world.column(52, 50).unwrap().solid(0));
+        // Refused: out of reach sideways, on yourself, inside a wall.
+        assert!(!act(&mut s, a, ACT_BUILD, 60, 50, 0));
+        assert!(!act(&mut s, a, ACT_BUILD, 50, 50, 0));
         place(&mut s, a, 118.0, 101.0);
-        assert!(!act(&mut s, ACT_BUILD, 61, 50), "inside the wall at x 120..130");
+        assert!(!act(&mut s, a, ACT_BUILD, 61, 50, 0), "inside the wall at x 120..130");
         place(&mut s, a, 100.0, 101.0);
-        // Walking east stops at the column.
+        // Walking east goes under the bridge and stops at the 3-high column.
         s.ents.dir_x[a] = 127;
         for _ in 0..40 {
             s.step(&[]);
         }
+        s.ents.dir_x[a] = 0;
         assert!(s.ents.x[a] < 106.0 && s.ents.x[a] > 104.0, "stopped at the block: {}", s.ents.x[a]);
-        s.ents.dir_x[a] = 0;
-        // Breaking takes blocks off the top. One block high, the column is a step: walking climbs onto it.
-        for _ in 1..MAX_STACK {
-            assert!(act(&mut s, ACT_BREAK, 53, 50));
-        }
-        assert_eq!(s.world.block_height(53, 50), 1);
+        // Someone else cannot break it, wherever they stand.
+        place(&mut s, b, 104.0, 99.0);
+        assert!(!act(&mut s, b, ACT_BREAK, 53, 50, 2), "not theirs");
+        // Its owner breaks any of its blocks, not just the top: the bottom two, leaving the top one up there.
+        assert!(act(&mut s, a, ACT_BREAK, 53, 50, 0) && act(&mut s, a, ACT_BREAK, 53, 50, 1));
+        assert_eq!(s.world.column(53, 50).unwrap().mask, 0b100, "the top block stays, held up by the bridge");
+        // Now the way is clear underneath it too: walking on east goes under, on the ground.
+        place(&mut s, b, 300.0, 300.0);
         s.ents.dir_x[a] = 127;
-        let r = s.defs.entity_radius;
-        let mut climbed = false;
-        for _ in 0..20 {
+        for _ in 0..8 {
             s.step(&[]);
-            climbed |= s.world.level(s.ents.x[a], s.ents.y[a], r) == 1;
         }
         s.ents.dir_x[a] = 0;
-        assert!(climbed && s.ents.x[a] > 108.0, "walked up onto the block and on past it: x {}", s.ents.x[a]);
-        place(&mut s, a, 100.0, 101.0);
-        assert!(act(&mut s, ACT_BREAK, 53, 50));
-        assert!(s.world.block_height(53, 50) == 0 && s.blocks.total == 0);
-        assert!(!act(&mut s, ACT_BREAK, 53, 50), "nothing left to break");
-        assert_eq!((s.stats.builds, s.stats.breaks), (MAX_STACK as u64, MAX_STACK as u64));
+        assert!(s.ents.x[a] > 106.0, "walked under: {}", s.ents.x[a]);
+        assert!(s.ents.z[a] == 0 || s.ents.z[a] == GROUND, "on the ground: {}", s.ents.z[a]);
+        // A low step is climbed: one block at (57, 50) (x 114..116), walked onto from the east.
+        place(&mut s, a, 110.0, 101.0);
+        assert!(act(&mut s, a, ACT_BUILD, 57, 50, 0));
+        place(&mut s, a, 117.5, 101.0);
+        s.ents.dir_x[a] = -127;
+        let mut climbed = false;
+        for _ in 0..10 {
+            s.step(&[]);
+            climbed |= s.ents.z[a] == 1;
+        }
+        s.ents.dir_x[a] = 0;
+        assert!(climbed, "stepped up onto the block");
+        assert!(MAX_STACK >= 8);
         // A new world keeps the blocks, except where its walls now stand.
-        assert!(act(&mut s, ACT_BUILD, 53, 50) && act(&mut s, ACT_BUILD, 52, 52));
-        s.replace_world(World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 104.0, y0: 104.0, x1: 110.0, y1: 110.0 }]));
-        assert!(s.world.block_height(53, 50) == 1 && s.world.block_height(52, 52) == 0 && s.blocks.total == 1);
+        s.replace_world(World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 104.0, y0: 98.0, x1: 109.0, y1: 104.0 }]), Default::default());
+        assert!(s.blocks.get(block_key(57, 50)).is_some() && s.blocks.get(block_key(51, 50)).is_some());
+        assert!(s.blocks.get(block_key(53, 50)).is_none() && s.blocks.get(block_key(52, 50)).is_none());
+        assert_eq!(s.blocks.total, 2);
     }
 
     #[test]
@@ -1164,16 +1268,16 @@ mod tests {
         place(&mut s, a, 100.0, 100.0);
         place(&mut s, b, 105.0, 100.0);
         let tid = s.ents.id_of(b);
-        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0 }]);
+        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0, arg: 0 }]);
         assert!(s.ents.air[b] > 0);
         assert!(s.ents.attrs[air][b] > 80.0, "just took off: {}", s.ents.attrs[air][b]);
         // A zap at a jumping target misses, and the attacker keeps its cooldown and energy.
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 100.0);
         assert_eq!(s.stats.dodges, 1);
         assert_eq!(s.ents.cooldown_until[a], 0);
         // No second jump in mid-air.
-        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0 }]);
+        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0, arg: 0 }]);
         assert_eq!(s.stats.jumps, 1);
         for _ in 0..20 {
             s.step(&[]);
@@ -1181,7 +1285,7 @@ mod tests {
         assert_eq!(s.ents.air[b], 0);
         assert_eq!(s.ents.attrs[air][b], 0.0);
         // Landed: the zap connects.
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 90.0);
     }
 
@@ -1209,7 +1313,7 @@ mod tests {
         s.ents.god[b] = true;
         s.ents.attrs[ATTR_HEALTH as usize][b] = 5.0; // one zap from death
         let tid = s.ents.id_of(b);
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][b], 100.0);
         assert_eq!((s.ents.x[b], s.ents.y[b]), (105.0, 100.0), "a god is not respawned");
         assert_eq!(s.stats.respawns, 0);
@@ -1227,12 +1331,12 @@ mod tests {
         place(&mut s, a, 100.0, 100.0);
         place(&mut s, b, 200.0, 100.0);
         let tid = s.ents.id_of(b);
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.ents.attrs[0][b], 100.0);
         // Self target, unknown action, stale generation.
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: s.ents.id_of(a) }]);
-        s.step(&[PendingAction { slot: a, action: 99, target: tid }]);
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid ^ (1 << 24) }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: s.ents.id_of(a), arg: 0 }]);
+        s.step(&[PendingAction { slot: a, action: 99, target: tid, arg: 0 }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid ^ (1 << 24), arg: 0 }]);
         assert_eq!(s.stats.zaps, 0);
         assert_eq!(s.stats.rejected_actions, 4);
     }
@@ -1246,7 +1350,7 @@ mod tests {
         place(&mut s, a, 100.0, 100.0);
         place(&mut s, b, 101.0, 100.0);
         let tid = s.ents.id_of(b);
-        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid }]);
+        s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.stats.respawns, 1);
         assert_eq!(s.ents.attrs[0][b], 100.0);
     }

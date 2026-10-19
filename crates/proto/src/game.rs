@@ -294,18 +294,20 @@ pub const ACT_PICKUP: u8 = 250;
 /// Jump: airborne for JUMP_SECS, and while airborne no action can target you (a dodge). Ignored mid-air.
 pub const ACT_JUMP: u8 = 251;
 pub const JUMP_SECS: f32 = 0.6;
-/// Build: put a block on the column in the target (see `build_target`), on top of any already there.
+/// Build: put a block in the cell in the target (see `build_target`) at the layer in the input's `arg`. It must
+/// rest on the ground or touch another block on a face, so blocks bridge gaps and leave windows.
 pub const ACT_BUILD: u8 = 252;
-/// Break: take the top block off the column in the target.
+/// Break: take out the block in the target's cell at the `arg` layer. Only its owner can (or anyone, for a
+/// block nobody owns).
 pub const ACT_BREAK: u8 = 253;
-/// How far from a column's centre you can build or break, in world units.
+/// How far from a column's centre you can build or break, in world units, sideways and up or down.
 pub const BUILD_REACH: f32 = 8.0;
-/// Most blocks in one column.
-pub const MAX_STACK: usize = 8;
+/// Most blocks in one column: the layers it spans above its base.
+pub const MAX_STACK: usize = crate::world::COLUMN_LAYERS as usize;
 /// Block materials (the client's theme decides what each looks like).
 pub const BLOCK_KINDS: u8 = 4;
 
-/// The target of a build or break: the column's cell and, for a build, the material.
+/// The target of a build or break: the column's cell and, for a build, the material. The layer goes in `arg`.
 pub fn build_target(cx: u32, cy: u32, kind: u8) -> u32 {
     (cx & 0x7fff) | (cy & 0x7fff) << 15 | ((kind as u32) & 3) << 30
 }
@@ -760,7 +762,7 @@ impl GameFile {
             return Err(format!("at most {MAX_REPL} attributes can be replicated"));
         }
         let wire: usize = replicated.iter().map(|&i| if attrs[i].bits <= 8 { 1 } else { 2 }).sum();
-        let worst = HEADER_LEN + self.max_visible as usize * (12 + wire);
+        let worst = HEADER_LEN + self.max_visible as usize * (crate::snapshot::ENTRY_LEN + wire);
         if worst > SNAPSHOT_BUDGET {
             return Err(format!(
                 "max_visible {} with these replicated attributes could make a {worst} byte snapshot (limit {SNAPSHOT_BUDGET}); lower max_visible",

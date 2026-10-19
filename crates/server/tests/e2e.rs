@@ -191,7 +191,7 @@ impl Client {
     fn send_input(&mut self, dx: i8, dy: i8) -> Vec<u8> {
         self.seq += 1;
         let mut plain = Vec::new();
-        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0, chat_ack: self.chat.ack() });
+        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0, arg: 0, chat_ack: self.chat.ack() });
         let mut pkt = Vec::new();
         assert!(self.sess.seal(&plain, &mut pkt));
         self.sock.send(&pkt).unwrap();
@@ -288,7 +288,7 @@ fn traffic_on_the_wire_is_ciphertext() {
     let mut c = connect(&srv);
     let mut pkt = Vec::new();
     let mut plain = Vec::new();
-    wire::encode_input(&mut plain, &Input { seq: 7, ack_tick: 0, dir_x: 99, dir_y: 99, action: 0, target: 0, chat_ack: 0 });
+    wire::encode_input(&mut plain, &Input { seq: 7, ack_tick: 0, dir_x: 99, dir_y: 99, action: 0, target: 0, arg: 0, chat_ack: 0 });
     c.sess.seal(&plain, &mut pkt);
     assert_eq!(pkt.len(), plain.len() + proto::secure::DATA_OVERHEAD);
     assert_ne!(&pkt[proto::secure::DATA_HEADER..proto::secure::DATA_HEADER + 2], &plain[..2]);
@@ -459,7 +459,7 @@ fn many_clients_each_get_only_their_own_session() {
     let pkt = {
         let mut p = Vec::new();
         let mut plain = Vec::new();
-        wire::encode_input(&mut plain, &Input { seq: 1, ack_tick: 0, dir_x: 0, dir_y: 0, action: 0, target: 0, chat_ack: 0 });
+        wire::encode_input(&mut plain, &Input { seq: 1, ack_tick: 0, dir_x: 0, dir_y: 0, action: 0, target: 0, arg: 0, chat_ack: 0 });
         cs[0].sess.seal(&plain, &mut p);
         p
     };
@@ -1070,7 +1070,7 @@ impl WebClient {
     fn input(&mut self, dx: i8, dy: i8) {
         self.seq += 1;
         let mut plain = Vec::new();
-        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0, chat_ack: 0 });
+        wire::encode_input(&mut plain, &Input { seq: self.seq, ack_tick: self.view.last_tick, dir_x: dx, dir_y: dy, action: 0, target: 0, arg: 0, chat_ack: 0 });
         let mut pkt = Vec::new();
         assert!(self.sess.seal(&plain, &mut pkt));
         self.ws.send(tungstenite::Message::Binary(pkt)).unwrap();
@@ -1593,9 +1593,14 @@ fn hand_placed_walls_survive_a_restart() {
 }
 
 fn act(c: &mut Client, action: u8, target: u32) {
+    act_arg(c, action, target, 0);
+}
+
+/// An action with the input's extra byte (a build's or break's layer).
+fn act_arg(c: &mut Client, action: u8, target: u32, arg: u8) {
     c.seq += 1;
     let mut plain = Vec::new();
-    wire::encode_input(&mut plain, &Input { seq: c.seq, ack_tick: c.view.last_tick, dir_x: 0, dir_y: 0, action, target, chat_ack: c.chat.ack() });
+    wire::encode_input(&mut plain, &Input { seq: c.seq, ack_tick: c.view.last_tick, dir_x: 0, dir_y: 0, action, target, arg, chat_ack: c.chat.ack() });
     let mut pkt = Vec::new();
     assert!(c.sess.seal(&plain, &mut pkt));
     c.sock.send(&pkt).unwrap();
@@ -2057,13 +2062,16 @@ fn the_console_generates_a_world_previews_it_and_applies_it_live() {
     assert_eq!((w["size"].clone(), w["boxes"].as_array().unwrap().len()), (1024.0.into(), solid));
 }
 
-/// Building over the real protocol: a client builds a block next to itself and breaks it, the web feed reports
-/// each change (and only the changes), and blocks are kept across a restart.
+/// Building over the real protocol: a client builds blocks next to itself in layers and breaks one, the web feed
+/// reports each change (and only the changes) with the builder's account as owner, and blocks are kept across a
+/// restart.
 #[test]
 fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     use proto::game::{build_target, ACT_BREAK, ACT_BUILD};
     let (mut srv, web) = start_web(&[]);
-    let mut c = connect(&srv);
+    let identity = proto::secure::new_identity();
+    let tag = proto::secure::account_tag(&proto::secure::identity_public(&identity));
+    let mut c = connect_as(&srv, identity);
     c.pump(400);
     let me = c.view.entries().iter().find(|e| e.id == c.entity).map(|e| (proto::world::dpos(e.x), proto::world::dpos(e.y))).expect("in the world");
     let feed = |since: u64| -> serde_json::Value { serde_json::from_str(&web_get(web, &format!("/play/blocks?since={since}")).1).unwrap() };
@@ -2071,11 +2079,12 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     let start = feed(0);
     assert_eq!((start["full"].clone(), start["cols"].as_array().unwrap().len()), (true.into(), 0));
 
-    // A few units away in some direction there is open ground (a wall may be in the way of one or two).
+    // A few units away in some direction there is open ground (a wall may be in the way of one or two). This
+    // world has no heights, so every column starts in layer 0.
     let mut cell = None;
     for (dx, dy) in [(4.0, 0.0), (-4.0, 0.0), (0.0, 4.0), (0.0, -4.0), (3.0, 3.0), (-3.0, -3.0)] {
         let (cx, cy) = (((me.0 + dx) / 2.0).floor() as u32, ((me.1 + dy) / 2.0).floor() as u32);
-        act(&mut c, ACT_BUILD, build_target(cx, cy, 1));
+        act_arg(&mut c, ACT_BUILD, build_target(cx, cy, 1), 0);
         c.pump(250);
         if total(&srv) == 1 {
             cell = Some((cx, cy));
@@ -2083,13 +2092,16 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
         }
     }
     let (cx, cy) = cell.expect("could not build anywhere near");
-    act(&mut c, ACT_BUILD, build_target(cx, cy, 3));
+    act_arg(&mut c, ACT_BUILD, build_target(cx, cy, 3), 1);
     c.pump(250);
     let f = feed(start["ver"].as_u64().unwrap());
     assert_eq!(f["full"], false);
-    assert_eq!(f["cols"], serde_json::json!([[cx, cy, "13"]]));
-    // Out of reach is refused.
-    act(&mut c, ACT_BUILD, build_target(cx + 40, cy, 0));
+    assert_eq!(f["owners"], serde_json::json!([tag]));
+    assert_eq!(f["cols"], serde_json::json!([[cx, cy, 0, "13", [1, 1]]]));
+    // Refused: out of reach, and a block with nothing under it or beside it.
+    act_arg(&mut c, ACT_BUILD, build_target(cx + 40, cy, 0), 0);
+    c.pump(250);
+    act_arg(&mut c, ACT_BUILD, build_target(cx, cy, 0), 3);
     c.pump(250);
     assert_eq!(total(&srv), 2);
     let state = json(&srv, "GET", "/api/state?limit=1", "").1;
@@ -2097,14 +2109,14 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     assert_eq!(state["blocks"]["total"], 2);
     assert!(play_info(web).contains(r#""act_build":252"#));
 
-    // Break the top one: the feed reports the column as it now is.
+    // Break the bottom one: the top one stays where it is, and the feed reports the column as it now is.
     let v = f["ver"].as_u64().unwrap();
-    act(&mut c, ACT_BREAK, build_target(cx, cy, 0));
+    act_arg(&mut c, ACT_BREAK, build_target(cx, cy, 0), 0);
     c.pump(250);
-    assert_eq!(feed(v)["cols"], serde_json::json!([[cx, cy, "1"]]));
+    assert_eq!(feed(v)["cols"], serde_json::json!([[cx, cy, 0, ".3", [0, 1]]]));
     assert_eq!(feed(feed(0)["ver"].as_u64().unwrap())["cols"], serde_json::json!([]), "nothing new");
 
-    // Saved within a few seconds, and back after a restart.
+    // Saved within a few seconds, and back after a restart, still owned.
     std::thread::sleep(Duration::from_millis(5600));
     let dir = std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep"));
     drop(c);
@@ -2112,11 +2124,14 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     assert!(dir.join("world.blocks.json").is_file());
     let srv = start_in(dir, &[]);
     assert_eq!(total(&srv), 1);
-    // The admin can place whole columns (not on a wall or a player) and clear them all.
-    let (s, r) = json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"0123"],[4,3,"2"],[3,3,"1"]]}"#);
-    assert_eq!((s, r["set"].clone(), r["total"].clone()), (200, 3.into(), 3.into()), "{r}");
-    assert_eq!(json(&srv, "POST", "/api/blocks", r#"{"cols":[[4,3,""]]}"#).1["total"], 2);
+    let b = json(&srv, "GET", "/api/blocks", "").1;
+    assert_eq!((b["owners"].clone(), b["cols"][0][3].clone(), b["cols"][0][4].clone()), (serde_json::json!([tag]), ".3".into(), serde_json::json!([0, 1])));
+    // The admin can place whole columns, counted from the ground (not on a wall or a player), and clear them all
+    // (the restored block too).
+    let (s, r) = json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"0123"],[4,3,"2"],[3,3,"1.1"]]}"#);
+    assert_eq!((s, r["set"].clone(), r["total"].clone()), (200, 3.into(), 4.into()), "{r}");
+    assert_eq!(json(&srv, "POST", "/api/blocks", r#"{"cols":[[4,3,""]]}"#).1["total"], 3);
     assert_eq!(json(&srv, "POST", "/api/blocks", "nope").0, 400);
-    assert_eq!(json(&srv, "POST", "/api/blocks/clear", "").1["removed"], 2);
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", "").1["removed"], 3);
     assert_eq!(total(&srv), 0);
 }

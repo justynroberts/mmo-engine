@@ -56,16 +56,23 @@ var next_swing := 0.0
 var notice_until := 0.0
 var notice := ""
 var smoke_log: Array[String] = []
-# Building: blocks on a grid (/play/info "build"), stacked into columns, fetched from /play/blocks.
+# Building: blocks on one grid in all three directions (/play/info "build"), fetched from /play/blocks. Layer z
+# fills heights z * block to (z + 1) * block everywhere, so blocks line up however the ground runs.
+const GROUND := -128      # the layer of something on the bare ground
 var build := {}           # /play/info "build"; empty if the server does not offer it
 var building := false     # build mode (B)
 var build_kind := 0
-var blocks := {}          # column key (cy << 15 | cx) -> materials from the bottom up, e.g. "013"
+var blocks := {}          # column key (cy << 15 | cx) -> {"b": base layer, "k": "..01" (a layer each), "o": owners}
+var block_owners := []    # owner tags, as /play/blocks numbers them (1 = the first)
+var my_tag := ""          # the tag our own blocks carry
+var my_layer := GROUND    # the layer our feet are in
 var blocks_ver := 0
 var blocks_poll := 0.0
 var blocks_busy := false
-var ghost := MeshInstance3D.new()
-var aim_cell := Vector2i(-1, -1)
+var ghost := MeshInstance3D.new()       # where the next block would go
+var break_mark := MeshInstance3D.new()  # the block a right click would take out
+var aim_place := Vector3i(-1, -1, 0)    # cell x, cell y, layer; x < 0 for none
+var aim_break := Vector3i(-1, -1, 0)
 
 func _ready() -> void:
 	args = _parse_args()
@@ -182,6 +189,12 @@ func _start() -> void:
 		ghost.material_override = mat
 		ghost.visible = false
 		add_child(ghost)
+		var bm := BoxMesh.new()
+		bm.size = Vector3(bs, bs, bs) * 1.08
+		break_mark.mesh = bm
+		break_mark.material_override = mat.duplicate()
+		break_mark.visible = false
+		add_child(break_mark)
 		var names := []
 		var swatches := []
 		for i in int(build.get("kinds", 4)):
@@ -198,6 +211,7 @@ func _start() -> void:
 	var err: String = net.connect_to(String(args["host"]), int(args["udp"]), info_text, id)
 	if err != "":
 		return _fail(err)
+	my_tag = net.account_tag()
 	if smoke:
 		_smoke()
 	if args.has("map"):
@@ -289,12 +303,14 @@ func _process(delta: float) -> void:
 			ents[id] = n
 		var node: Node3D = ents[id]
 		var p: Vector2 = e["position"]
-		var np := Vector3(p.x, _stand_height(p), p.y)
+		var layer := int(e.get("layer", GROUND))
+		var np := Vector3(p.x, _stand_height(p, layer), p.y)
 		var hp := clampf(float(e.get(health_idx, health_max)) / health_max, 0.0, 1.0) if health_idx != "" else 1.0
 		var air := clampf(float(e.get("airborne", 0.0)) / air_max, 0.0, 1.0) if air_max > 0.0 else 0.0
 		_animate(id, node, np, hp, mine, delta, self_id, air)
 		if mine:
 			me_pos = p
+			my_layer = layer
 		elif node.has_node("body"):
 			var mat := (node.get_node("body") as MeshInstance3D).material_override as StandardMaterial3D
 			if mat:
@@ -377,67 +393,127 @@ func _poll_blocks(delta: float) -> void:
 	if not d is Dictionary:
 		return
 	var changed := {}
+	block_owners = d.get("owners", block_owners)
 	if d.get("full", false):
 		for k in blocks:
 			changed[k] = true
-			net.set_block(k & 0x7fff, k >> 15, 0)
+			net.set_column(k & 0x7fff, k >> 15, 0, 0)
 		blocks.clear()
 	for c in d.get("cols", []):
 		var cx := int(c[0])
 		var cy := int(c[1])
 		var k := cy << 15 | cx
-		var kinds := String(c[2])
+		var kinds := String(c[3])
 		changed[k] = true
 		if kinds == "":
 			blocks.erase(k)
 		else:
-			blocks[k] = kinds
-		net.set_block(cx, cy, kinds.length()) # prediction climbs and stops as the server does
+			blocks[k] = {"b": int(c[2]), "k": kinds, "o": c[4]}
+		net.set_column(cx, cy, int(c[2]), _mask(kinds)) # prediction climbs, falls and walks under as the server does
 	blocks_ver = int(d.get("ver", blocks_ver))
 	if not changed.is_empty():
 		theme.set_blocks(blocks, changed.keys())
 
-## In build mode: the column under the mouse (the ground there, or a column the ray runs into), shown as a ghost
-## block where the next one would go, green in reach and red out of it.
+## A column's layers as a bit mask, bit k for a block in its base layer + k.
+func _mask(kinds: String) -> int:
+	var m := 0
+	for k in mini(kinds.length(), 16):
+		if kinds[k] != ".":
+			m |= 1 << k
+	return m
+
+func _solid(cx: int, cy: int, z: int) -> bool:
+	var c: Dictionary = blocks.get(cy << 15 | cx, {})
+	if c.is_empty():
+		return false
+	var k: int = z - int(c["b"])
+	var kinds: String = c["k"]
+	return k >= 0 and k < kinds.length() and kinds[k] != "."
+
+## The layer a column starts in: its own if it is built, else where its ground is.
+func _col_base(cx: int, cy: int) -> int:
+	var c: Dictionary = blocks.get(cy << 15 | cx, {})
+	return int(c["b"]) if not c.is_empty() else theme.block_layer(cx, cy)
+
+## Who built a block: their tag, or "" for nobody.
+func _owner_of(cx: int, cy: int, z: int) -> String:
+	var c: Dictionary = blocks.get(cy << 15 | cx, {})
+	if c.is_empty():
+		return ""
+	var k: int = z - int(c["b"])
+	var o: Array = c["o"]
+	var n := int(o[k]) if k >= 0 and k < o.size() else 0
+	return String(block_owners[n - 1]) if n > 0 and n <= block_owners.size() else ""
+
+## Whether a block is ours to break: ours, or nobody's.
+func _breakable(cell: Vector3i) -> bool:
+	var who := _owner_of(cell.x, cell.y, cell.z)
+	return who == "" or who == my_tag
+
+## In reach of a cell's layer, as the server measures it: sideways from the cell's centre, and up or down from
+## our feet.
+func _in_reach(cell: Vector3i) -> bool:
+	var bs := float(build["block"])
+	var reach := float(build["reach"])
+	var centre := Vector2((cell.x + 0.5) * bs, (cell.y + 0.5) * bs)
+	var feet := my_layer
+	if feet == GROUND:
+		feet = _col_base(int(floor(me_pos.x / bs)), int(floor(me_pos.y / bs)))
+	return me_pos.distance_to(centre) <= reach and absf((cell.z - feet + 0.5) * bs) <= reach
+
+## In build mode: follow the mouse ray through the block grid. The first block it meets is the one a right click
+## breaks, and the empty cell just before it is where a left click builds; where the ray meets the ground first,
+## a block goes in that cell's lowest layer. Green in reach, red out of it (or, for a break, not yours).
 func _aim() -> void:
-	aim_cell = Vector2i(-1, -1)
+	aim_place = Vector3i(-1, -1, 0)
+	aim_break = Vector3i(-1, -1, 0)
 	ghost.visible = false
+	break_mark.visible = false
 	if not building or build.is_empty() or world_map.visible:
 		return
 	var bs := float(build["block"])
 	var mp := get_viewport().get_mouse_position()
 	var from := cam.project_ray_origin(mp)
 	var dir := cam.project_ray_normal(mp)
+	var prev := Vector3i(-1, -1, 0)
 	var t := 0.0
 	while t < 300.0:
 		var p := from + dir * t
-		var c := Vector2i(int(floor(p.x / bs)), int(floor(p.z / bs)))
-		var k := c.y << 15 | c.x
-		var in_col: bool = blocks.has(k) and p.y <= theme.block_base(c.x, c.y) + String(blocks[k]).length() * bs
-		if c.x >= 0 and c.y >= 0 and (in_col or p.y <= _height(p.x, p.z)):
-			aim_cell = c
-			break
-		t += 0.4
-	if aim_cell.x < 0:
-		return
-	var h := String(blocks.get(aim_cell.y << 15 | aim_cell.x, "")).length()
-	var centre := Vector2((aim_cell.x + 0.5) * bs, (aim_cell.y + 0.5) * bs)
-	ghost.visible = true
-	ghost.position = Vector3(centre.x, theme.block_base(aim_cell.x, aim_cell.y) + (h + 0.5) * bs, centre.y)
-	var ok := me_pos.distance_to(centre) <= float(build["reach"]) and h < int(build["max_stack"])
-	(ghost.material_override as StandardMaterial3D).albedo_color = Color(0.45, 1.0, 0.55, 0.4) if ok else Color(1.0, 0.35, 0.3, 0.4)
+		var cell := Vector3i(int(floor(p.x / bs)), int(floor(p.z / bs)), int(floor(p.y / bs)))
+		if cell.x >= 0 and cell.y >= 0:
+			if _solid(cell.x, cell.y, cell.z):
+				aim_break = cell
+				aim_place = prev
+				break
+			if p.y <= _height(p.x, p.z):
+				aim_place = Vector3i(cell.x, cell.y, _col_base(cell.x, cell.y))
+				break
+			prev = cell
+		t += 0.1
+	if aim_place.x >= 0:
+		ghost.visible = true
+		ghost.position = Vector3((aim_place.x + 0.5) * bs, (aim_place.z + 0.5) * bs, (aim_place.y + 0.5) * bs)
+		var near := _in_reach(aim_place)
+		(ghost.material_override as StandardMaterial3D).albedo_color = Color(0.45, 1.0, 0.55, 0.4) if near else Color(1.0, 0.35, 0.3, 0.4)
+	if aim_break.x >= 0:
+		break_mark.visible = true
+		break_mark.position = Vector3((aim_break.x + 0.5) * bs, (aim_break.z + 0.5) * bs, (aim_break.y + 0.5) * bs)
+		var ok := _in_reach(aim_break) and _breakable(aim_break)
+		(break_mark.material_override as StandardMaterial3D).albedo_color = Color(1, 1, 1, 0.18) if ok else Color(1.0, 0.35, 0.3, 0.25)
 
-## Put a block on the column you are aiming at, or take its top one off.
+## Build where the ghost is, or break the block under the mouse.
 func _build(place: bool) -> void:
-	if aim_cell.x < 0:
+	var cell := aim_place if place else aim_break
+	if cell.x < 0:
 		return
-	var bs := float(build["block"])
-	if me_pos.distance_to(Vector2((aim_cell.x + 0.5) * bs, (aim_cell.y + 0.5) * bs)) > float(build["reach"]):
-		notice = "too far to build there"
-		notice_until = t_total + 1.5
+	if not _in_reach(cell):
+		_notice("too far to build there" if place else "too far to reach that block")
 		return
-	var target := aim_cell.x | aim_cell.y << 15 | build_kind << 30
-	net.act(int(build["act_build"] if place else build["act_break"]), target)
+	if not place and not _breakable(cell):
+		_notice("that block is someone else's")
+		return
+	var target := cell.x | cell.y << 15 | build_kind << 30
+	net.act_arg(int(build["act_build"] if place else build["act_break"]), target, cell.z)
 	blocks_poll = minf(blocks_poll, 0.12)
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
@@ -589,21 +665,13 @@ func _apply_weather(w: Dictionary) -> void:
 func _height(x: float, y: float) -> float:
 	return theme.height(x, y) if theme else 0.0
 
-## Where a character at `p` stands: the ground, or the top of the block column it is on. The server says how many
-## blocks up (the same rule it moves by); the tallest column under the character says where that is.
-func _stand_height(p: Vector2) -> float:
+## Where a character at `p` with its feet in `layer` stands: the ground, or the top of the block it is on (layer
+## z is z blocks up from height 0, the same everywhere). The server sends the layer.
+func _stand_height(p: Vector2, layer: int) -> float:
 	var ground := _height(p.x, p.y)
-	var lv: int = net.level(p) if net and not blocks.is_empty() else 0
-	if lv == 0:
+	if layer == GROUND or build.is_empty():
 		return ground
-	var bs := float(build["block"])
-	var r := float(info.get("entity_radius", 0.5))
-	var top := ground
-	for cy in range(int(floor((p.y - r) / bs)), int(floor((p.y + r) / bs)) + 1):
-		for cx in range(int(floor((p.x - r) / bs)), int(floor((p.x + r) / bs)) + 1):
-			if String(blocks.get(cy << 15 | cx, "")).length() == lv:
-				top = maxf(top, theme.block_base(cx, cy) + lv * bs)
-	return top
+	return maxf(ground, layer * float(build["block"]))
 
 ## A small picture of a block material for the build bar: its texture, or a square of its colour.
 func _swatch(kind: int) -> Texture2D:
@@ -918,41 +986,56 @@ func _smoke() -> void:
 		_check("jumps", ok, "")
 		ok = await _wait(3.0, func(): return track.get(net.get_self_id(), {}).get("air", 1.0) == 0.0)
 		_check("and lands", ok, "")
-	# Building: put a block next to us (trying a few sides, in case a wall is in the way), see it arrive and be
-	# drawn, then break it.
+	# Building: put a block next to us in its column's lowest layer (trying a few sides, in case a wall is in the
+	# way) and see it arrive, owned by us, and be drawn. Climb onto it and off again. Then a second block on top,
+	# the bottom one broken out from under it (the top one stays up), and that one broken too.
 	if not build.is_empty():
 		var bs := float(build["block"])
 		var built := -1
+		var base := 0
 		for off in [Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4)]:
 			var at: Vector2 = me_pos + off
 			var c := Vector2i(int(floor(at.x / bs)), int(floor(at.y / bs)))
-			net.act(int(build["act_build"]), c.x | c.y << 15 | 2 << 30)
+			base = _col_base(c.x, c.y)
+			net.act_arg(int(build["act_build"]), c.x | c.y << 15 | 2 << 30, base)
 			blocks_poll = 0.2
 			if await _wait(3.0, func(): return blocks.has(c.y << 15 | c.x)):
 				built = c.y << 15 | c.x
+				base = int(blocks[built]["b"])
 				break
 		_check("builds a block", built >= 0, "%d column(s)" % blocks.size())
 		if built >= 0:
+			var bx := built & 0x7fff
+			var by := built >> 15
 			_check("and the theme draws it", theme._block_nodes.size() > 0, "%d chunk(s)" % theme._block_nodes.size())
+			_check("and it is ours", my_tag != "" and _owner_of(bx, by, base) == my_tag, "owner '%s', us '%s'" % [_owner_of(bx, by, base), my_tag])
 			# One block high is a step: walk onto it, stand on top, and come back down.
-			var top := Vector2(((built & 0x7fff) + 0.5) * bs, ((built >> 15) + 0.5) * bs)
+			var top := Vector2((bx + 0.5) * bs, (by + 0.5) * bs)
 			var back := me_pos
 			net.set_move((top - me_pos).normalized())
-			ok = await _wait(3.0, func(): return net.level(me_pos) == 1)
+			ok = await _wait(3.0, func(): return my_layer == base + 1)
 			net.set_move(Vector2.ZERO)
-			_check("climbs onto it", ok, "level %d at %.1f, %.1f" % [net.level(me_pos), me_pos.x, me_pos.y])
+			_check("climbs onto it", ok, "layer %d (block in %d) at %.1f, %.1f" % [my_layer, base, me_pos.x, me_pos.y])
 			var drawn: Node3D = ents.get(net.get_self_id())
 			await get_tree().create_timer(0.5).timeout
-			var block_top: float = theme.block_base(built & 0x7fff, built >> 15) + bs
+			var block_top := (base + 1) * bs
 			_check("and is drawn on top", drawn != null and drawn.position.y > block_top - 0.2, "y %.2f, block top %.2f" % [drawn.position.y if drawn else -1.0, block_top])
 			net.set_move((back - me_pos).normalized())
-			ok = await _wait(3.0, func(): return net.level(me_pos) == 0)
+			ok = await _wait(3.0, func(): return my_layer == GROUND)
 			net.set_move(Vector2.ZERO)
-			_check("and steps off", ok, "")
-			net.act(int(build["act_break"]), built & 0x7fff | (built >> 15) << 15)
+			_check("and steps off", ok, "layer %d" % my_layer)
+			net.act_arg(int(build["act_build"]), bx | by << 15 | 1 << 30, base + 1)
+			blocks_poll = 0.2
+			ok = await _wait(3.0, func(): return _solid(bx, by, base + 1))
+			_check("stacks a second block", ok, "")
+			net.act_arg(int(build["act_break"]), bx | by << 15, base)
+			blocks_poll = 0.2
+			ok = await _wait(3.0, func(): return not _solid(bx, by, base) and _solid(bx, by, base + 1))
+			_check("breaks the bottom one and the top one stays", ok, "%s" % [blocks.get(built, {})])
+			net.act_arg(int(build["act_break"]), bx | by << 15, base + 1)
 			blocks_poll = 0.2
 			ok = await _wait(3.0, func(): return not blocks.has(built))
-			_check("and breaks it", ok, "")
+			_check("and breaks that too", ok, "")
 	# Weather: define one, start it from the admin side, and the client should pick it up and make it rain.
 	var admin_url := "http://%s" % args["admin"]
 	var got := await _fetch(admin_url + "/api/game")

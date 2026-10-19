@@ -283,7 +283,7 @@ mod tests {
     }
 
     fn act(s: &mut Sim, slot: usize, a: u8) {
-        s.step(&[PendingAction { slot, action: a, target: 0 }]);
+        s.step(&[PendingAction { slot, action: a, target: 0, arg: 0 }]);
         for _ in 0..ITEM_CD_TICKS {
             s.step(&[]);
         }

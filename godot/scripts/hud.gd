@@ -68,7 +68,7 @@ func _ready() -> void:
 			chat_submitted.emit(t))
 	root.add_child(chat_in)
 
-	help.text = "WASD move   Q/E turn   wheel zoom   Tab target   Space attack (hold)   J jump   B build (click place, right-click break, 1-4 material, walk up one block at a time)   1-8 use   Shift+1-8 drop   F pick up   G god   M map   F11 full screen"
+	help.text = "WASD move   Q/E turn   wheel zoom   Tab target   Space attack (hold)   J jump   B build (click place, right-click break one of yours, 1-4 material; walk up one block at a time)   1-8 use   Shift+1-8 drop   F pick up   G god   M map   F11 full screen"
 	help.position = Vector2(14, 720 - 28)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	root.add_child(help)

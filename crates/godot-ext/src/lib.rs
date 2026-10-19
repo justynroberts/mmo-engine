@@ -118,19 +118,27 @@ impl MmoClient {
         unsafe { m::mmo_set_move(self.c, direction.x.round() as i32, direction.y.round() as i32) };
     }
 
-    /// A built block column's height (0 = cleared), as /play/blocks reports, so prediction climbs and stops as
-    /// the server does.
+    /// A built block column as /play/blocks reports it (bit k of `mask` = a block in layer `base + k`; 0
+    /// clears it), so prediction climbs, falls and walks under as the server does.
     #[func]
-    fn set_block(&mut self, cx: i64, cy: i64, height: i64) {
+    fn set_column(&mut self, cx: i64, cy: i64, base: i64, mask: i64) {
         if cx >= 0 && cy >= 0 {
-            unsafe { m::mmo_set_block(self.c, cx as u32, cy as u32, height.clamp(0, 255) as i32) };
+            unsafe { m::mmo_set_column(self.c, cx as u32, cy as u32, base as i32, mask as u32) };
         }
     }
 
-    /// How many blocks up a character at this position stands (0 = on the ground).
+    /// The owner tag /play/blocks gives the blocks you build; empty for a guest.
     #[func]
-    fn level(&self, position: Vector2) -> i64 {
-        unsafe { m::mmo_level(self.c, position.x, position.y) as i64 }
+    fn account_tag(&self) -> GString {
+        let mut buf = [0 as std::ffi::c_char; 32];
+        unsafe { m::mmo_account_tag(self.c, buf.as_mut_ptr(), buf.len()) };
+        unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().as_ref().into()
+    }
+
+    /// An action with its extra byte (a build's or break's layer).
+    #[func]
+    fn act_arg(&mut self, action: i64, target: i64, arg: i64) {
+        unsafe { m::mmo_act_arg(self.c, action as u8, target as u32, arg as i32) };
     }
 
     /// Use an action (ids are in /play/info) on a target entity id (0 for none).
@@ -176,6 +184,7 @@ impl MmoClient {
             let mut d = VarDictionary::new();
             d.set("id", e.id as i64);
             d.set("position", Vector2::new(e.x, e.y));
+            d.set("layer", e.z as i64);
             for (k, n) in names.iter().enumerate() {
                 d.set(n.as_str(), e.attrs[k] as f64);
             }

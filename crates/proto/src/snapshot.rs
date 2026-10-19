@@ -20,12 +20,16 @@ pub const MAX_REPL: usize = 4;
 pub const RING: usize = 16;
 pub const MAX_BASELINE_AGE: u32 = 12;
 pub const HEADER_LEN: usize = 17;
+/// A snapshot entry's fixed part: id, x and y (u32 each) and the layer (i8), before its attributes.
+pub const ENTRY_LEN: usize = 13;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Entry {
     pub id: u32,
     pub x: u32,
     pub y: u32,
+    /// The layer its feet are in (`world::GROUND` on the bare ground): how high it stands on built blocks.
+    pub z: i8,
     /// Quantised replicated attributes, in `Defs::replicated` order.
     pub attrs: [u16; MAX_REPL],
 }
@@ -54,6 +58,7 @@ fn write_entry(out: &mut Vec<u8>, defs: &Defs, e: &Entry) {
     put_u32(out, e.id);
     put_u32(out, e.x);
     put_u32(out, e.y);
+    put_u8(out, e.z as u8);
     for (k, &attr) in defs.replicated.iter().enumerate() {
         if defs.attr_wire_bytes(attr) == 1 {
             put_u8(out, e.attrs[k] as u8);
@@ -64,7 +69,7 @@ fn write_entry(out: &mut Vec<u8>, defs: &Defs, e: &Entry) {
 }
 
 fn read_entry(r: &mut Reader, defs: &Defs) -> Option<Entry> {
-    let mut e = Entry { id: r.u32()?, x: r.u32()?, y: r.u32()?, attrs: [0; MAX_REPL] };
+    let mut e = Entry { id: r.u32()?, x: r.u32()?, y: r.u32()?, z: r.i8()?, attrs: [0; MAX_REPL] };
     for (k, &attr) in defs.replicated.iter().enumerate() {
         e.attrs[k] = if defs.attr_wire_bytes(attr) == 1 { r.u8()? as u16 } else { r.u16()? };
     }
@@ -269,6 +274,7 @@ mod tests {
                 id,
                 x: rng.below(65536) as u32 * 61,
                 y: rng.below(65536) as u32 * 61,
+                z: rng.below(256) as u8 as i8,
                 attrs: [rng.below(256) as u16, 0, 0, 0],
             })
             .collect()
@@ -287,13 +293,16 @@ mod tests {
             if rng.below(8) == 0 {
                 e.attrs[0] = rng.below(256) as u16;
             }
+            if rng.below(8) == 0 {
+                e.z = rng.below(256) as u8 as i8;
+            }
             out.push(e);
         }
         for _ in 0..rng.below(6) {
             // some arrive
             let id = rng.below(id_space);
             if out.binary_search_by_key(&id, |e| e.id).is_err() {
-                out.push(Entry { id, x: 1, y: 2, attrs: [9, 0, 0, 0] });
+                out.push(Entry { id, x: 1, y: 2, z: crate::world::GROUND, attrs: [9, 0, 0, 0] });
             }
         }
         out.sort_by_key(|e| e.id);

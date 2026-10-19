@@ -250,13 +250,16 @@ fn main() {
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
     let mut sim = Sim::new(game, world, cap, cfg.hz, cfg.seed);
     sim.player_reserve = cfg.max_clients;
+    if let Some(w) = &world_file {
+        sim.terrain = w.terrain.clone();
+    }
     // What players built, kept beside the world file.
     let blocks_path = blocks::path_for(&world_path);
     if let Ok(text) = std::fs::read_to_string(&blocks_path) {
         match blocks::Blocks::parse(&text) {
             Ok(cols) => {
                 let dropped = sim.set_blocks(cols);
-                eprintln!("restored {} built block(s) from {}{}", sim.blocks.total, blocks_path.display(), if dropped > 0 { format!(" ({dropped} column(s) inside walls left out)") } else { String::new() });
+                eprintln!("restored {} built block(s) from {}{}", sim.blocks.total, blocks_path.display(), if dropped > 0 { format!(" ({dropped} column(s) inside walls or under the ground left out)") } else { String::new() });
                 sim.blocks.unsaved = false;
             }
             Err(e) => eprintln!("{}: {e}; starting with no built blocks", blocks_path.display()),
@@ -501,12 +504,12 @@ fn main() {
         let changes = sim.blocks.take_changes();
         if !changes.is_empty() {
             if let Some(g) = &hs.gateway {
-                g.blocks_changed(changes);
+                g.blocks_changed(changes, &sim.blocks.owners);
             }
         }
         if sim.blocks.unsaved && sim.tick % (cfg.hz * 5).max(1) == 0 {
             sim.blocks.unsaved = false;
-            blocks::save_in_background(blocks_path.clone(), format!(r#"{{"cols":{}}}"#, sim.blocks.cols_json()));
+            blocks::save_in_background(blocks_path.clone(), sim.blocks.to_json());
         }
         let t2 = Instant::now();
 
@@ -596,7 +599,7 @@ fn main() {
     net::save_all(&sim, &clients, hs.store.as_deref());
     if sim.blocks.unsaved {
         let tmp = blocks_path.with_extension("tmp");
-        if let Err(e) = std::fs::write(&tmp, format!(r#"{{"cols":{}}}"#, sim.blocks.cols_json())).and_then(|_| std::fs::rename(&tmp, &blocks_path)) {
+        if let Err(e) = std::fs::write(&tmp, sim.blocks.to_json()).and_then(|_| std::fs::rename(&tmp, &blocks_path)) {
             eprintln!("blocks: not saved to {}: {e}", blocks_path.display());
         }
     }

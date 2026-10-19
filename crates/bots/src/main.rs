@@ -385,10 +385,12 @@ fn main() {
                                                 let (mx, my) = (dpos(me.x), dpos(me.y));
                                                 match b.pred.as_mut() {
                                                     None => {
-                                                        b.pred = Some(Predictor::new(mx, my, defs.move_speed, cfg.hz, defs.entity_radius));
+                                                        let mut p = Predictor::new(mx, my, defs.move_speed, cfg.hz, defs.entity_radius);
+                                                        p.z = me.z;
+                                                        b.pred = Some(p);
                                                     }
                                                     Some(pr) => {
-                                                        let err = pr.reconcile(wd, mx, my, info.last_input_seq);
+                                                        let err = pr.reconcile(wd, mx, my, me.z, info.last_input_seq);
                                                         if err > 5.0 {
                                                             tot.teleports += 1; // respawn or similar: the server did something we cannot predict
                                                         } else {
@@ -507,6 +509,7 @@ fn main() {
                             dir_y: b.dir.1,
                             action,
                             target,
+                            arg: 0,
                             chat_ack: b.chat.ack(),
                         },
                     );

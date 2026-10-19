@@ -1,4 +1,4 @@
-# Wire protocol, version 7
+# Wire protocol, version 8
 
 Everything is UDP, little-endian, byte aligned. The reference implementations are
 `crates/proto` (Rust) and `ui/src/play/protocol.ts` (TypeScript, cross-checked against Rust).
@@ -58,7 +58,7 @@ Inner messages:
 
 | Kind | Dir | Layout |
 |---|---|---|
-| `0x02` INPUT | C->S | `seq u32 | ack_tick u32 | dir_x i8 | dir_y i8 | action u8 | target u32 | chat_ack u32` (20 bytes) |
+| `0x02` INPUT | C->S | `seq u32 | ack_tick u32 | dir_x i8 | dir_y i8 | action u8 | target u32 | arg u8 | chat_ack u32` (21 bytes) |
 | `0x04` CHAT_SEND | C->S | `cseq u32 | channel u8 | len u8 | utf8 text` (len <= 120) |
 | `0x82` SNAPSHOT | S->C | see section 3 |
 | `0x86` CHAT_BATCH | S->C | `ack_cseq u32 | n u8 | n x (seq u32 | from u32 | channel u8 | len u8 | text)` |
@@ -76,7 +76,7 @@ the server applies the newest. `ack_tick` is the newest snapshot tick you hold. 
 ```
 0x82 | tick u32 | baseline_tick u32 | last_input_seq u32 | n_changed u16 | n_removed u16
      | n_changed x entry | n_removed x entity id u32
-entry = id u32 | x u32 | y u32 | one value per replicated attribute (u8 if bits <= 8 else u16)
+entry = id u32 | x u32 | y u32 | z i8 | one value per replicated attribute (u8 if bits <= 8 else u16)
 ```
 
 - Entries are sorted by id. `baseline_tick = 0` means a full snapshot. Otherwise it is a delta against the snapshot of that
@@ -84,6 +84,8 @@ entry = id u32 | x u32 | y u32 | one value per replicated attribute (u8 if bits 
   baseline you acknowledged with `ack_tick`.
 - State = baseline + changed (replaces by id) - removed. Ignore a snapshot whose tick is not newer than the last applied.
 - `x`, `y` are `value * 16` rounded, so world units = `q / 16`. Attributes: `min + q / (2^bits - 1) * (max - min)`.
+- `z` is the block layer the entity's feet are in (see Building): -128 on the bare ground, otherwise it stands at
+  `z * 2` world units up, on top of the block in layer `z - 1`.
 - The replicated attributes and their order come from `/play/info` (`replicated` indices into `attrs`, at most 4).
 - `last_input_seq` is the newest INPUT the server applied: use it for round trip time and for client-side prediction
   (re-apply unacknowledged inputs on top of the authoritative position).
@@ -127,27 +129,44 @@ not spent). Nothing new goes on the wire. If the game file has an attribute name
 share of the current jump still to come, from its max at take-off to its min on landing; make it replicated and clients
 draw the arc from it as a parabola, `4h * p * (1 - p)` with `p = 1 - share`. The default game has one (0 to 100, 8 bits).
 
-## Building
+## Building (version 8)
 
-`252` builds and `253` breaks, in the INPUT action byte; nothing new goes on the wire, so the protocol version is
-unchanged. The target names a block column: `cx | cy << 15 | material << 30`, where a column is a `BLOCK` (2 unit)
-square cell, `cx = floor(x / 2)`, `cy = floor(y / 2)`, and the material is 0..3. A build puts a block of that material
-on top of the column (at most 8); a break takes the top one off. The server refuses a column more than 8 units from
-the builder's position, one inside a wall or outside the world, and a new column where anyone stands.
+Blocks sit on one grid for the whole world, in all three directions: a cell is a `BLOCK` (2 unit) square, `cx =
+floor(x / 2)`, `cy = floor(y / 2)`, and layer `z` fills heights `2z` to `2z + 2`, the same everywhere, so blocks line
+up however the ground runs. A cell's column starts in its *base* layer, the one the lowest corner of its ground is in
+(`floor(lowest / 2)`; the server reads the ground from the world file's `heights`, flat at 0 without them), and spans
+16 layers up from there. Any of those layers may hold a block or not, so blocks bridge gaps and leave windows. Every
+block has a material (0..3) and an owner: the account that built it (guests' blocks belong to nobody).
 
-Columns are climbed. A character stands on the tallest column its bounding square overlaps (its *level*, 0 on the
-ground, `World::level`); a move is refused only into a column more than `CLIMB` (1) block above the level it starts
-from, so a staircase is walked up one block at a time and any height is dropped off. Nothing about height goes on the
-wire: the level follows from the position and the columns, so a client that predicts mirrors the column heights it is
-told about (`World::set_block(cx, cy, height)`, `mmo_set_block`) and draws a character `level * BLOCK` above the
-column's base (`mmo_level`). `/play/info` carries `build` (block size, reach, stack limit, materials, climb, the two
+`252` builds and `253` breaks, in the INPUT action byte. The target names the cell, `cx | cy << 15 | material << 30`,
+and INPUT's `arg` the layer, as an i8. A build needs the layer empty and inside the column, the block resting on
+the column's base layer or against another block above, below or on one of its four sides, nobody's body in that
+layer of the cell, and the cell within 8 units of the builder sideways and its layer within 8 units of their feet.
+A break takes out that one block, anywhere in the column, and only its owner can (anyone, for a block nobody owns).
+The server refuses anything else (`rejected_actions`).
+
+Movement is in three dimensions. Each entity's feet are in a layer (`z` in its snapshot entry): -128 on the bare ground
+away from any column, otherwise the layer it stands in. Its bounding square overlaps some columns; a move is allowed if
+the layer it would stand in there is empty in all of them, and when it is not, the move steps up `CLIMB` (1) layer if
+that one is empty. After any move, and every tick while standing on blocks, it drops to the highest layer with a
+block under it in one of those columns (or their highest base). A body is one layer tall: you walk under a block one
+layer above the ground. Coming off the bare ground into a column you start at its base. `proto::world::World`
+(`set_column`, `enter`, `settle`, `step`) is the reference, mirrored in `ui/src/play/sim.ts`; a client that predicts
+mirrors the columns it is told about (`mmo_set_column`) and carries its own layer through prediction. `/play/info`
+carries `build` (block size, reach, layers per column as `max_stack`, materials, climb, the ground layer, the two
 action ids) when the server offers building.
 
-The blocks travel over HTTP, not UDP: `GET /play/blocks?since=VER` returns `{"ver", "full", "cols": [[cx, cy,
-"materials"], ...]}`, with materials as digits from the bottom up. With `full: false` the list holds only the columns
-changed after `VER` (an empty string is a cleared column); with `full: true` (no `since`, a version from before a
-restart, or one too far behind) it is every column and the client drops what it had. Poll it every second or so, and
-soon after building.
+The blocks travel over HTTP, not UDP: `GET /play/blocks?since=VER` returns `{"ver", "full", "owners": [tags],
+"cols": [[cx, cy, base, "layers", [owners]], ...]}`. `layers` has a character per layer from the base up to the
+highest block, `.` for an empty one and `0`-`3` for a material; `owners` has a number per layer, 0 for nobody,
+otherwise an index into the response's `owners` plus one. An owner tag is 16 hex digits of the builder's identity
+public key, so a client knows its own (`mmo_account_tag`). With `full: false` the list holds only the columns changed
+after `VER` (an empty `layers` is a cleared column); with `full: true` (no `since`, a version from before a restart,
+or one too far behind) it is every column and the client drops what it had. Poll it every second or so, and soon
+after building.
+
+Version 8 added `z` to snapshot entries (13 bytes plus attributes; with two 8 bit attributes `max_visible` can be at
+most 72) and `arg` to INPUT.
 
 ## World size (version 7)
 

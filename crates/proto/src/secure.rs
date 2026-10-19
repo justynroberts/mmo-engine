@@ -329,6 +329,12 @@ pub const CONNECT_LEN: usize = 55 + 8 + 32 + TAG_LEN;
 /// The identity of a client that wants nothing remembered.
 pub const GUEST: [u8; 32] = [0; 32];
 
+/// The short public name of an identity: what built blocks record as their owner. Sixteen hex digits of the
+/// identity's public key, so a client can tell its own blocks without being told.
+pub fn account_tag(id_pub: &[u8; 32]) -> String {
+    id_pub[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Public half of an identity secret.
 pub fn identity_public(secret: &[u8; 32]) -> [u8; 32] {
     PublicKey::from(&StaticSecret::from(*secret)).to_bytes()

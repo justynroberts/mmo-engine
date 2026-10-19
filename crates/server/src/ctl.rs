@@ -223,11 +223,11 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,
-        // Building: blocks on a grid, stacked into columns; clients fetch them from /play/blocks.
+        // Building: blocks on one grid in all three directions; clients fetch them from /play/blocks.
         "build": {
             "block": proto::world::BLOCK, "reach": proto::game::BUILD_REACH, "max_stack": proto::game::MAX_STACK,
             "kinds": proto::game::BLOCK_KINDS, "act_build": proto::game::ACT_BUILD, "act_break": proto::game::ACT_BREAK,
-            "climb": proto::world::CLIMB,
+            "climb": proto::world::CLIMB, "ground": proto::world::GROUND,
         },
         "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
         "replicated": sim.defs.replicated,
@@ -551,18 +551,18 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             let path = c.params.world_path.clone();
             use_world_file(c, &path)
         }
-        Cmd::Blocks => (200, format!(r#"{{"ver":{},"total":{},"cols":{}}}"#, c.sim.blocks.ver, c.sim.blocks.total, c.sim.blocks.cols_json())),
+        Cmd::Blocks => (200, format!(r#"{{"ver":{},"total":{},{}"#, c.sim.blocks.ver, c.sim.blocks.total, &c.sim.blocks.to_json()[1..])),
         Cmd::BlocksClear => {
             let n = c.sim.blocks.total;
             c.sim.set_blocks(Vec::new());
             (200, json!({ "ok": true, "removed": n }).to_string())
         }
-        Cmd::BlocksPut(text) => match crate::blocks::Blocks::parse_with_clears(&text) {
+        Cmd::BlocksPut(text) => match crate::blocks::Blocks::parse(&text) {
             Ok(cols) => {
                 let (set, refused) = c.sim.put_columns(cols);
                 (200, json!({ "ok": true, "set": set, "refused": refused, "total": c.sim.blocks.total }).to_string())
             }
-            Err(e) => err(400, format!("expected {{\"cols\": [[cx, cy, \"materials\"], ...]}}: {e}")),
+            Err(e) => err(400, format!("expected {{\"cols\": [[cx, cy, \"layers\"], ...]}} (materials from the ground up, . for an empty layer): {e}")),
         },
         Cmd::PutGame(text) => apply_game(&text, c),
         Cmd::State { limit } => (200, state_json(c, limit)),
@@ -642,7 +642,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
                 });
                 if let Some((_, t)) = best {
                     let target = c.sim.ents.id_of(t);
-                    c.sim.admin_actions.push(PendingAction { slot: s, action: id, target });
+                    c.sim.admin_actions.push(PendingAction { slot: s, action: id, target, arg: 0 });
                     used = Some(target);
                 }
             }
@@ -740,7 +740,7 @@ fn use_world_file(c: &mut Ctl, path: &Path) -> (u16, String) {
                 .to_string(),
         );
     }
-    let moved = c.sim.replace_world(World::from_boxes(w.size, c.params.seed, w.boxes.clone()));
+    let moved = c.sim.replace_world(World::from_boxes(w.size, c.params.seed, w.boxes.clone()), w.terrain.clone());
     let w = std::sync::Arc::new(w);
     c.hs.world = Some(w.clone());
     if let Some(g) = &c.hs.gateway {
@@ -786,8 +786,9 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         // Characters survive a world restart: save them from the world they are in, before it is replaced.
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
         // So do the blocks players built.
-        let blocks: Vec<(u32, Vec<u8>)> = c.sim.blocks.cols.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let (blocks, terrain) = (c.sim.block_texts(), c.sim.terrain.clone());
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
+        c.sim.terrain = terrain;
         c.sim.set_blocks(blocks);
         c.sim.player_reserve = c.params.max_clients;
         let (limiter, id_limiter) = (c.clients.limiter.take(), c.clients.id_limiter.take());
@@ -804,7 +805,8 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.places = game.places;
         c.sim.routes = game.routes;
         if world.boxes != c.sim.world.boxes {
-            moved = c.sim.replace_world(world);
+            let terrain = c.sim.terrain.clone();
+            moved = c.sim.replace_world(world, terrain);
         }
     }
     c.sim.populate_from(&bots);

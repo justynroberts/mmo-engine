@@ -7,7 +7,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-export const PROTO_VERSION = 7
+export const PROTO_VERSION = 8
 export const HELLO_LEN = 96
 export const CHALLENGE_LEN = 53
 export const CONNECT_LEN = 55 + 8 + 32 + 16
@@ -314,11 +314,13 @@ export interface Input {
   dirY: number
   action: number
   target: number
+  /** The action's extra byte: a build's or break's layer (-128..127). */
+  arg?: number
   chatAck: number
 }
 
 export function encodeInput(i: Input): Uint8Array {
-  const b = new Uint8Array(20)
+  const b = new Uint8Array(21)
   const v = new DataView(b.buffer)
   b[0] = kind.INPUT
   v.setUint32(1, i.seq >>> 0, true)
@@ -327,7 +329,8 @@ export function encodeInput(i: Input): Uint8Array {
   v.setInt8(10, i.dirY)
   v.setUint8(11, i.action)
   v.setUint32(12, i.target >>> 0, true)
-  v.setUint32(16, i.chatAck >>> 0, true)
+  v.setUint8(16, (i.arg ?? 0) & 0xff)
+  v.setUint32(17, i.chatAck >>> 0, true)
   return b
 }
 
@@ -342,8 +345,13 @@ export interface Entry {
   id: number
   x: number
   y: number
+  /** The block layer its feet are in; GROUND (-128) on the bare ground. */
+  z: number
   attrs: number[]
 }
+
+/** Entry.z for something on the bare ground (proto::world::GROUND). */
+export const GROUND = -128
 
 export const POS_SCALE = 16
 const RING = 16
@@ -388,9 +396,9 @@ export function decodeSnapshot(buf: Uint8Array, defs: Defs, view: ClientView): {
   let p = 17
   const changed: Entry[] = []
   for (let i = 0; i < nChanged; i++) {
-    if (p + 12 > buf.length) return { error: 'truncated' }
-    const e: Entry = { id: v.getUint32(p, true), x: v.getUint32(p + 4, true), y: v.getUint32(p + 8, true), attrs: [] }
-    p += 12
+    if (p + 13 > buf.length) return { error: 'truncated' }
+    const e: Entry = { id: v.getUint32(p, true), x: v.getUint32(p + 4, true), y: v.getUint32(p + 8, true), z: v.getInt8(p + 12), attrs: [] }
+    p += 13
     for (const a of defs.replicated) {
       if (a.bits <= 8) {
         if (p + 1 > buf.length) return { error: 'truncated' }

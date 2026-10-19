@@ -9,6 +9,8 @@ pub struct Ent {
     pub id: u32,
     pub x: f32,
     pub y: f32,
+    /// The block layer its feet are in, from the newer snapshot (layers are not blended).
+    pub z: i8,
     pub attrs: [f32; crate::MAX_REPL],
 }
 
@@ -82,7 +84,7 @@ mod tests {
     use super::*;
 
     fn ent(id: u32, x: f32) -> Ent {
-        Ent { id, x, y: 0.0, attrs: [0.0; crate::MAX_REPL] }
+        Ent { id, x, y: 0.0, z: proto::world::GROUND, attrs: [0.0; crate::MAX_REPL] }
     }
     fn snap(tick: u32, at: f64, ents: Vec<Ent>) -> Snap {
         Snap { tick, at, ents }

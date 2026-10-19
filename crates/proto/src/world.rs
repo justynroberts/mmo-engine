@@ -33,13 +33,40 @@ pub struct Aabb {
     pub y1: f32,
 }
 
-/// Edge of a building block: players build on a grid of these and stack them into columns.
+/// Edge of a building block. Blocks sit on one grid for the whole world, in all three directions: block layer
+/// `z` fills heights `z * BLOCK ..= (z + 1) * BLOCK`, so blocks line up however the ground below them runs.
 pub const BLOCK: f32 = 2.0;
-/// Blocks a walker steps up without help. A column taller than where you stand plus this is a wall; anything
-/// lower is ground you walk onto, and you drop off any height.
-pub const CLIMB: u8 = 1;
+/// Layers a column spans, upwards from its base (the layer its ground is in).
+pub const COLUMN_LAYERS: i16 = 16;
+/// The layer of something standing on the bare ground, away from any built column. Anywhere else, a layer is
+/// where its feet are: one block up from the ground for something standing on a ground-level block.
+pub const GROUND: i8 = i8::MIN;
+/// Layers a walker steps up without help. A step up has to leave it room (one layer is a body's height); a
+/// taller face is a wall. It drops off any height.
+pub const CLIMB: i16 = 1;
 /// Block columns per axis the cell key has room for (the largest world is 32768 blocks across).
 pub const BLOCK_GRID: u32 = 1 << 15;
+
+/// The base layer of a column whose ground's lowest corner is at height `lowest`: blocks start just below the
+/// ground, so a column never floats.
+pub fn base_layer(lowest: f32) -> i8 {
+    ((lowest / BLOCK).floor() as i32).clamp(-120, (i8::MAX as i16 - COLUMN_LAYERS) as i32) as i8
+}
+
+/// A built column: its base layer and which of the `COLUMN_LAYERS` above it hold a block (bit k = layer base + k).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Column {
+    pub base: i8,
+    pub mask: u16,
+}
+
+impl Column {
+    #[inline]
+    pub fn solid(&self, z: i16) -> bool {
+        let k = z - self.base as i16;
+        (0..COLUMN_LAYERS).contains(&k) && self.mask & (1 << k) != 0
+    }
+}
 
 /// A block column's key: its cell, packed.
 #[inline]
@@ -59,8 +86,8 @@ pub struct World {
     cell: f32,
     gw: usize,
     buckets: Vec<Vec<u32>>,
-    /// Heights of the block columns players have built (by `block_key`), never 0.
-    blocks: std::collections::HashMap<u32, u8>,
+    /// The block columns players have built (by `block_key`), never with an empty mask.
+    blocks: std::collections::HashMap<u32, Column>,
 }
 
 impl World {
@@ -99,61 +126,100 @@ impl World {
         World { size, seed, boxes, cell, gw, buckets, blocks: Default::default() }
     }
 
-    /// Set a block column's height (0 clears it). The server does this as players build; clients mirror it for
-    /// prediction.
-    pub fn set_block(&mut self, cx: u32, cy: u32, height: u8) {
+    /// Set a block column (an empty mask clears it). The server does this as players build; clients mirror it
+    /// for prediction.
+    pub fn set_column(&mut self, cx: u32, cy: u32, col: Column) {
         if cx >= BLOCK_GRID || cy >= BLOCK_GRID {
             return;
         }
-        if height > 0 {
-            self.blocks.insert(block_key(cx, cy), height);
+        if col.mask != 0 {
+            self.blocks.insert(block_key(cx, cy), col);
         } else {
             self.blocks.remove(&block_key(cx, cy));
         }
     }
 
-    pub fn block_height(&self, cx: u32, cy: u32) -> u8 {
-        self.blocks.get(&block_key(cx, cy)).copied().unwrap_or(0)
+    pub fn column(&self, cx: u32, cy: u32) -> Option<Column> {
+        self.blocks.get(&block_key(cx, cy)).copied()
     }
 
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
 
-    /// The tallest block column a circle (by its bounding box) of radius `r` at `(x, y)` overlaps: how many
-    /// blocks up it stands. 0 on the ground.
-    pub fn level(&self, x: f32, y: f32, r: f32) -> u8 {
+    /// The built columns a circle (by its bounding box) of radius `r` at `(x, y)` overlaps.
+    fn columns_under(&self, x: f32, y: f32, r: f32, mut f: impl FnMut(&Column)) {
         if self.blocks.is_empty() {
-            return 0;
+            return;
         }
         let last = (BLOCK_GRID - 1) as f32;
         let (cx0, cx1) = (((x - r) / BLOCK).floor().max(0.0) as u32, ((x + r) / BLOCK).floor().min(last) as u32);
         let (cy0, cy1) = (((y - r) / BLOCK).floor().max(0.0) as u32, ((y + r) / BLOCK).floor().min(last) as u32);
-        let mut top = 0;
         for cy in cy0..=cy1 {
             for cx in cx0..=cx1 {
-                let h = self.block_height(cx, cy);
-                if h > top {
+                if let Some(c) = self.blocks.get(&block_key(cx, cy)) {
                     let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
                     if x + r > bx && x - r < bx + BLOCK && y + r > by && y - r < by + BLOCK {
-                        top = h;
+                        f(c);
                     }
                 }
             }
         }
+    }
+
+    /// The highest base among the columns under a circle: the ground there, as far as blocks are concerned.
+    /// None away from every column, where only the bare ground counts.
+    pub fn floor(&self, x: f32, y: f32, r: f32) -> Option<i16> {
+        let mut top = None;
+        self.columns_under(x, y, r, |c| top = top.max(Some(c.base as i16)));
         top
     }
 
-    /// True if a circle (approximated by its bounding box) of radius `r` at `(x, y)` leaves the world, overlaps
-    /// any static box or overlaps any built block. For finding free spots; walking uses `blocked_from`.
-    pub fn blocked(&self, x: f32, y: f32, r: f32) -> bool {
-        self.level(x, y, r) > 0 || self.blocked_by_walls(x, y, r)
+    /// True if any column under a circle has a block in layer `z`.
+    pub fn solid_at(&self, x: f32, y: f32, r: f32, z: i16) -> bool {
+        let mut hit = false;
+        self.columns_under(x, y, r, |c| hit |= c.solid(z));
+        hit
     }
 
-    /// True if something standing `level` blocks up cannot be at `(x, y)`: out of the world, in a wall, or
-    /// against a column more than `CLIMB` blocks above it.
-    pub fn blocked_from(&self, x: f32, y: f32, r: f32, level: u8) -> bool {
-        self.level(x, y, r) > level.saturating_add(CLIMB) || self.blocked_by_walls(x, y, r)
+    /// Where something with its feet in layer `z` ends up standing at `(x, y)` without moving sideways: pushed up
+    /// out of any block it is inside, then dropped onto whatever is below it.
+    pub fn settle(&self, x: f32, y: f32, r: f32, z: i8) -> i8 {
+        let Some(floor) = self.floor(x, y, r) else { return GROUND };
+        let mut z = if z == GROUND { floor } else { (z as i16).max(floor) };
+        while self.solid_at(x, y, r, z) && z < i8::MAX as i16 {
+            z += 1;
+        }
+        while z > floor && !self.solid_at(x, y, r, z - 1) {
+            z -= 1;
+        }
+        z as i8
+    }
+
+    /// Where something with its feet in layer `z` stands if it moves to `(x, y)`, or None if it cannot: a wall,
+    /// the world's edge, or a block face taller than it climbs.
+    pub fn enter(&self, x: f32, y: f32, r: f32, z: i8) -> Option<i8> {
+        if self.blocked_by_walls(x, y, r) {
+            return None;
+        }
+        let Some(floor) = self.floor(x, y, r) else { return Some(GROUND) };
+        let mut z = if z == GROUND { floor } else { (z as i16).max(floor) };
+        if self.solid_at(x, y, r, z) {
+            for up in 1..=CLIMB {
+                if !self.solid_at(x, y, r, z + up) {
+                    z += up;
+                    return Some(self.settle(x, y, r, z as i8));
+                }
+            }
+            return None;
+        }
+        Some(self.settle(x, y, r, z as i8))
+    }
+
+    /// True if a circle (approximated by its bounding box) of radius `r` at `(x, y)` leaves the world, overlaps
+    /// any static box or overlaps any built column. For finding free spots; walking uses `enter`.
+    pub fn blocked(&self, x: f32, y: f32, r: f32) -> bool {
+        self.floor(x, y, r).is_some() || self.blocked_by_walls(x, y, r)
     }
 
     /// Like `blocked` but built blocks do not count (something may be standing on them).
@@ -178,16 +244,19 @@ impl World {
         false
     }
 
-    /// Axis-separated move so entities slide along walls instead of sticking. Built blocks are climbed
-    /// `CLIMB` at a time from where the move starts.
+    /// Axis-separated move so entities slide along walls instead of sticking, climbing and dropping as they go.
+    /// `z` is the layer the feet are in (`GROUND` on the bare ground).
     #[inline]
-    pub fn step(&self, x: f32, y: f32, dx: f32, dy: f32, r: f32) -> (f32, f32) {
-        let level = self.level(x, y, r);
-        let nx = x + dx;
-        let x1 = if self.blocked_from(nx, y, r, level) { x } else { nx };
-        let ny = y + dy;
-        let y1 = if self.blocked_from(x1, ny, r, level) { y } else { ny };
-        (x1, y1)
+    pub fn step(&self, x: f32, y: f32, z: i8, dx: f32, dy: f32, r: f32) -> (f32, f32, i8) {
+        let (x1, z1) = match self.enter(x + dx, y, r, z) {
+            Some(z1) => (x + dx, z1),
+            None => (x, z),
+        };
+        let (y1, z2) = match self.enter(x1, y + dy, r, z1) {
+            Some(z2) => (y + dy, z2),
+            None => (y, z1),
+        };
+        (x1, y1, z2)
     }
 
     /// Find a free spot. Falls back to the centre if the world is pathological.
@@ -219,23 +288,26 @@ pub fn move_vector(dir_x: i8, dir_y: i8) -> (f32, f32) {
     }
 }
 
-/// One movement tick, identical on server and (for prediction) client.
+/// One movement tick, identical on server and (for prediction) client. Standing still still settles: a block
+/// broken underfoot drops you.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn integrate(
     world: &World,
     x: f32,
     y: f32,
+    z: i8,
     dir_x: i8,
     dir_y: i8,
     speed: f32,
     dt: f32,
     r: f32,
-) -> (f32, f32) {
+) -> (f32, f32, i8) {
     let (mx, my) = move_vector(dir_x, dir_y);
     if mx == 0.0 && my == 0.0 {
-        return (x, y);
+        return (x, y, if z == GROUND { z } else { world.settle(x, y, r, z) });
     }
-    world.step(x, y, mx * speed * dt, my * speed * dt, r)
+    world.step(x, y, z, mx * speed * dt, my * speed * dt, r)
 }
 
 #[cfg(test)]
@@ -255,14 +327,14 @@ mod tests {
         let w = wall_world();
         let (mut x, mut y) = (95.0, 50.0);
         for _ in 0..200 {
-            let r = integrate(&w, x, y, 127, 0, 20.0, 0.05, 0.5);
+            let r = integrate(&w, x, y, GROUND, 127, 0, 20.0, 0.05, 0.5);
             x = r.0;
             y = r.1;
         }
         assert!(x < 100.0, "tunnelled through wall: x={x}");
         let (mut x, mut y) = (5.0, 5.0);
         for _ in 0..400 {
-            let r = integrate(&w, x, y, -127, -127, 20.0, 0.05, 0.5);
+            let r = integrate(&w, x, y, GROUND, -127, -127, 20.0, 0.05, 0.5);
             x = r.0;
             y = r.1;
         }
@@ -274,7 +346,7 @@ mod tests {
         let w = wall_world();
         let (mut x, mut y) = (99.0, 50.0);
         for _ in 0..40 {
-            let r = integrate(&w, x, y, 127, 127, 20.0, 0.05, 0.5);
+            let r = integrate(&w, x, y, GROUND, 127, 127, 20.0, 0.05, 0.5);
             x = r.0;
             y = r.1;
         }
@@ -285,9 +357,9 @@ mod tests {
     #[test]
     fn speed_is_server_controlled_and_diagonals_not_faster() {
         let w = World::from_boxes(512.0, 1, vec![]);
-        let (x, y) = integrate(&w, 100.0, 100.0, 127, 0, 20.0, 1.0, 0.5);
+        let (x, y, _) = integrate(&w, 100.0, 100.0, GROUND, 127, 0, 20.0, 1.0, 0.5);
         assert!((x - 120.0).abs() < 1e-3 && (y - 100.0).abs() < 1e-3);
-        let (x, y) = integrate(&w, 100.0, 100.0, 127, 127, 20.0, 1.0, 0.5);
+        let (x, y, _) = integrate(&w, 100.0, 100.0, GROUND, 127, 127, 20.0, 1.0, 0.5);
         let d = ((x - 100.0).powi(2) + (y - 100.0).powi(2)).sqrt();
         assert!((d - 20.0).abs() < 1e-3, "diagonal speed {d}");
     }
@@ -311,28 +383,36 @@ mod tests {
         }
     }
 
+    /// A column on flat ground (base 0) with blocks in these layers.
+    fn col(layers: &[i16]) -> Column {
+        Column { base: 0, mask: layers.iter().fold(0, |m, &z| m | 1 << z) }
+    }
+
+    /// Walk east along row 25 (y 50..52) from x 95 for `ticks`, returning where you end up and the highest layer
+    /// your feet reached.
+    fn walk_east(w: &World, ticks: usize) -> (f32, i8, i8) {
+        let (mut x, mut z, mut top) = (95.0, GROUND, GROUND);
+        for _ in 0..ticks {
+            (x, _, z) = integrate(w, x, 51.0, z, 127, 0, 20.0, 0.05, 0.5);
+            top = top.max(z);
+        }
+        (x, z, top)
+    }
+
     #[test]
     fn built_blocks_stop_movement_like_walls_and_clearing_them_frees_the_way() {
         let mut w = World::from_boxes(256.0, 1, vec![]);
-        // A line of blocks two high across x = 100..102: too tall to step onto.
+        // A wall two blocks high across x = 100..102: too tall to step onto.
         for cy in 0..128 {
-            w.set_block(50, cy, 2);
+            w.set_column(50, cy, col(&[0, 1]));
         }
-        assert!(w.block_height(50, 3) == 2 && w.block_height(51, 3) == 0);
-        // Along the middle of row 25 (y 50..52), where the gap will be.
-        let walk = |w: &World| {
-            let (mut x, mut y) = (95.0, 51.0);
-            for _ in 0..200 {
-                (x, y) = integrate(w, x, y, 127, 0, 20.0, 0.05, 0.5);
-            }
-            x
-        };
-        assert!(walk(&w) < 100.0, "walked through blocks");
+        assert!(w.column(50, 3).unwrap().solid(1) && w.column(51, 3).is_none());
+        assert!(walk_east(&w, 200).0 < 100.0, "walked through blocks");
         // Exactly touching a block's edge is not blocked, as with boxes.
-        assert!(!w.blocked(99.5, 50.0, 0.5) && w.blocked(99.51, 50.0, 0.5));
-        w.set_block(50, 25, 0);
-        assert!(walk(&w) > 102.0, "the gap should let you through");
-        w.set_block(BLOCK_GRID, 0, 1); // out of range: ignored
+        assert!(w.enter(99.5, 51.0, 0.5, GROUND).is_some() && w.enter(99.51, 51.0, 0.5, GROUND).is_none());
+        w.set_column(50, 25, col(&[]));
+        assert!(walk_east(&w, 200).0 > 102.0, "the gap should let you through");
+        w.set_column(BLOCK_GRID, 0, col(&[0])); // out of range: ignored
         assert_eq!(w.block_count(), 127);
         assert_eq!(block_cell(block_key(32767, 12345)), (32767, 12345));
     }
@@ -342,20 +422,70 @@ mod tests {
         let mut w = World::from_boxes(256.0, 1, vec![]);
         // Steps 1, 2, 3 high along row 25, then a 3-high landing, then nothing.
         for (cx, h) in [(50, 1), (51, 2), (52, 3), (53, 3)] {
-            w.set_block(cx, 25, h);
+            w.set_column(cx, 25, col(&(0..h).collect::<Vec<_>>()));
         }
-        let (mut x, y) = (95.0, 51.0);
-        let mut top = 0;
-        for _ in 0..200 {
-            (x, _) = integrate(&w, x, y, 127, 0, 20.0, 0.05, 0.5);
-            top = top.max(w.level(x, y, 0.5));
-        }
+        let (x, z, top) = walk_east(&w, 200);
         assert_eq!(top, 3, "climbed to the top");
-        assert!(x > 108.0, "walked off the far end");
-        assert_eq!(w.level(x, y, 0.5), 0, "and dropped to the ground");
+        assert!(x > 108.0 && z == GROUND, "walked off the far end and dropped to the ground: {x} {z}");
         // From the ground a 2-high column is a wall; from the 1-high step next to it, it is a step.
-        assert!(w.blocked_from(102.0, 51.0, 0.5, 0) && !w.blocked_from(102.0, 51.0, 0.5, 1));
+        assert_eq!(w.enter(102.0, 51.0, 0.5, GROUND), None);
+        assert_eq!(w.enter(102.0, 51.0, 0.5, 1), Some(2));
         assert!(w.blocked(101.0, 51.0, 0.5) && !w.blocked_by_walls(101.0, 51.0, 0.5));
+    }
+
+    #[test]
+    fn a_bridge_is_walked_under_from_the_ground_and_over_from_above() {
+        let mut w = World::from_boxes(256.0, 1, vec![]);
+        // Towers 3 high at x 100..102 and 106..108, a bridge in layer 2 between them (x 102..106), nothing under it.
+        w.set_column(50, 25, col(&[0, 1, 2]));
+        w.set_column(53, 25, col(&[0, 1, 2]));
+        w.set_column(51, 25, col(&[2]));
+        w.set_column(52, 25, col(&[2]));
+        // Under it: the gap below is two layers, room to stand.
+        assert_eq!(w.enter(104.0, 51.0, 0.5, GROUND), Some(0));
+        // On it: from the top of a tower (feet in layer 3) you walk across at layer 3, no drop.
+        assert_eq!(w.enter(104.0, 51.0, 0.5, 3), Some(3));
+        let (mut x, mut z) = (101.0, 3);
+        for _ in 0..6 {
+            (x, _, z) = integrate(&w, x, 51.0, z, 127, 0, 20.0, 0.05, 0.5);
+            assert_eq!(z, 3, "kept to the top of the bridge at x {x}");
+        }
+        // A block broken out from under you drops you on the next tick, standing still.
+        w.set_column(51, 25, col(&[]));
+        w.set_column(52, 25, col(&[]));
+        assert_eq!(integrate(&w, 104.0, 51.0, 3, 0, 0, 20.0, 0.05, 0.5).2, GROUND);
+    }
+
+    #[test]
+    fn a_window_is_a_gap_in_a_wall_and_a_low_doorway_lets_you_through() {
+        let mut w = World::from_boxes(256.0, 1, vec![]);
+        // A wall at x 100..102: blocks in layers 1 and 2 over a gap at layer 0, a doorway one block high.
+        for cy in 0..128 {
+            w.set_column(50, cy, col(&[1, 2, 3]));
+        }
+        assert!(walk_east(&w, 200).0 > 102.0, "walked through the doorway");
+        // Fill the doorway's floor: now the face is solid at 0 and 1, too tall to climb.
+        for cy in 0..128 {
+            w.set_column(50, cy, col(&[0, 1, 2, 3]));
+        }
+        assert!(walk_east(&w, 200).0 < 100.0);
+        // A window: a gap at layer 2 over a 1-high sill. You step onto the sill and into the window.
+        w.set_column(50, 25, col(&[0, 3]));
+        assert_eq!(w.enter(99.6, 51.0, 0.5, GROUND), Some(1));
+    }
+
+    #[test]
+    fn columns_on_uneven_ground_share_one_grid_and_are_levelled_by_layer() {
+        let mut w = World::from_boxes(256.0, 1, vec![]);
+        // Ground lower at x 100 (base 2) than at x 102 (base 3); both columns reach layer 4.
+        assert_eq!((base_layer(5.9), base_layer(6.0), base_layer(-0.1)), (2, 3, -1));
+        w.set_column(50, 25, Column { base: 2, mask: 0b111 });
+        w.set_column(51, 25, Column { base: 3, mask: 0b11 });
+        assert!(w.column(50, 25).unwrap().solid(4) && w.column(51, 25).unwrap().solid(4));
+        // Standing on the low column's top (feet in 5), you walk straight across onto the other at the same level.
+        assert_eq!(w.enter(103.0, 51.0, 0.5, 5), Some(5));
+        // Coming off the bare ground into the high column, you meet its base block and step up onto it.
+        assert_eq!(w.enter(103.0, 51.0, 0.5, GROUND), None, "two layers above its base: a wall");
     }
 
     #[test]
