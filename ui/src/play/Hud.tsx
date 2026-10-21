@@ -6,13 +6,17 @@ import Bag from './Bag'
 import Joystick from './Joystick'
 import Minimap from './Minimap'
 import { play as sfx, rememberSound, soundWanted } from './sfx'
-import { ACT_DROP, ACT_JUMP, ACT_PICKUP, ACT_USE, clampZoom, healthAttr, type Shared } from './shared'
+import { ACT_DROP, ACT_JUMP, ACT_PICKUP, ACT_USE, clampZoom, healthAttr, locationAt, type Shared } from './shared'
 
 export interface Line {
   key: number
+  /** The speaker's entity id (0 = the server), so the name can be filled in when it arrives. */
+  from?: number
   who: string
   text: string
   shout: boolean
+  /** The server's news (an event): shown across the screen as well as in chat. */
+  banner?: boolean
 }
 
 interface Props {
@@ -29,6 +33,12 @@ interface Props {
 
 const TYPING = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')
 
+/** How a location's title fades in and away, in ms. */
+const LOC_IN = 1200
+const LOC_OUT = 2000
+/** How long it stays up once in: entering, leaving. */
+const LOC_HOLD = { in: 3500, out: 2000 }
+
 interface Readout {
   hp: number
   hpText: string
@@ -39,6 +49,7 @@ interface Readout {
   fps: number
   hurt: number
   weather: string
+  here: string | null
   pos: [number, number] | null
   target: ReturnType<typeof snapshotTarget>
 }
@@ -48,7 +59,7 @@ function snapshotTarget(s: Shared) {
 }
 
 export default function Hud({ client, info, shared, status, lines, recovery, dark, onToggleTheme }: Props) {
-  const [r, setR] = useState<Readout>({ hp: 1, hpText: '', low: false, down: false, visible: 0, rtt: 0, fps: 0, hurt: 0, weather: '', pos: null, target: null })
+  const [r, setR] = useState<Readout>({ hp: 1, hpText: '', low: false, down: false, visible: 0, rtt: 0, fps: 0, hurt: 0, weather: '', here: null, pos: null, target: null })
   const [panel, setPanel] = useState<'none' | 'code' | 'help'>('none')
   const [copied, setCopied] = useState(false)
   const [sound, setSound] = useState(soundWanted)
@@ -61,6 +72,22 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
   // `G` arms dropping: the next number key drops that slot instead of using it.
   const [dropArmed, setDropArmed] = useState(false)
   const armRef = useRef(0)
+
+  // A location's title as we cross its edge: fades in over LOC_IN, holds, then fades away over LOC_OUT.
+  const [loc, setLoc] = useState<{ title: string; leaving: boolean; on: boolean; n: number } | null>(null)
+  const here = useRef<string | null>(null)
+
+  // The server's banners (events): the newest goes across the screen for a few seconds, then fades.
+  const [banner, setBanner] = useState<{ text: string; key: number; on: boolean } | null>(null)
+  useEffect(() => {
+    const b = [...lines].reverse().find((l) => l.banner)
+    if (b && b.key !== banner?.key) setBanner({ text: b.text, key: b.key, on: true })
+  }, [lines]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!banner?.on) return
+    const t = setTimeout(() => setBanner((p) => (p && p.key === banner.key ? { ...p, on: false } : p)), LOC_IN + 4000)
+    return () => clearTimeout(t)
+  }, [banner])
 
   const hpa = healthAttr(info)
   const beep = useCallback((k: Parameters<typeof sfx>[0]) => soundRef.current && sfx(k), [])
@@ -81,6 +108,14 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
       const down = v !== undefined && hpa ? v <= hpa.min + 0.01 : false
       if (down && !wasDown.current) beep('down')
       wasDown.current = down
+      if (me) {
+        const now = locationAt(shared.current.locations, me.x, me.y, here.current)
+        if (now !== here.current) {
+          const was = here.current
+          here.current = now
+          if (now ?? was) setLoc((p) => ({ title: (now ?? was)!, leaving: now === null, on: true, n: (p?.n ?? 0) + 1 }))
+        }
+      }
       const next: Readout = {
         hp: frac,
         hpText: v !== undefined && hpa ? `${hpa.name} ${Math.round(v)}` : '',
@@ -90,7 +125,8 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
         rtt: Math.round(client.rtt),
         fps: shared.current.fps,
         hurt: hurtCount.current,
-        weather: shared.current.weather?.name ?? '',
+        weather: shared.current.shown?.name ?? '',
+        here: here.current,
         pos: me ? [Math.round(me.x * 10) / 10, Math.round(me.y * 10) / 10] : null,
         target: snapshotTarget(shared.current),
       }
@@ -98,6 +134,12 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
     }, 100)
     return () => clearInterval(t)
   }, [client, hpa, shared, beep])
+
+  useEffect(() => {
+    if (!loc?.on) return
+    const t = setTimeout(() => setLoc((p) => p && p.n === loc.n ? { ...p, on: false } : p), LOC_IN + (loc.leaving ? LOC_HOLD.out : LOC_HOLD.in))
+    return () => clearTimeout(t)
+  }, [loc])
 
   const fire = useCallback(
     (i: number) => {
@@ -220,6 +262,12 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
     const el = chatBox.current
     if (!el) return
     const raw = el.value
+    if (raw.startsWith('/name ')) {
+      client.setName(raw.slice(6))
+      el.value = ''
+      el.blur()
+      return
+    }
     const shout = raw.startsWith('!')
     client.say(shout ? raw.slice(1) : raw, shout)
     el.value = ''
@@ -233,6 +281,31 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
     <aside aria-label="Heads-up display" className="contents">
       <div className="hud absolute inset-0 pointer-events-none text-label" data-testid="hud" data-self-x={r.pos?.[0]} data-self-y={r.pos?.[1]}>
         {r.hurt > 0 && <div key={r.hurt} className="hud-hit absolute inset-0" aria-hidden="true" />}
+        {banner && (
+          <div
+            key={banner.key}
+            data-testid="banner"
+            role="alert"
+            className="absolute left-4 right-4 top-[30%] text-center text-[color:var(--hud-accent)]"
+            style={{ opacity: banner.on ? 1 : 0, animation: `hud-loc-in ${LOC_IN}ms ease-out`, transition: `opacity ${LOC_OUT}ms ease-in`, textShadow: '0 0 8px var(--hud-bg)', fontSize: 24, lineHeight: 1.3 }}
+          >
+            {banner.text}
+          </div>
+        )}
+        {loc && (
+          <div
+            key={loc.n}
+            data-testid="location"
+            role="status"
+            className="absolute left-0 right-0 top-[18%] text-center"
+            style={{ opacity: loc.on ? 1 : 0, animation: `hud-loc-in ${LOC_IN}ms ease-out`, transition: `opacity ${LOC_OUT}ms ease-in`, textShadow: '0 0 8px var(--hud-bg)' }}
+          >
+            {loc.leaving && <div className="hud-dim">LEAVING</div>}
+            <div className={loc.leaving ? 'hud-dim' : 'text-[color:var(--hud-accent)] tracking-wide'} style={{ fontSize: loc.leaving ? 20 : 32, lineHeight: 1.25 }}>
+              {loc.title}
+            </div>
+          </div>
+        )}
 
         <div className="absolute top-3 left-4 w-56 grid gap-2">
           <div className="leading-5">
@@ -243,13 +316,15 @@ export default function Hud({ client, info, shared, status, lines, recovery, dar
             <div className="hud-dim">
               {r.visible} in view · {r.rtt ? `${r.rtt} ms` : '… ms'} · {r.fps || '…'} fps
             </div>
+            {r.here && <div>{r.here.toUpperCase()}</div>}
             {r.weather && <div>WEATHER · {r.weather}</div>}
           </div>
           {t && (
             <div className="hud-panel p-2 leading-5" aria-label="Target" role="group">
               <div className="flex items-center justify-between">
                 <span>
-                  <Crosshair size={14} className="inline -mt-0.5 mr-1" aria-hidden />#{t.id & 0xffffff}
+                  <Crosshair size={14} className="inline -mt-0.5 mr-1" aria-hidden />
+                  {shared.current.names.name(t.id)}
                 </span>
                 <span className={t.inRange ? 'text-[color:var(--hud-accent)]' : 'hud-dim'}>{t.dist} away{t.inRange ? ' · in range' : ''}</span>
               </div>

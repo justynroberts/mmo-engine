@@ -67,7 +67,7 @@ impl Drop for MmoClient {
 
 #[godot_api]
 impl MmoClient {
-    /// 0 connecting, 1 playing, 2 rejected, 3 closed.
+    /// 0 connecting, 1 playing, 2 rejected, 3 closed, 4 moved to another zone (`moved`).
     #[signal]
     fn status_changed(status: i64);
     /// A chat line: speaker entity id, channel (0 say, 1 shout), text.
@@ -112,6 +112,26 @@ impl MmoClient {
         GString::from(&unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().to_string())
     }
 
+    /// Follow a zone handoff by reconnecting (true, the default after `connect_to`), or stop with status 4 so the
+    /// game can load the new zone's map and connect there itself (zone lines). Call it after `connect_to`.
+    #[func]
+    fn set_follow_redirects(&mut self, on: bool) {
+        unsafe { m::mmo_follow_redirects(self.c, on as i32) };
+    }
+
+    /// After status 4: where we were handed, {zone (index into /play/info "zones"), host, port}; empty before.
+    #[func]
+    fn moved(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let (mut zone, mut ip, mut port) = (0u8, [0u8; 4], 0u16);
+        if unsafe { m::mmo_moved(self.c, &mut zone, ip.as_mut_ptr(), &mut port) } == 1 {
+            d.set("zone", zone as i64);
+            d.set("host", &GString::from(&format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])));
+            d.set("port", port as i64);
+        }
+        d
+    }
+
     /// Movement intent, each axis -1, 0 or 1. The server decides the speed.
     #[func]
     fn set_move(&mut self, direction: Vector2) {
@@ -125,6 +145,49 @@ impl MmoClient {
         if cx >= 0 && cy >= 0 {
             unsafe { m::mmo_set_column(self.c, cx as u32, cy as u32, base as i32, mask as u32) };
         }
+    }
+
+    /// For a world that streams its walls: the /play/tiles path to GET for the player at `at`, or "" when nothing
+    /// is missing. Pass the reply to `put_tiles`, or call `tiles_failed`.
+    #[func]
+    fn tiles_wanted(&mut self, at: Vector2) -> GString {
+        let mut buf = vec![0 as std::ffi::c_char; 2048];
+        let n = unsafe { m::mmo_tiles_wanted(self.c, at.x, at.y, buf.as_mut_ptr(), buf.len()) };
+        if n <= 0 {
+            return GString::new();
+        }
+        unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().as_ref().into()
+    }
+
+    /// A /play/tiles reply: true once its walls are in prediction, false when the walls changed on the server
+    /// (fetch /play/info again and pass it to `set_walls`).
+    #[func]
+    fn put_tiles(&mut self, bytes: PackedByteArray) -> bool {
+        unsafe { m::mmo_put_tiles(self.c, bytes.as_slice().as_ptr(), bytes.len()) == 1 }
+    }
+
+    #[func]
+    fn tiles_failed(&mut self) {
+        unsafe { m::mmo_tiles_failed(self.c) };
+    }
+
+    /// True once every wall near the player is in.
+    #[func]
+    fn walls_ready(&self) -> bool {
+        unsafe { m::mmo_walls_ready(self.c) == 1 }
+    }
+
+    /// Adopt the walls of a fresh /play/info document; true if they changed.
+    #[func]
+    fn set_walls(&mut self, info_json: GString) -> bool {
+        let Ok(i) = CString::new(info_json.to_string()) else { return false };
+        unsafe { m::mmo_set_walls(self.c, i.as_ptr()) == 1 }
+    }
+
+    /// Your light on or off (sneaking, when the game has a `lit` attribute).
+    #[func]
+    fn set_light(&mut self, on: bool) {
+        unsafe { m::mmo_set_light(self.c, on as i32) };
     }
 
     /// The owner tag /play/blocks gives the blocks you build; empty for a guest.
@@ -152,6 +215,14 @@ impl MmoClient {
     fn say(&mut self, text: GString, shout: bool) {
         if let Ok(t) = CString::new(text.to_string()) {
             unsafe { m::mmo_say(self.c, shout as u8, t.as_ptr()) };
+        }
+    }
+
+    /// Ask to be known by a name; the server answers in chat (from id 0).
+    #[func]
+    fn set_display_name(&mut self, name: GString) {
+        if let Ok(t) = CString::new(name.to_string()) {
+            unsafe { m::mmo_set_name(self.c, t.as_ptr()) };
         }
     }
 

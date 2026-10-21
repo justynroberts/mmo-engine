@@ -67,11 +67,13 @@ export function ChatPanel({ selected, active }: { selected: number | null; activ
           <Empty>Nothing said yet. Players and bots talk through the same channel; say is heard within 64 units, shout by everyone.</Empty>
         ) : (
           <ol className="list-none m-0 p-0">
-            {lines.map(([tick, from, ch, t], i) => (
+            {lines.map(([tick, from, ch, t, name], i) => (
               <li key={`${tick}-${from}-${i}`} className="cell flex gap-2">
                 <span className="text-fg-3 w-14 shrink-0 tabular-nums">t{tick}</span>
-                <span className="text-fg-2 w-14 shrink-0 tabular-nums">#{from & 0xffffff}</span>
-                <span className="lbl w-12 shrink-0 leading-6">{ch === 1 ? 'shout' : 'say'}</span>
+                <span className="text-fg-2 w-28 shrink-0 truncate" title={`#${from & 0xffffff}`}>
+                  {name || `#${from & 0xffffff}`}
+                </span>
+                <span className="lbl w-12 shrink-0 leading-6">{ch === 3 ? 'banner' : ch === 1 ? 'shout' : 'say'}</span>
                 <span className="min-w-0 break-words">{t}</span>
               </li>
             ))}

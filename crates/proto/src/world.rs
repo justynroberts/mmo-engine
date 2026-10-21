@@ -156,19 +156,33 @@ impl World {
         // gets coarser ones so the bucket table stays small (at most about a million buckets).
         let cell = (size / 1024.0).max(16.0);
         let gw = (size / cell).ceil() as usize + 1;
-        let mut buckets = vec![Vec::new(); gw * gw];
-        for (i, b) in boxes.iter().enumerate() {
-            let cx0 = (b.x0 / cell) as usize;
-            let cx1 = (b.x1 / cell) as usize;
-            let cy0 = (b.y0 / cell) as usize;
-            let cy1 = (b.y1 / cell) as usize;
-            for cy in cy0..=cy1.min(gw - 1) {
-                for cx in cx0..=cx1.min(gw - 1) {
-                    buckets[cy * gw + cx].push(i as u32);
-                }
+        let mut w = World { size, seed, boxes: Vec::new(), cell, gw, buckets: vec![Vec::new(); gw * gw], blocks: Default::default() };
+        w.set_boxes(boxes);
+        w
+    }
+
+    /// Replace the walls, keeping the built blocks. Costs what the old and new walls touch, not the size of the
+    /// world, so a client streaming tiles can call it whenever its window moves.
+    pub fn set_boxes(&mut self, boxes: Vec<Aabb>) {
+        let old = std::mem::replace(&mut self.boxes, boxes);
+        for b in &old {
+            self.cells(b, |k, buckets| buckets[k].clear());
+        }
+        for i in 0..self.boxes.len() {
+            let b = self.boxes[i];
+            self.cells(&b, |k, buckets| buckets[k].push(i as u32));
+        }
+    }
+
+    fn cells(&mut self, b: &Aabb, mut f: impl FnMut(usize, &mut Vec<Vec<u32>>)) {
+        let (cell, gw) = (self.cell, self.gw);
+        let (cx0, cx1) = ((b.x0.max(0.0) / cell) as usize, ((b.x1.max(0.0) / cell) as usize).min(gw - 1));
+        let (cy0, cy1) = ((b.y0.max(0.0) / cell) as usize, ((b.y1.max(0.0) / cell) as usize).min(gw - 1));
+        for cy in cy0..=cy1 {
+            for cx in cx0..=cx1 {
+                f(cy * gw + cx, &mut self.buckets);
             }
         }
-        World { size, seed, boxes, cell, gw, buckets, blocks: Default::default() }
     }
 
     /// Set a block column (an empty mask clears it). The server does this as players build; clients mirror it
@@ -344,6 +358,18 @@ pub fn integrate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swapping_the_walls_keeps_the_blocks_and_forgets_the_old_walls() {
+        let mut w = wall_world();
+        w.set_column(10, 10, Column { base: 0, mask: 1 });
+        w.set_boxes(vec![Aabb { x0: 10.0, y0: 10.0, x1: 12.0, y1: 12.0 }]);
+        assert!(!w.blocked_by_walls(105.0, 100.0, 0.5), "the old wall is gone");
+        assert!(w.blocked_by_walls(11.0, 11.0, 0.5));
+        assert_eq!(w.column(10, 10), Some(Column { base: 0, mask: 1 }));
+        w.set_boxes(Vec::new());
+        assert!(!w.blocked_by_walls(11.0, 11.0, 0.5));
+    }
 
     fn wall_world() -> World {
         World::from_boxes(

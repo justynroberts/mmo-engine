@@ -481,7 +481,7 @@ export function WorldView(p: Props) {
       }
 
       // Readout, on an ink band so it reads over any ground.
-      ctx.font = "11px 'Martian Mono', monospace"
+      ctx.font = "12px 'Instrument Sans Variable', system-ui, sans-serif"
       ctx.fillStyle = MAP.ink
       ctx.globalAlpha = 0.72
       ctx.fillRect(0, h - 22, w, 22)
@@ -578,7 +578,7 @@ function drawShape(
   }
   if (sh.previewing) {
     const label = 'PREVIEW · not live until applied'
-    ctx.font = '600 11px ui-monospace, monospace'
+    ctx.font = "600 12px 'Instrument Sans Variable', system-ui, sans-serif"
     const tw = ctx.measureText(label).width
     ctx.fillStyle = MAP.ink
     ctx.fillRect(8, 8, tw + 16, 22)
@@ -599,7 +599,7 @@ function drawEdit(
 ) {
   const sx = (x: number) => (x - v.cx) * v.scale + w / 2
   const sy = (y: number) => (y - v.cy) * v.scale + h / 2
-  ctx.font = "11px 'Martian Mono', monospace"
+  ctx.font = "12px 'Instrument Sans Variable', system-ui, sans-serif"
   ctx.lineWidth = 1
 
   ;(ed.walls ?? []).forEach((q, i) => {

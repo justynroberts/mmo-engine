@@ -100,7 +100,8 @@ pub enum Behaviour {
     Flee,
 }
 
-/// A named circular area: a spawn point, a hangout, a market square.
+/// A named circular area: a spawn point, a hangout, a market square. `name` is what rules and events refer to;
+/// `title`, if set, is what players are told when they walk in or out ("Hollow Market"), and makes it a location.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Place {
@@ -109,9 +110,26 @@ pub struct Place {
     pub y: f32,
     #[serde(default = "d_place_r")]
     pub r: f32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    /// Makes the place a zone line: a player who walks in arrives at `x, y` in `zone` (a zone of a `--zone-lines`
+    /// world, by name), or on this map when `zone` is empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<Exit>,
 }
 fn d_place_r() -> f32 {
     12.0
+}
+
+/// Where a zone line leads.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Exit {
+    /// The zone's name (`--zone-names`); empty for somewhere on this map.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub zone: String,
+    pub x: f32,
+    pub y: f32,
 }
 
 /// A named path bots can walk. `looped` wraps from the last point to the first; otherwise they turn around.
@@ -192,6 +210,8 @@ pub struct Rule {
 
 pub const MAX_RULES: usize = 16;
 pub const MAX_PLACES: usize = 64;
+/// Longest place title players see, in characters.
+pub const MAX_TITLE: usize = 40;
 pub const MAX_ROUTES: usize = 64;
 pub const MAX_ROUTE_POINTS: usize = 64;
 
@@ -266,6 +286,13 @@ pub struct GameFile {
     pub weather: Vec<WeatherDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<EventDef>,
+    /// Weather that stays in one place: a place and a weather, drawn as mist over it and in effect only inside it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zones: Vec<WeatherZone>,
+    /// When it is light and dark (`daylight.rs`). Absent is the default cycle. Not in the content hash: an edit
+    /// applies live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daylight: Option<crate::daylight::Daylight>,
 }
 fn d_speed() -> f32 {
     20.0
@@ -301,13 +328,15 @@ pub const ACT_BUILD: u8 = 252;
 /// Break: take out the block in the target's cell at the `arg` layer (`build_arg`, any material). Only its owner
 /// can (or anyone, for a block nobody owns).
 pub const ACT_BREAK: u8 = 253;
+/// Light: put your light on (`arg` 1) or out (`arg` 0). Only does anything when the game has a `LIT_ATTR` attribute.
+pub const ACT_LIGHT: u8 = 254;
 /// How far from a column's centre you can build or break, in world units, sideways and up or down.
 pub const BUILD_REACH: f32 = 8.0;
 /// Most blocks in one column: the layers it spans above its base.
 pub const MAX_STACK: usize = crate::world::COLUMN_LAYERS as usize;
-/// Block materials (the client's theme decides what each looks like). Text gives each a character: `0`-`9`, then
-/// `a`-`z` (see `block_char`).
-pub const BLOCK_KINDS: u8 = 12;
+/// Block materials (the client's theme decides what each looks like; 12 is a lamp and 13 a fire, which give light at
+/// night). Text gives each a character: `0`-`9`, then `a`-`z` (see `block_char`).
+pub const BLOCK_KINDS: u8 = 14;
 
 /// The target of a build or break: the column's cell.
 pub fn build_target(cx: u32, cy: u32) -> u32 {
@@ -338,6 +367,12 @@ pub fn block_kind(c: u8) -> Option<u8> {
 /// If the game file has an attribute of this name, the server keeps it at the share of the current jump still to
 /// come (its max at take-off, falling to its min on landing). Make it replicated and every client can draw the arc.
 pub const AIRBORNE_ATTR: &str = "airborne";
+/// If the game file has an attribute of this name, it says whether a player's light is on (its max) or out (its
+/// min), set by `ACT_LIGHT`. Make it replicated and clients hide an unlit player's name in the dark; at night bots
+/// see an unlit player only at `SNEAK_SIGHT` of their range. That is sneaking.
+pub const LIT_ATTR: &str = "lit";
+/// How far bots see an unlit player at night, as a share of their sight.
+pub const SNEAK_SIGHT: f32 = 0.35;
 /// How close you must be to pick something up, in world units.
 pub const PICKUP_RANGE: f32 = 3.0;
 
@@ -413,7 +448,28 @@ pub struct DropRt {
 
 pub const MAX_WEATHER: usize = 16;
 pub const MAX_EVENTS: usize = 32;
-pub const MAX_STEPS: usize = 12;
+pub const MAX_ZONES: usize = 32;
+
+/// A weather that stays over one place (red mist round a haunted ruin, green mist hiding a castle): clients draw it as
+/// mist in the weather's colour, standing `height` units tall over the place, and inside it the weather's effects
+/// (drains, how far bots see) apply as if it were the weather everywhere. Events switch it on and off.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WeatherZone {
+    pub name: String,
+    pub place: String,
+    pub weather: String,
+    #[serde(default = "d_true")]
+    pub active: bool,
+    #[serde(default = "d_zone_height")]
+    pub height: f32,
+}
+fn d_zone_height() -> f32 {
+    30.0
+}
+pub const MAX_STEPS: usize = 24;
+/// Longest time an event's waits, time limit and cooldown may name, in seconds (a day).
+pub const MAX_EVENT_SECS: u32 = 86_400;
 pub const MAX_EVENT_SPAWN: u32 = 500;
 
 /// A per-second change to one attribute of everything in the world while a weather is active.
@@ -458,12 +514,23 @@ fn d_chance() -> f32 {
     100.0
 }
 
-/// One thing an event does. Steps run in order, all in the same tick.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// One thing an event does. Steps run in order, straight on until one waits (`Wait`, `Defeat`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Step {
-    /// A server message to every player.
-    Announce { text: String },
+    /// A server message: to every player, or with `nearby` only to those at the event's place. A `banner` goes
+    /// across the middle of the screen as well as into chat.
+    Announce {
+        text: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        banner: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        nearby: bool,
+    },
     /// Start a weather for a while, or with no name end the current one.
     Weather {
         #[serde(default)]
@@ -471,13 +538,16 @@ pub enum Step {
         #[serde(default = "d_duration")]
         duration_secs: u32,
     },
-    /// Add bots, spread over a place or anywhere.
+    /// Add bots, spread over a place (the event's, if the step names none) or anywhere. They belong to this run of
+    /// the event: killed, they are gone (no respawn), and `Defeat` waits for them. `name` names them (a boss).
     Spawn {
         archetype: String,
         #[serde(default = "d_spawn_count")]
         count: u32,
         #[serde(default)]
         place: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
     /// Change an attribute once for everything inside a place, or everywhere.
     Hit {
@@ -496,21 +566,120 @@ pub enum Step {
         #[serde(default)]
         place: Option<String>,
     },
+    /// Switch a weather zone on or off.
+    Zone { zone: String, on: bool },
+    /// Pause before the next step.
+    Wait { secs: u32 },
+    /// Wait until every bot this run has spawned is beaten. After `within_secs` (0: no limit but the event's own) the
+    /// event has failed, and its `fail_steps` run instead.
+    Defeat {
+        #[serde(default)]
+        within_secs: u32,
+    },
+    /// Put items in the bags of the players who took part (were at the event's place while it ran; everyone
+    /// online, for an event with no place), or with `everyone` every player online. What does not fit lands at
+    /// their feet.
+    Reward {
+        item: String,
+        #[serde(default = "d_one_count")]
+        count: u32,
+        #[serde(default, skip_serializing_if = "is_false")]
+        everyone: bool,
+    },
+}
+fn d_one_count() -> u32 {
+    1
 }
 
-/// Something that happens: on demand from the console, or on a timer.
+/// What starts an event on its own, besides its timer.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum When {
+    /// At least `count` players at the event's place (anywhere, for an event with no place).
+    Players {
+        #[serde(default = "d_one_count")]
+        count: u32,
+    },
+    /// The day reaches this part (`daylight`): `dawn` sunrise, `day` midday, `dusk` sunset, `night` midnight.
+    Time { at: DayPart },
+    /// Another event has just finished.
+    After {
+        event: String,
+        #[serde(default)]
+        outcome: Outcome,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DayPart {
+    Dawn,
+    Day,
+    Dusk,
+    Night,
+}
+
+impl DayPart {
+    /// Where in the day (`daylight::Daylight::phase`) this part starts, given the night's share of it.
+    pub fn phase(self, night_share: f64) -> f64 {
+        match self {
+            DayPart::Dawn => 0.0,
+            DayPart::Day => (1.0 - night_share) / 2.0,
+            DayPart::Dusk => 1.0 - night_share,
+            DayPart::Night => 1.0 - night_share / 2.0,
+        }
+    }
+}
+
+/// How an event ended: it ran to its last step, or a time limit ran out first (or the console stopped it).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    #[default]
+    Success,
+    Failure,
+    Either,
+}
+
+/// Something that happens: fired by hand, on a timer, or when something in the world starts it (`when`). It runs
+/// its steps over time (they can wait), so one event can be a whole raid: a warning, waves, a boss, a reward.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EventDef {
     pub name: String,
-    /// Run itself every this many seconds (at least 5). 0 means only when fired by hand.
+    /// Run itself every this many seconds (at least 5). 0 means only when fired by hand (or `when`).
     #[serde(default)]
     pub every_secs: u32,
     /// Each time it comes due, the chance in percent that it really happens.
     #[serde(default = "d_chance")]
     pub chance_pct: f32,
+    /// Start when this happens, too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
+    /// Least seconds from one start by `when` to the next.
+    #[serde(default = "d_cooldown")]
+    pub cooldown_secs: u32,
+    /// Where it happens, for a local event: steps that name no place happen here, `nearby` messages reach the
+    /// players here, and they are the ones who take part (and are rewarded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+    /// Longest it may run before it has failed (0: no limit).
+    #[serde(default)]
+    pub limit_secs: u32,
     #[serde(default)]
     pub steps: Vec<Step>,
+    /// What happens instead if it fails: a `Defeat` or the time limit ran out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fail_steps: Vec<Step>,
+}
+fn d_cooldown() -> u32 {
+    600
+}
+
+impl Default for EventDef {
+    fn default() -> Self {
+        EventDef { name: String::new(), every_secs: 0, chance_pct: 100.0, when: None, cooldown_secs: d_cooldown(), place: None, limit_secs: 0, steps: Vec::new(), fail_steps: Vec::new() }
+    }
 }
 
 /// Server-side runtime form of an archetype: names resolved to indices.
@@ -567,6 +736,7 @@ pub struct Game {
     pub items: Vec<ItemRt>,
     pub places: Vec<Place>,
     pub routes: Vec<Route>,
+    pub daylight: crate::daylight::Daylight,
 }
 
 /// Most walls a game file may place.
@@ -661,9 +831,9 @@ impl GameFile {
         ];
         GameFile {
             places: vec![
-                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0 },
-                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0 },
-                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0 },
+                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None },
+                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None },
+                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None },
             ],
             routes: vec![
                 Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true },
@@ -681,6 +851,8 @@ impl GameFile {
                 item("data chip", "#4fc3ff", 5, &[]),
             ],
             weather: Vec::new(),
+            zones: Vec::new(),
+            daylight: None,
             events: Vec::new(),
             move_speed: 20.0,
             entity_radius: 0.5,
@@ -690,6 +862,7 @@ impl GameFile {
                 attr("health", true, 0.0, OnZeroFile::Respawn),
                 attr("energy", false, 5.0, OnZeroFile::None),
                 AttrFile { default: 0.0, ..attr(AIRBORNE_ATTR, true, 0.0, OnZeroFile::None) },
+                AttrFile { min: 0.0, max: 1.0, default: 1.0, ..attr(LIT_ATTR, true, 0.0, OnZeroFile::None) },
             ],
             actions: vec![ActionFile {
                 id: 1,
@@ -861,14 +1034,26 @@ impl GameFile {
         if self.places.len() > MAX_PLACES || self.routes.len() > MAX_ROUTES {
             return Err(format!("at most {MAX_PLACES} places and {MAX_ROUTES} routes"));
         }
-        let coord = |v: f32| v.is_finite() && (0.0..=4095.0).contains(&v);
+        // Anywhere a world can reach (the game file does not know this world's size; a world file can set it).
+        let coord = |v: f32| v.is_finite() && (0.0..=crate::world::MAX_WORLD_SIZE as f32).contains(&v);
         let mut pnames = HashSet::new();
         for p in &self.places {
             if p.name.is_empty() || p.name.len() > 32 || !pnames.insert(p.name.as_str()) {
                 return Err(format!("place names must be unique, 1..32 characters ('{}')", p.name));
             }
             if !(coord(p.x) && coord(p.y) && p.r.is_finite() && (1.0..=512.0).contains(&p.r)) {
-                return Err(format!("place '{}': x and y must be 0..4095 and r 1..512", p.name));
+                return Err(format!("place '{}': x and y must be 0..65536 and r 1..512", p.name));
+            }
+            if let Some(e) = &p.exit {
+                if !(coord(e.x) && coord(e.y)) || e.zone.len() > 32 {
+                    return Err(format!("place '{}': an exit goes to x and y 0..65536, in a zone named in at most 32 characters", p.name));
+                }
+                if e.zone.is_empty() && (e.x - p.x).hypot(e.y - p.y) <= p.r {
+                    return Err(format!("place '{}': an exit on this map must lead somewhere outside the place itself", p.name));
+                }
+            }
+            if p.title.chars().count() > MAX_TITLE || p.title.trim() != p.title || p.title.chars().any(char::is_control) {
+                return Err(format!("place '{}': a title is at most {MAX_TITLE} characters, no leading or trailing spaces", p.name));
             }
         }
         let mut rnames = HashSet::new();
@@ -880,7 +1065,7 @@ impl GameFile {
                 return Err(format!("route '{}': needs 2..{MAX_ROUTE_POINTS} points", r.name));
             }
             if !r.points.iter().all(|p| coord(p[0]) && coord(p[1])) {
-                return Err(format!("route '{}': points must be 0..4095", r.name));
+                return Err(format!("route '{}': points must be 0..65536", r.name));
             }
         }
         let place_ix = |n: &str, ctx: &str| {
@@ -1047,7 +1232,9 @@ impl GameFile {
             });
         }
         self.check_director()?;
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone() })
+        let daylight = self.daylight.clone().unwrap_or_default();
+        daylight.validate()?;
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight })
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {
@@ -1060,10 +1247,109 @@ impl GameFile {
 }
 
 impl GameFile {
+    /// One event step's references and numbers.
+    fn check_step(&self, st: &Step, ctx: &str, has_place: bool) -> Result<(), String> {
+        let attr = |n: &str| self.attrs.iter().any(|a| a.name == n);
+        let arch = |n: &str| self.archetypes.iter().any(|a| a.name == n);
+        let place = |n: &str| self.places.iter().any(|p| p.name == n);
+        match st {
+            Step::Announce { text, nearby, .. } => {
+                if text.trim().is_empty() || text.len() > 120 {
+                    return Err(format!("{ctx}: the message must be 1..120 bytes"));
+                }
+                if *nearby && !has_place {
+                    return Err(format!("{ctx}: a message to those nearby needs the event to have a place"));
+                }
+            }
+            Step::Weather { name, duration_secs } => {
+                if let Some(n) = name {
+                    if !self.weather.iter().any(|w| &w.name == n) {
+                        return Err(format!("{ctx}: unknown weather '{n}'"));
+                    }
+                    if *duration_secs == 0 || *duration_secs > 86_400 {
+                        return Err(format!("{ctx}: duration must be 1..86400 seconds"));
+                    }
+                }
+            }
+            Step::Spawn { archetype, count, place: pl, name } => {
+                if let Some(n) = name {
+                    if n.trim().is_empty() || n.chars().count() > 32 {
+                        return Err(format!("{ctx}: a name is 1..32 characters"));
+                    }
+                }
+                if !arch(archetype) {
+                    return Err(format!("{ctx}: unknown bot type '{archetype}'"));
+                }
+                if *count == 0 || *count > MAX_EVENT_SPAWN {
+                    return Err(format!("{ctx}: count must be 1..{MAX_EVENT_SPAWN}"));
+                }
+                if let Some(p) = pl {
+                    if !place(p) {
+                        return Err(format!("{ctx}: unknown place '{p}'"));
+                    }
+                }
+            }
+            Step::Hit { attr: a, delta, place: pl } => {
+                if !attr(a) {
+                    return Err(format!("{ctx}: unknown attribute '{a}'"));
+                }
+                if !delta.is_finite() {
+                    return Err(format!("{ctx}: delta must be a number"));
+                }
+                if let Some(p) = pl {
+                    if !place(p) {
+                        return Err(format!("{ctx}: unknown place '{p}'"));
+                    }
+                }
+            }
+            Step::Clear { archetype } => {
+                if !arch(archetype) {
+                    return Err(format!("{ctx}: unknown bot type '{archetype}'"));
+                }
+            }
+            Step::Drop { item, count, place: pl } => {
+                if !self.items.iter().any(|i| &i.name == item) {
+                    return Err(format!("{ctx}: unknown item '{item}'"));
+                }
+                if *count == 0 || *count > MAX_EVENT_SPAWN {
+                    return Err(format!("{ctx}: count must be 1..{MAX_EVENT_SPAWN}"));
+                }
+                if let Some(p) = pl {
+                    if !place(p) {
+                        return Err(format!("{ctx}: unknown place '{p}'"));
+                    }
+                }
+            }
+            Step::Zone { zone, .. } => {
+                if !self.zones.iter().any(|z| &z.name == zone) {
+                    return Err(format!("{ctx}: unknown weather zone '{zone}'"));
+                }
+            }
+            Step::Wait { secs } => {
+                if *secs == 0 || *secs > MAX_EVENT_SECS {
+                    return Err(format!("{ctx}: a wait is 1..{MAX_EVENT_SECS} seconds"));
+                }
+            }
+            Step::Defeat { within_secs } => {
+                if *within_secs > MAX_EVENT_SECS {
+                    return Err(format!("{ctx}: at most {MAX_EVENT_SECS} seconds"));
+                }
+            }
+            Step::Reward { item, count, .. } => {
+                if !self.items.iter().any(|i| &i.name == item) {
+                    return Err(format!("{ctx}: unknown item '{item}'"));
+                }
+                if *count == 0 || *count > 255 {
+                    return Err(format!("{ctx}: count must be 1..255"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Weather and events refer to attributes, bot types and places by name; make sure every reference lands.
     fn check_director(&self) -> Result<(), String> {
         let attr = |n: &str| self.attrs.iter().any(|a| a.name == n);
-        let arch = |n: &str| self.archetypes.iter().any(|a| a.name == n);
         let place = |n: &str| self.places.iter().any(|p| p.name == n);
         let plain = |n: &str, what: &str| -> Result<(), String> {
             if n.trim().is_empty() || n.len() > 32 || n.trim() != n {
@@ -1116,72 +1402,49 @@ impl GameFile {
             if !(0.0..=100.0).contains(&e.chance_pct) {
                 return Err(format!("event '{}': chance_pct must be 0..100", e.name));
             }
-            if e.steps.is_empty() || e.steps.len() > MAX_STEPS {
-                return Err(format!("event '{}': needs 1 to {MAX_STEPS} steps", e.name));
+            if e.steps.is_empty() || e.steps.len() > MAX_STEPS || e.fail_steps.len() > MAX_STEPS {
+                return Err(format!("event '{}': needs 1 to {MAX_STEPS} steps (and at most {MAX_STEPS} if it fails)", e.name));
             }
-            for (i, st) in e.steps.iter().enumerate() {
-                let ctx = format!("event '{}' step {}", e.name, i + 1);
-                match st {
-                    Step::Announce { text } => {
-                        if text.trim().is_empty() || text.len() > 120 {
-                            return Err(format!("{ctx}: the message must be 1..120 bytes"));
-                        }
-                    }
-                    Step::Weather { name, duration_secs } => {
-                        if let Some(n) = name {
-                            if !self.weather.iter().any(|w| &w.name == n) {
-                                return Err(format!("{ctx}: unknown weather '{n}'"));
-                            }
-                            if *duration_secs == 0 || *duration_secs > 86_400 {
-                                return Err(format!("{ctx}: duration must be 1..86400 seconds"));
-                            }
-                        }
-                    }
-                    Step::Spawn { archetype, count, place: pl } => {
-                        if !arch(archetype) {
-                            return Err(format!("{ctx}: unknown bot type '{archetype}'"));
-                        }
-                        if *count == 0 || *count > MAX_EVENT_SPAWN {
-                            return Err(format!("{ctx}: count must be 1..{MAX_EVENT_SPAWN}"));
-                        }
-                        if let Some(p) = pl {
-                            if !place(p) {
-                                return Err(format!("{ctx}: unknown place '{p}'"));
-                            }
-                        }
-                    }
-                    Step::Hit { attr: a, delta, place: pl } => {
-                        if !attr(a) {
-                            return Err(format!("{ctx}: unknown attribute '{a}'"));
-                        }
-                        if !delta.is_finite() {
-                            return Err(format!("{ctx}: delta must be a number"));
-                        }
-                        if let Some(p) = pl {
-                            if !place(p) {
-                                return Err(format!("{ctx}: unknown place '{p}'"));
-                            }
-                        }
-                    }
-                    Step::Clear { archetype } => {
-                        if !arch(archetype) {
-                            return Err(format!("{ctx}: unknown bot type '{archetype}'"));
-                        }
-                    }
-                    Step::Drop { item, count, place: pl } => {
-                        if !self.items.iter().any(|i| &i.name == item) {
-                            return Err(format!("{ctx}: unknown item '{item}'"));
-                        }
-                        if *count == 0 || *count > MAX_EVENT_SPAWN {
-                            return Err(format!("{ctx}: count must be 1..{MAX_EVENT_SPAWN}"));
-                        }
-                        if let Some(p) = pl {
-                            if !place(p) {
-                                return Err(format!("{ctx}: unknown place '{p}'"));
-                            }
-                        }
-                    }
+            if let Some(p) = &e.place {
+                if !place(p) {
+                    return Err(format!("event '{}': unknown place '{p}'", e.name));
                 }
+            }
+            if e.limit_secs > MAX_EVENT_SECS || e.cooldown_secs > MAX_EVENT_SECS {
+                return Err(format!("event '{}': a time limit and cooldown are at most {MAX_EVENT_SECS} seconds", e.name));
+            }
+            match &e.when {
+                Some(When::Players { count }) if *count == 0 || *count > 10_000 => {
+                    return Err(format!("event '{}': players to start it must be 1..10000", e.name));
+                }
+                Some(When::After { event, .. }) if event == &e.name || !self.events.iter().any(|x| &x.name == event) => {
+                    return Err(format!("event '{}': starts after '{event}', which is not another event", e.name));
+                }
+                _ => {}
+            }
+            for (i, st) in e.steps.iter().map(|s| (false, s)).chain(e.fail_steps.iter().map(|s| (true, s))).enumerate() {
+                let (failing, st) = st;
+                let ctx = if failing { format!("event '{}' fail step {}", e.name, i + 1 - e.steps.len()) } else { format!("event '{}' step {}", e.name, i + 1) };
+                self.check_step(st, &ctx, e.place.is_some())?;
+            }
+        }
+        if self.zones.len() > MAX_ZONES {
+            return Err(format!("at most {MAX_ZONES} weather zones"));
+        }
+        let mut seen = HashSet::new();
+        for z in &self.zones {
+            plain(&z.name, "weather zone")?;
+            if !seen.insert(z.name.as_str()) {
+                return Err(format!("duplicate weather zone '{}'", z.name));
+            }
+            if !place(&z.place) {
+                return Err(format!("weather zone '{}': unknown place '{}'", z.name, z.place));
+            }
+            if !self.weather.iter().any(|w| w.name == z.weather) {
+                return Err(format!("weather zone '{}': unknown weather '{}'", z.name, z.weather));
+            }
+            if !(z.height >= 2.0 && z.height <= 500.0) {
+                return Err(format!("weather zone '{}': height must be 2..500", z.name));
             }
         }
         Ok(())
@@ -1320,6 +1583,10 @@ mod tests {
             ("unique", Box::new(|g| g.places.push(g.places[0].clone()))),
             ("x and y", Box::new(|g| g.places[0].x = f32::NAN)),
             ("r 1..512", Box::new(|g| g.places[0].r = 0.0)),
+            ("a title is at most", Box::new(|g| g.places[0].title = "x".repeat(41))),
+            ("a title is at most", Box::new(|g| g.places[0].title = " Market".into())),
+            ("an exit goes to", Box::new(|g| g.places[0].exit = Some(Exit { zone: String::new(), x: -1.0, y: 5.0 }))),
+            ("outside the place itself", Box::new(|g| { let (x, y) = (g.places[0].x, g.places[0].y); g.places[0].exit = Some(Exit { zone: String::new(), x, y }); })),
             ("needs 2", Box::new(|g| g.routes[0].points.truncate(1))),
             ("points must be", Box::new(|g| g.routes[0].points[0] = [-5.0, 1.0])),
         ];
@@ -1393,14 +1660,15 @@ mod tests {
             name: "raid".into(),
             every_secs: 60,
             chance_pct: 50.0,
-            steps: vec![
-                Step::Announce { text: "Raiders at the plaza".into() },
+            ..EventDef::default()
+        });
+        g.events[0].steps = vec![
+                Step::Announce { text: "Raiders at the plaza".into(), banner: true, nearby: false },
                 Step::Weather { name: Some("storm".into()), duration_secs: 30 },
-                Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 5, place: Some("plaza".into()) },
+                Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 5, place: Some("plaza".into()), name: None },
                 Step::Hit { attr: "health".into(), delta: -10.0, place: Some("plaza".into()) },
                 Step::Clear { archetype: g.archetypes[0].name.clone() },
-            ],
-        });
+            ];
         g.build().expect("a consistent game builds");
         let back = GameFile::from_json(&g.to_json()).unwrap();
         assert_eq!(back, g);
@@ -1418,12 +1686,51 @@ mod tests {
         bad(&|h| h.events[0].every_secs = 2, "every_secs");
         bad(&|h| h.events[0].steps.clear(), "steps");
         bad(&|h| h.events[0].steps[1] = Step::Weather { name: Some("hail".into()), duration_secs: 5 }, "unknown weather 'hail'");
-        bad(&|h| h.events[0].steps[2] = Step::Spawn { archetype: "ghost".into(), count: 1, place: None }, "unknown bot type");
-        bad(&|h| h.events[0].steps[2] = Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 9999, place: None }, "count");
+        bad(&|h| h.events[0].steps[2] = Step::Spawn { archetype: "ghost".into(), count: 1, place: None, name: None }, "unknown bot type");
+        bad(&|h| h.events[0].steps[2] = Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 9999, place: None, name: None }, "count");
         bad(&|h| h.events[0].steps[3] = Step::Hit { attr: "health".into(), delta: -1.0, place: Some("nowhere".into()) }, "unknown place");
         bad(&|h| h.events.push(h.events[0].clone()), "duplicate event");
+        // Raids and local events: a place to happen at, waits, a fight to win, rewards, and what starts them.
+        bad(&|h| h.events[0].steps[0] = Step::Announce { text: "near".into(), banner: false, nearby: true }, "needs the event to have a place");
+        bad(&|h| h.events[0].place = Some("nowhere".into()), "unknown place 'nowhere'");
+        bad(&|h| h.events[0].steps.push(Step::Wait { secs: 0 }), "a wait is");
+        bad(&|h| h.events[0].fail_steps.push(Step::Reward { item: "gold".into(), count: 1, everyone: false }), "fail step 1: unknown item 'gold'");
+        bad(&|h| h.events[0].when = Some(When::After { event: "raid".into(), outcome: Outcome::Success }), "not another event");
+        bad(&|h| h.events[0].when = Some(When::Players { count: 0 }), "players to start it");
+        bad(&|h| h.events[0].steps.push(Step::Spawn { archetype: h.archetypes[0].name.clone(), count: 1, place: None, name: Some(" ".into()) }), "a name is");
+        let mut raid = g.clone();
+        raid.events[0].place = Some("plaza".into());
+        raid.events[0].limit_secs = 600;
+        raid.events[0].when = Some(When::Time { at: DayPart::Dusk });
+        raid.events[0].steps = vec![
+            Step::Announce { text: "To arms".into(), banner: true, nearby: true },
+            Step::Wait { secs: 10 },
+            Step::Spawn { archetype: g.archetypes[0].name.clone(), count: 3, place: None, name: Some("Morvane".into()) },
+            Step::Defeat { within_secs: 120 },
+        ];
+        raid.events[0].fail_steps = vec![Step::Announce { text: "The plaza falls".into(), banner: true, nearby: false }];
+        raid.build().expect("a raid builds");
+        assert_eq!(GameFile::from_json(&raid.to_json()).unwrap(), raid, "and round-trips");
+        assert!(GameFile::from_json(&g.to_json()).unwrap().events[0].cooldown_secs == 600, "old files get the default cooldown");
         // Removing a bot type that an event spawns is caught too.
         bad(&|h| { let n = h.archetypes[0].name.clone(); h.archetypes.retain(|a| a.name != n) }, "unknown bot type");
+        // Weather zones name a place and a weather, and events switch them by name.
+        let mut z = g.clone();
+        z.zones.push(WeatherZone { name: "haunt".into(), place: "plaza".into(), weather: "storm".into(), active: true, height: 30.0 });
+        z.events[0].steps.push(Step::Zone { zone: "haunt".into(), on: false });
+        z.build().expect("a zone over a known place with a known weather builds");
+        assert_eq!(GameFile::from_json(&z.to_json()).unwrap(), z);
+        let zbad = |f: &dyn Fn(&mut GameFile), needle: &str| {
+            let mut h = z.clone();
+            f(&mut h);
+            let e = h.build().err().unwrap_or_else(|| panic!("should refuse: {needle}"));
+            assert!(e.contains(needle), "{e} should mention {needle}");
+        };
+        zbad(&|h| h.zones[0].place = "nowhere".into(), "unknown place 'nowhere'");
+        zbad(&|h| h.zones[0].weather = "hail".into(), "unknown weather 'hail'");
+        zbad(&|h| h.zones[0].height = 0.5, "height");
+        zbad(&|h| h.zones.push(h.zones[0].clone()), "duplicate weather zone");
+        zbad(&|h| h.events[0].steps[5] = Step::Zone { zone: "elsewhere".into(), on: true }, "unknown weather zone");
         // Weather and events change nothing on the wire.
         let mut w = g.clone();
         w.weather.clear();

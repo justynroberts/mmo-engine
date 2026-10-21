@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { Info, Moon, Sun } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { useRef } from 'react'
 import type { State } from '../api'
 
@@ -62,68 +62,135 @@ function Ruler({ s }: { s: State }) {
   )
 }
 
-export function StatusBar({
+/** The server's own numbers in full: the tick budget and every network counter (the Server page). */
+export function NetworkPanel({ s }: { s: State | null }) {
+  if (!s) return <p className="text-fg-3">Waiting for the server at /api/state.</p>
+  return (
+    <div className="grid gap-4">
+      <Ruler s={s} />
+      <div className="grid grid-cols-3 gap-x-6 gap-y-3">
+        <Cell label="Entities" value={s.live} />
+        <Cell label="Players connected" value={s.clients} />
+        <Cell label="Snapshot lanes" value={s.perf.lanes} />
+        <Cell label="Packets in / s" value={Math.round(s.perf.in_pps)} />
+        <Cell label="Packets out / s" value={Math.round(s.perf.out_pps)} />
+        <Cell label="Mbit/s out" value={s.perf.mbit.toFixed(1)} />
+        <Cell label="Hellos" value={s.net.hellos} />
+        <Cell label="Connects" value={s.net.connects} />
+        <Cell label="Inputs" value={s.net.inputs} />
+        <Cell label="Bad cookies" value={s.net.bad_cookie} warn={s.net.bad_cookie > 0} />
+        <Cell label="Failed authentication" value={s.net.auth_fail} warn={s.net.auth_fail > 0} />
+        <Cell label="Timeouts" value={s.net.timeouts} />
+      </div>
+      {s.zone && <ZonePanel s={s} />}
+    </div>
+  )
+}
+
+/** Where this server sits among the zones: its name and neighbours, and the players passed between them. */
+function ZonePanel({ s }: { s: State }) {
+  const z = s.zone!
+  const name = (i: number) => z.names[i] || `zone ${i}`
+  const others = Array.from({ length: z.count }, (_, i) => i).filter((i) => i !== z.index).map(name)
+  return (
+    <div className="grid gap-2 border-t border-line pt-3">
+      <div className="lbl">
+        {z.lines ? 'Zone lines' : 'Zone strips'}: this is {name(z.index)} ({z.index + 1} of {z.count})
+        {others.length > 0 && <span className="text-fg-3"> · others: {others.join(', ')}</span>}
+      </div>
+      <div className="grid grid-cols-3 gap-x-6 gap-y-3">
+        {!z.lines && <Cell label="Owns x" value={`${z.lo} to ${z.hi}`} />}
+        <Cell label="Handed on" value={z.out} />
+        <Cell label="Arrived" value={z.in} />
+        {z.lines && <Cell label="Sent on at sign-in" value={s.net.sent_on ?? 0} />}
+        <Cell label="Failed handoffs" value={z.failed} warn={z.failed > 0} />
+        <Cell label="Refused" value={z.rejected} warn={z.rejected > 0} />
+        {!z.lines && <Cell label="Border ghosts" value={z.ghosts} />}
+      </div>
+    </div>
+  )
+}
+
+/** One headline number in the header: a word and a value, no jargon. */
+function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-label text-fg-3 truncate">{label}</div>
+      <div className={`font-semibold truncate ${warn ? 'text-accent' : 'text-fg'}`}>{value}</div>
+    </div>
+  )
+}
+
+/** The top of every page: what this is and whether the server is up, the three numbers that matter, and the
+ * Apply / Revert for changes waiting to go to the server (they are made on any page, so they live here). */
+export function Header({
   s,
   online,
-  dark,
-  onTheme,
+  dirty,
+  restarts,
+  applying,
+  onApply,
+  onRevert,
+  result,
 }: {
   s: State | null
   online: boolean
-  dark: boolean
-  onTheme: () => void
+  dirty: boolean
+  /** The waiting changes alter the wire format, so applying them restarts the world. */
+  restarts: boolean
+  applying: boolean
+  onApply: () => void
+  onRevert: () => void
+  result: { ok: boolean; text: string } | null
 }) {
+  const budget = s ? 1000 / s.hz : 50
+  const p99 = s?.perf.tick_p99_ms ?? 0
+  const bots = s ? Math.max(0, s.live - s.clients) : 0
   return (
-    <header className="cell grid gap-x-6 gap-y-2 px-4 py-2 grid-cols-1 lg:grid-cols-[minmax(240px,1.2fr)_2fr_auto] items-start">
+    <header className="flex flex-wrap items-center gap-x-8 gap-y-2 px-5 py-3 border-b border-line">
       <div className="min-w-0">
-        <h1 className="text-head leading-6 tracking-tight">
-          mmo-engine<span className="text-fg-3"> / console</span>
+        <h1 className="text-head font-semibold m-0">
+          mmo-engine <span className="text-fg-3 font-normal">admin</span>
         </h1>
-        <div className="lbl flex items-center gap-2">
-          <span
-            className={`inline-block h-2 w-2 ${online ? 'bg-accent' : 'bg-fg-3'}`}
-            aria-hidden
-          />
-          {online ? `live · tick ${s?.tick ?? 0}` : 'server not reachable'}
+        <div className="flex items-center gap-2 text-label text-fg-3">
+          <span className={`inline-block h-2 w-2 rounded-full ${online ? 'bg-accent' : 'bg-fg-3'}`} aria-hidden />
+          {online ? 'Server running' : 'Server not reachable'}
         </div>
       </div>
-      {s ? (
-        <div className="grid gap-x-6 gap-y-1 grid-cols-2 md:grid-cols-[1.4fr_1fr_1fr]">
-          <div className="col-span-2 md:col-span-1">
-            <Ruler s={s} />
-          </div>
-          <div className="grid grid-cols-3 gap-x-4 col-span-2 md:col-span-2">
-            <Cell label="Entities" value={s.live} />
-            <Cell label="Players" value={s.clients} />
-            <Cell label="Lanes" value={s.perf.lanes} />
-            <Cell label="Packets in/s" value={Math.round(s.perf.in_pps)} />
-            <Cell label="Packets out/s" value={Math.round(s.perf.out_pps)} />
-            <Cell label="Mbit/s out" value={s.perf.mbit.toFixed(1)} />
-          </div>
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-x-4 col-span-2 md:col-span-3">
-            <Cell label="Hello" value={s.net.hellos} />
-            <Cell label="Connect" value={s.net.connects} />
-            <Cell label="Inputs" value={s.net.inputs} />
-            <Cell label="Bad cookie" value={s.net.bad_cookie} warn={s.net.bad_cookie > 0} />
-            <Cell label="Auth failed" value={s.net.auth_fail} warn={s.net.auth_fail > 0} />
-            <Cell label="Timeouts" value={s.net.timeouts} />
-          </div>
+      {s && (
+        <div className="flex flex-wrap gap-x-8 gap-y-2 min-w-0 max-w-full">
+          <Stat label="Players online" value={String(s.clients)} />
+          <Stat label="Bots and others" value={bots.toLocaleString()} />
+          <Stat
+            label="Server load"
+            value={`${Math.round((s.perf.tick_avg_ms / budget) * 100)}% busy${p99 > budget ? `, spikes to ${p99.toFixed(0)} ms` : ''}`}
+            warn={s.perf.tick_avg_ms > budget * 0.7}
+          />
         </div>
-      ) : (
-        <p className="text-fg-3">Waiting for the server at /api/state</p>
       )}
-      <div className="justify-self-end flex gap-2">
-      <About />
-      <button
-        type="button"
-        className="btn"
-        aria-pressed={!dark}
-        aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-        onClick={onTheme}
-      >
-        {dark ? <Sun size={16} strokeWidth={1.5} aria-hidden /> : <Moon size={16} strokeWidth={1.5} aria-hidden />}
-        {dark ? 'Light' : 'Dark'}
-      </button>
+      <div className="ml-auto flex items-center gap-3" aria-label="Changes">
+        <div aria-live="polite" className="text-right max-w-[34ch]">
+          {result && !result.ok ? (
+            <span role="alert" className="text-accent">
+              {result.text}
+            </span>
+          ) : dirty ? (
+            <span className={restarts ? 'text-accent' : 'text-fg-2'}>{restarts ? 'Unsaved changes: applying restarts the world' : 'Unsaved changes: they apply live'}</span>
+          ) : result ? (
+            <span role={result.ok ? 'status' : 'alert'} className={result.ok ? 'text-fg-3' : 'text-accent'}>
+              {result.text}
+            </span>
+          ) : (
+            <span className="text-fg-3">Everything is saved</span>
+          )}
+        </div>
+        <button type="button" className="btn" disabled={!dirty || applying} onClick={onRevert}>
+          Revert
+        </button>
+        <button type="button" className={`btn ${dirty ? 'btn-primary' : ''}`} disabled={!dirty || applying} onClick={onApply}>
+          {applying ? 'Applying…' : 'Apply'}
+        </button>
+        <About />
       </div>
     </header>
   )

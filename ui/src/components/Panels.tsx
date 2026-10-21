@@ -39,8 +39,10 @@ export function EntityPanel({
           <>
             <div className="flex items-baseline justify-between">
               <h2 className="text-head leading-6">
-                #{(row[0] ?? 0) & 0xffffff}
-                <span className="text-fg-3"> gen {(row[0] ?? 0) >>> 24}</span>
+                {s.names?.[String(row[0])] ?? `#${(row[0] ?? 0) & 0xffffff}`}
+                <span className="text-fg-3">
+                  {s.names?.[String(row[0])] ? ` #${(row[0] ?? 0) & 0xffffff}` : ''} gen {(row[0] ?? 0) >>> 24}
+                </span>
               </h2>
               <span className="lbl flex items-center gap-1">
                 {arch ? BEHAVIOUR_ICON[arch.behaviour] : null}
@@ -116,7 +118,7 @@ export function EntityPanel({
                   className={`w-full text-left h-6 px-0 bg-transparent border-0 border-b border-line cursor-pointer flex gap-2 ${r[0] === selected ? 'text-accent' : 'text-fg-2 hover:text-fg'}`}
                 >
                   <span className="w-14">#{(r[0] ?? 0) & 0xffffff}</span>
-                  <span className="flex-1 truncate">{k === KIND_PLAYER ? 'player' : k === KIND_DRIVEN ? `${a?.name ?? 'npc'} (possessed)` : (a?.name ?? 'plain npc')}</span>
+                  <span className="flex-1 truncate">{k === KIND_PLAYER ? (s.names?.[String(r[0])] ?? 'player') : k === KIND_DRIVEN ? `${a?.name ?? 'npc'} (possessed)` : (a?.name ?? 'plain npc')}</span>
                   <span>
                     {(r[1] ?? 0).toFixed(0)},{(r[2] ?? 0).toFixed(0)}
                   </span>

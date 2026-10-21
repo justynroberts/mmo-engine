@@ -1,4 +1,6 @@
 import { BLOCK_KINDS, blocksOf } from './blocks'
+import { SCENERY } from './walls'
+import { zoneAt, type ZoneView } from './shared'
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
@@ -122,51 +124,76 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     const winBg = dark ? '#0b0a1a' : '#cdc5e0'
     const winTex = windowTexture(winBg, [css(pal.line), css(pal.hot), css(pal.accent)])
     disposables.push(winTex)
-    const plain = new THREE.MeshBasicMaterial({ color: dark ? 0x0d0b1e : 0xc3badb })
-    disposables.push(plain)
+    // One instanced mesh draws every building in view, one merged line set outlines them and one instanced mesh
+    // draws the solid scenery (trunks, rocks), so a city costs three draw calls however many buildings it has. The
+    // windows are laid out from world position (one every 5 units across, 4 up), so every building of whatever size
+    // gets whole windows from one shared texture, and its roof is plain.
+    const roof = new THREE.Color(dark ? 0x0d0b1e : 0xc3badb)
+    const slabMat = new THREE.MeshBasicMaterial({ map: winTex, color: dark ? 0xffffff : 0xdcd4ee })
+    slabMat.onBeforeCompile = (sh) => {
+      sh.uniforms.roof = { value: roof }
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vW;\nvarying vec3 vN;')
+        .replace('#include <fog_vertex>', '#include <fog_vertex>\nvW = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;\nvN = normal;')
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vW;\nvarying vec3 vN;\nuniform vec3 roof;')
+        .replace(
+          '#include <map_fragment>',
+          'vec2 wuv = abs(vN.x) > 0.5 ? vec2(vW.z / 5.0, vW.y / 4.0) : vec2(vW.x / 5.0, vW.y / 4.0);\n' +
+            'diffuseColor *= abs(vN.y) > 0.5 ? vec4(roof / max(diffuse, vec3(1e-4)), 1.0) : texture2D(map, wuv);',
+        )
+    }
+    const trunkMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(pal.dim).multiplyScalar(dark ? 1.4 : 0.8) })
+    const unitBox = new THREE.BoxGeometry(1, 1, 1)
+    unitBox.translate(0, 0.5, 0)
+    disposables.push(slabMat, trunkMat, unitBox)
     // Buildings come and go with the wall store: all of them in a small world, the ones near you in a big one.
-    type Building = { mesh: THREE.Mesh; edges: THREE.LineSegments; own: { dispose(): void }[] }
-    const buildings = new Map<string, Building>()
+    let slabs: THREE.InstancedMesh | null = null
+    let trunks: THREE.InstancedMesh | null = null
+    let outline: THREE.LineSegments | null = null
     let wallRev = -1
+    const dropBuildings = () => {
+      for (const o of [slabs, trunks, outline]) if (o) scene.remove(o)
+      slabs?.dispose()
+      trunks?.dispose()
+      outline?.geometry.dispose()
+      slabs = trunks = outline = null
+    }
     const syncBuildings = () => {
-      const wanted = client.walls.list()
       wallRev = client.walls.rev
-      const keep = new Set<string>()
-      for (const [x0, y0, x1, y1] of wanted) {
-        const key = `${x0},${y0},${x1},${y1}`
-        keep.add(key)
-        if (buildings.has(key)) continue
-        // Height from position, so a wall keeps its look whichever chunk delivered it.
-        const h = 7 + (Math.abs(Math.floor(x0 * 7 + y0 * 13)) % 9)
-        const w = x1 - x0
-        const d = y1 - y0
-        const own: { dispose(): void }[] = []
-        const face = (across: number) => {
-          const t = winTex.clone()
-          t.needsUpdate = true
-          t.repeat.set(Math.max(1, Math.round(across / 5)), Math.max(1, Math.round(h / 4)))
-          const m = new THREE.MeshBasicMaterial({ map: t, color: dark ? 0xffffff : 0xdcd4ee })
-          own.push(t, m)
-          return m
-        }
-        const sideX = face(d)
-        const sideZ = face(w)
-        const g = new THREE.BoxGeometry(w, h, d)
-        const mesh = new THREE.Mesh(g, [sideX, sideX, plain, plain, sideZ, sideZ])
-        mesh.position.set((x0 + x1) / 2 - half, h / 2, (y0 + y1) / 2 - half)
-        scene.add(mesh)
-        const eg = new THREE.EdgesGeometry(g)
-        eg.translate(mesh.position.x, mesh.position.y, mesh.position.z)
-        const edges = new THREE.LineSegments(eg, wallMat)
-        scene.add(edges)
-        own.push(g, eg)
-        buildings.set(key, { mesh, edges, own })
+      dropBuildings()
+      const all = client.walls.entries()
+      const walls = all.filter((e) => e.cls !== SCENERY)
+      const scenery = all.filter((e) => e.cls === SCENERY)
+      const m = new THREE.Matrix4()
+      if (walls.length) {
+        slabs = new THREE.InstancedMesh(unitBox, slabMat, walls.length)
+        const lines = new Float32Array(walls.length * 24 * 3)
+        walls.forEach(({ box: [x0, y0, x1, y1] }, i) => {
+          // Height from position, so a wall keeps its look whichever tile delivered it.
+          const h = 7 + (Math.abs(Math.floor(x0 * 7 + y0 * 13)) % 9)
+          m.makeScale(x1 - x0, h, y1 - y0).setPosition((x0 + x1) / 2 - half, 0, (y0 + y1) / 2 - half)
+          slabs!.setMatrixAt(i, m)
+          boxEdges(lines, i * 72, x0 - half, y0 - half, x1 - half, y1 - half, h)
+        })
+        slabs.instanceMatrix.needsUpdate = true
+        slabs.frustumCulled = false
+        scene.add(slabs)
+        const g = new THREE.BufferGeometry()
+        g.setAttribute('position', new THREE.BufferAttribute(lines, 3))
+        outline = new THREE.LineSegments(g, wallMat)
+        outline.frustumCulled = false
+        scene.add(outline)
       }
-      for (const [key, bd] of buildings) {
-        if (keep.has(key)) continue
-        scene.remove(bd.mesh, bd.edges)
-        for (const o of bd.own) o.dispose()
-        buildings.delete(key)
+      if (scenery.length) {
+        trunks = new THREE.InstancedMesh(unitBox, trunkMat, scenery.length)
+        scenery.forEach(({ box: [x0, y0, x1, y1] }, i) => {
+          m.makeScale(x1 - x0, 3 + (x1 - x0), y1 - y0).setPosition((x0 + x1) / 2 - half, 0, (y0 + y1) / 2 - half)
+          trunks!.setMatrixAt(i, m)
+        })
+        trunks.instanceMatrix.needsUpdate = true
+        trunks.frustumCulled = false
+        scene.add(trunks)
       }
     }
     syncBuildings()
@@ -175,7 +202,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     const BS = ref.current.info.build?.block ?? 2
     /** Height of whatever block a character stands on. */
     const lift = (x: number, y: number, z: number) => client.standLevel(x, y, z) * BS
-    // The neon look has four inks: the twelve materials are those four, then two paler rounds of them.
+    // The neon look has four inks: the materials are those four, then paler rounds of them.
     const blockColours = Array.from({ length: BLOCK_KINDS }, (_, k) => new THREE.Color([pal.dim, pal.line, pal.hot, pal.accent][k % 4]).lerp(new THREE.Color('#ffffff'), Math.floor(k / 4) * 0.3))
     const blockMeshes: THREE.InstancedMesh[] = []
     let blocksRev = -1
@@ -317,6 +344,42 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     const fogBase = new THREE.Color(pal.bg)
     const fogTint = new THREE.Color()
     const fog = scene.fog as THREE.Fog
+
+    // Weather zones: a glowing column of mist over the place, in its weather's colour, and a ring where it meets the
+    // ground. Rebuilt when the server's list changes.
+    let zoneKey = ''
+    let zoneGroup: THREE.Group | null = null
+    const syncZones = (zones: readonly ZoneView[]) => {
+      const key = JSON.stringify(zones)
+      if (key === zoneKey) return
+      zoneKey = key
+      if (zoneGroup) {
+        scene.remove(zoneGroup)
+        zoneGroup.traverse((o) => {
+          const m = o as THREE.Mesh
+          m.geometry?.dispose()
+          ;(m.material as THREE.Material | undefined)?.dispose()
+        })
+      }
+      zoneGroup = new THREE.Group()
+      for (const z of zones) {
+        const k = Math.max(0, Math.min(1, z.intensity))
+        const col = new THREE.Color(z.color)
+        const column = new THREE.Mesh(
+          new THREE.CylinderGeometry(z.r, z.r, z.height, 48, 1, true),
+          new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.12 + 0.3 * k, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
+        )
+        column.position.set(z.x - half, z.height / 2, z.y - half)
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(z.r - 0.4, z.r, 64),
+          new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(glow), transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+        )
+        ring.rotation.x = -Math.PI / 2
+        ring.position.set(z.x - half, 0.05, z.y - half)
+        zoneGroup.add(column, ring)
+      }
+      scene.add(zoneGroup)
+    }
 
     // Floating damage numbers.
     const textures = new Map<string, THREE.CanvasTexture>()
@@ -670,7 +733,11 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         beam.visible = false
         selfPrev = null
       }
-      const wx = s.weather
+      // Inside a weather zone its weather is the one in force (and drawn); elsewhere the weather everywhere.
+      syncZones(s.zones)
+      const inZone = self ? zoneAt(s.zones, self.x, self.y) : null
+      const wx = inZone ? { name: inZone.weather, color: inZone.color, intensity: inZone.intensity } : s.weather
+      s.shown = wx
       if (wx && self) {
         const k = Math.max(0, Math.min(1, wx.intensity))
         fogTint.set(wx.color)
@@ -680,7 +747,9 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
         fog.near = 50 - 40 * k
         fog.far = 150 - 90 * k
         rainMat.color.set(wx.color).lerp(new THREE.Color(pal.line), 0.4)
-        const n = k > 0.25 ? Math.round(RAIN * k) : 0
+        // Fog and mist hang in the air; everything else falls (godot/scripts/theme.gd weather_kind uses the same words).
+        const still = /fog|mist|haze|smog/i.test(wx.name) && !/snow|blizzard|sleet|frost|dust|sand|ash/i.test(wx.name)
+        const n = k > 0.25 && !still ? Math.round(RAIN * k) : 0
         rain.visible = n > 0
         const rp = rainGeo.getAttribute('position') as THREE.BufferAttribute
         const sx = self.x - half
@@ -737,7 +806,8 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       for (const f of floaters) drop(f)
       for (const t of textures.values()) t.dispose()
       for (const g of geoms) g.dispose()
-      for (const bd of buildings.values()) for (const o of bd.own) o.dispose()
+      dropBuildings()
+      syncZones([]) // lets the last zones' meshes go
       for (const m of blockMeshes) {
         m.geometry.dispose()
         ;(m.material as THREE.Material).dispose()
@@ -763,4 +833,30 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
   }, [info, dark])
 
   return <div ref={box} className="absolute inset-0 overflow-hidden" style={{ background: 'var(--hud-bg)' }} />
+}
+
+/** The 12 edges of an axis-aligned box standing on the ground, `h` high, written as 24 points into `out` at `at`. */
+function boxEdges(out: Float32Array, at: number, x0: number, z0: number, x1: number, z1: number, h: number) {
+  const c = [
+    [x0, z0],
+    [x1, z0],
+    [x1, z1],
+    [x0, z1],
+  ] as const
+  let p = at
+  const put = (x: number, y: number, z: number) => {
+    out[p++] = x
+    out[p++] = y
+    out[p++] = z
+  }
+  for (let i = 0; i < 4; i++) {
+    const [ax, az] = c[i]!
+    const [bx, bz] = c[(i + 1) % 4]!
+    put(ax, 0, az)
+    put(bx, 0, bz)
+    put(ax, h, az)
+    put(bx, h, bz)
+    put(ax, 0, az)
+    put(ax, h, az)
+  }
 }

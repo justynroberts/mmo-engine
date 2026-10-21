@@ -26,6 +26,11 @@ pub mod channel {
     pub const SAY: u8 = 0;
     /// Heard by everyone.
     pub const SHOUT: u8 = 1;
+    /// Client to server only: the text is the display name the player claims (`crate::names`). Never routed.
+    pub const NAME: u8 = 2;
+    /// Server to client only, from the server (0): a message to put across the screen as well as in chat (an
+    /// event's banner). Older clients just show it as a chat line.
+    pub const BANNER: u8 = 3;
 }
 
 pub mod kind {
@@ -95,7 +100,7 @@ pub fn decode_send(buf: &[u8]) -> Option<(u32, u8, String)> {
     let cseq = u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]);
     let ch = buf[5];
     let n = buf[6] as usize;
-    if ch > channel::SHOUT || n > MAX_TEXT || buf.len() != 7 + n {
+    if ch > channel::NAME || n > MAX_TEXT || buf.len() != 7 + n {
         return None;
     }
     let text = std::str::from_utf8(&buf[7..]).ok()?.to_string();

@@ -15,7 +15,7 @@ pub const DRIVEN: u32 = u32::MAX - 1;
 pub const GHOST: u32 = u32::MAX - 2;
 /// Archetype of entities that are not bots (players, plain NPCs).
 pub const NO_ARCH: u8 = u8::MAX;
-const SLOT_MASK: u32 = 0x00FF_FFFF;
+pub const SLOT_MASK: u32 = 0x00FF_FFFF;
 
 pub struct Entities {
     pub alive: Vec<bool>,
@@ -46,6 +46,14 @@ pub struct Entities {
     pub account: Vec<u16>,
     /// One array per attribute, indexed by slot (structure of arrays).
     pub attrs: Vec<Vec<f32>>,
+    /// A player's display name (`proto::names`); None for bots, which go by their type.
+    pub name: Vec<Option<std::sync::Arc<str>>>,
+    /// Whether the player chose that name (saved and kept unique) or was given one (not saved).
+    pub name_claimed: Vec<bool>,
+    /// Raised by an event (`director`): killed, it is gone instead of respawning, and it is never saved.
+    pub fleeting: Vec<bool>,
+    /// Slots whose name may have changed since the web gateway last looked (spawned, removed, renamed).
+    pub renamed: Vec<u32>,
     free: Vec<u32>,
     pub high: usize,
     pub live: usize,
@@ -79,8 +87,13 @@ impl Entities {
             wp_fwd: vec![true; cap],
             say_at: vec![0; cap],
             attrs: (0..n_attrs).map(|_| vec![0.0; cap]).collect(),
+            name: vec![None; cap],
+            name_claimed: vec![false; cap],
+            fleeting: vec![false; cap],
+            renamed: Vec::new(),
             free: Vec::new(),
-            high: 0,
+            // Slot 0 is never used, so entity id 0 always means the server (chat from 0 is the server speaking).
+            high: 1,
             live: 0,
         }
     }
@@ -127,6 +140,10 @@ impl Entities {
             self.gen[slot] = self.gen[slot].wrapping_add(1);
             self.owner[slot] = NONE;
             self.account[slot] = 0;
+            self.name[slot] = None;
+            self.name_claimed[slot] = false;
+            self.fleeting[slot] = false;
+            self.renamed.push(slot as u32);
             self.free.push(slot as u32);
             self.live -= 1;
         }
@@ -256,8 +273,16 @@ pub struct Sim {
     /// from here, so quantisation cost is O(entities), not O(clients x visible).
     pub entry_cache: Vec<Entry>,
     pub archs: Vec<ArchRt>,
+    /// Every name may have changed (bot types edited): the web gateway republishes them all.
+    pub names_all: bool,
     pub places: Vec<proto::game::Place>,
     pub routes: Vec<proto::game::Route>,
+    /// When it is light and dark; clients draw it, and at night bots see unlit players less far.
+    pub daylight: proto::daylight::Daylight,
+    /// Whether it is night now (worked out from `daylight` each tick).
+    pub night: bool,
+    /// The `lit` attribute, when the game has one (sneaking).
+    lit_attr: Option<usize>,
     /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
     pub npc_say: Vec<(usize, bool, String)>,
     /// Actions requested by bots this tick.
@@ -270,6 +295,8 @@ pub struct Sim {
     pub sight_mult: f32,
     /// What clients are told about the current weather, if any.
     pub weather: Option<WeatherView>,
+    /// The weather zones that are on (the director keeps this).
+    pub zones: Vec<ZoneView>,
     /// Item kinds (from the game file) and who carries what, indexed by entity slot.
     pub items: Vec<proto::game::ItemRt>,
     pub inv: Vec<crate::items::Bag>,
@@ -284,6 +311,11 @@ pub struct Sim {
     pub blocks: crate::blocks::Blocks,
     /// The ground's heights, which say which layer a new block column starts in.
     pub terrain: crate::worldfile::Terrain,
+    /// Walkability grid and flow fields toward places and route points (see `nav.rs`).
+    pub nav: crate::nav::Nav,
+    /// Per slot: the static point a bot last decided to walk to and how near counts as there (negative for
+    /// none), so between decisions it can keep following the flow field round corners.
+    nav_goal: Vec<(f32, f32, f32)>,
 }
 
 /// The part of the weather that clients draw.
@@ -294,9 +326,51 @@ pub struct WeatherView {
     pub intensity: f32,
 }
 
+/// A weather zone that is on: where it is, what clients draw there, and how far bots inside it see.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ZoneView {
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub r: f32,
+    pub height: f32,
+    pub weather: String,
+    pub color: String,
+    pub intensity: f32,
+    #[serde(skip)]
+    pub sight_mult: f32,
+}
+
+/// How far a bot sees entity `t`, as a share of its sight: an unlit player at night is hard to see.
+#[inline]
+fn seen_at(e: &Entities, lit: usize, t: usize) -> f32 {
+    if e.owner[t] < DRIVEN && e.attrs[lit][t] < 0.5 {
+        proto::game::SNEAK_SIGHT
+    } else {
+        1.0
+    }
+}
+
 impl Sim {
+    /// The `lit` attribute when sneaking is in play right now (a game that has one, at night).
+    fn sneak(&self) -> Option<usize> {
+        self.lit_attr.filter(|_| self.night)
+    }
+
+    /// How far bots see at (x, y), as a multiple of what their type says: inside a weather zone its weather decides
+    /// (the most blinding, where zones overlap), elsewhere the weather everywhere does.
+    pub fn sight_at(&self, x: f32, y: f32) -> f32 {
+        let mut inside: Option<f32> = None;
+        for z in &self.zones {
+            if (x - z.x).powi(2) + (y - z.y).powi(2) <= z.r * z.r {
+                inside = Some(inside.map_or(z.sight_mult, |m| m.min(z.sight_mult)));
+            }
+        }
+        inside.unwrap_or(self.sight_mult)
+    }
+
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items } = game;
+        let Game { defs, archs, places, routes, items, daylight } = game;
         let ents = Entities::new(cap, defs.attrs.len());
         let grid = Grid::new(world.size, defs.interest_radius, cap);
         Sim {
@@ -311,14 +385,19 @@ impl Sim {
             stats: SimStats::default(),
             entry_cache: vec![Entry::default(); cap],
             archs,
+            names_all: true,
             places,
             routes,
+            daylight,
+            night: false,
+            lit_attr: None,
             npc_say: Vec::new(),
             npc_actions: Vec::new(),
             admin_actions: Vec::new(),
             zone: None,
             sight_mult: 1.0,
             weather: None,
+            zones: Vec::new(),
             items,
             inv: vec![[(0, 0); proto::game::INV_SLOTS]; cap],
             inv_ver: vec![0; cap],
@@ -328,6 +407,8 @@ impl Sim {
             next_ground: 1,
             blocks: Default::default(),
             terrain: Default::default(),
+            nav: Default::default(),
+            nav_goal: vec![(0.0, 0.0, -1.0); cap],
         }
     }
 
@@ -383,7 +464,11 @@ impl Sim {
         e.wp[slot] = 0;
         e.wp_fwd[slot] = true;
         e.say_at[slot] = 0;
+        e.name[slot] = None;
+        e.name_claimed[slot] = false;
+        e.renamed.push(slot as u32);
         e.live += 1;
+        self.nav_goal[slot].2 = -1.0;
         self.reset_attrs(slot);
         self.clear_inv(slot);
         self.item_cd[slot] = 0;
@@ -397,21 +482,50 @@ impl Sim {
             y: self.ents.y[slot],
             attrs: self.defs.attrs.iter().enumerate().map(|(i, d)| (d.name.clone(), self.ents.attrs[i][slot])).collect(),
             inv: self.inv_names(slot),
+            name: if self.ents.name_claimed[slot] { self.ents.name[slot].as_deref().unwrap_or("").to_string() } else { String::new() },
+            zone: None,
         }
+    }
+
+    /// Give a player a display name: `claimed` for one they chose (saved with them), otherwise one they were given.
+    pub fn set_name(&mut self, slot: usize, name: &str, claimed: bool) {
+        self.ents.name[slot] = Some(name.into());
+        self.ents.name_claimed[slot] = claimed;
+        self.ents.renamed.push(slot as u32);
+    }
+
+    /// What everyone calls an entity: a player's name, a bot's type, "Traveller" for a guest from another zone.
+    pub fn name_of(&self, slot: usize) -> std::sync::Arc<str> {
+        if let Some(n) = &self.ents.name[slot] {
+            return n.clone();
+        }
+        match self.archs.get(self.ents.arch[slot] as usize) {
+            Some(a) => proto::names::bot(&a.name).into(),
+            None if self.ents.owner[slot] == GHOST => "Traveller".into(),
+            None => "Guest".into(),
+        }
+    }
+
+    /// Move an entity straight to (x, y), standing on whatever is there, if it is inside the world and not in a
+    /// wall. Returns whether it moved.
+    pub fn put(&mut self, slot: usize, x: f32, y: f32) -> bool {
+        let r = self.defs.entity_radius;
+        let size = self.world.size;
+        if !(x.is_finite() && y.is_finite() && x >= r && y >= r && x <= size - r && y <= size - r) || self.world.blocked_by_walls(x, y, r) {
+            return false;
+        }
+        self.ents.x[slot] = x;
+        self.ents.y[slot] = y;
+        // On top of whatever is there now (it may have been built over while away).
+        self.ents.z[slot] = self.world.settle(x, y, r, proto::world::GROUND);
+        true
     }
 
     /// Put a saved character back. Position is kept only if it is still a legal spot
     /// (the world may have changed); attributes are matched by name and clamped to
     /// their current range, so a changed game file never produces an invalid value.
     pub fn restore(&mut self, slot: usize, rec: &crate::store::Record) {
-        let r = self.defs.entity_radius;
-        let size = self.world.size;
-        if rec.x.is_finite() && rec.y.is_finite() && rec.x >= r && rec.y >= r && rec.x <= size - r && rec.y <= size - r && !self.world.blocked_by_walls(rec.x, rec.y, r) {
-            self.ents.x[slot] = rec.x;
-            self.ents.y[slot] = rec.y;
-            // Back on top of whatever is there now (it may have been built over while away).
-            self.ents.z[slot] = self.world.settle(rec.x, rec.y, r, proto::world::GROUND);
-        }
+        self.put(slot, rec.x, rec.y);
         for (i, d) in self.defs.attrs.iter().enumerate() {
             if let Some(&v) = rec.attrs.get(&d.name) {
                 if v.is_finite() {
@@ -421,6 +535,9 @@ impl Sim {
         }
         if !rec.inv.is_empty() {
             self.restore_inv(slot, &rec.inv);
+        }
+        if let Ok(n) = proto::names::clean(&rec.name) {
+            self.set_name(slot, &n, true);
         }
     }
 
@@ -436,6 +553,9 @@ impl Sim {
         e.dir_x[slot] = 0;
         e.dir_y[slot] = 0;
         e.owner[slot] = GHOST;
+        e.name[slot] = None;
+        e.name_claimed[slot] = false;
+        e.renamed.push(slot as u32);
         e.arch[slot] = arch;
         e.speed[slot] = 0.0;
         e.live += 1;
@@ -453,6 +573,7 @@ impl Sim {
     pub fn replace_world(&mut self, world: World, terrain: crate::worldfile::Terrain) -> usize {
         self.world = world;
         self.terrain = terrain;
+        self.nav.clear();
         // Built blocks stay where they are, except those the new world's walls cover or its ground buries.
         let cols = self.block_texts();
         self.set_blocks(cols);
@@ -672,7 +793,7 @@ impl Sim {
     pub fn bot_records(&self) -> crate::store::WorldSave {
         let mut bots = Vec::new();
         for s in 0..self.ents.high {
-            if self.ents.alive[s] && self.ents.arch[s] != NO_ARCH && self.ents.owner[s] >= DRIVEN {
+            if self.ents.alive[s] && self.ents.arch[s] != NO_ARCH && self.ents.owner[s] >= DRIVEN && !self.ents.fleeting[s] {
                 let Some(a) = self.archs.get(self.ents.arch[s] as usize) else { continue };
                 let rec = self.record_of(s);
                 bots.push(crate::store::BotRec { arch: a.name.clone(), x: rec.x, y: rec.y, attrs: rec.attrs });
@@ -709,7 +830,7 @@ impl Sim {
                 return;
             };
             // A spot that is no longer legal falls back to a fresh one inside spawn_as; attributes still apply.
-            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone(), inv: Vec::new() });
+            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone(), inv: Vec::new(), name: String::new(), zone: None });
             have[a] += 1;
         }
         for a in 0..self.archs.len() {
@@ -724,6 +845,10 @@ impl Sim {
     /// Advance the world by one fixed step.
     pub fn step(&mut self, pending: &[PendingAction]) {
         self.tick += 1;
+        if self.tick % self.tick_hz.max(1) == 1 {
+            self.lit_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::LIT_ATTR);
+            self.night = self.daylight.phase(proto::daylight::now_ms()) >= 1.0 - self.daylight.night_share();
+        }
         self.npc_actions.clear();
         self.system_npc_ai();
         self.system_regen();
@@ -747,12 +872,38 @@ impl Sim {
         }
     }
 
+    /// Steer toward a point that does not move (a place, a route point): down its flow field when one is
+    /// built and the bot is in its window, otherwise straight at it. Remembers the point so the bot keeps
+    /// following the field between decisions.
+    fn toward_static(&mut self, s: usize, tx: f32, ty: f32, stop: f32) -> (i8, i8) {
+        let (x, y) = (self.ents.x[s], self.ents.y[s]);
+        let (dx, dy) = (tx - x, ty - y);
+        if dx * dx + dy * dy <= stop * stop {
+            return (0, 0);
+        }
+        self.nav_goal[s] = (tx, ty, stop);
+        let r = self.defs.entity_radius;
+        self.nav.steer(&self.world, r, self.tick, x, y, tx, ty, true).unwrap_or_else(|| dir_to(dx, dy, stop))
+    }
+
+    /// Between decisions, turn a bot walking to a static point along its (already built) flow field. Where
+    /// the field has nothing to say the bot keeps its direction, as it did before there were fields.
+    fn follow_field(&mut self, s: usize) {
+        let (tx, ty, _) = self.nav_goal[s];
+        let r = self.defs.entity_radius;
+        if let Some((dx, dy)) = self.nav.steer(&self.world, r, self.tick, self.ents.x[s], self.ents.y[s], tx, ty, false) {
+            self.ents.dir_x[s] = dx;
+            self.ents.dir_y[s] = dy;
+        }
+    }
+
     /// Random-walk step, drifting back toward the home place when outside it.
     fn wander_dir(&mut self, s: usize, a: usize) -> (i8, i8) {
         if let Some(p) = self.archs.get(a).and_then(|r| r.home).and_then(|h| self.places.get(h)) {
             let (dx, dy) = (p.x - self.ents.x[s], p.y - self.ents.y[s]);
             if dx * dx + dy * dy > p.r * p.r {
-                return dir_to(dx, dy, 0.5);
+                let (px, py, pr) = (p.x, p.y, p.r);
+                return self.toward_static(s, px, py, pr);
             }
         }
         if self.rng.below(4) == 0 {
@@ -768,7 +919,7 @@ impl Sim {
     fn run_rules(&mut self, s: usize, a: usize) -> bool {
         use proto::game::{ActRt, CondRt, Seek};
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
-        let m = self.sight_mult;
+        let m = self.sight_at(x, y);
         let (reach, attack) = (self.archs[a].reach * m.max(1.0), self.archs[a].attack);
         let attack_range = attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range);
 
@@ -778,6 +929,7 @@ impl Sim {
         if scan > 0.0 {
             let e = &self.ents;
             let me_arch = e.arch[s];
+            let sneak = self.sneak();
             self.grid.for_neighbours(x, y, |t| {
                 let t = t as usize;
                 if t == s {
@@ -785,7 +937,8 @@ impl Sim {
                 }
                 let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                 let d2 = dx * dx + dy * dy;
-                if d2 > scan * scan {
+                let m = sneak.map_or(1.0, |lit| seen_at(e, lit, t));
+                if d2 > scan * scan * m * m {
                     return;
                 }
                 if e.owner[t] == GHOST {
@@ -860,7 +1013,8 @@ impl Sim {
                 }
                 ActRt::Goto { place } => {
                     let p = &self.places[place];
-                    dir_to(p.x - x, p.y - y, (p.r * 0.5).max(1.0))
+                    let (px, py, stop) = (p.x, p.y, (p.r * 0.5).max(1.0));
+                    self.toward_static(s, px, py, stop)
                 }
                 ActRt::Patrol { route } => {
                     let r = &self.routes[route];
@@ -888,7 +1042,7 @@ impl Sim {
                         self.ents.wp_fwd[s] = fwd;
                     }
                     let [px, py] = r.points[i];
-                    dir_to(px - x, py - y, 0.5)
+                    self.toward_static(s, px, py, 0.5)
                 }
             };
             self.ents.dir_x[s] = steer.0;
@@ -908,8 +1062,12 @@ impl Sim {
                 continue;
             }
             if (tick as usize + s) % 10 != 0 {
+                if (tick as usize + s) % 2 == 0 && self.nav_goal[s].2 >= 0.0 {
+                    self.follow_field(s);
+                }
                 continue;
             }
+            self.nav_goal[s].2 = -1.0;
             let a = self.ents.arch[s];
             if self.archs.get(a as usize).is_some_and(|r| !r.rules.is_empty()) && self.run_rules(s, a as usize) {
                 continue;
@@ -918,7 +1076,7 @@ impl Sim {
             let (behaviour, sight, attack, attack_range) = match self.archs.get(a as usize) {
                 Some(r) => (
                     r.behaviour,
-                    r.sight * self.sight_mult,
+                    r.sight * self.sight_at(self.ents.x[s], self.ents.y[s]),
                     r.attack,
                     r.attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range),
                 ),
@@ -930,6 +1088,7 @@ impl Sim {
                 let reach = sight.max(attack_range);
                 let (x, y) = (self.ents.x[s], self.ents.y[s]);
                 let e = &self.ents;
+                let sneak = self.sneak();
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
                     if t == s || e.arch[t] == a && a != NO_ARCH {
@@ -937,7 +1096,8 @@ impl Sim {
                     }
                     let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                     let d2 = dx * dx + dy * dy;
-                    if d2 <= reach * reach && near.map_or(true, |(b, _)| d2 < b) {
+                    let m = sneak.map_or(1.0, |lit| seen_at(e, lit, t));
+                    if d2 <= reach * reach * m * m && near.map_or(true, |(b, _)| d2 < b) {
                         near = Some((d2, t));
                     }
                 });
@@ -1013,6 +1173,13 @@ impl Sim {
     fn system_actions(&mut self, pending: &[PendingAction]) {
         for p in pending {
             if !self.ents.alive[p.slot] {
+                continue;
+            }
+            if p.action == proto::game::ACT_LIGHT {
+                if let Some(a) = self.lit_attr.or_else(|| self.defs.attrs.iter().position(|d| d.name == proto::game::LIT_ATTR)) {
+                    let d = &self.defs.attrs[a];
+                    self.ents.attrs[a][p.slot] = if p.arg > 0 { d.max } else { d.min };
+                }
                 continue;
             }
             if p.action == proto::game::ACT_JUMP {
@@ -1127,6 +1294,10 @@ impl Sim {
                 if self.ents.alive[s] && self.ents.owner[s] != GHOST && self.ents.attrs[a][s] <= min {
                     if self.is_bot(s) {
                         self.loot_from(s);
+                    }
+                    if self.ents.fleeting[s] {
+                        self.ents.despawn(s); // an event's bot: beaten is beaten
+                        continue;
                     }
                     let (x, y) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
                     self.ents.x[s] = x;
@@ -1481,6 +1652,27 @@ mod tests {
     }
 
     #[test]
+    fn at_night_bots_see_an_unlit_player_only_close_up() {
+        // A chaser with 40 units of sight and a player 20 units east; the default game has `lit`.
+        let setup = |phase: f64, lit: bool| {
+            let mut s = sim_with(|g| {
+                g.archetypes = vec![arch("hound", Behaviour::Chase, vec![])];
+                g.daylight = Some(proto::daylight::Daylight::Fixed { phase });
+            });
+            let bot = s.spawn_as(NONE, 0, Some((200.0, 200.0))).unwrap();
+            let me = s.spawn(7).unwrap();
+            place(&mut s, me, 220.0, 200.0);
+            s.step(&[PendingAction { slot: me, action: proto::game::ACT_LIGHT, target: 0, arg: lit as u16 }]);
+            run(&mut s, 12);
+            // Seen, it heads straight east at the player; unseen, it wanders where it likes.
+            (s.ents.dir_x[bot], s.ents.dir_y[bot]) == (127, 0)
+        };
+        assert!(!setup(0.9, false), "night, light out: 20 units is past 40 x 0.35, so the hound does not come");
+        assert!(setup(0.9, true), "night, light on: seen");
+        assert!(setup(0.3, false), "by day the light makes no difference");
+    }
+
+    #[test]
     fn patrol_walks_the_route_in_order_and_loops() {
         let mut s = sim_with(|g| {
             g.routes = vec![Route { name: "sq".into(), points: vec![[100.0, 100.0], [140.0, 100.0], [140.0, 140.0], [100.0, 140.0]], looped: true }];
@@ -1523,19 +1715,19 @@ mod tests {
     #[test]
     fn bots_spawn_in_their_home_place_and_wander_stays_near_it() {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0 }];
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None }];
             let mut a = arch("w", Behaviour::Wander, vec![]);
             a.home = Some("home".into());
             a.count = 20;
             g.archetypes = vec![a];
         });
         s.populate_bots();
-        for sl in 0..s.ents.high {
+        for sl in (0..s.ents.high).filter(|&sl| s.ents.alive[sl]) {
             let d = (s.ents.x[sl] - 250.0).hypot(s.ents.y[sl] - 250.0);
             assert!(d <= 15.01, "spawned {d} from the centre");
         }
         run(&mut s, 3000);
-        for sl in 0..s.ents.high {
+        for sl in (0..s.ents.high).filter(|&sl| s.ents.alive[sl]) {
             let d = (s.ents.x[sl] - 250.0).hypot(s.ents.y[sl] - 250.0);
             assert!(d < 15.0 + 10.0, "wandered {d} from home");
         }
@@ -1561,6 +1753,74 @@ mod tests {
         assert!(s.ents.x[bot] > 215.0, "hurt bot should run away, x={}", s.ents.x[bot]);
     }
 
+    /// A cup open to the south around (250, 175), its base between the bot inside it and the place at (250, 260).
+    fn cup() -> World {
+        use proto::world::Aabb;
+        World::from_boxes(
+            512.0,
+            1,
+            vec![
+                Aabb { x0: 200.0, y0: 200.0, x1: 300.0, y1: 204.0 },
+                Aabb { x0: 200.0, y0: 140.0, x1: 204.0, y1: 204.0 },
+                Aabb { x0: 296.0, y0: 140.0, x1: 300.0, y1: 204.0 },
+            ],
+        )
+    }
+
+    /// Ticks a bot in the cup takes to reach the place behind it, if it does within a minute.
+    fn walk_out_of_the_cup(s: &mut Sim, bot: usize) -> Option<u32> {
+        (0..1200).find(|_| {
+            s.step(&[]);
+            (s.ents.x[bot] - 250.0).hypot(s.ents.y[bot] - 260.0) < 6.0
+        })
+    }
+
+    fn cup_sim(per_tick: u32) -> (Sim, usize) {
+        let mut s = sim_with(|g| {
+            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None }];
+            g.archetypes = vec![arch("b", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Goto { place: "far".into() } }])];
+        });
+        s.replace_world(cup(), Default::default());
+        s.nav.per_tick = per_tick;
+        let bot = s.spawn_as(NONE, 0, Some((250.0, 175.0))).unwrap();
+        (s, bot)
+    }
+
+    #[test]
+    fn bots_find_their_way_round_walls_to_a_place() {
+        let (mut s, bot) = cup_sim(1);
+        let t = walk_out_of_the_cup(&mut s, bot);
+        assert!(t.is_some_and(|t| t < 600), "took {t:?}, at {},{}", s.ents.x[bot], s.ents.y[bot]);
+        // Without fields (none may be built) the bot pushes straight into the cup's base for ever.
+        let (mut s, bot) = cup_sim(0);
+        assert_eq!(walk_out_of_the_cup(&mut s, bot), None);
+        assert!(s.ents.y[bot] < 200.0 && s.nav.field_count() == 0);
+    }
+
+    #[test]
+    fn route_points_are_followed_round_walls_too() {
+        let mut s = sim_with(|g| {
+            g.routes = vec![Route { name: "out".into(), points: vec![[250.0, 175.0], [250.0, 260.0]], looped: false }];
+            g.archetypes = vec![arch("p", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Patrol { route: "out".into() } }])];
+        });
+        s.replace_world(cup(), Default::default());
+        let bot = s.spawn_as(NONE, 0, Some((250.0, 175.0))).unwrap();
+        assert!(walk_out_of_the_cup(&mut s, bot).is_some());
+    }
+
+    #[test]
+    fn a_new_world_drops_the_navigation_grid() {
+        let (mut s, bot) = cup_sim(1);
+        run(&mut s, 30);
+        assert!(s.nav.field_count() == 1 && s.nav.tile_count() > 0);
+        let moved = s.replace_world(World::from_boxes(512.0, 1, vec![]), Default::default());
+        assert_eq!((moved, s.nav.field_count(), s.nav.tile_count()), (0, 0, 0));
+        // The old field would still send it the long way round; with the walls gone it walks straight there.
+        place(&mut s, bot, 250.0, 175.0);
+        let t = walk_out_of_the_cup(&mut s, bot);
+        assert!(t.is_some_and(|t| t < 120), "took {t:?}");
+    }
+
     #[test]
     fn say_fires_once_per_cooldown_and_does_not_stop_movement_rules() {
         let rules = vec![
@@ -1568,7 +1828,7 @@ mod tests {
             Rule { when: Cond::Always, then: Act::Goto { place: "gate".into() } },
         ];
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0 }];
+            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None }];
             g.archetypes = vec![arch("b", Behaviour::Idle, rules)];
         });
         let p = s.spawn(0).unwrap();
@@ -1617,7 +1877,7 @@ mod tests {
         use crate::store::Record;
         let mut s = sim();
         let p = s.spawn(0).unwrap();
-        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default(), inv: Vec::new() };
+        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None };
         rec.attrs.insert("health".into(), 37.0);
         rec.attrs.insert("energy".into(), 9999.0); // beyond the current max
         rec.attrs.insert("removed_attr".into(), 5.0); // no longer exists
@@ -1628,17 +1888,17 @@ mod tests {
         // Out of the world, or not a number: position is left alone, attributes still apply.
         let (x0, y0) = (s.ents.x[p], s.ents.y[p]);
         for (x, y) in [(-5.0, 10.0), (9999.0, 10.0), (f32::NAN, 1.0), (10.0, f32::INFINITY)] {
-            s.restore(p, &Record { x, y, attrs: Default::default(), inv: Vec::new() });
+            s.restore(p, &Record { x, y, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None });
             assert_eq!((s.ents.x[p], s.ents.y[p]), (x0, y0), "({x}, {y})");
         }
         // A saved NaN attribute is ignored rather than poisoning the entity.
-        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default(), inv: Vec::new() };
+        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None };
         bad.attrs.insert("health".into(), f32::NAN);
         s.restore(p, &bad);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 37.0);
         // A new attribute missing from the record keeps its default (new entities start there).
         let q = s.spawn(1).unwrap();
-        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default(), inv: Vec::new() });
+        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None });
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][q], 100.0);
     }
 

@@ -23,7 +23,8 @@ enum {
   MMO_CONNECTING = 0,
   MMO_PLAYING = 1,
   MMO_REJECTED = 2, /* wrong server key, version or content; see mmo_status_text */
-  MMO_CLOSED = 3    /* the server never answered */
+  MMO_CLOSED = 3,   /* the server never answered */
+  MMO_MOVED = 4     /* handed to another zone with following off; see mmo_moved */
 };
 
 #define MMO_MAX_REPL 4 /* replicated attributes per entity */
@@ -38,7 +39,7 @@ typedef struct {
 
 typedef struct {
   uint32_t from;     /* entity id of the speaker */
-  uint8_t channel;   /* 0 = say (nearby), 1 = shout (everyone) */
+  uint8_t channel;   /* 0 = say (nearby), 1 = shout (everyone), 3 = banner (from the server: show it big) */
   char text[256];    /* NUL-terminated UTF-8 */
 } MmoChat;
 
@@ -68,6 +69,12 @@ void mmo_free(MmoClient *c);
 int mmo_poll(MmoClient *c);
 int mmo_status(const MmoClient *c);
 void mmo_status_text(const MmoClient *c, char *out, size_t cap);
+/* Zones. By default a handoff is followed by reconnecting (strips of one world share the map). With following off
+   (zone lines: every zone a map of its own) the client stops with MMO_MOVED instead, and mmo_moved says where: the
+   zone's index (its web address is /play/info "zones"[index]), its IPv4 address and UDP port. Load that zone's
+   /play/info and world, then connect again with the same identity. mmo_moved returns 1 once moved, else 0. */
+void mmo_follow_redirects(MmoClient *c, int on);
+int mmo_moved(const MmoClient *c, uint8_t *zone, uint8_t ip[4], uint16_t *port);
 
 /* Intent. Each axis is -1, 0 or 1; the server decides the speed. Sticks until changed. */
 void mmo_set_move(MmoClient *c, int dx, int dy);
@@ -75,8 +82,23 @@ void mmo_set_move(MmoClient *c, int dx, int dy);
  * walking under). cx, cy are block cells (multiply by /play/info build.block for world units); bit k of mask is
  * a block in layer base + k, and mask 0 clears the column. */
 void mmo_set_column(MmoClient *c, uint32_t cx, uint32_t cy, int base, uint32_t mask);
+/* Walls, for a world that streams them (/play/info walls.inline false; small worlds send them inline and these do
+ * nothing). As the player moves, ask which /play/tiles request to make for them at (x, y): written to out as a
+ * path with query, the return is its length, 0 for nothing missing, -1 if cap is too small. GET it from the web
+ * gateway and pass the reply's bytes to mmo_put_tiles, or call mmo_tiles_failed if the fetch failed. mmo_put_tiles
+ * returns 1 when the walls are in prediction, 0 when they have changed on the server (a 409 reply means the same):
+ * fetch /play/info again and pass it to mmo_set_walls, which also adopts walls edited in the console. */
+int mmo_tiles_wanted(MmoClient *c, float x, float y, char *out, size_t cap);
+int mmo_put_tiles(MmoClient *c, const uint8_t *bytes, size_t len);
+void mmo_tiles_failed(MmoClient *c);
+/* 1 once every wall near the player is in (always, for inline walls). */
+int mmo_walls_ready(const MmoClient *c);
+int mmo_set_walls(MmoClient *c, const char *info_json);
 /* The owner tag /play/blocks gives the blocks you build (out holds 17 bytes); empty for a guest. */
 void mmo_account_tag(const MmoClient *c, char *out, size_t cap);
+/* Your light on (1) or off (0). With a `lit` attribute in the game, others hide your name in the dark while it is out
+ * and bots see you less far at night. Sent in an input that has no other action, so it never displaces one. */
+void mmo_set_light(MmoClient *c, int on);
 /* One action request (ids are in /play/info "actions") against a target entity id (0 = none). */
 void mmo_act(MmoClient *c, uint8_t action, uint32_t target);
 /* An action with its extra argument: for build and break (/play/info build), (layer & 0xff) | material << 8, with
@@ -84,6 +106,9 @@ void mmo_act(MmoClient *c, uint8_t action, uint32_t target);
 void mmo_act_arg(MmoClient *c, uint8_t action, uint32_t target, int arg);
 /* Say (0) or shout (1). Queued and resent until the server has it; the server rate-limits and trims. */
 void mmo_say(MmoClient *c, uint8_t channel, const char *text);
+/* Ask to be known by a name (3 to 16 letters; see PROTOCOL.md "Names"). The server answers with a chat line from id
+ * 0. Everyone's names: GET /play/names?ids=1,2,3 on the web gateway. */
+void mmo_set_name(MmoClient *c, const char *name);
 /* Pop the next line heard. Returns 1 and fills out, or 0. */
 int mmo_next_chat(MmoClient *c, MmoChat *out);
 

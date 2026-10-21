@@ -7,6 +7,7 @@ import { Interpolator } from './interp'
 import { GROUND, Predictor, World } from './sim'
 import { maskOf, type BlockCol } from './blocks'
 import { WallStore, type WallsMeta } from './walls'
+import { playUrl } from './base'
 
 export interface PlayInfo {
   server_key: string
@@ -22,15 +23,25 @@ export interface PlayInfo {
   replicated: number[]
   actions: { id: number; name: string; range: number }[]
   boxes: [number, number, number, number][]
-  /** How the walls travel: inline in `boxes`, or fetched by area from /play/walls. */
+  /** What each inline box is (`WALL` or `SCENERY`, from './walls'); missing means a wall. */
+  box_class?: number[]
+  /** How the walls travel: inline in `boxes`, or fetched by tile from /play/tiles. */
   walls?: WallsMeta
   /** Set when the server is one zone of several: its index, and each zone's web base URL (null if unknown). */
   zone?: number | null
   zones?: (string | null)[] | null
+  /** Zone lines: every zone is a map of its own, joined by exits; a client handed to one loads it afresh. */
+  zone_lines?: boolean
+  /** Every zone's name, by index (zone lines). */
+  zone_names?: string[] | null
   /** What kinds of item exist, by index (the order in the game file). */
   items?: { name: string; color: string; stack_max: number; usable: boolean }[]
   /** The weather right now, or null for clear sky. */
   weather?: { name: string; color: string; intensity: number } | null
+  /** Weather zones that are on: a weather standing over a place. */
+  weather_zones?: import('./shared').ZoneView[]
+  /** Titled places: what to tell the player as they walk in and out. */
+  locations?: import('./shared').LocationView[]
   /** Building, when the server offers it: blocks on a grid, listed at /play/blocks. */
   build?: { block: number; reach: number; max_stack: number; kinds: number; act_build: number; act_break: number }
 }
@@ -67,6 +78,9 @@ export interface Frame {
 export interface Handlers {
   onStatus: (s: Status, detail?: string) => void
   onChat: (m: ChatMsg) => void
+  /** Zone lines: an exit handed us to zone `zone`, a map of its own. The client has stopped; load that zone's info
+   *  from its web address (`zones[zone]`) and start a new client there with the same identity. */
+  onMoved?: (zone: number) => void
 }
 
 /** WebSocket.send wants a plain ArrayBuffer view; a copy keeps the types and the data honest. */
@@ -128,15 +142,15 @@ export class GameClient {
     private h: Handlers,
   ) {
     this.defs = defsOf(info)
-    this.walls = new WallStore(info.world_size, info.walls, info.boxes)
+    this.walls = new WallStore(info.world_size, info.walls, info.boxes, info.box_class)
     this.world = new World(info.world_size, this.walls.list())
     this.worldRev = this.walls.rev
     this.interp = new Interpolator<Ent>(info.hz)
   }
 
   /** The map editor can change walls while people are playing; adopt them so prediction stays right. */
-  setWalls(fresh: Pick<PlayInfo, 'boxes' | 'walls'>) {
-    this.walls.adopt(fresh.walls, fresh.boxes)
+  setWalls(fresh: Pick<PlayInfo, 'boxes' | 'box_class' | 'walls'>) {
+    this.walls.adopt(fresh.walls, fresh.boxes, fresh.box_class)
   }
 
   /** How many layers above the blocks' ground a character with its feet in layer z stands at (x, y): this page
@@ -158,7 +172,7 @@ export class GameClient {
    * prediction stops at them as the server does. */
   private async pollBlocks() {
     try {
-      const r = await fetch(`/play/blocks?since=${this.blocksVer}`)
+      const r = await fetch(playUrl(`/play/blocks?since=${this.blocksVer}`))
       if (!r.ok) return
       const d = (await r.json()) as { ver: number; full: boolean; cols: [number, number, number, string, number[]][] }
       if (d.full) {
@@ -314,6 +328,13 @@ export class GameClient {
           const r = decodeRedirect(inner)
           const base = r && this.info.zones?.[r.zone]
           if (!r) return
+          if (this.info.zone_lines && this.h.onMoved) {
+            // Another map: the page loads it and starts again there (Play.tsx), so this client is done.
+            this.stopped = true
+            this.teardown()
+            this.h.onMoved(r.zone)
+            return
+          }
           if (!base) {
             this.stopped = true
             this.teardown()
@@ -425,6 +446,12 @@ export class GameClient {
   say(text: string, shout: boolean) {
     const t = text.trim()
     if (t) this.chat.say(shout ? 1 : 0, t)
+  }
+
+  /** Ask to be known by a name. The server answers with a chat line from id 0 (taken, not allowed, or done). */
+  setName(name: string) {
+    const t = name.trim()
+    if (t) this.chat.say(2, t)
   }
 
   /** The world as of the newest snapshot, positions in world units. */

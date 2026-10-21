@@ -35,6 +35,19 @@ impl Sim {
         self.inv_ver[slot] = self.inv_ver[slot].wrapping_add(1);
     }
 
+    /// Give items, and what does not fit in the bag lands at their feet. Returns how many went into the bag.
+    pub fn give_or_drop(&mut self, slot: usize, item: usize, count: u32) -> u32 {
+        let left = self.give(slot, item, count);
+        if left > 0 {
+            let (x, y) = (self.ents.x[slot], self.ents.y[slot]);
+            let stack = self.items[item].stack_max.max(1) as u32;
+            for n in (0..left.div_ceil(stack)).map(|k| (left - k * stack).min(stack)) {
+                self.put_ground(x, y, item, n as u8);
+            }
+        }
+        count - left
+    }
+
     /// Add to a bag, topping up existing stacks first. Returns how many did not fit.
     pub fn give(&mut self, slot: usize, item: usize, count: u32) -> u32 {
         let Some(def) = self.items.get(item) else { return count };

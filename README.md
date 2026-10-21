@@ -113,10 +113,77 @@ The console's God tab is the game master's panel. Everything on it is data in th
 |---|---|
 | Spawn | Pick a running bot type and a count, then drop them anywhere, spread over a place, or by clicking the map (the map arms until you press Stop) |
 | Weather | Named conditions with a colour, thickness, a bot-sight multiplier (fog, clear night) and attribute drains on everything alive (acid rain: -1 health a second). Start one for N seconds or until cleared; a drain that reaches zero is a death like any other. Players see it: the play page draws haze and falling streaks in its colour |
-| Events | A list of steps that run together: announce (a message from "server" to everyone), set or clear the weather, spawn bots in a place, change an attribute for everyone in a place, remove all bots of a type. Fire by hand, or on a timer with a chance each time it comes due |
+| Events | World and local events, raids, bosses: a script that runs over time (see "Events" below). Started by hand, on a timer, when players gather at a place, at a time of day, or after another event |
 | Log | What fired and what each step did |
+| Weather zones | A weather that stays over one place (`zones: [{name, place, weather, active, height}]`): red mist round a ruin, green mist thick enough to hide a castle, a small spring of healing light (a weather whose drain is positive). Inside it the weather's effects apply (drains, how far bots see) and players see that weather; from outside it is a wall of drifting mist in its colour standing over the place. On/Off live (`POST /api/zone {"name": "red mist", "on": false}`), and an event step switches one (`{"kind": "zone", "zone": "red mist", "on": true}`): raise the mist at dusk, lift it when the boss falls |
+| Day and night | The schedule (game file `daylight`): a **cycle** (`day_minutes`, `night_share`), the **real clock** (`sunrise`, `sunset` as HH:MM, `utc_offset_minutes`), or **held** at one moment (`phase`). Dawn / Noon / Dusk / Midnight now buttons move a cycle at once (`POST /api/daylight {"phase": 0.8}`, saved). The server sends the schedule, not the time: every client works out the phase from its own clock, so they agree and nothing goes stale |
 
-Presets give a start (fog, acid rain, bot wave, strike, storm front, cleanup). Renaming or deleting an attribute, bot type, place or weather rewrites or drops the steps that used it, and a deleted place never turns a local strike into a global one. API: `POST /api/weather {"name": "fog", "duration_secs": 60}` (`name: null` clears), `POST /api/events/fire {"name": "wave"}`, and `/api/state` carries `director` (current weather, event counters, log). `POST /api/spawn` takes an optional `radius` to scatter around `x, y`. With several zones each zone runs its own timers.
+### Events
+
+An event is a script. Its steps run in order, straight on until one waits:
+
+| Step | What it does |
+|---|---|
+| `announce` | A message from the server, to everyone or (`nearby`) only to players at the event's place; a `banner` also goes across the middle of their screens |
+| `weather`, `zone` | Set or clear the weather; raise or lift a weather zone |
+| `spawn` | Bots of a type at a place (the event's, by default), optionally `name`d: a boss. They belong to this run: killed, they are gone instead of respawning, and they are never saved |
+| `hit`, `drop`, `clear` | Change an attribute for everything at a place (hurt or heal), scatter items, remove every bot of a type |
+| `wait` | Pause for N seconds |
+| `defeat` | Wait until every bot this run spawned is beaten; with `within_secs`, the event fails if they are not |
+| `reward` | Items into the bags of the players who took part (were at the event's place while it ran; everyone online, for an event with no place), or `everyone` online. What does not fit lands at their feet |
+
+What makes it a world or a local event is `place`: with one, steps that name no place happen there, `nearby` messages
+reach the players within 60 units of it, and those players are the ones taking part. What starts it: the console
+(Start now), a timer (`every_secs`, `chance_pct`), or `when`: `{"kind": "players", "count": 3}` (that many players at
+its place, or online), `{"kind": "time", "at": "dusk"}` (dawn, day, dusk, night, from the day's schedule), or
+`{"kind": "after", "event": "raid", "outcome": "failure"}` (success, failure or either), each at most once per
+`cooldown_secs` (600 by default). An event never runs twice at once.
+
+It succeeds by reaching its last step. It fails if a `defeat` or its `limit_secs` runs out; then its `fail_steps` run
+instead, and whatever is left of its bots leaves afterwards (they have had their way). On success, any of its bots still
+standing stay until beaten. The console shows each run as it goes (which step, what it is waiting for, how many bots
+are left and players taking part) with Start now and Stop (`POST /api/events/stop`: it ends there, its bots leave and
+nothing follows it).
+
+```json
+{"name": "raid", "place": "market", "limit_secs": 600,
+ "steps": [
+   {"kind": "announce", "text": "Raiders are marching on the market!", "banner": true},
+   {"kind": "wait", "secs": 30},
+   {"kind": "spawn", "archetype": "raider", "count": 8},
+   {"kind": "wait", "secs": 45},
+   {"kind": "spawn", "archetype": "raider", "count": 12},
+   {"kind": "spawn", "archetype": "brute", "count": 1, "name": "Gorrak the Red"},
+   {"kind": "defeat", "within_secs": 240},
+   {"kind": "announce", "text": "The market holds.", "banner": true},
+   {"kind": "reward", "item": "medkit", "count": 2}],
+ "fail_steps": [{"kind": "announce", "text": "The market has fallen.", "banner": true}]}
+```
+
+Banners travel on chat channel 3 (from the server, id 0), so clients that do not know it show them as a chat line;
+the Godot client and the play page put them across the screen.
+
+Presets give a start (fog, acid rain, bot wave, strike, storm front, raid, world boss, night terror, defend, cleanup). Renaming or deleting an attribute, bot type, place or weather rewrites or drops the steps that used it, and a deleted place never turns a local strike into a global one. API: `POST /api/weather {"name": "fog", "duration_secs": 60}` (`name: null` clears), `POST /api/events/fire {"name": "wave"}` (409 if it is already running), `POST /api/events/stop {"name": "wave"}`, and `/api/state` carries `director` (current weather, event counters and how each last ended, `runs` in progress, log). `POST /api/spawn` takes an optional `radius` to scatter around `x, y`. With several zones each zone runs its own timers.
+
+In the dark the Godot client lights the world: you carry a torch that lights itself when it gets dark (L: on when
+dark, always, never), and so does everyone near you; squares have campfires, keeps and towers braziers, and some
+houses a lantern by the door (all placed by the theme from the world file, so every client draws the same); and two
+building materials give light, the lamp (`[`) and the fire (`]`). A pool of 24 real lights goes to whichever sources
+are nearest, so a town, or a player who builds a thousand lamps, costs the same.
+
+**Sneaking.** Give the game file an attribute called `lit` (replicated, min 0, max 1, default 1; the default game has
+one) and the server knows whose light is on: a client sends it (`ACT_LIGHT`, action 254, or `mmo_set_light` in the C
+SDK, which rides an input with no other action so it never displaces one). In the dark, other players' clients hide the
+name and health bar of anyone whose light is out, and at night bots see an unlit player only at a third of their range
+(`SNEAK_SIGHT`). A replicated attribute costs a byte per visible character in each snapshot, so a game already at the
+budget lowers `max_visible` a little (72 to 67 with three others).
+
+## Clear down
+
+The console's World tab clears what players leave behind: built blocks (all, one account's, or nobody's, the guests'),
+or items on the ground, everywhere or inside one place. `POST /api/blocks/clear {"owner": "27e5f44f38eb50e5",
+"place": "plaza"}` and `POST /api/ground/clear {"x": 300, "y": 400, "r": 50}`; every filter given must match, and an
+empty body clears everything.
 
 ## Items and loot
 
@@ -199,6 +266,24 @@ Not done: no accounts, passwords or recovery (lose the key, lose the character),
 
 An encrypted reliable channel on top of UDP (`proto::chat`). Client to server keeps one message in flight and resends it every tick until the server's batch acknowledges it; server to client queues every line per recipient and resends the unacknowledged ones each tick until the client's inputs acknowledge them. Delivery is in order and exactly once over a link that loses and reorders packets (tested at 30 percent loss both ways, 8 seeds). `say` reaches players within 64 units (and the speaker), `shout` reaches everyone, once per 10 seconds per player. Text is cleaned on the server (control characters and bidi overrides become spaces, collapsed, 120 bytes), and each player gets a burst of three lines with one more per second. Bots and the console can speak through the same path (`POST /api/say`, `GET /api/chat`).
 
+## Names
+
+Everyone has a name (`proto::names`, PROTOCOL.md "Names"). A player claims one over the chat channel (the browser sends
+the account name on sign in; type `/name Ana Lee` in either client's chat, or start Godot with `--name "Ana Lee"`), and the
+session is the proof of whose it is. The server checks it (3 to 16 letters, readable, nothing that passes for staff),
+keeps it unique ignoring case and marks, saves it with the character and keeps it taken while its player is away. Until
+they claim one, a player goes by a name made from their account tag; bots go by their type. Clients look names up at
+`/play/names?ids=...` on the web gateway, for nameplates, the target frame and chat; the console shows them in the
+entity list and the chat log.
+
+## Locations
+
+A place with a `title` ("Market Square") is a location. Set it under Places in the console's builder ("Shown to players
+as"); it applies live. Walking in, the title fades in at the top of the screen, holds a few seconds and fades away;
+walking out, "Leaving Market Square" does the same, smaller. Where locations overlap the smallest wins, so a village
+inside a forest is the village, and back out in the forest the forest's title shows again. Godot also puts it in the
+line under the minimap. Places without a title stay what they were: spawn points and targets for bots and events.
+
 ## Client prediction
 
 `proto::predict::Predictor` applies each input locally with the same `integrate` function the server runs, then on every snapshot snaps to the server position and replays the inputs the server has not seen. The bots use it: live correction is 0.000 at p50 and about 0.06 units at p99, and a lockstep test proves exact agreement through walls over 3,000 random inputs.
@@ -239,7 +324,9 @@ their prediction used the old walls. Every zone of a scaled-out world must run t
 
 `--world-size` takes 64 to 65,536 units on a side (default 2,048). At the default move speed of 20 units a second that is about 55 minutes edge to edge at the top end. Positions are 32 bit on the wire (protocol 7), which could describe far more; the server stops at 65,536 so that its own 32 bit floats keep a finer resolution than the wire does. Generated walls are capped at 4,000 however large the world, and the neighbour grid and wall index coarsen themselves so memory stays small: an idle 65,536 unit world with 300 bots measured 35 MB and a 4 ms average tick.
 
-The browser does not download the whole map. Worlds with up to 600 walls send them with the join info as before. Bigger ones send only a version, and the page fetches `GET /play/walls?c=cx,cy;cx,cy` (256 unit chunks, at most 64 per request) for the 5x5 window around you, drops chunks more than three away, and builds and removes buildings to match. Editing walls in the console changes the version and open pages start over on their next 5 second poll. Native clients that cannot stream yet get a clear error from `mmo_connect`; fetch `/play/walls?all=1` once and put its `all` array into `boxes` in the info JSON.
+The browser does not download the whole map. Worlds with up to 600 walls send them with the join info as before. Bigger ones send only a version, and the page fetches `GET /play/tiles?v=<ver>&c=cx,cy;cx,cy` (256 unit tiles, at most 64 per request, a compact binary reply, gzipped and cacheable for good because the version is in the URL) for the 5x5 window around you, drops tiles more than three away, and draws what it holds with three instanced draw calls: buildings, their outlines, and solid scenery. Editing walls in the console changes the version and open pages start over on their next 5 second poll. Native clients stream the same way through the C SDK (`mmo_tiles_wanted`, `mmo_put_tiles`, `mmo_set_walls`); the host only does the HTTP.
+
+How far it goes, measured in Docker on a laptop (8 cores): a generated 16,384 unit world has 230,613 walls (trees and rocks are solid) and loads in 1.6 s at 111 MB resident; a 32,768 unit world has 917,479 walls, 169 MB of JSON, and loads in 5.5 s at 298 MB. Either way no tile holds more than about 200 walls, a 5x5 window is 34 KB (24 KB gzipped) and is answered in under a millisecond, and a live reload of the 32,768 world runs on the admin thread while the tick's p99 stays near 2 ms. The world file is parsed as a stream, keeping only solid footprints, the size and the heights. Clients take the file in parts too (WORLD.md): a head of every building, the heights and the water, then trees and rocks by tile, so the Godot client joins a 32,768 world in 2.7 s at 660 MB (it was 13.5 s and 2.6 GB taking the whole file), and a 65,536 world (6.2 million objects, 3.66 million walls) in 4.5 s at 820 MB, where the server starts in 7.5 s at 955 MB. worldgen writes its file as a stream, so that world takes it 1.4 GB and 33 s. The limits are 4,096 walls touching any one tile and 4,000,000 in all.
 
 Size is not the same as players. A client only receives what is within its interest radius, and a snapshot has to fit in one 1,200 byte datagram, which caps `max_visible` at 255 and in practice at about 70 with a couple of replicated attributes. Zones (below) add CPU and players, not area: every zone runs the same geometry and owns a vertical strip of it.
 
@@ -290,6 +377,39 @@ Limits, stated plainly:
 - The admin console is per process; there is no combined view.
 - Not measured at scale: the tests run two processes on one machine. The feed costs one pass over the entities per neighbour per tick.
 
+### Zone lines: maps of their own
+
+Strips cut one world. Zone lines join separate ones, EverQuest style: a valley, a city, a barrow under the hill, each
+its own server process with its own world file, game file (places, bots, weather, daylight) and database. Players cross
+by walking into a place that leads somewhere:
+
+```json
+{"name": "barrow door", "x": 990, "y": 860, "r": 4, "title": "Barrow of Morvane",
+ "exit": {"zone": "barrow", "x": 384, "y": 372}}
+```
+
+Walk in and the character is handed to the barrow exactly as at a strip border, arriving at 384, 372. Leave `zone`
+out and the exit leads somewhere on the same map (a drop shaft, a portal), which needs no zones at all and works for
+guests too. In the console it is "Leads somewhere" on a place. Arriving inside an exit does not take you through it:
+an exit fires when you walk in.
+
+```
+server --zone 0/2 --zone-lines --zone-names valley,barrow --world valley.json --game valley-game.json \
+       --zone-listen 10.0.0.1:9000 --zone-peers 10.0.0.1:9000,10.0.0.2:9000 \
+       --zone-public 203.0.113.1:7777,203.0.113.2:7777 --zone-web https://valley.example,https://barrow.example
+server --zone 1/2 --zone-lines --zone-names valley,barrow --world barrow.json --game barrow-game.json (same peers, public, web)
+```
+
+What must match across zones: the server key and the attributes, actions and settings (the content hash), since the
+client's handshake is checked against them. Everything else may differ. The Godot client darkens the screen
+("Travelling to Barrow"), loads the new zone's world and connects there; the browser does the same, reading the next
+zone's info from its `--zone-web` address.
+
+Characters: the zone a player leaves keeps a note of where they went, instead of a stale copy, so signing in there
+later sends them straight on to the zone that has them. Guests have no character to hand over, so they cannot leave
+their map. Names are unique per zone, not across them. A zone that is down closes the ways into it ("The way to the
+barrow is closed for now"); a player whose character is in a zone that is down cannot sign in elsewhere until it is up.
+
 ## Measured results
 
 Environment: a 2 vCPU VM, over loopback. Server pinned to core 0, bots on core 1, all traffic encrypted. Loopback charges the receiver's kernel work to the sender, so server numbers are pessimistic, and the load generator shares the machine.
@@ -305,6 +425,35 @@ Re-checked after chat, rules, identity and persistence were added (same VM, same
 
 All runs: zero decode errors, zero missing baselines, zero failed decryptions.
 For comparison, before encryption the same machine did 2,000 normal-density clients at p50 11.2 ms and 4,000 at 6 of 600 ticks over budget, so encryption costs about 50 percent more CPU per client here. One core now holds roughly 2,000 to 3,000 clients with the gate (2,000 bots at 20 Hz on one core) still passing. The two-lane live run is muddied because the bots occupy the second core on this machine; the in-process table above is the clean measurement.
+
+### Slow and lossy players (`scripts/latency.sh`)
+
+The question: does one player on a bad connection cost anyone else anything? `bots` emulates a network per bot (a
+one-way delay, jitter that reorders packets, and loss, each way; `--latency`, `--jitter`, `--loss`, and a worse link
+for the last `--slow N` bots). `scripts/latency.sh` runs the same server twice with the same number of clients: once
+with the extra group on a healthy link (control), once on a bad one (test), so only the link differs. Healthy bots on a
+perfect link, server on three cores (3 lanes), bots on the other five, all in Docker on an 8-vCPU laptop VM, 4096 world,
+40 s:
+
+| Clients | The extra group's link | Healthy bots, input to ack p50 / p99 | Server tick p50 / p99 | Reconnects |
+| --- | --- | --- | --- | --- |
+| 3,600 + 400 | healthy (control) | 50.1–50.4 / 142–158 ms | 14.5 / 91.5 ms | 0 |
+| 3,600 + 400 | 400 ms + 150 jitter, 10% loss | 50.6–51.1 / 143–178 ms | 17.4 / 105 ms | 0 |
+| 3,000 + 1,000 | healthy (control) | 50.1–51.8 / 114–122 ms | 16.8 / 83.0 ms | 0 |
+| 3,000 + 1,000 | 1,000 ms + 500 jitter, 30% loss | 50.1–50.4 / 97–117 ms | 14.2 / 56.2 ms | 0 |
+
+A slow player costs the others nothing measurable: their latency does not move, and every slow bot stays connected
+(30% loss with 1 to 1.5 s delay still plays, at about 6 snapshots a second). What a slow player does cost is a little
+server CPU: one whose acks take longer than `MAX_BASELINE_AGE` (12 ticks) never has a delta baseline, so it gets full
+snapshots (bounded by `max_visible`). The tick's p99 in all these runs is the laptop VM, not the load: the same stalls
+show in the control runs.
+
+The first run of this test found a real problem: after one long tick (here a VM stall), the next tick read and handled
+the whole backlog in the socket's 14 MB buffer, took longer still, and in a few ticks every client had timed out (a
+4.3 s tick, all 4,000 bots reconnecting). The receive phase now gathers a tick's packets and handles them in one go, and
+handles at most four per connected client per tick (or a third of a tick spent reading); the rest of a backlog is read
+and dropped ("shed" in the server's per-second line and summary). A stall now costs everyone a little loss, which the
+protocol shrugs off, and the server is back in step a tick or two later.
 
 ## Tests
 
@@ -397,6 +546,11 @@ not which archetype an entity is, and the touch controls are basic arrows.
 
 `godot/` is a Godot 4.6 project that plays the world through the `mmo_godot` extension: sign in as a guest, camera-relative WASD, orbit and zoom, tab or click targeting, attack, an 8 slot bag, loot on the ground, chat.
 
+Lettering: titles (names, location and zone titles, banners, headings) are Uncial Antiqua, and everything read at
+length (chat, bars, help, nameplates) is Alegreya with level figures for numbers. Both are SIL Open Font License, in
+`godot/fonts` with their licences; `fonts/title.tres` and `fonts/body.tres` say which file and settings each uses, so
+changing the look is a one-line edit there.
+
 ### Three separate parts: the engine, the world, the look
 
 The world is data, and what it looks like is a swappable theme; the engine knows nothing about either.
@@ -437,4 +591,4 @@ scripts/godot_e2e.sh                       # generate a world, boot the server o
 godot --path godot -- ... --walk near --zoom 40 --shot out.png --shot_after 10   # screenshot beside the nearest building
 ```
 
-The extension is built against the Godot 4.6 API and refuses to load in older editors. It now exposes `bag()`, `ground()`, `use_slot()`, `drop_slot()` and `pickup()` (the C SDK has `mmo_bag_*`, `mmo_ground*` and `mmo_item_*` to match). Worlds that stream their walls are loaded whole by the slice (`/play/walls?all=1`), which is fine to a few thousand boxes; streaming by area in GDScript is the next step. Weather and the item `usable` flag are not exposed yet.
+The extension is built against the Godot 4.6 API and refuses to load in older editors. It now exposes `bag()`, `ground()`, `use_slot()`, `drop_slot()` and `pickup()` (the C SDK has `mmo_bag_*`, `mmo_ground*` and `mmo_item_*` to match). Worlds that stream their walls are fetched by tile as you move (`tiles_wanted`, `put_tiles`, `set_walls`); with no world file the streamed walls are also what the plain theme draws. Weather and the item `usable` flag are not exposed yet.

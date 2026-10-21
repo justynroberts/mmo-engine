@@ -509,7 +509,7 @@ function PlacesSection({ game, setGame, b, setB }: Edit & Pick<Props, 'b' | 'set
   return (
     <section aria-label="Places" className="cell py-2">
       <h2 className="lbl pb-1">Places</h2>
-      {game.places.length === 0 && <Empty>No places. Use “Add place” and click the map. Bots can spawn in one, wander near it, walk to it or react to being inside it.</Empty>}
+      {game.places.length === 0 && <Empty>No places. Use “Add place” and click the map. Bots can spawn in one, wander near it, walk to it or react to being inside it. Give one a title and players see it fade in as they walk in; make it lead somewhere and it is a zone line.</Empty>}
       {game.places.map((p, i) => {
         const on = b.sel?.kind === 'place' && b.sel.index === i
         return (
@@ -523,10 +523,31 @@ function PlacesSection({ game, setGame, b, setB }: Edit & Pick<Props, 'b' | 'set
                 <Trash2 size={16} strokeWidth={1.5} aria-hidden />
               </button>
             </div>
+            <TextField
+              label="Shown to players as"
+              value={p.title ?? ''}
+              invalid={(p.title ?? '').length > 40}
+              onCommit={(t) => patch(i, { title: t.trim().slice(0, 40) || undefined })}
+              className="pt-1"
+            />
             <div className="grid grid-cols-3 gap-x-2 pt-1">
-              <NumField label="X" value={p.x} onCommit={(n) => patch(i, { x: clamp(n, 0, 4095) })} />
-              <NumField label="Y" value={p.y} onCommit={(n) => patch(i, { y: clamp(n, 0, 4095) })} />
+              <NumField label="X" value={p.x} onCommit={(n) => patch(i, { x: clamp(n, 0, 65536) })} />
+              <NumField label="Y" value={p.y} onCommit={(n) => patch(i, { y: clamp(n, 0, 65536) })} />
               <Range label="Radius" value={p.r} min={1} max={150} step={1} onChange={(r) => patch(i, { r })} />
+            </div>
+            <div className="flex items-end gap-2 pt-1">
+              <Toggle
+                label="Leads somewhere"
+                checked={!!p.exit}
+                onChange={(on) => patch(i, { exit: on ? { x: clamp(p.x + p.r + 10, 0, 65536), y: p.y } : undefined })}
+              />
+              {p.exit && (
+                <div className="grid grid-cols-3 gap-x-2 flex-1">
+                  <TextField label="To zone (empty: this map)" value={p.exit.zone ?? ''} onCommit={(z) => patch(i, { exit: { ...p.exit!, zone: z.trim().slice(0, 32) || undefined } })} />
+                  <NumField label="Arrive at X" value={p.exit.x} onCommit={(n) => patch(i, { exit: { ...p.exit!, x: clamp(n, 0, 65536) } })} />
+                  <NumField label="Arrive at Y" value={p.exit.y} onCommit={(n) => patch(i, { exit: { ...p.exit!, y: clamp(n, 0, 65536) } })} />
+                </div>
+              )}
             </div>
           </Strip>
         )
@@ -568,8 +589,8 @@ function RoutesSection({ game, setGame, b, setB }: Edit & Pick<Props, 'b' | 'set
               {r.points.map((pt, k) => (
                 <div key={k} className="grid grid-cols-[2rem_1fr_1fr_auto] gap-x-2 items-end">
                   <span className="lbl h-6 leading-6">{k + 1}</span>
-                  <NumField label={`Route ${r.name} point ${k + 1} X`} value={pt[0]} onCommit={(n) => patch(i, { points: r.points.map((q, j) => (j === k ? [clamp(n, 0, 4095), q[1]] : q)) })} />
-                  <NumField label={`Route ${r.name} point ${k + 1} Y`} value={pt[1]} onCommit={(n) => patch(i, { points: r.points.map((q, j) => (j === k ? [q[0], clamp(n, 0, 4095)] : q)) })} />
+                  <NumField label={`Route ${r.name} point ${k + 1} X`} value={pt[0]} onCommit={(n) => patch(i, { points: r.points.map((q, j) => (j === k ? [clamp(n, 0, 65536), q[1]] : q)) })} />
+                  <NumField label={`Route ${r.name} point ${k + 1} Y`} value={pt[1]} onCommit={(n) => patch(i, { points: r.points.map((q, j) => (j === k ? [q[0], clamp(n, 0, 65536)] : q)) })} />
                   <button
                     type="button"
                     className="btn px-1"

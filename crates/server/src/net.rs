@@ -42,6 +42,10 @@ pub enum ZState {
 
 pub struct Client {
     pub zstate: ZState,
+    /// The exit place (`net::exits`) the player stands in, by index, and whether we have looked yet: an exit
+    /// takes you when you walk into it, not when you sign in or arrive standing in one.
+    pub exit_in: Option<u16>,
+    pub exit_seen: bool,
     pub addr: SocketAddrV4,
     /// Where the player really is: differs from `addr` for web players, whose packets are relayed from this machine.
     pub ip: [u8; 4],
@@ -88,6 +92,10 @@ pub struct Clients {
     pub id_limiter: Option<IdentityLimiter>,
     /// Recent chat for the console: (tick, speaker id, channel, text).
     pub chat_log: std::collections::VecDeque<(u32, u32, u8, String)>,
+    /// Claimed display names, by `proto::names::key`, and whose they are: online or not, a name stays taken.
+    pub names: HashMap<String, [u8; 32]>,
+    /// Names asked for this tick: (session, the name as sent).
+    pub claims: Vec<(u32, String)>,
 }
 
 #[inline]
@@ -237,6 +245,10 @@ pub struct NetStats {
     /// Sessions ended because the same identity connected again and proved itself.
     pub takeovers: u64,
     pub restored: u64,
+    /// Players who signed in to a zone they had left and were sent on to the one that has their character.
+    pub sent_on: u64,
+    /// Packets read and dropped unhandled because a tick was catching up on a backlog (overload).
+    pub shed: u64,
 }
 
 pub struct Handshake {
@@ -251,6 +263,8 @@ pub struct Handshake {
     pub zone_web: Vec<String>,
     /// The world file, when the world came from one (`--world`).
     pub world: Option<std::sync::Arc<crate::worldfile::WorldFile>>,
+    /// The walls by tile and the world file, as the admin API and the gateway read them.
+    pub statics: std::sync::Arc<crate::statics::Statics>,
 }
 
 impl Handshake {
@@ -280,7 +294,7 @@ pub fn handle_packet(
     match data.first().copied() {
         Some(kind::DATA) => {
             if let Some(sid) = on_data(sim, clients, stats, addr, data, plain) {
-                prove(sim, clients, stats, hs.store.as_deref(), sid);
+                prove(sim, clients, stats, hs.store.as_deref(), hs.zone.as_ref().map(|z| z.index), sid);
             }
         }
         Some(kind::HELLO | kind::CONNECT) if !clients.limiter.as_mut().map_or(true, |l| l.allow(hs.ip_of(&addr), sim.tick, sim.tick_hz)) => {
@@ -372,6 +386,8 @@ fn on_connect(
     tx.queue(addr, &accept);
     let client = Client {
         zstate: ZState::Here,
+        exit_in: None,
+        exit_seen: false,
         addr,
         ip: hs.ip_of(&addr),
         session,
@@ -450,6 +466,7 @@ fn apply_data(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, sid: u
         Dec::Chat(cseq, ch, text) => {
             c.last_seen = sim.tick;
             match c.chat.accept(cseq, ch, &text, sim.tick, sim.tick_hz) {
+                proto::chat::Accept::Route { channel, text } if channel == proto::chat::channel::NAME => clients.claims.push((sid, text)),
                 proto::chat::Accept::Route { channel, text } => {
                     stats.chat_in += 1;
                     clients.chat_in.push((c.slot, channel, text));
@@ -584,14 +601,14 @@ pub fn handle_batch(
         }
     }
     for sid in proven {
-        prove(sim, clients, stats, hs.store.as_deref(), sid);
+        prove(sim, clients, stats, hs.store.as_deref(), hs.zone.as_ref().map(|z| z.index), sid);
     }
 }
 
 /// The session just authenticated its first packet, so its identity claim is now
 /// proven. Anything else online under the same identity is a stale session: end it
 /// (saving its state first) and restore the character into the new one.
-fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Option<&Store>, sid: u32) {
+fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Option<&Store>, here: Option<u8>, sid: u32) {
     let Some(Some(c)) = clients.slab.get_mut(sid as usize) else { return };
     c.proven = true;
     let id = c.id;
@@ -612,6 +629,15 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
         stats.restored += 1;
     } else if let Some(store) = store {
         match store.load(&id) {
+            // They left this zone for another, which has their character: send them on (zone::Zone::tick
+            // repeats the redirect, then lets them go, saving the same note again).
+            Some(rec) if rec.zone.is_some() && here.is_some() && rec.zone != here => {
+                sim.restore(slot, &rec);
+                if let Some(Some(c)) = clients.slab.get_mut(sid as usize) {
+                    c.zstate = ZState::Moved { to: rec.zone.unwrap(), since: sim.tick };
+                }
+                stats.sent_on += 1;
+            }
             Some(rec) => {
                 sim.restore(slot, &rec);
                 stats.restored += 1;
@@ -634,23 +660,129 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
             }
         }
     }
+    // Their claimed name came back with their character; anyone else goes by the name their account tag gives.
+    match sim.ents.name[slot].clone() {
+        Some(n) if sim.ents.name_claimed[slot] => {
+            clients.names.entry(proto::names::key(&n)).or_insert(id);
+        }
+        _ => sim.set_name(slot, &proto::names::generated(&proto::secure::account_tag(&id)), false),
+    }
     clients.by_id.insert(id, sid);
+}
+
+/// A player asks to be known by a name: check it, keep it unique, save it, and tell them how it went.
+fn claim_name(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, sid: u32, raw: &str) {
+    let Some(Some(c)) = clients.slab.get(sid as usize) else { return };
+    let (id, slot, proven) = (c.id, c.slot, c.proven);
+    let answer = if id == GUEST || !proven {
+        "Guests cannot take a name: sign in with an account first.".to_string()
+    } else {
+        match proto::names::clean(raw) {
+            Err(why) => why,
+            Ok(name) => {
+                let k = proto::names::key(&name);
+                match clients.names.get(&k) {
+                    Some(owner) if *owner != id => format!("\"{name}\" is taken."),
+                    _ => {
+                        clients.names.retain(|_, owner| *owner != id);
+                        clients.names.insert(k, id);
+                        sim.set_name(slot, &name, true);
+                        if let Some(store) = store {
+                            store.save(vec![(id, sim.record_of(slot))]);
+                        }
+                        format!("You are now known as {name}.")
+                    }
+                }
+            }
+        }
+    };
+    if let Some(Some(c)) = clients.slab.get_mut(sid as usize) {
+        c.chat.deliver(0, proto::chat::channel::SAY, &answer);
+    }
 }
 
 /// End a session: save its character if it has a proven identity, free its entity.
 pub fn drop_client(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, idx: u32) -> bool {
     let Some(c) = clients.remove(idx) else { return false };
-    if let (Some(store), true) = (store, c.proven && c.id != GUEST && !matches!(c.zstate, ZState::Moved { .. })) {
-        store.save(vec![(c.id, sim.record_of(c.slot))]);
+    if let (Some(store), true) = (store, c.proven && c.id != GUEST) {
+        store.save(vec![(c.id, saved(sim, &c))]);
     }
     sim.ents.despawn(c.slot);
     true
 }
 
+/// The exit place holding (x, y): the smallest, where they overlap.
+fn exit_at(places: &[proto::game::Place], x: f32, y: f32) -> Option<u16> {
+    places
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.exit.is_some() && (x - p.x).hypot(y - p.y) <= p.r)
+        .min_by(|a, b| a.1.r.total_cmp(&b.1.r))
+        .map(|(i, _)| i as u16)
+}
+
+/// Zone lines: a player who walks into a place with an exit goes where it leads. Somewhere on this map, they are
+/// simply put there; in another zone, their character is handed over (`zone::Zone::send`) and the client is
+/// redirected once that zone has it. Guests have nothing to hand over, so they only travel within a map.
+pub fn exits(sim: &mut Sim, clients: &mut Clients, zone: Option<&crate::zone::Zone>) {
+    if !sim.places.iter().any(|p| p.exit.is_some()) {
+        return;
+    }
+    for c in clients.slab.iter_mut().flatten() {
+        // Not before sign-in is done: until then the entity stands where it spawned, not where the character is.
+        if !c.proven || !matches!(c.zstate, ZState::Here) {
+            continue;
+        }
+        let now = exit_at(&sim.places, sim.ents.x[c.slot], sim.ents.y[c.slot]);
+        let entered = c.exit_seen && now.is_some() && now != c.exit_in;
+        c.exit_seen = true;
+        c.exit_in = now;
+        let Some(e) = now.filter(|_| entered).and_then(|i| sim.places[i as usize].exit.clone()) else { continue };
+        let shared = zone.map(|z| &z.shared);
+        let this_map = e.zone.is_empty() || shared.and_then(|z| z.named(&e.zone)) == shared.map(|z| z.index);
+        let fail = if this_map {
+            if sim.put(c.slot, e.x, e.y) {
+                // Arriving inside another exit does not take you on through it.
+                c.exit_in = exit_at(&sim.places, e.x, e.y);
+                None
+            } else {
+                Some("The way is blocked.".to_string())
+            }
+        } else {
+            match (zone, shared.filter(|z| z.lines).and_then(|z| z.named(&e.zone))) {
+                (Some(z), Some(to)) if c.proven && c.id != GUEST => {
+                    let mut rec = sim.record_of(c.slot);
+                    (rec.x, rec.y) = (e.x, e.y);
+                    if z.send(to, c.id, rec) {
+                        c.zstate = ZState::Handing { to };
+                        None
+                    } else {
+                        Some(format!("The way to {} is closed for now.", e.zone))
+                    }
+                }
+                (Some(_), Some(_)) => Some(format!("Only a signed-in character can travel to {}.", e.zone)),
+                _ => Some(format!("The way to {} is closed.", e.zone)),
+            }
+        };
+        if let Some(t) = fail {
+            c.chat.deliver(0, proto::chat::channel::SAY, &t);
+        }
+    }
+}
+
+/// What to save for a player: their character, marked with the zone that took it once another zone has (that one is
+/// the real character; this copy is only used if that zone is ever gone from the setup).
+fn saved(sim: &Sim, c: &Client) -> crate::store::Record {
+    match c.zstate {
+        ZState::Moved { to, .. } => crate::store::Record { zone: Some(to), ..sim.record_of(c.slot) },
+        _ => sim.record_of(c.slot),
+    }
+}
+
 /// Save every proven player (autosave, shutdown, world restart).
 pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
     let Some(store) = store else { return };
-    let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST && !matches!(c.zstate, ZState::Moved { .. })).map(|c| (c.id, sim.record_of(c.slot))).collect();
+    let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST).map(|c| (c.id, saved(sim, c))).collect();
     store.save(recs);
     store.save_world(&sim.bot_records());
 }
@@ -685,7 +817,10 @@ impl Clients {
 }
 
 /// Route chat accepted during the input phase and refill rate limits once a second.
-pub fn route_chat(sim: &mut Sim, clients: &mut Clients) {
+pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
+    for (sid, name) in std::mem::take(&mut clients.claims) {
+        claim_name(sim, clients, store, sid, &name);
+    }
     if sim.tick % sim.tick_hz == 0 {
         for c in clients.slab.iter_mut().flatten() {
             c.chat.refill(1.0);
@@ -947,6 +1082,8 @@ mod tests {
             let slot = sim.spawn(NONE).unwrap();
             let ci = clients.insert(Client {
                 zstate: ZState::Here,
+        exit_in: None,
+        exit_seen: false,
                 addr: dest,
                 ip: dest.ip().octets(),
                 session,

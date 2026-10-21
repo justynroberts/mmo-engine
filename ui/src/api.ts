@@ -1,3 +1,4 @@
+import type { Daylight } from './daylight'
 export type Behaviour = 'idle' | 'wander' | 'chase' | 'flee'
 export type Who = 'self' | 'target'
 
@@ -46,6 +47,10 @@ export interface Place {
   x: number
   y: number
   r: number
+  /** What players see as they walk in and out; empty or missing for a place that is not a location. */
+  title?: string
+  /** A zone line: walking in takes a player to (x, y) in `zone` (a zone's name), or on this map if `zone` is empty. */
+  exit?: { zone?: string; x: number; y: number }
 }
 export interface Route {
   name: string
@@ -96,22 +101,64 @@ export interface WeatherDef {
   drain: Drain[]
 }
 export type Step =
-  | { kind: 'announce'; text: string }
+  | { kind: 'announce'; text: string; banner?: boolean; nearby?: boolean }
   | { kind: 'weather'; name: string | null; duration_secs: number }
-  | { kind: 'spawn'; archetype: string; count: number; place: string | null }
+  | { kind: 'spawn'; archetype: string; count: number; place: string | null; name?: string | null }
   | { kind: 'hit'; attr: string; delta: number; place: string | null }
   | { kind: 'clear'; archetype: string }
   | { kind: 'drop'; item: string; count: number; place: string | null }
+  | { kind: 'zone'; zone: string; on: boolean }
+  | { kind: 'wait'; secs: number }
+  | { kind: 'defeat'; within_secs: number }
+  | { kind: 'reward'; item: string; count: number; everyone?: boolean }
+export type DayPart = 'dawn' | 'day' | 'dusk' | 'night'
+/** What starts an event on its own, besides its timer. */
+export type When =
+  | { kind: 'players'; count: number }
+  | { kind: 'time'; at: DayPart }
+  | { kind: 'after'; event: string; outcome?: 'success' | 'failure' | 'either' }
+/** A weather that stays over one place: drawn as mist there, in effect only inside. */
+export interface WeatherZone {
+  name: string
+  place: string
+  weather: string
+  active?: boolean
+  height?: number
+}
 export interface EventDef {
   name: string
   every_secs: number
   chance_pct: number
+  when?: When | null
+  /** Least seconds between two starts by `when` (default 600). */
+  cooldown_secs?: number
+  /** Where it happens: a local event. */
+  place?: string | null
+  /** Longest it may run before it has failed; 0 for no limit. */
+  limit_secs?: number
   steps: Step[]
+  /** What happens instead if it fails. */
+  fail_steps?: Step[]
+}
+/** An event in progress (`/api/state` director.runs). */
+export interface RunRow {
+  name: string
+  step: number
+  of: number
+  failing: boolean
+  waiting: string | null
+  foes: number
+  people: number
+  secs: number
+  left_secs: number | null
 }
 export interface DirectorState {
   weather: { name: string; left_secs: number | null } | null
   weathers: string[]
-  events: { name: string; fired: number; next_in_secs: number | null }[]
+  /** Each weather zone and whether it is on right now. */
+  zones?: { name: string; on: boolean }[]
+  events: { name: string; fired: number; next_in_secs: number | null; last?: string | null }[]
+  runs?: RunRow[]
   /** Newest first: [tick, text]. */
   log: [number, string][]
 }
@@ -131,6 +178,9 @@ export interface GameFile {
   items?: ItemDef[]
   weather?: WeatherDef[]
   events?: EventDef[]
+  zones?: WeatherZone[]
+  /** When it is light and dark (absent: the default cycle). */
+  daylight?: Daylight
 }
 
 export interface Perf {
@@ -154,6 +204,25 @@ export interface NetCounters {
   auth_fail: number
   rejected: number
   timeouts: number
+  /** Players who signed in here but had last left through a zone line, so were sent on to that zone. */
+  sent_on?: number
+}
+/** This server's place among the zones, when it runs as one (`--zone`). */
+export interface ZoneState {
+  index: number
+  count: number
+  /** Separate maps joined by exits (`--zone-lines`) rather than strips of one world. */
+  lines: boolean
+  /** Each zone's name, by index. */
+  names: string[]
+  lo: number
+  hi: number
+  /** Players handed to another zone, and taken from one. */
+  out: number
+  in: number
+  failed: number
+  rejected: number
+  ghosts: number
 }
 /** Entity row: [id, x, y, archetype (-1 none), kind (0 bot, 1 player, 2 driven), ...attrs] */
 export type EntityRow = number[]
@@ -165,10 +234,13 @@ export interface State {
   hash: string
   perf: Perf
   net: NetCounters
+  zone?: ZoneState
   game: { zaps: number; respawns: number; rejected_actions: number; ground_items?: number }
   attrs: string[]
   e: EntityRow[]
   shown: number
+  /** Players' display names by entity id (bots go by their type). */
+  names?: Record<string, string>
   director?: DirectorState
   /** Blocks built by players: `ver` changes whenever they do (refetch /api/blocks). */
   blocks?: { ver: number; total: number }
@@ -231,6 +303,6 @@ export const KIND_GHOST = 3
 
 export interface ChatLog {
   tick: number
-  /** [tick, speaker id, channel (0 say, 1 shout), text] */
-  lines: [number, number, number, string][]
+  /** [tick, speaker id, channel (0 say, 1 shout), text, the speaker's name now ("" if gone)] */
+  lines: [number, number, number, string, string?][]
 }

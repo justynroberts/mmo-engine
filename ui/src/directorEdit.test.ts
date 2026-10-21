@@ -2,13 +2,18 @@ import { fixture } from './test/fixture'
 import {
   addEvent,
   addWeather,
+  addZone,
+  removeZone,
+  renameZone,
   defaultStep,
   describeStep,
   directorProblems,
   EVENT_PRESETS,
   removeArch,
+  removeEvent,
   removeWeather,
   renameArch,
+  renameEvent,
   renameWeather,
   rewriteRefs,
   STEP_KINDS,
@@ -106,5 +111,91 @@ describe('starting points', () => {
     const p = directorProblems(g)
     expect(p.join(' ')).toContain('ghost')
     expect(p.join(' ')).toContain('atlantis')
+  })
+})
+
+describe('weather zones', () => {
+  const zoned = (): GameFile => ({
+    ...withDirector(),
+    zones: [{ name: 'haunt', place: 'plaza', weather: 'storm', active: true, height: 30 }],
+    events: [...(withDirector().events ?? []), { name: 'lift', every_secs: 0, chance_pct: 100, steps: [{ kind: 'zone', zone: 'haunt', on: false }] }],
+  })
+
+  it('a zone over a known place with a known weather is valid, and a step switches it', () => {
+    expect(directorProblems(zoned())).toEqual([])
+    expect(describeStep({ kind: 'zone', zone: 'haunt', on: false })).toBe('lift the haunt')
+  })
+
+  it('renaming its place or weather follows through, deleting either takes the zone and the steps that switch it', () => {
+    const g = zoned()
+    expect(renamePlace(g, 0, 'square').zones![0]!.place).toBe('square')
+    expect(renameWeather(g, 0, 'squall').zones![0]!.weather).toBe('squall')
+    const noPlace = removePlace(g, 0)
+    expect(noPlace.zones).toEqual([])
+    expect(noPlace.events!.some((e) => e.name === 'lift')).toBe(false)
+    expect(removeWeather(g, 0).zones).toEqual([])
+  })
+
+  it('renaming or removing the zone itself fixes its steps', () => {
+    const g = zoned()
+    expect(renameZone(g, 0, 'red mist').events!.find((e) => e.name === 'lift')!.steps[0]).toEqual({ kind: 'zone', zone: 'red mist', on: false })
+    expect(removeZone(g, 0).events!.some((e) => e.name === 'lift')).toBe(false)
+    expect(directorProblems({ ...g, zones: [{ ...g.zones![0]!, place: 'nowhere' }] })[0]).toMatch(/no place called “nowhere”/)
+  })
+
+  it('adds a zone only when there is a place and a weather to make it of', () => {
+    expect(addZone(zoned()).zones).toHaveLength(2)
+    expect(addZone({ ...fixture(), places: [] }).zones).toBeUndefined()
+  })
+})
+
+describe('raids and local events', () => {
+  const raid = (): GameFile => {
+    const g = withDirector()
+    return {
+      ...g,
+      items: [{ name: 'medkit', color: '#ff4d6d', stack_max: 5, uses: [], consume: true }],
+      events: [
+        {
+          ...g.events![0]!,
+          place: 'plaza',
+          limit_secs: 300,
+          steps: [{ kind: 'announce', text: 'To arms', banner: true, nearby: true }, { kind: 'defeat', within_secs: 60 }, { kind: 'reward', item: 'medkit', count: 1 }],
+          fail_steps: [{ kind: 'announce', text: 'Fallen', banner: true }],
+        },
+        { name: 'aftermath', every_secs: 0, chance_pct: 100, when: { kind: 'after', event: 'raid', outcome: 'failure' }, steps: [{ kind: 'announce', text: 'Rebuild' }] },
+      ],
+    }
+  }
+
+  it('a raid with a place, a fight, a reward and a follow-up is valid', () => expect(directorProblems(raid())).toEqual([]))
+
+  it('renaming an event moves what follows it; removing it stops that following', () => {
+    const g = renameEvent(raid(), 0, 'siege')
+    expect(g.events![1]!.when).toEqual({ kind: 'after', event: 'siege', outcome: 'failure' })
+    const h = removeEvent(g, 0)
+    expect(h.events!.map((e) => e.name)).toEqual(['aftermath'])
+    expect(h.events![0]!.when).toBeNull()
+  })
+
+  it('rewards follow an item rename, in the fail steps too, and a deleted event place leaves nothing "nearby"', () => {
+    const g = raid()
+    g.events![0]!.fail_steps!.push({ kind: 'reward', item: 'medkit', count: 2, everyone: true })
+    const r = rewriteRefs(g, 'item', 'medkit', 'bandage')
+    expect(r.events![0]!.steps[2]).toMatchObject({ kind: 'reward', item: 'bandage' })
+    expect(r.events![0]!.fail_steps![1]).toMatchObject({ kind: 'reward', item: 'bandage' })
+    const p = removePlace(raid(), 0)
+    expect(p.events![0]!.place).toBeNull()
+    expect(p.events![0]!.steps[0]).toMatchObject({ kind: 'announce', nearby: false })
+    expect(directorProblems(p)).toEqual([])
+  })
+
+  it('problems with the new parts are found in plain words', () => {
+    const g = raid()
+    g.events![0]!.place = null
+    g.events![1]!.when = { kind: 'after', event: 'nothing' }
+    const p = directorProblems(g)
+    expect(p.some((x) => x.includes('needs the event to have a place'))).toBe(true)
+    expect(p.some((x) => x.includes('which is not another event'))).toBe(true)
   })
 })

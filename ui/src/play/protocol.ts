@@ -7,7 +7,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-export const PROTO_VERSION = 8
+export const PROTO_VERSION = 9
 export const HELLO_LEN = 96
 export const CHALLENGE_LEN = 53
 export const CONNECT_LEN = 55 + 8 + 32 + 16
@@ -446,7 +446,8 @@ export function dequantize(a: { min: number; max: number; bits: number }, q: num
 // --------------------------------------------------------------------- chat
 
 export const MAX_TEXT = 120
-export const channel = { SAY: 0, SHOUT: 1 } as const
+/** SAY and SHOUT are heard; NAME (client to server only) claims a display name (crates/proto/src/names.rs). */
+export const channel = { SAY: 0, SHOUT: 1, NAME: 2, BANNER: 3 } as const
 
 export interface ChatMsg {
   seq: number

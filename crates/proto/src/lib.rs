@@ -5,12 +5,15 @@
 //! collision maths cannot drift apart.
 
 pub mod chat;
+pub mod daylight;
 pub mod defs;
 pub mod game;
+pub mod names;
 pub mod predict;
 pub mod rng;
 pub mod secure;
 pub mod snapshot;
+pub mod tiles;
 pub mod wire;
 pub mod world;
 

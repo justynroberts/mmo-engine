@@ -19,6 +19,12 @@ var _hw := 0
 var _hh := 0
 var _heights := PackedFloat32Array()
 var _cells := {}                 # cell key -> indices of objects whose position (or footprint centre) is in it
+var _streamed := {}              # ids of walls added by add_boxes
+var _points := {}                # cell key -> point objects (trees, rocks) streamed in by tile
+var _point_tiles := {}           # tile key -> true, for the tiles whose points are in
+
+## Point objects arrive by tile (/play/world/tiles); a tile is exactly 2 x 2 cells.
+const TILE := 256.0
 
 static func from_file(text: String) -> RefCounted:
 	var d = JSON.parse_string(text)
@@ -56,6 +62,25 @@ static func from_boxes(world_size: float, boxes: Array) -> RefCounted:
 	w._index()
 	return w
 
+## Walls streamed in by tile ([id, x0, y0, x1, y1, class] each), for a world with no file: each new one becomes a
+## block. Returns the keys of the cells that gained one, for a theme to redraw.
+func add_boxes(list: Array) -> Array:
+	var touched := {}
+	for e in list:
+		if _streamed.has(e[0]):
+			continue
+		_streamed[e[0]] = true
+		var b := [e[1], e[2], e[3], e[4]]
+		var o := {"t": "block", "b": b, "solid": true, "y": 0.0, "v": absi(int(b[0]) * 73856093 ^ int(b[1]) * 19349663)}
+		objects.append(o)
+		var at := centre(o)
+		var k := key(int(floor(at.x / CELL)), int(floor(at.y / CELL)))
+		if not _cells.has(k):
+			_cells[k] = []
+		_cells[k].append(objects.size() - 1)
+		touched[k] = true
+	return touched.keys()
+
 func _index() -> void:
 	_cells.clear()
 	for i in objects.size():
@@ -80,10 +105,48 @@ func in_cell(cx: int, cy: int) -> Array:
 	var out := []
 	for i in _cells.get(key(cx, cy), []):
 		out.append(objects[i])
+	out.append_array(_points.get(key(cx, cy), []))
 	return out
 
+## A tile's point objects, as /play/world/tiles sends them (replacing any it had). Returns the cells to redraw.
+func set_points(tx: int, ty: int, list: Array) -> Array:
+	var cells := _tile_cells(tx, ty)
+	for k in cells:
+		_points.erase(k)
+	for o in list:
+		var at := centre(o)
+		var k := key(int(floor(at.x / CELL)), int(floor(at.y / CELL)))
+		if not _points.has(k):
+			_points[k] = []
+		_points[k].append(o)
+	_point_tiles[key(tx, ty)] = true
+	return cells
+
+## Let go of a tile's point objects. Returns the cells to redraw.
+func drop_points(tx: int, ty: int) -> Array:
+	var cells := _tile_cells(tx, ty)
+	for k in cells:
+		_points.erase(k)
+	_point_tiles.erase(key(tx, ty))
+	return cells
+
+func has_points(tx: int, ty: int) -> bool:
+	return _point_tiles.has(key(tx, ty))
+
+## How many point objects are in.
+func point_count() -> int:
+	var n := 0
+	for l in _points.values():
+		n += l.size()
+	return n
+
+static func _tile_cells(tx: int, ty: int) -> Array:
+	return [key(tx * 2, ty * 2), key(tx * 2 + 1, ty * 2), key(tx * 2, ty * 2 + 1), key(tx * 2 + 1, ty * 2 + 1)]
+
 func cells_in_use() -> Array:
-	return _cells.keys()
+	var all := _cells.duplicate()
+	all.merge(_points)
+	return all.keys()
 
 ## Ground height, interpolated between samples; 0 where there are no heights.
 func height(x: float, y: float) -> float:

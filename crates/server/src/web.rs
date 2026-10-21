@@ -8,7 +8,8 @@
 //! their identity key) never leaves the browser.
 //!
 //! The same port serves the play page and `/play/info`, the public facts a
-//! client needs (server key, definitions, world geometry). Nothing here exposes
+//! client needs (server key, definitions, world geometry), with the walls by tile
+//! at `/play/tiles` and the world file at `/play/world`. Nothing here exposes
 //! the admin API, which stays on loopback.
 //!
 //! Every relayed connection reaches the game server from 127.0.0.1, so by
@@ -53,110 +54,20 @@ pub struct Gateway {
     ports: Mutex<HashMap<u16, [u8; 4]>>,
     per_ip: Mutex<HashMap<[u8; 4], u32>>,
     info: RwLock<String>,
-    walls: RwLock<Walls>,
-    /// The world file's bytes, served as they are at /play/world (empty: none).
-    world: RwLock<std::sync::Arc<Vec<u8>>>,
+    /// The walls by tile and the world file (`/play/tiles`, `/play/world`).
+    statics: Arc<crate::statics::Statics>,
     /// Built blocks, served at /play/blocks.
     blocks: RwLock<crate::blocks::Feed>,
+    /// Every entity's name by slot, with the id it was for (`/play/names`).
+    names: RwLock<Vec<(u32, Arc<str>)>>,
     pub stats: GwStats,
 }
 
-/// Edge of a wall chunk. Clients ask for walls by chunk, so a huge world is never sent whole.
-pub const WALL_CHUNK: f32 = 256.0;
-/// More walls than this and `/play/info` stops carrying them inline.
+/// Most ids one `/play/names` request may ask about.
+pub const NAMES_MAX: usize = 256;
+
+/// More walls than this and `/play/info` stops carrying them inline: clients fetch them by tile from `/play/tiles`.
 pub const WALLS_INLINE_MAX: usize = 600;
-const MAX_CHUNKS_PER_REQUEST: usize = 64;
-
-/// The world's walls, indexed by chunk for `/play/walls`. `ver` changes whenever the walls do.
-#[derive(Default)]
-pub struct Walls {
-    pub ver: u64,
-    boxes: Vec<[f32; 4]>,
-    chunks: HashMap<(u32, u32), Vec<u32>>,
-}
-
-impl Walls {
-    pub fn build(boxes: &[[f32; 4]]) -> Walls {
-        // FNV-1a over the bit patterns: cheap, and any change to any wall changes it.
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in boxes {
-            for v in b {
-                for byte in v.to_bits().to_le_bytes() {
-                    h = (h ^ byte as u64).wrapping_mul(0x100000001b3);
-                }
-            }
-        }
-        h ^= boxes.len() as u64;
-        let mut chunks: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-        for (i, b) in boxes.iter().enumerate() {
-            let (x0, x1) = ((b[0].max(0.0) / WALL_CHUNK) as u32, (b[2].max(0.0) / WALL_CHUNK) as u32);
-            let (y0, y1) = ((b[1].max(0.0) / WALL_CHUNK) as u32, (b[3].max(0.0) / WALL_CHUNK) as u32);
-            for cy in y0..=y1 {
-                for cx in x0..=x1 {
-                    chunks.entry((cx, cy)).or_default().push(i as u32);
-                }
-            }
-        }
-        Walls { ver: h, boxes: boxes.to_vec(), chunks }
-    }
-
-    fn entry(&self, i: u32) -> String {
-        let b = self.boxes[i as usize];
-        format!("[{},{},{},{},{}]", i, b[0], b[1], b[2], b[3])
-    }
-
-    /// `c=cx,cy;cx,cy` for chunks, `all=1` for everything. A box on a chunk border is in each chunk it touches.
-    fn body(&self, query: &str) -> Option<String> {
-        let mut out = format!("{{\"ver\":\"{:016x}\",\"chunk\":{},\"chunks\":{{", self.ver, WALL_CHUNK);
-        let mut first = true;
-        for kv in query.split('&') {
-            match kv.split_once('=') {
-                Some(("all", "1")) => {
-                    out.push_str("\"all\":[");
-                    for i in 0..self.boxes.len() as u32 {
-                        if i > 0 {
-                            out.push(',');
-                        }
-                        out.push_str(&self.entry(i));
-                    }
-                    out.push(']');
-                    first = false;
-                }
-                Some(("c", list)) => {
-                    let wanted: Vec<(u32, u32)> = list
-                        .split(';')
-                        .filter_map(|t| {
-                            let (a, b) = t.split_once(',')?;
-                            Some((a.parse().ok()?, b.parse().ok()?))
-                        })
-                        .collect();
-                    if wanted.len() > MAX_CHUNKS_PER_REQUEST {
-                        return None;
-                    }
-                    for (cx, cy) in wanted {
-                        if !first {
-                            out.push(',');
-                        }
-                        first = false;
-                        out.push_str(&format!("\"{cx},{cy}\":["));
-                        if let Some(ids) = self.chunks.get(&(cx, cy)) {
-                            for (n, i) in ids.iter().enumerate() {
-                                if n > 0 {
-                                    out.push(',');
-                                }
-                                out.push_str(&self.entry(*i));
-                            }
-                        }
-                        out.push(']');
-                    }
-                }
-                _ => {}
-            }
-        }
-        out.push_str("}}");
-        Some(out)
-    }
-}
 
 pub struct WebCfg {
     pub addr: SocketAddr,
@@ -165,26 +76,14 @@ pub struct WebCfg {
     pub max_conns: usize,
     pub per_ip: u32,
     pub trust_proxy: bool,
+    /// The other zones' web addresses (`--zone-web`): a page one of them served may connect here, since a player
+    /// handed over from that zone arrives with that page still open.
+    pub zone_hosts: Vec<String>,
 }
 
 impl Gateway {
-    pub fn new() -> Arc<Gateway> {
-        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), walls: RwLock::new(Walls::default()), world: RwLock::default(), blocks: RwLock::new(crate::blocks::Feed::new()), stats: GwStats::default() })
-    }
-
-    /// Publish the walls. Returns the version the clients will see.
-    pub fn set_walls(&self, boxes: &[[f32; 4]]) -> u64 {
-        if let Ok(r) = self.walls.read() {
-            if r.boxes.len() == boxes.len() && r.boxes.as_slice() == boxes {
-                return r.ver;
-            }
-        }
-        let w = Walls::build(boxes);
-        let ver = w.ver;
-        if let Ok(mut g) = self.walls.write() {
-            *g = w;
-        }
-        ver
+    pub fn new(statics: Arc<crate::statics::Statics>) -> Arc<Gateway> {
+        Arc::new(Gateway { ports: Mutex::default(), per_ip: Mutex::default(), info: RwLock::new("{}".into()), statics, blocks: RwLock::new(crate::blocks::Feed::new()), names: RwLock::default(), stats: GwStats::default() })
     }
 
     /// Columns players changed this tick, as they now are.
@@ -194,10 +93,36 @@ impl Gateway {
         }
     }
 
-    pub fn set_world(&self, bytes: std::sync::Arc<Vec<u8>>) {
-        if let Ok(mut w) = self.world.write() {
-            *w = bytes;
+    /// Take the names that changed this tick (all of them when bot types changed). Called by the sim thread after
+    /// the tick; the lock is held only to copy a handful of pointers.
+    pub fn names_changed(&self, sim: &crate::sim::Sim) {
+        let slots: Vec<usize> = if sim.names_all { (0..sim.ents.high).collect() } else { sim.ents.renamed.iter().map(|&s| s as usize).collect() };
+        let fresh: Vec<(usize, u32, Arc<str>)> =
+            slots.into_iter().filter(|&s| sim.ents.alive[s]).map(|s| (s, sim.ents.id_of(s), sim.name_of(s))).collect();
+        if let Ok(mut t) = self.names.write() {
+            if t.len() < sim.ents.cap() {
+                t.resize(sim.ents.cap(), (u32::MAX, Arc::from("")));
+            }
+            for (s, id, n) in fresh {
+                t[s] = (id, n);
+            }
         }
+    }
+
+    /// `{"<id>": "<name>", ...}` for those of `ids` that are alive. An id whose slot has moved on is left out.
+    pub fn names_json(&self, ids: &[u32]) -> String {
+        let t = self.names.read();
+        let mut out = serde_json::Map::new();
+        if let Ok(t) = t {
+            for &id in ids {
+                if let Some((have, n)) = t.get((id & crate::sim::SLOT_MASK) as usize) {
+                    if *have == id {
+                        out.insert(id.to_string(), serde_json::Value::String(n.to_string()));
+                    }
+                }
+            }
+        }
+        serde_json::Value::Object(out).to_string()
     }
 
     pub fn set_info(&self, json: String) {
@@ -265,6 +190,7 @@ struct Head {
     origin: Option<String>,
     forwarded: Option<String>,
     query: String,
+    gzip: bool,
 }
 
 /// Read the request head without consuming it, so a WebSocket upgrade can be handed to
@@ -287,7 +213,7 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
             let target = first.next()?;
             let (path, query) = target.split_once('?').unwrap_or((target, ""));
             let (path, query) = (path.to_string(), query.to_string());
-            let mut h = Head { path, websocket: false, host: None, origin: None, forwarded: None, query };
+            let mut h = Head { path, websocket: false, host: None, origin: None, forwarded: None, query, gzip: false };
             for l in lines {
                 let Some((k, v)) = l.split_once(':') else { continue };
                 let v = v.trim();
@@ -296,6 +222,7 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
                     "host" => h.host = Some(v.to_string()),
                     "origin" => h.origin = Some(v.to_string()),
                     "x-forwarded-for" => h.forwarded = Some(v.to_string()),
+                    "accept-encoding" => h.gzip = v.split(',').any(|e| e.trim().split(';').next() == Some("gzip")),
                     _ => {}
                 }
             }
@@ -309,20 +236,37 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
 }
 
 fn respond(conn: &mut TcpStream, status: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
+    respond_with(conn, status, ctype, body, "Cache-Control: no-store\r\n")
+}
+
+/// A reply with `extra` header lines (each ending in CRLF) in place of the default no-store. Any page may read it:
+/// everything here is public and no request carries credentials, and with zone lines the play page of one zone
+/// loads the next zone's info, walls and blocks from that zone's gateway.
+fn respond_with(conn: &mut TcpStream, status: u16, ctype: &str, body: &[u8], extra: &str) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
+        409 => "Conflict",
         429 => "Too Many Requests",
         _ => "Error",
     };
     write!(
         conn,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n{extra}Access-Control-Allow-Origin: *\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n",
         body.len()
     )?;
     conn.write_all(body)
+}
+
+/// Gzip `body` for a client that takes it (Vary says the reply depends on that).
+fn maybe_gzip(gzip: bool, body: Vec<u8>, extra: &str) -> (Vec<u8>, String) {
+    if gzip && body.len() > 256 {
+        (crate::worldfile::gzip(&body, 1), format!("{extra}Content-Encoding: gzip\r\nVary: Accept-Encoding\r\n"))
+    } else {
+        (body, format!("{extra}Vary: Accept-Encoding\r\n"))
+    }
 }
 
 fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()> {
@@ -346,24 +290,65 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
             let body = gw.info.read().map(|s| s.clone()).unwrap_or_default();
             respond(&mut conn, 200, "application/json", body.as_bytes())
         }
-        "/play/world" => {
-            let body = gw.world.read().map(|b| b.clone()).unwrap_or_default();
-            if body.is_empty() {
-                respond(&mut conn, 404, "text/plain", b"this world has no world file")
-            } else {
-                respond(&mut conn, 200, "application/json", &body)
+        "/play/world" => match gw.statics.file() {
+            None => respond(&mut conn, 404, "text/plain", b"this world has no world file"),
+            Some(w) if head.gzip => respond_with(&mut conn, 200, "application/json", &w.gz(), "Cache-Control: no-store\r\nContent-Encoding: gzip\r\nVary: Accept-Encoding\r\n"),
+            Some(w) => respond_with(&mut conn, 200, "application/json", &w.bytes, "Cache-Control: no-store\r\nVary: Accept-Encoding\r\n"),
+        },
+        // The world file in parts: the head (every footprint object, the heights and the water), then the point
+        // objects (trees, rocks) by tile around the player. `v` is the file's version from /play/info, as for walls.
+        "/play/world/head" => match gw.statics.file() {
+            None => respond(&mut conn, 404, "text/plain", b"this world has no world file"),
+            Some(w) if head.gzip => respond_with(&mut conn, 200, "application/json", &w.head_gz, "Cache-Control: no-store\r\nContent-Encoding: gzip\r\nVary: Accept-Encoding\r\n"),
+            Some(w) => respond_with(&mut conn, 200, "application/json", &w.head, "Cache-Control: no-store\r\nVary: Accept-Encoding\r\n"),
+        },
+        "/play/world/tiles" => {
+            let q = |k: &str| head.query.split('&').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.strip_prefix('=')));
+            let want = q("c").and_then(crate::worldfile::parse_tiles);
+            match (gw.statics.file(), q("v").and_then(|v| u64::from_str_radix(v, 16).ok()), want) {
+                (None, _, _) => respond(&mut conn, 404, "text/plain", b"this world has no world file"),
+                (_, _, None) => respond(&mut conn, 400, "text/plain", b"c must be cx,cy;cx,cy"),
+                (Some(w), Some(v), _) if v != w.ver => respond(&mut conn, 409, "text/plain", b"the world has changed: read /play/info again"),
+                (Some(w), v, Some(want)) => match w.points_json(&want) {
+                    None => respond(&mut conn, 400, "text/plain", b"too many tiles"),
+                    Some(body) => {
+                        let cache = if v.is_some() { "Cache-Control: public, max-age=31536000, immutable\r\n" } else { "Cache-Control: no-store\r\n" };
+                        let (body, extra) = maybe_gzip(head.gzip, body, cache);
+                        respond_with(&mut conn, 200, "application/json", &body, &extra)
+                    }
+                },
             }
+        }
+        "/play/names" => {
+            // ?ids=1,2,3: the names of those entities (players, bots by their type).
+            let ids: Vec<u32> = head.query.split('&').find_map(|kv| kv.strip_prefix("ids=")).unwrap_or("").split(',').filter_map(|v| v.parse().ok()).collect();
+            if ids.len() > NAMES_MAX {
+                return respond(&mut conn, 400, "text/plain", format!("at most {NAMES_MAX} ids").as_bytes());
+            }
+            respond(&mut conn, 200, "application/json", gw.names_json(&ids).as_bytes())
         }
         "/play/blocks" => {
             let since = head.query.split('&').find_map(|kv| kv.strip_prefix("since=")).and_then(|v| v.parse().ok()).unwrap_or(0);
             let body = gw.blocks.read().map(|f| f.since(since)).unwrap_or_default();
             respond(&mut conn, 200, "application/json", body.as_bytes())
         }
-        "/play/walls" => {
-            let body = gw.walls.read().ok().and_then(|w| w.body(&head.query));
-            match body {
-                Some(b) => respond(&mut conn, 200, "application/json", b.as_bytes()),
-                None => respond(&mut conn, 400, "text/plain", b"too many chunks"),
+        "/play/tiles" => {
+            // `v` is the walls' version from /play/info: a reply is for that version only, so it can be cached for
+            // good, and a client asking for an older one is told to read /play/info again.
+            let q = |k: &str| head.query.split('&').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.strip_prefix('=')));
+            let tiles = gw.statics.tiles();
+            let want = q("c").and_then(proto::tiles::parse_list);
+            match (q("v").and_then(|v| u64::from_str_radix(v, 16).ok()), want) {
+                (_, None) => respond(&mut conn, 400, "text/plain", b"c must be cx,cy;cx,cy"),
+                (Some(v), _) if v != tiles.ver => respond(&mut conn, 409, "text/plain", b"the walls have changed: read /play/info again"),
+                (v, Some(want)) => match tiles.encode(&want) {
+                    None => respond(&mut conn, 400, "text/plain", b"too many tiles"),
+                    Some(body) => {
+                        let cache = if v.is_some() { "Cache-Control: public, max-age=31536000, immutable\r\n" } else { "Cache-Control: no-store\r\n" };
+                        let (body, extra) = maybe_gzip(head.gzip, body, cache);
+                        respond_with(&mut conn, 200, "application/octet-stream", &body, &extra)
+                    }
+                },
             }
         }
         p => static_file(&mut conn, cfg.ui_dir.as_deref(), p),
@@ -424,10 +409,11 @@ impl Drop for Slot<'_> {
 }
 
 fn relay(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway, head: &Head, real: [u8; 4]) -> std::io::Result<()> {
-    // A page on another site must not be able to open a game connection from a visitor's browser.
+    // A page on another site must not be able to open a game connection from a visitor's browser. Our own pages
+    // and the other zones' may.
     if let (Some(o), Some(h)) = (&head.origin, &head.host) {
         let o_host = o.split("://").nth(1).unwrap_or(o);
-        if !o_host.eq_ignore_ascii_case(h) {
+        if !o_host.eq_ignore_ascii_case(h) && !cfg.zone_hosts.iter().any(|z| z.eq_ignore_ascii_case(o_host)) {
             gw.stats.refused.fetch_add(1, Ordering::Relaxed);
             return respond(&mut conn, 403, "text/plain", b"cross-site connections are not allowed");
         }

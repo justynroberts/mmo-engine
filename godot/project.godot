@@ -14,4 +14,9 @@ window/stretch/aspect="keep_height"
 
 [rendering]
 renderer/rendering_method="forward_plus"
+reflections/sky_reflections/roughness_layers=7
 anti_aliasing/quality/msaa_3d=1
+
+[gui]
+
+theme/custom_font="res://fonts/body.tres"

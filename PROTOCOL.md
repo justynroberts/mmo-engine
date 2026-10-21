@@ -1,4 +1,4 @@
-# Wire protocol, version 8
+# Wire protocol, version 9
 
 Everything is UDP, little-endian, byte aligned. The reference implementations are
 `crates/proto` (Rust) and `ui/src/play/protocol.ts` (TypeScript, cross-checked against Rust).
@@ -69,7 +69,9 @@ Inner messages:
 Send INPUT at the server's tick rate (20 Hz). `dir_x`/`dir_y` are -127..127 intent, never speed. `seq` increases;
 the server applies the newest. `ack_tick` is the newest snapshot tick you hold. `action` is an action id (0 = none) with a
 `target` entity id; send it once. Chat is reliable on top of UDP: resend CHAT_SEND until `ack_cseq` in a batch covers it;
-`chat_ack` in INPUT tells the server the highest batch `seq` you have.
+`chat_ack` in INPUT tells the server the highest batch `seq` you have. Channels: 0 say (heard within 64 units), 1 shout
+(heard by all, one per 10 s), 2 name (client to server only: claim a display name, see Names). A batch line `from` 0 is
+the server speaking; entity slot 0 is never used, so no entity has id 0.
 
 ## 3. Snapshots
 
@@ -109,6 +111,14 @@ ordinary handshake with the given address using the **same identity**; the new z
 Guests are never redirected (they are stopped at the border). Browsers use the zone's web gateway instead of the UDP address
 (`/play/info` lists each zone's web base URL under `zones`).
 
+Zone lines. When `/play/info` says `"zone_lines": true`, every zone is a map of its own (`zone_names` gives each one's
+name, by index), and a REDIRECT means you walked through an exit. The new zone's walls, world file, blocks and names are
+its own: read its `/play/info` from `zones[zone]` and load its world before you connect, then handshake with the same
+identity. You arrive where the exit says. (The C library stops with `MMO_MOVED` for this when `mmo_follow_redirects(c, 0)`
+is set; `mmo_moved` gives the zone and address.) Signing in to a zone you have left also gets a REDIRECT at once, to the
+zone that has your character now. The gateway allows any page to read its public `/play` paths, and accepts a WebSocket
+from its own pages or another zone's (`--zone-web`), so a page loaded from one zone can carry on in the next.
+
 ## 6. Browsers
 
 The web gateway relays one WebSocket binary message as one datagram, both ways, at `/ws`. The protocol above is unchanged.
@@ -128,6 +138,27 @@ ignored, and while airborne no action can target it, so attacks miss (counted as
 not spent). Nothing new goes on the wire. If the game file has an attribute named `airborne`, the server keeps it at the
 share of the current jump still to come, from its max at take-off to its min on landing; make it replicated and clients
 draw the arc from it as a parabola, `4h * p * (1 - p)` with `p = 1 - share`. The default game has one (0 to 100, 8 bits).
+
+## Banners
+
+Chat channel 3 is a banner: a message from the server (sender 0) for the middle of the screen, sent by events. It is
+sent only by the server and only to clients; show it as a chat line too. A client that does not know channel 3 can
+treat it as an ordinary line. (No version change: the chat batch format already carries any channel.)
+
+## Names (version 9)
+
+Every entity has a display name, served by the web gateway: `GET /play/names?ids=1,2,3` (at most 256 ids, else 400)
+answers `{"<id>": "<name>", ...}` for the ids that are alive (an id from an older generation of its slot is left out).
+A player goes by the name they claimed, or until they claim one, a name made from their account tag (the same every
+time, not unique); a guest is `Guest`; a bot goes by its type, each word capitalised (`cave troll` is `Cave Troll`).
+Ask again now and then for the players in view: a name can change.
+
+To claim a name, send it as CHAT_SEND on channel 2. The server answers with one line from 0: `You are now known as
+<name>.`, or why not. A name is 3 to 16 characters: letters (any script), digits, single spaces, `'` and `-`, starting
+with a letter, ending with a letter or digit, never two of space, `'`, `-` together, and not a reserved word (admin, gm,
+god, moderator, server, system, guest...). Names are unique ignoring case and marks (`Ana-Lee` and `ana lee` clash), stay
+taken while their player is away, and are saved with the character. Guests cannot claim one. `proto::names` has the
+rules; the C SDK sends a claim with `mmo_set_name`.
 
 ## Building (version 8)
 
@@ -178,4 +209,23 @@ server refuses a game file whose `max_visible` could overflow it.
 
 ## Walls over HTTP
 
-`/play/info` carries `walls: {ver, chunk, count, inline}`. When `inline` is true the boxes are in `boxes`. When false (more than 600 walls) `boxes` is empty and walls come from `GET /play/walls?c=cx,cy;...` (up to 64 chunks, chunk edge `chunk` units), answered with `{ver, chunk, chunks: {"cx,cy": [[id,x0,y0,x1,y1],...]}}`; a box touching several chunks appears in each with the same id. `?all=1` returns `{chunks: {all: [...]}}`. `ver` changes whenever any wall changes; a client holding another version discards what it has.
+`/play/info` carries `weather_zones`: each weather zone that is on, `{name, x, y, r, height, weather, color, intensity}`. Inside
+one (the smallest, where they overlap) a client shows that weather instead of `weather`; from outside it draws mist in
+its colour standing `height` tall over the circle. (`zones` is something else: the web URLs of a multi-process world.)
+
+`/play/info` carries `locations`: each place with a `title`, `{title, x, y, r}`. A client tells the player the title of
+the smallest one round them as they walk in, and "Leaving" it as they walk out; it counts them as still inside until
+3 units past the edge so the title does not flicker. Titles are live (a console edit is in the next `/play/info`).
+
+`/play/info` carries `daylight`: the schedule (`mode` `cycle`, `clock` or `fixed` and its fields, as in the game file),
+`night_share`, and `sample: [unix_ms, phase]`, one moment the server worked out. Clients compute the phase themselves
+(`proto::daylight::Daylight::phase`, ported to `godot/scripts/theme.gd` and `ui/src/daylight.ts`): 0 is sunrise,
+`1 - night_share` sunset. Block materials 12 (`c`) and 13 (`d`) are a lamp and a fire.
+
+`/play/info` carries `walls: {ver, tile, count, inline}`. When `inline` is true (600 walls or fewer) the boxes are in `boxes` and what each is in `box_class` (below). When false `boxes` is empty and walls come by tile: `GET /play/tiles?v=<ver>&c=cx,cy;cx,cy` (up to 64 tiles of `tile` = 256 units, counted from (0, 0)). The reply is binary, little-endian, and gzipped for a client that sends `Accept-Encoding: gzip`:
+
+```
+u8 format (1) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n x (u32 id | f32 x0 | f32 y0 | f32 x1 | f32 y1 | u8 class)
+```
+
+A box touching several tiles appears in each with the same id, and its corners are the server's f32s bit for bit (collide with exactly those). Class 0 is a wall or building; class 1 is solid scenery the world file draws (a trunk, a rock), which a client should not draw as a block. A reply names its version, so it is cached for good (`Cache-Control: immutable`); asked for another version the server answers 409, which means the walls changed: read `/play/info` again and start over. More than 64 tiles is a 400. Keep the 5x5 tiles around the player and let go of tiles more than three away. No tile holds more than 4,096 boxes. `proto::tiles` implements both ends (`TileSet`, `TileStream`) and the C SDK exposes it as `mmo_tiles_wanted` / `mmo_put_tiles` / `mmo_set_walls`.

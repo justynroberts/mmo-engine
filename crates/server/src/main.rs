@@ -9,12 +9,20 @@ mod ctl;
 mod director;
 mod items;
 mod io;
+mod nav;
 mod net;
 mod sim;
+mod statics;
 mod store;
 mod web;
 mod worldfile;
 mod zone;
+
+/// Most packets one tick handles per connected client (an input a tick, plus chat and room to catch up after a
+/// hiccup); the rest of a backlog is shed.
+const RECV_PER_CLIENT: usize = 4;
+/// Most packets one tick reads only to drop; anything past it waits in the socket for the next tick.
+const SHED_MAX: usize = 65_536;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -61,6 +69,8 @@ struct Config {
     zone_public: Vec<String>,
     zone_web: Vec<String>,
     zone_secret: Option<String>,
+    zone_lines: bool,
+    zone_names: Vec<String>,
     bots_dir: Option<PathBuf>,
 }
 
@@ -99,6 +109,8 @@ fn parse_args() -> Config {
         zone_public: Vec::new(),
         zone_web: Vec::new(),
         zone_secret: None,
+        zone_lines: false,
+        zone_names: Vec::new(),
         bots_dir: Some(PathBuf::from("bots.d")),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -152,6 +164,8 @@ fn parse_args() -> Config {
             "--zone-public" => c.zone_public = val(a).split(',').map(|s| s.trim().to_string()).collect(),
             "--zone-web" => c.zone_web = val(a).split(',').map(|s| s.trim().to_string()).collect(),
             "--zone-secret" => c.zone_secret = Some(val(a)),
+            "--zone-lines" => c.zone_lines = true,
+            "--zone-names" => c.zone_names = val(a).split(',').map(|s| s.trim().to_string()).collect(),
             "--bots-dir" => c.bots_dir = Some(PathBuf::from(val(a))),
             "--no-bots-dir" => c.bots_dir = None,
             "--quiet" => c.quiet = true,
@@ -180,6 +194,9 @@ fn usage(msg: &str) -> ! {
   --zone-public A,B,.. public UDP address (ip:port) of every zone in index order, given to clients on handoff
   --zone-web U,V,..  public web base URL of every zone, for browser clients (optional)
   --zone-secret S   shared secret for the handoff link, or set MMO_ZONE_SECRET (at least 16 bytes)
+  --zone-lines      each zone is a map of its own (its own --world and game file), joined by exits on places,
+                    instead of a strip of one world
+  --zone-names A,B,..  every zone's name in index order, for exits to name where they lead (default 0,1,..)
   --quiet           only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
@@ -239,12 +256,24 @@ fn main() {
         std::sync::Arc::new(w)
     });
     let world = match &world_file {
-        Some(w) => proto::World::from_boxes(w.size, cfg.seed, w.boxes.clone()),
+        Some(w) => proto::World::from_boxes(w.size, cfg.seed, w.tiles.boxes.clone()),
         None => game_file.world(cfg.world_size, cfg.seed).unwrap_or_else(|e| {
             eprintln!("{}: {e}", cfg.game.display());
             std::process::exit(1);
         }),
     };
+    // The walls as the admin API and the gateway serve them, read on their own threads.
+    let tiles = match &world_file {
+        Some(w) => w.tiles.clone(),
+        None => std::sync::Arc::new(proto::tiles::TileSet::build(world.size, world.boxes.clone(), Vec::new()).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", cfg.game.display());
+            std::process::exit(1);
+        })),
+    };
+    if world_file.is_some() {
+        eprintln!("{} walls, at most {} touching one {} unit tile", tiles.boxes.len(), tiles.densest(), proto::tiles::TILE);
+    }
+    let statics = statics::Statics::new(tiles, world_file.clone());
     let n_boxes = world.boxes.len();
     let bots: u32 = game.archs.iter().map(|a| a.count).sum();
     let cap = cfg.max_clients + cfg.npcs + bots as usize + 4096;
@@ -278,12 +307,20 @@ fn main() {
             usage("--zone-peers and --zone-public need one entry per zone");
         }
         let public = cfg.zone_public.iter().map(|a| a.parse().unwrap_or_else(|_| usage("bad --zone-public address, want ip:port"))).collect();
-        let z = zone::Zone::start(zone::ZoneCfg { index, count, listen, peers: cfg.zone_peers.clone(), public, secret: secret.into_bytes() }, cfg.world_size as f32).unwrap_or_else(|e| {
+        let names = if cfg.zone_names.is_empty() { (0..count).map(|i| i.to_string()).collect() } else { cfg.zone_names.clone() };
+        if names.len() != count as usize || names.iter().any(|n| n.is_empty() || n.len() > 32) {
+            usage("--zone-names needs one name per zone, 1..32 characters each");
+        }
+        let z = zone::Zone::start(zone::ZoneCfg { index, count, listen, peers: cfg.zone_peers.clone(), public, secret: secret.into_bytes(), lines: cfg.zone_lines, names }, sim.world.size).unwrap_or_else(|e| {
             eprintln!("cannot start zone link on {listen}: {e}");
             std::process::exit(1);
         });
-        sim.zone = Some((z.shared.lo, z.shared.hi));
-        eprintln!("zone {index} of {count}: owns x {:.0}..{:.0}, handoffs on tcp/{listen}", z.shared.lo, z.shared.hi);
+        if z.shared.lines {
+            eprintln!("zone {index} of {count} ('{}'): a map of its own, joined to the others by exits, handoffs on tcp/{listen}", z.shared.names[index as usize]);
+        } else {
+            sim.zone = Some((z.shared.lo, z.shared.hi));
+            eprintln!("zone {index} of {count}: owns x {:.0}..{:.0}, handoffs on tcp/{listen}", z.shared.lo, z.shared.hi);
+        }
         z
     });
     let keys = load_keys(&cfg.key_file);
@@ -336,12 +373,12 @@ fn main() {
 
     let gateway = cfg.web.as_ref().map(|a| {
         let addr: std::net::SocketAddr = a.parse().unwrap_or_else(|_| usage("bad --web address"));
-        let gw = web::Gateway::new();
+        let gw = web::Gateway::new(statics.clone());
         let ui = cfg.ui_dir.clone().or_else(|| {
             let d = PathBuf::from("ui/dist");
             d.is_dir().then_some(d)
         });
-        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy };
+        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy, zone_hosts: cfg.zone_web.iter().map(|u| u.split("://").nth(1).unwrap_or(u).trim_end_matches('/').to_string()).collect() };
         match web::start(wc, gw.clone()) {
             Ok(local) => eprintln!("web gateway: http://{local}/  (browsers play through WebSocket, at most {} at once, {} per address{})", cfg.web_max_conns, cfg.web_per_ip, if cfg.web_trust_proxy { ", trusting X-Forwarded-For" } else { "" }),
             Err(e) => {
@@ -351,10 +388,7 @@ fn main() {
         }
         gw
     });
-    if let (Some(g), Some(w)) = (&gateway, &world_file) {
-        g.set_world(w.bytes.clone());
-    }
-    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store, gateway, zone: zone.as_ref().map(|z| z.shared.clone()), zone_web: cfg.zone_web.clone(), world: world_file };
+    let mut hs = Handshake { keys, defs_hash, max_clients: cfg.max_clients, store, gateway, zone: zone.as_ref().map(|z| z.shared.clone()), zone_web: cfg.zone_web.clone(), world: world_file, statics: statics.clone() };
     if let Some(g) = &hs.gateway {
         g.set_info(ctl::play_info(&sim, &hs));
     }
@@ -367,7 +401,6 @@ fn main() {
         plain_npcs: cfg.npcs,
         game_path: Some(cfg.game.clone()),
         max_clients: cfg.max_clients,
-        world_path: world_path.clone(),
     };
     let mut live = ctl::LiveStats { snap_lanes: lanes_n, ..Default::default() };
     let admin_rx = cfg.admin.as_ref().map(|a| {
@@ -381,8 +414,8 @@ fn main() {
             let near = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("worldgen")));
             near.filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("worldgen"))
         });
-        let gen = ctl::GenCfg { worldgen, preview: world_path.with_extension("preview.json") };
-        let rx = ctl::start(addr, ui.clone(), gen).unwrap_or_else(|e| {
+        let gen = ctl::GenCfg { worldgen, preview: world_path.with_extension("preview.json"), world: world_path.clone(), seed: cfg.seed };
+        let rx = ctl::start(addr, ui.clone(), gen, statics.clone()).unwrap_or_else(|e| {
             eprintln!("cannot start admin interface on {a}: {e}");
             std::process::exit(1);
         });
@@ -393,6 +426,12 @@ fn main() {
         rx
     });
     let mut clients = Clients::default();
+    // Claimed names stay taken while their players are away.
+    if let Some(st) = &hs.store {
+        for (id, n) in st.names() {
+            clients.names.entry(proto::names::key(&n)).or_insert(id);
+        }
+    }
     clients.limiter = Some(net::RateLimiter::new(cfg.hello_rate, !cfg.limit_loopback));
     clients.id_limiter = Some(net::IdentityLimiter::new(cfg.new_ids_per_hour, !cfg.limit_loopback));
     let mut nstats = NetStats::default();
@@ -412,6 +451,9 @@ fn main() {
     let (mut w_in, mut w_out, mut w_bytes) = (0u64, 0u64, 0u64);
     let timeout_ticks = cfg.timeout_secs * cfg.hz;
     let mut peak_clients = 0usize;
+    // This tick's incoming packets, copied out of the receive ring so they can all be handled at once.
+    let mut in_data: Vec<u8> = Vec::with_capacity(1 << 20);
+    let mut in_pkts: Vec<(std::net::SocketAddrV4, usize, usize)> = Vec::with_capacity(16 * 1024);
 
     loop {
         // Wait for the deadline: sleep most of it, spin the last stretch.
@@ -427,16 +469,37 @@ fn main() {
             late += 1;
         }
 
-        // 1. Inputs and handshakes.
+        // 1. Inputs and handshakes. Everything that came in since the last tick is gathered first and handled in one
+        // go (one parallel decryption across the lanes, not one per recvmmsg). Catching up never eats the tick: past a
+        // few ticks' worth of packets, or a third of the tick spent reading, the rest of a backlog is read and dropped
+        // (shed). After a stall that costs everyone a little loss, which the protocol shrugs off, instead of a spiral
+        // where each tick works through a bigger backlog than the last.
         let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
+        let cap = (clients.count * RECV_PER_CLIENT).max(4096);
+        let read_until = t0 + dt / 3;
+        in_data.clear();
+        in_pkts.clear();
+        let mut shed = 0usize;
         loop {
             let n = rx.recv();
-            let pkts: Vec<_> = (0..n).map(|i| rx.packet(i)).collect();
-            net::handle_batch(&mut sim, &mut clients, &mut tx, &hs, &mut nstats, &pkts, &mut lanes, cfg.pin, &mut scratch, &mut plain, now_secs);
-            if n < io::RBATCH {
+            // Time only counts once there is a real backlog: a hiccup in the middle of reading a handful of packets
+            // must not drop them.
+            if in_pkts.len() + n > cap || (in_pkts.len() >= cap / 4 && Instant::now() > read_until) {
+                shed += n;
+            } else {
+                for i in 0..n {
+                    let (addr, data) = rx.packet(i);
+                    in_pkts.push((addr, in_data.len(), data.len()));
+                    in_data.extend_from_slice(data);
+                }
+            }
+            if n < io::RBATCH || shed >= SHED_MAX {
                 break;
             }
         }
+        nstats.shed += shed as u64;
+        let pkts: Vec<(std::net::SocketAddrV4, &[u8])> = in_pkts.iter().map(|&(a, at, len)| (a, &in_data[at..at + len])).collect();
+        net::handle_batch(&mut sim, &mut clients, &mut tx, &hs, &mut nstats, &pkts, &mut lanes, cfg.pin, &mut scratch, &mut plain, now_secs);
         // Handshake replies go out now rather than after the whole tick.
         tx.flush();
         if let Some(rx) = &admin_rx {
@@ -495,11 +558,20 @@ fn main() {
             }
         }
         sim.step(&pending);
+        net::exits(&mut sim, &mut clients, zone.as_ref());
         if let Some(z) = zone.as_mut() {
-            z.tick(&mut sim, &mut clients, &mut tx, &mut scratch);
+            z.tick(&mut sim, &mut clients, hs.store.as_deref(), &mut tx, &mut scratch);
             tx.flush();
         }
-        net::route_chat(&mut sim, &mut clients);
+        net::route_chat(&mut sim, &mut clients, hs.store.as_deref());
+        // Names that changed this tick (spawns, removals, players renaming) go to the web gateway's table.
+        if sim.names_all || !sim.ents.renamed.is_empty() {
+            if let Some(g) = &hs.gateway {
+                g.names_changed(&sim);
+            }
+            sim.ents.renamed.clear();
+            sim.names_all = false;
+        }
         // Blocks built or broken this tick go to the clients, and are saved every few seconds.
         let changes = sim.blocks.take_changes();
         if !changes.is_empty() {
@@ -564,7 +636,7 @@ fn main() {
             };
             if !cfg.quiet {
                 eprintln!(
-                    "[{:>4}s] clients {:>5} ents {:>5} | tick avg {} p99 {} max {} ms (recv {} sim {} snap+send {}) | in {:.1}k/s out {:.1}k/s {:.1} Mbit/s | late {} over {} drops {}",
+                    "[{:>4}s] clients {:>5} ents {:>5} | tick avg {} p99 {} max {} ms (recv {} sim {} snap+send {}) | in {:.1}k/s out {:.1}k/s {:.1} Mbit/s | late {} over {} drops {} shed {}",
                     (t4 - start).as_secs(),
                     clients.count,
                     sim.ents.live - sim.ghost_count(),
@@ -580,6 +652,7 @@ fn main() {
                     late,
                     overruns,
                     t_drop,
+                    nstats.shed,
                 );
             }
             window.clear();
@@ -625,7 +698,7 @@ fn main() {
         ms(*all_ticks.last().unwrap_or(&0) as f64),
         ms(deadline_us)
     );
-    println!("ticks over budget {overruns}, ticks that started late {late}");
+    println!("ticks over budget {overruns}, ticks that started late {late}, packets shed {}", nstats.shed);
     println!(
         "cpu: user {:.2}s sys {:.2}s = {:.0}% of one core over the run",
         user,

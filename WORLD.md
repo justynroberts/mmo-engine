@@ -19,9 +19,20 @@ applies it live. The server runs the generator for it (`POST /api/world/generate
 preview; `POST /api/world/apply` makes the preview the world file and the world). The world file is `--world`,
 or `world.json` in the server's working directory, which the server loads on start when it exists.
 
-`/play/info` carries `"world": {"ver": "<hex>", "bytes": N}` when there is a world file, and clients fetch it
-from `GET /play/world` (the admin side has the same at `GET /api/worldfile`). `ver` changes whenever the file
-does. `POST /api/world/reload` rereads the file and applies it live, as a wall edit is: nobody is
+`/play/info` carries `"world": {"ver": "<hex>", "bytes": N, "parts": true, "head_bytes": N, "points": N, "tile": 256}`
+when there is a world file. A client can fetch it whole from `GET /play/world` (the admin side has the same at
+`GET /api/worldfile`), but a big world is better taken in parts, which is what the Godot client does:
+
+- `GET /play/world/head`: the file with only its footprint objects (everything without a point `p`: buildings,
+  walls, cities, crags, lakes), its heights and its water. Enough for a map of the whole world.
+- `GET /play/world/tiles?v=<ver>&c=cx,cy;cx,cy` (up to 64): the point objects (trees, rocks, bushes, spires) whose
+  `p` is in each 256 unit tile, as `{"ver", "tile", "tiles": {"cx,cy": [objects...]}}`, each object exactly as the
+  file has it. Tiles past the edge are negative or beyond the last (scenery runs a little outside the world). Keep the
+  5x5 around the player. A reply names its version, so it is cached for good; another version is a 409.
+
+Both are slices of the file's own bytes, gzipped for a client that asks. `ver` changes whenever the file does.
+A 65,536 unit world (6.2 million objects, 650 MB) costs a Godot client its head (about 145,000 footprints) and a
+couple of thousand trees around it: it joins in 4.5 s at about 820 MB. `POST /api/world/reload` rereads the file and applies it live, as a wall edit is: nobody is
 disconnected, anything left inside a new wall is moved. Changing the size needs a restart. While a world
 file is in use, the game file's `walls` are not.
 
@@ -112,7 +123,12 @@ pieces). Only `solid` footprints matter to the engine; `t` is for themes. The ty
 | `boulder`, `spire` | point, solid | Big rocks on the mountains past the edge (solid where they reach into the world) |
 
 A point object may also carry `solid` and a footprint `b`: the engine treats it like any other solid footprint, and a
-theme still draws it by its type at its point.
+theme still draws it by its type at its point. Worldgen also marks those `scenery: true` (trees, rocks, boulders, spires),
+and the engine treats any solid object with a point as scenery, marked or not: it still collides with them, but tells clients (`/play/tiles` class 1, `/play/info` `box_class`) that the file
+draws them, so a client that draws walls as blocks leaves them out and nothing treats them as buildings.
+
+No more than 4,096 solid footprints may touch any one 256 unit tile (counted from (0, 0)), and no more than 4,000,000
+in all; the engine refuses a file past either.
 
 A theme should draw an unknown type as something neutral (a plain block for a solid footprint), so new
 generators work with old themes.

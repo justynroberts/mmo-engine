@@ -17,7 +17,8 @@ interface Props {
   infoError: string | null
   /** Why the server turned us away, if it did. */
   rejected: string | null
-  onEnter: (identity: Uint8Array | null) => void
+  /** The identity, and for an account the name to be known by (the account name). */
+  onEnter: (identity: Uint8Array | null, name?: string) => void
 }
 
 export default function SignIn({ info, infoError, rejected, onEnter }: Props) {
@@ -54,7 +55,7 @@ export default function SignIn({ info, infoError, rejected, onEnter }: Props) {
       }
       setBusy(true)
     }
-    onEnter(id)
+    onEnter(id, mode === 'account' ? account.trim() : undefined)
     setBusy(false)
   }
 

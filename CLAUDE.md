@@ -25,6 +25,7 @@ npm run dev          # Vite on :5183, proxies /api to a server on 127.0.0.1:7780
 
 scripts/ui_e2e.py [--shots DIR]   # Playwright against release binaries + built UI; starts its own server
 scripts/bench.sh [bots] [world] [secs] [workers]
+scripts/latency.sh [normal] [slow] [delay ms] [jitter ms] [loss %] [secs] [workers]   # does a slow player cost the others anything? (Linux)
 
 target/release/server --workers 2 [--web 0.0.0.0:7790]   # prints server key; console at http://127.0.0.1:7780/
 target/release/bots --bots 200 --server-key <key>
@@ -36,7 +37,7 @@ Run `npm run build` after editing TypeScript in `ui/src/` (it is the type check)
 
 **Workspace crates**
 - `proto` — everything both sides must agree on: wire format (`wire.rs`, `PROTO_VERSION`), handshake + ChaCha20-Poly1305 sessions (`secure.rs`), delta snapshots (`snapshot.rs`), reliable chat channel (`chat.rs`), game file schema and validation (`game.rs`), the `Defs` derived from it (`defs.rs`, `content_hash`), static world + the movement/collision step (`world.rs`), client prediction (`predict.rs`). Compiled into server and every Rust client so they cannot drift.
-- `server` — single binary. `main.rs` parses flags and runs the fixed tick. `sim.rs` owns the world (SoA entities, spatial grid, bot rules). `net.rs` handles handshakes and DATA packets and builds per-client snapshots, split across `--workers` lanes with `std::thread::scope` (each lane owns a disjoint slice of clients; sim is read-only in that phase, so no locks). `ctl.rs` is the loopback-only admin HTTP API. `web.rs` is the public `--web` gateway: serves `play.html` + `/play/info` + `/play/walls`, and relays WebSocket messages to the UDP port (it never decrypts). `store.rs` is a SQLite writer thread for players and the bot population. `zone.rs` is multi-process scale-out (strip ownership, TCP handoff, border ghosts). `director.rs` = weather and events (God tab), `items.rs` = bags and ground items, `botdir.rs` = hot-reloads `bots.d/*.json`.
+- `server` — single binary. `main.rs` parses flags and runs the fixed tick. `sim.rs` owns the world (SoA entities, spatial grid, bot rules). `net.rs` handles handshakes and DATA packets and builds per-client snapshots, split across `--workers` lanes with `std::thread::scope` (each lane owns a disjoint slice of clients; sim is read-only in that phase, so no locks). `ctl.rs` is the loopback-only admin HTTP API. `web.rs` is the public `--web` gateway: serves `play.html` + `/play/info` + `/play/tiles` (walls by tile) + `/play/world`, and relays WebSocket messages to the UDP port (it never decrypts). `store.rs` is a SQLite writer thread for players and the bot population. `zone.rs` is multi-process scale-out: strips of one world (ownership by x, TCP handoff, border ghosts) or, with `--zone-lines`, separate maps joined by exits on places (`net::exits`; same handoff, and the zone left keeps a `Record::zone` marker that sends a returning player on). `statics.rs` holds the walls by tile and the world file for the admin and web threads, and prepares a reloaded world off the sim thread. `nav.rs` = walkability grid and flow fields that steer bots round walls. `director.rs` = weather and events (God tab), `items.rs` = bags and ground items, `botdir.rs` = hot-reloads `bots.d/*.json`.
 - `bots` — N real encrypted clients for load testing.
 - `client-ffi` (`mmo-client`) — the client protocol behind a C ABI; header in `sdk/c/mmo_client.h`. `godot-ext` wraps it as a GDExtension (compiles, never loaded in Godot).
 
@@ -58,7 +59,7 @@ The protocol is implemented twice and movement three times. A change to any of t
 - `crates/proto` ↔ `ui/src/play/protocol.ts` (handshake, keys, Argon2id identity and recovery code match Rust byte for byte; `protocol.test.ts`). Bump `PROTO_VERSION` in both and update `PROTOCOL.md`.
 - `crates/proto/src/world.rs` + `predict.rs` ↔ `ui/src/play/sim.ts` (f32 rounding via `Math.fround`; `sim.test.ts`).
 - Snapshot interpolation (same approach, not a byte-exact port): `crates/client-ffi/src/interp.rs` ↔ `ui/src/play/interp.ts`.
-- Wall streaming chunks (256 units, `/play/walls`) in `web.rs` ↔ `ui/src/play/walls.ts`.
+- Walls by tile (256 units, `/play/tiles`, binary): `crates/proto/src/tiles.rs` (server and Rust clients) ↔ `ui/src/play/walls.ts` (a shared byte fixture in both tests).
 - Built block columns and 3D movement (`World::set_column`/`enter`/`settle`/`step`, `integrate` with the feet layer) in `crates/proto/src/world.rs` + `predict.rs` ↔ `ui/src/play/sim.ts` (same cases tested on both sides).
 
 ## UI

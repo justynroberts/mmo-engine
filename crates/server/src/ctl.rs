@@ -27,7 +27,6 @@ const MAX_BODY: usize = 256 * 1024;
 
 pub enum Cmd {
     Info,
-    World,
     GetGame,
     PutGame(String),
     State { limit: usize },
@@ -39,24 +38,71 @@ pub enum Cmd {
     Say(SayReq),
     SetWeather(WeatherReq),
     FireEvent(FireReq),
+    StopEvent(FireReq),
     Give(GiveReq),
     PutItems(PutItemsReq),
     Inventory { id: u32 },
     God(GodReq),
-    WorldFile,
-    WorldReload,
-    /// Put the last generated preview live.
-    WorldApply,
+    /// Switch a weather zone on or off, live (not saved: the game file says how it starts).
+    SetZone { name: String, on: bool },
+    /// Move the day so that it is `phase` now (0 sunrise, 1 - night_share sunset), live and saved.
+    SetTime { phase: f64 },
+    /// Make a world file, already prepared off the sim thread, the world (a reload or the World tab's apply).
+    UseWorld(Box<crate::statics::Prepared>),
     Blocks,
-    BlocksClear,
+    /// Clear down: built blocks (all, or only some account's, or only in an area).
+    BlocksClear(ClearReq),
     BlocksPut(String),
+    /// Clear down: items lying on the ground (all, or only in an area).
+    GroundClear(ClearReq),
+}
+
+/// What a clear-down takes away. Every filter given must match; none at all means everything.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ClearReq {
+    /// Only blocks this account built (its 16-hex-digit tag, as /api/blocks lists owners), or "" for blocks nobody
+    /// owns (guests' and old ones). Blocks only.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Only inside this place...
+    #[serde(default)]
+    pub place: Option<String>,
+    /// ...or this circle.
+    #[serde(default)]
+    pub x: Option<f32>,
+    #[serde(default)]
+    pub y: Option<f32>,
+    #[serde(default)]
+    pub r: Option<f32>,
+}
+
+impl ClearReq {
+    /// The circle it is limited to, if any; an unknown place is an error.
+    fn area(&self, sim: &Sim) -> Result<Option<(f32, f32, f32)>, String> {
+        if let Some(name) = &self.place {
+            let p = sim.places.iter().find(|p| &p.name == name).ok_or_else(|| format!("no place named '{name}'"))?;
+            return Ok(Some((p.x, p.y, p.r)));
+        }
+        match (self.x, self.y, self.r) {
+            (Some(x), Some(y), Some(r)) if x.is_finite() && y.is_finite() && r.is_finite() && r > 0.0 => Ok(Some((x, y, r))),
+            (None, None, None) => Ok(None),
+            _ => Err("an area needs x, y and r (r above 0), or a place".into()),
+        }
+    }
 }
 
 /// What the World tab needs to make worlds: the generator, and where it writes a preview.
 pub struct GenCfg {
     pub worldgen: PathBuf,
     pub preview: PathBuf,
+    /// The world file (`--world`, else world.json), and the seed its collision world is built with.
+    pub world: PathBuf,
+    pub seed: u64,
 }
+
+/// One world reload or apply at a time: each reads a file, prepares it and hands it to the sim.
+static APPLYING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// One world generation at a time; they share the preview file.
 static GENERATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -199,18 +245,21 @@ pub struct Params {
     pub plain_npcs: usize,
     pub game_path: Option<PathBuf>,
     pub max_clients: usize,
-    /// Where the world file lives (or will, once the World tab applies one).
-    pub world_path: PathBuf,
 }
 
 /// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
 /// Everything here is public by nature (a UDP client learns the same from the handshake).
+/// Never touches every wall: it runs on the sim thread whenever the weather changes.
 pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
-    let all: Vec<[f32; 4]> = sim.world.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect();
-    let ver = hs.gateway.as_ref().map_or(0, |g| g.set_walls(&all));
-    // Small worlds ship their walls inline; big ones are fetched by area from /play/walls.
-    let inline = all.len() <= crate::web::WALLS_INLINE_MAX;
-    let boxes = if inline { all.clone() } else { Vec::new() };
+    let tiles = hs.statics.tiles();
+    // Small worlds ship their walls inline; big ones are fetched by tile from /play/tiles.
+    let inline = tiles.boxes.len() <= crate::web::WALLS_INLINE_MAX;
+    let boxes: Vec<[f32; 4]> = if inline { tiles.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect() } else { Vec::new() };
+    let classes: &[u8] = if inline { &tiles.class } else { &[] };
+    let now = proto::daylight::now_ms().floor();
+    let mut daylight = serde_json::to_value(&sim.daylight).unwrap_or_default();
+    daylight["night_share"] = json!(sim.daylight.night_share());
+    daylight["sample"] = json!([now, sim.daylight.phase(now)]);
     json!({
         "server_key": to_hex(&hs.keys.public),
         // A string: a u64 does not fit a JavaScript number.
@@ -233,13 +282,26 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
         "boxes": boxes,
-        "walls": { "ver": format!("{ver:016x}"), "chunk": crate::web::WALL_CHUNK, "count": all.len(), "inline": inline },
+        "box_class": classes,
+        "walls": { "ver": format!("{:016x}", tiles.ver), "tile": proto::tiles::TILE, "count": tiles.boxes.len(), "inline": inline },
         // A world file to fetch from /play/world: terrain, water and objects for a client theme to draw.
-        "world": hs.world.as_ref().map(|w| json!({ "ver": format!("{:016x}", w.ver), "bytes": w.bytes.len() })),
+        // Fetch it whole from /play/world, or (`parts`) the head from /play/world/head and the point objects by tile
+        // from /play/world/tiles as the player moves.
+        "world": hs.world.as_ref().map(|w| json!({ "ver": format!("{:016x}", w.ver), "bytes": w.bytes.len(), "parts": true, "head_bytes": w.head.len(), "points": w.point_count, "tile": proto::tiles::TILE })),
         "items": sim.items.iter().map(|i| json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty()})).collect::<Vec<_>>(),
         "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
+        // The schedule, not the time: clients work the phase out from their own clocks (proto::daylight), and
+        // `sample` is one moment worked out here, to check a port against.
+        "daylight": daylight,
+        // Weather zones that are on: mist to draw over a place, and inside it the weather instead of the global one.
+        "weather_zones": sim.zones,
+        // Places with a title: named locations a client tells the player about as they walk in and out.
+        "locations": sim.places.iter().filter(|p| !p.title.is_empty()).map(|p| json!({"title": p.title, "x": p.x, "y": p.y, "r": p.r})).collect::<Vec<_>>(),
         "zone": hs.zone.as_ref().map(|z| z.index),
         "zones": hs.zone.as_ref().map(|z| (0..z.count).map(|i| hs.zone_web.get(i as usize).cloned()).collect::<Vec<_>>()),
+        // Zone lines: each zone is a map of its own, so a client arriving in one loads its world afresh.
+        "zone_lines": hs.zone.as_ref().is_some_and(|z| z.lines),
+        "zone_names": hs.zone.as_ref().map(|z| z.names.clone()),
     })
     .to_string()
 }
@@ -257,7 +319,7 @@ pub struct Ctl<'a> {
     pub director: &'a mut crate::director::Director,
 }
 
-pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg) -> std::io::Result<Receiver<Request>> {
+pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg, statics: std::sync::Arc<crate::statics::Statics>) -> std::io::Result<Receiver<Request>> {
     let gen = std::sync::Arc::new(gen);
     if !addr.ip().is_loopback() {
         return Err(std::io::Error::new(
@@ -273,9 +335,9 @@ pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg) -> std::io:
             for conn in listener.incoming().flatten() {
                 let tx = tx.clone();
                 let ui = ui_dir.clone();
-                let gen = gen.clone();
+                let (gen, statics) = (gen.clone(), statics.clone());
                 std::thread::spawn(move || {
-                    let _ = serve(conn, &tx, ui.as_deref(), &gen);
+                    let _ = serve(conn, &tx, ui.as_deref(), &gen, &statics);
                 });
             }
         })?;
@@ -367,7 +429,27 @@ fn host_ok(host: &str) -> bool {
     matches!(name, "localhost" | "127.0.0.1" | "[::1]")
 }
 
-fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &GenCfg) -> std::io::Result<()> {
+/// A clear-down's filters: an empty body is "everything".
+fn clear_req(body: &[u8]) -> Option<ClearReq> {
+    if body.iter().all(|b| b.is_ascii_whitespace()) {
+        return Some(ClearReq::default());
+    }
+    serde_json::from_slice(body).ok()
+}
+
+/// Hand a command to the sim thread and answer with what it says.
+fn ask(conn: &mut TcpStream, tx: &Sender<Request>, cmd: Cmd) -> std::io::Result<()> {
+    let (rtx, rrx) = channel();
+    if tx.send(Request { cmd, reply: rtx }).is_err() {
+        return respond(conn, 503, "application/json", br#"{"error":"server is shutting down"}"#);
+    }
+    match rrx.recv_timeout(Duration::from_secs(3)) {
+        Ok((status, body)) => respond(conn, status, "application/json", body.as_bytes()),
+        Err(_) => respond(conn, 503, "application/json", br#"{"error":"sim thread did not answer in time"}"#),
+    }
+}
+
+fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &GenCfg, statics: &crate::statics::Statics) -> std::io::Result<()> {
     let Some(req) = read_request(&mut conn) else {
         return respond(&mut conn, 400, "text/plain", b"bad request");
     };
@@ -385,14 +467,50 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
             Err(e) => respond(&mut conn, 400, "application/json", json!({ "ok": false, "error": e }).to_string().as_bytes()),
         };
     }
+    // The world's static parts are read, loaded and prepared here, on this connection's thread: the sim only swaps
+    // a finished world in.
+    match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/api/world") => return respond(&mut conn, 200, "application/json", statics.world_json(statics.tiles().size).as_bytes()),
+        ("GET", "/api/worldfile") => {
+            return match statics.file() {
+                Some(w) => respond(&mut conn, 200, "application/json", &w.bytes),
+                None => respond(&mut conn, 404, "application/json", br#"{"ok":false,"error":"this world has no world file (start the server with --world)"}"#),
+            };
+        }
+        ("POST", "/api/world/reload") | ("POST", "/api/world/apply") => {
+            let _one = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
+            let fail = |conn: &mut TcpStream, status: u16, e: String| respond(conn, status, "application/json", json!({ "ok": false, "error": e }).to_string().as_bytes());
+            let prepared = if req.path.ends_with("apply") {
+                // The World tab's preview becomes the world file, and the world.
+                match crate::statics::prepare(&gen.preview, gen.seed) {
+                    Err(e) => return fail(&mut conn, 400, format!("nothing to apply: {e}")),
+                    Ok(mut p) => {
+                        if let Err(e) = std::fs::rename(&gen.preview, &gen.world) {
+                            return fail(&mut conn, 500, format!("{}: {e}", gen.world.display()));
+                        }
+                        p.file.path = gen.world.clone();
+                        p
+                    }
+                }
+            } else {
+                // Read the world file again (after running worldgen) and apply it live, as a wall edit is.
+                if !gen.world.is_file() {
+                    return fail(&mut conn, 404, "this world has no world file (start the server with --world)".into());
+                }
+                match crate::statics::prepare(&gen.world, gen.seed) {
+                    Ok(p) => p,
+                    Err(e) => return fail(&mut conn, 400, e),
+                }
+            };
+            return ask(&mut conn, tx, Cmd::UseWorld(Box::new(prepared)));
+        }
+        _ => {}
+    }
     let cmd = match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/info") => Some(Cmd::Info),
-        ("GET", "/api/world") => Some(Cmd::World),
-        ("GET", "/api/worldfile") => Some(Cmd::WorldFile),
-        ("POST", "/api/world/reload") => Some(Cmd::WorldReload),
-        ("POST", "/api/world/apply") => Some(Cmd::WorldApply),
         ("GET", "/api/blocks") => Some(Cmd::Blocks),
-        ("POST", "/api/blocks/clear") => Some(Cmd::BlocksClear),
+        ("POST", "/api/blocks/clear") => clear_req(&req.body).map(Cmd::BlocksClear),
+        ("POST", "/api/ground/clear") => clear_req(&req.body).map(Cmd::GroundClear),
         ("POST", "/api/blocks") => Some(Cmd::BlocksPut(body_str())),
         ("GET", "/api/game") => Some(Cmd::GetGame),
         ("PUT", "/api/game") => Some(Cmd::PutGame(body_str())),
@@ -419,27 +537,36 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
         ("GET", "/api/chat") => Some(Cmd::ChatLog),
         ("POST", "/api/say") => serde_json::from_slice(&req.body).ok().map(Cmd::Say),
         ("POST", "/api/weather") => serde_json::from_slice(&req.body).ok().map(Cmd::SetWeather),
+        ("POST", "/api/zone") => {
+            #[derive(Deserialize)]
+            struct R {
+                name: String,
+                on: bool,
+            }
+            serde_json::from_slice::<R>(&req.body).ok().map(|r| Cmd::SetZone { name: r.name, on: r.on })
+        }
+        ("POST", "/api/daylight") => {
+            #[derive(Deserialize)]
+            struct R {
+                phase: f64,
+            }
+            serde_json::from_slice::<R>(&req.body).ok().filter(|r| r.phase.is_finite()).map(|r| Cmd::SetTime { phase: r.phase })
+        }
         ("POST", "/api/give") => serde_json::from_slice(&req.body).ok().map(Cmd::Give),
         ("POST", "/api/ground") => serde_json::from_slice(&req.body).ok().map(Cmd::PutItems),
         ("GET", "/api/inventory") => req.query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(|v| v.parse().ok()).map(|id| Cmd::Inventory { id }),
         ("POST", "/api/events/fire") => serde_json::from_slice(&req.body).ok().map(Cmd::FireEvent),
+        ("POST", "/api/events/stop") => serde_json::from_slice(&req.body).ok().map(Cmd::StopEvent),
         ("POST", "/api/god") => serde_json::from_slice(&req.body).ok().map(Cmd::God),
         _ => None,
     };
     if let Some(cmd) = cmd {
-        let (rtx, rrx) = channel();
-        if tx.send(Request { cmd, reply: rtx }).is_err() {
-            return respond(&mut conn, 503, "application/json", br#"{"error":"server is shutting down"}"#);
-        }
-        return match rrx.recv_timeout(Duration::from_secs(3)) {
-            Ok((status, body)) => respond(&mut conn, status, "application/json", body.as_bytes()),
-            Err(_) => respond(&mut conn, 503, "application/json", br#"{"error":"sim thread did not answer in time"}"#),
-        };
+        return ask(&mut conn, tx, cmd);
     }
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear" | "/api/ground/clear" | "/api/daylight" | "/api/zone" | "/api/events/fire" | "/api/events/stop"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -523,39 +650,75 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             })
             .to_string(),
         ),
-        Cmd::World => {
-            let boxes: Vec<[f32; 4]> = c.sim.world.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect();
-            (200, json!({ "size": c.sim.world.size, "boxes": boxes }).to_string())
-        }
         Cmd::GetGame => (200, c.game.to_json()),
-        Cmd::WorldFile => match &c.hs.world {
-            Some(w) => (200, String::from_utf8_lossy(&w.bytes).into_owned()),
-            None => err(404, "this world has no world file (start the server with --world)"),
+        Cmd::UseWorld(p) => use_world(c, *p),
+        Cmd::SetZone { name, on } => match c.director.set_zone(c.sim, &name, on) {
+            Ok(()) => {
+                if let Some(g) = &c.hs.gateway {
+                    g.set_info(play_info(c.sim, c.hs));
+                }
+                (200, json!({ "ok": true, "zone": name, "on": on }).to_string())
+            }
+            Err(e) => err(404, e),
         },
-        Cmd::WorldReload => {
-            // Read the world file again (after running worldgen) and apply it live, as a wall edit is.
-            let Some(path) = c.hs.world.as_ref().map(|w| w.path.clone()) else {
-                return err(404, "this world has no world file (start the server with --world)");
-            };
-            use_world_file(c, &path)
-        }
-        Cmd::WorldApply => {
-            // The World tab's preview becomes the world file, and the world.
-            let preview = c.params.world_path.with_extension("preview.json");
-            if let Err(e) = crate::worldfile::load(&preview) {
-                return err(400, format!("nothing to apply: {e}"));
+        Cmd::SetTime { phase } => {
+            let mut d = c.sim.daylight.clone();
+            if let Err(e) = d.set_phase(proto::daylight::now_ms(), phase) {
+                return err(409, e);
             }
-            if let Err(e) = std::fs::rename(&preview, &c.params.world_path) {
-                return err(500, format!("{}: {e}", c.params.world_path.display()));
+            c.sim.daylight = d.clone();
+            c.game.daylight = Some(d);
+            if let Some(g) = &c.hs.gateway {
+                g.set_info(play_info(c.sim, c.hs));
             }
-            let path = c.params.world_path.clone();
-            use_world_file(c, &path)
+            let saved = save_game(c);
+            (200, json!({ "ok": true, "daylight": c.sim.daylight, "saved": saved }).to_string())
         }
         Cmd::Blocks => (200, format!(r#"{{"ver":{},"total":{},{}"#, c.sim.blocks.ver, c.sim.blocks.total, &c.sim.blocks.to_json()[1..])),
-        Cmd::BlocksClear => {
-            let n = c.sim.blocks.total;
-            c.sim.set_blocks(Vec::new());
-            (200, json!({ "ok": true, "removed": n }).to_string())
+        Cmd::BlocksClear(f) => {
+            let area = match f.area(c.sim) {
+                Ok(a) => a,
+                Err(e) => return err(404, e),
+            };
+            let before = c.sim.blocks.total;
+            if f.owner.is_none() && area.is_none() {
+                c.sim.set_blocks(Vec::new());
+                return (200, json!({ "ok": true, "removed": before }).to_string());
+            }
+            // Keep every block the filters do not match, and put the rest back.
+            let b = proto::world::BLOCK;
+            let mut cols = c.sim.block_texts();
+            for col in &mut cols {
+                let (cx, cy) = proto::world::block_cell(col.key);
+                let (mx, my) = ((cx as f32 + 0.5) * b, (cy as f32 + 0.5) * b);
+                if area.is_some_and(|(x, y, r)| (mx - x).powi(2) + (my - y).powi(2) > r * r) {
+                    continue;
+                }
+                for l in col.layers.iter_mut() {
+                    let gone = match (&f.owner, &*l) {
+                        (_, None) => false,
+                        (None, Some(_)) => true,
+                        (Some(o), Some((_, who))) => who.as_deref().unwrap_or("") == o.as_str(),
+                    };
+                    if gone {
+                        *l = None;
+                    }
+                }
+            }
+            c.sim.set_blocks(cols);
+            (200, json!({ "ok": true, "removed": before - c.sim.blocks.total }).to_string())
+        }
+        Cmd::GroundClear(f) => {
+            if f.owner.is_some() {
+                return err(400, "ground items have no owner");
+            }
+            let area = match f.area(c.sim) {
+                Ok(a) => a,
+                Err(e) => return err(404, e),
+            };
+            let before = c.sim.ground.len();
+            c.sim.ground.retain(|g| area.is_some_and(|(x, y, r)| (g.x - x).powi(2) + (g.y - y).powi(2) > r * r));
+            (200, json!({ "ok": true, "removed": before - c.sim.ground.len() }).to_string())
         }
         Cmd::BlocksPut(text) => match crate::blocks::Blocks::parse(&text) {
             Ok(cols) => {
@@ -649,7 +812,11 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             (200, json!({ "ok": true, "target": used }).to_string())
         }
         Cmd::ChatLog => {
-            let rows: Vec<_> = c.clients.chat_log.iter().map(|(t, from, ch, text)| json!([t, from, ch, text])).collect();
+            let rows: Vec<_> = c.clients.chat_log.iter().map(|(t, from, ch, text)| {
+                // The speaker's name as it is now, if they are still here ("" if not; id 0 is the server).
+                let name = if *from == 0 { "Server".to_string() } else { c.sim.ents.resolve(*from).map_or(String::new(), |s| c.sim.name_of(s).to_string()) };
+                json!([t, from, ch, text, name])
+            }).collect();
             (200, json!({ "tick": c.sim.tick, "lines": rows }).to_string())
         }
         Cmd::Say(r) => {
@@ -670,7 +837,12 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
         },
         Cmd::FireEvent(r) => match c.director.fire(&r.name) {
             Ok(()) => (200, json!({ "ok": true, "queued": r.name }).to_string()),
+            Err(e) if e.contains("already running") => err(409, e),
             Err(e) => err(404, e),
+        },
+        Cmd::StopEvent(r) => match c.director.stop(c.sim, &r.name) {
+            Ok(()) => (200, json!({ "ok": true, "stopped": r.name }).to_string()),
+            Err(e) => err(409, e),
         },
         Cmd::Give(r) => {
             let Some(s) = c.sim.ents.resolve(r.id) else { return err(404, "no such entity") };
@@ -678,16 +850,8 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             if r.count == 0 || r.count > 9999 {
                 return err(400, "count must be 1..9999");
             }
-            let left = c.sim.give(s, i, r.count);
-            if left > 0 {
-                // What does not fit in the bag lands at their feet.
-                let (x, y) = (c.sim.ents.x[s], c.sim.ents.y[s]);
-                let stack = c.sim.items[i].stack_max as u32;
-                for n in (0..left.div_ceil(stack)).map(|k| (left - k * stack).min(stack)) {
-                    c.sim.put_ground(x, y, i, n as u8);
-                }
-            }
-            (200, json!({ "ok": true, "given": r.count - left, "dropped": left }).to_string())
+            let given = c.sim.give_or_drop(s, i, r.count);
+            (200, json!({ "ok": true, "given": given, "dropped": r.count - given }).to_string())
         }
         Cmd::PutItems(r) => {
             let Some(i) = c.sim.items.iter().position(|x| x.name == r.item) else { return err(404, "no such item") };
@@ -726,13 +890,11 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
     }
 }
 
-/// Load a world file and make it the world, live: nobody is disconnected, and anyone a new wall lands on is
-/// moved. A different size needs a restart (the file is kept and used then).
-fn use_world_file(c: &mut Ctl, path: &Path) -> (u16, String) {
-    let w = match crate::worldfile::load(path) {
-        Ok(w) => w,
-        Err(e) => return err(400, e),
-    };
+/// Make a prepared world file the world, live: nobody is disconnected, and anyone a new wall lands on is moved. A
+/// different size needs a restart (the file is kept and used then). Cheap: the file was read, indexed and its
+/// collision world built before it got here.
+fn use_world(c: &mut Ctl, p: crate::statics::Prepared) -> (u16, String) {
+    let crate::statics::Prepared { file: w, world } = p;
     if w.size != c.sim.world.size {
         return (
             200,
@@ -740,14 +902,39 @@ fn use_world_file(c: &mut Ctl, path: &Path) -> (u16, String) {
                 .to_string(),
         );
     }
-    let moved = c.sim.replace_world(World::from_boxes(w.size, c.params.seed, w.boxes.clone()), w.terrain.clone());
+    // Freeing a big world takes a while, so the old one goes to another thread to be dropped.
+    let old = std::mem::replace(&mut c.sim.world, World::from_boxes(64.0, 0, Vec::new()));
+    let moved = c.sim.replace_world(world, w.terrain.clone());
     let w = std::sync::Arc::new(w);
-    c.hs.world = Some(w.clone());
+    let old = (old, c.hs.world.replace(w.clone()), c.hs.statics.set(w.tiles.clone(), Some(w.clone())));
+    std::thread::spawn(move || drop(old));
     if let Some(g) = &c.hs.gateway {
-        g.set_world(w.bytes.clone());
         g.set_info(play_info(c.sim, c.hs));
     }
-    (200, json!({ "ok": true, "ver": format!("{:016x}", w.ver), "walls": w.boxes.len(), "moved_entities": moved }).to_string())
+    (200, json!({ "ok": true, "ver": format!("{:016x}", w.ver), "walls": w.tiles.boxes.len(), "moved_entities": moved }).to_string())
+}
+
+/// Publish a game file's walls (no world file) to the gateway and the admin API.
+fn set_walls(hs: &Handshake, world: &World) {
+    if hs.world.is_none() {
+        if let Ok(t) = proto::tiles::TileSet::build(world.size, world.boxes.clone(), Vec::new()) {
+            hs.statics.set(std::sync::Arc::new(t), None);
+        }
+    }
+}
+
+/// Write the game file back (beside it, then renamed into place): true, false for none, or why not.
+fn save_game(c: &Ctl) -> serde_json::Value {
+    match &c.params.game_path {
+        Some(p) => {
+            let tmp = p.with_extension("json.tmp");
+            match std::fs::write(&tmp, c.game.to_json()).and_then(|_| std::fs::rename(&tmp, p)) {
+                Ok(()) => json!(true),
+                Err(e) => json!(format!("not saved: {e}")),
+            }
+        }
+        None => json!(false),
+    }
 }
 
 pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
@@ -759,11 +946,12 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         Ok(g) => g,
         Err(e) => return err(400, e),
     };
-    // With a world file, the walls are the file's; the game file's own walls do not apply.
+    // With a world file, the walls are the file's and stay as they are (the game file's own walls do not apply),
+    // so a game edit never rebuilds a big world. Without one they are the game file's, a few thousand at most.
     let world = match &c.hs.world {
-        Some(w) => World::from_boxes(w.size, c.params.seed, w.boxes.clone()),
+        Some(_) => None,
         None => match file.world(c.params.world_size, c.params.seed) {
-            Ok(w) => w,
+            Ok(w) => Some(w),
             Err(e) => return err(400, e),
         },
     };
@@ -787,24 +975,33 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         crate::net::save_all(c.sim, c.clients, c.hs.store.as_deref());
         // So do the blocks players built.
         let (blocks, terrain) = (c.sim.block_texts(), c.sim.terrain.clone());
+        let world = match world {
+            Some(w) => w,
+            None => std::mem::replace(&mut c.sim.world, World::from_boxes(64.0, 0, Vec::new())),
+        };
+        set_walls(c.hs, &world);
         *c.sim = Sim::new(game, world, c.params.cap, c.params.hz, c.params.seed);
         c.sim.terrain = terrain;
         c.sim.set_blocks(blocks);
         c.sim.player_reserve = c.params.max_clients;
-        let (limiter, id_limiter) = (c.clients.limiter.take(), c.clients.id_limiter.take());
+        let (limiter, id_limiter, names) = (c.clients.limiter.take(), c.clients.id_limiter.take(), std::mem::take(&mut c.clients.names));
         *c.clients = Clients::default();
         c.clients.limiter = limiter;
         c.clients.id_limiter = id_limiter;
+        c.clients.names = names;
         c.hs.defs_hash = hash;
         for _ in 0..c.params.plain_npcs {
             c.sim.spawn(NONE);
         }
     } else {
         c.sim.archs = game.archs;
+        c.sim.names_all = true; // bot types may have been renamed: every bot's name may have changed
         c.sim.set_items(game.items);
         c.sim.places = game.places;
         c.sim.routes = game.routes;
-        if world.boxes != c.sim.world.boxes {
+        c.sim.daylight = game.daylight;
+        if let Some(world) = world.filter(|w| w.boxes != c.sim.world.boxes) {
+            set_walls(c.hs, &world);
             let terrain = c.sim.terrain.clone();
             moved = c.sim.replace_world(world, terrain);
         }
@@ -815,16 +1012,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
     if let Some(g) = &c.hs.gateway {
         g.set_info(play_info(c.sim, c.hs));
     }
-    let saved = match &c.params.game_path {
-        Some(p) => {
-            let tmp = p.with_extension("json.tmp");
-            match std::fs::write(&tmp, c.game.to_json()).and_then(|_| std::fs::rename(&tmp, p)) {
-                Ok(()) => json!(true),
-                Err(e) => json!(format!("not saved: {e}")),
-            }
-        }
-        None => json!(false),
-    };
+    let saved = save_game(c);
     (
         200,
         json!({ "ok": true, "reset": reset, "dropped_clients": dropped, "moved_entities": moved, "content_hash": format!("{hash:016x}"), "saved": saved })
@@ -849,8 +1037,8 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     );
     let _ = write!(
         o,
-        r#""net":{{"hellos":{},"connects":{},"inputs":{},"bad":{},"bad_cookie":{},"auth_fail":{},"rejected":{},"timeouts":{},"chat_in":{},"chat_dropped":{},"takeovers":{},"restored":{},"rate_limited":{},"identity_limited":{}}},"#,
-        n.hellos, n.connects, n.inputs, n.bad, n.bad_cookie, n.auth_fail, n.rejected, n.timeouts, n.chat_in, n.chat_dropped, n.takeovers, n.restored, n.rate_limited, n.identity_limited
+        r#""net":{{"hellos":{},"connects":{},"inputs":{},"bad":{},"bad_cookie":{},"auth_fail":{},"rejected":{},"timeouts":{},"chat_in":{},"chat_dropped":{},"takeovers":{},"restored":{},"sent_on":{},"rate_limited":{},"identity_limited":{}}},"#,
+        n.hellos, n.connects, n.inputs, n.bad, n.bad_cookie, n.auth_fail, n.rejected, n.timeouts, n.chat_in, n.chat_dropped, n.takeovers, n.restored, n.sent_on, n.rate_limited, n.identity_limited
     );
     let (sv, ld, er) = c.hs.store.as_ref().map_or((0, 0, 0), |st| {
         use std::sync::atomic::Ordering::Relaxed;
@@ -862,7 +1050,7 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     }
     if let Some(z) = &c.hs.zone {
         use std::sync::atomic::Ordering::Relaxed;
-        let _ = write!(o, r#""zone":{{"index":{},"count":{},"lo":{},"hi":{},"out":{},"in":{},"failed":{},"rejected":{},"ghosts":{},"feeds_out":{},"feeds_in":{}}},"#, z.index, z.count, z.lo, z.hi, z.stats.handoffs_out.load(Relaxed), z.stats.handoffs_in.load(Relaxed), z.stats.failed.load(Relaxed), z.stats.rejected.load(Relaxed), z.stats.ghosts.load(Relaxed), z.stats.feeds_out.load(Relaxed), z.stats.feeds_in.load(Relaxed));
+        let _ = write!(o, r#""zone":{{"index":{},"count":{},"lines":{},"names":{},"lo":{},"hi":{},"out":{},"in":{},"failed":{},"rejected":{},"ghosts":{},"feeds_out":{},"feeds_in":{}}},"#, z.index, z.count, z.lines, json!(z.names), z.lo, z.hi, z.stats.handoffs_out.load(Relaxed), z.stats.handoffs_in.load(Relaxed), z.stats.failed.load(Relaxed), z.stats.rejected.load(Relaxed), z.stats.ghosts.load(Relaxed), z.stats.feeds_out.load(Relaxed), z.stats.feeds_in.load(Relaxed));
     }
     if let Some(b) = c.bot_dir {
         let _ = write!(o, r#""bot_dir":{},"#, json!({"dir": b.dir, "files": b.files, "bots": b.bots, "error": b.error, "applied": b.applied}));
@@ -875,7 +1063,9 @@ fn state_json(c: &Ctl, limit: usize) -> String {
             json!({
                 "weather": d.active.as_ref().map(|a| json!({"name": a.name, "left_secs": a.until.map(|u| u.saturating_sub(s.tick) / s.tick_hz.max(1))})),
                 "weathers": d.weather_names(),
+                "zones": d.zone_rows(),
                 "events": d.event_rows(s.tick, s.tick_hz),
+                "runs": d.run_rows(s.tick, s.tick_hz),
                 "log": d.log.iter().rev().take(40).map(|(t, x)| json!([t, x])).collect::<Vec<_>>(),
             })
         );
@@ -924,6 +1114,11 @@ fn state_json(c: &Ctl, limit: usize) -> String {
         }
         o.push(']');
     }
-    let _ = write!(o, r#"],"shown":{shown}}}"#);
+    // Players' names (bots go by their type, which the console already has).
+    let players: serde_json::Map<String, serde_json::Value> = (0..s.ents.high)
+        .filter(|&slot| s.ents.alive[slot] && s.ents.name[slot].is_some())
+        .map(|slot| (s.ents.id_of(slot).to_string(), json!(&*s.name_of(slot))))
+        .collect();
+    let _ = write!(o, r#"],"shown":{shown},"names":{}}}"#, serde_json::Value::Object(players));
     o
 }

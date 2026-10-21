@@ -3,7 +3,7 @@
 // per layer (0 nobody, otherwise an index into the response's `owners` plus one).
 
 /** Block materials (proto::game::BLOCK_KINDS). */
-export const BLOCK_KINDS = 12
+export const BLOCK_KINDS = 14
 
 /** A material from its character in block text, or -1 for an empty layer or anything else. */
 export function kindOf(ch: string): number {

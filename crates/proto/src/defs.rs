@@ -91,6 +91,16 @@ impl Defs {
                 regen_per_sec: 0.0,
                 on_zero: OnZero::None,
             },
+            AttrDef {
+                name: crate::game::LIT_ATTR.into(),
+                min: 0.0,
+                max: 1.0,
+                default: 1.0,
+                bits: 8,
+                replicated: true,
+                regen_per_sec: 0.0,
+                on_zero: OnZero::None,
+            },
         ];
         let actions = vec![ActionDef {
             id: ACTION_ZAP,

@@ -343,10 +343,11 @@ fn hello_flood_allocates_nothing_and_never_amplifies() {
     sock.connect(srv.udp).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
     let mut buf = [0u8; 2048];
-    for _ in 0..500 {
+    let t0 = Instant::now();
+    for i in 0..500 {
         let hello = ClientHs::new(None, 1).hello();
         sock.send(&hello).unwrap();
-        let n = sock.recv(&mut buf).expect("challenge");
+        let n = sock.recv(&mut buf).unwrap_or_else(|e| panic!("no challenge for hello {i} at {:?}: {e}", t0.elapsed()));
         assert!(n < hello.len(), "amplification {} -> {n}", hello.len());
     }
     // A short HELLO gets no answer at all.
@@ -1158,6 +1159,16 @@ fn the_gateway_refuses_cross_site_pages_and_too_many_connections_per_address() {
     assert!(ws_open(web, &[]).is_err(), "the fourth connection from one address is refused");
 }
 
+/// A player handed over from another zone arrives with that zone's page still open, so the zones' own pages
+/// (`--zone-web`) may connect; any other site still may not.
+#[test]
+fn the_gateway_lets_the_other_zones_pages_connect() {
+    let (_srv, web) = start_web(&["--zone-web", "http://zone-a.example:8080,https://zone-b.example/"]);
+    let _a = ws_open(web, &[("Origin", "http://zone-a.example:8080")]).expect("a zone's page");
+    let _b = ws_open(web, &[("Origin", "https://zone-b.example")]).expect("another zone's page");
+    assert!(ws_open(web, &[("Origin", "https://evil.example")]).is_err());
+}
+
 #[test]
 fn web_players_are_limited_by_their_real_address_not_the_gateways() {
     // Behind a proxy the real address arrives in X-Forwarded-For. Two new identities per
@@ -1195,7 +1206,19 @@ fn start_zones() -> Zones {
 
 /// `open` = no walls at all, so movement in a test is never blocked.
 fn start_zones_with(open: bool) -> Zones {
-    let n = 2;
+    let games = if open {
+        let mut g = GameFile::default_game();
+        g.walls = Some(vec![]);
+        vec![Some(g.clone()), Some(g)]
+    } else {
+        vec![None, None]
+    };
+    start_zones_cfg(games, &[])
+}
+
+/// Zones with a game file each (None = the default), and more flags for every one of them.
+fn start_zones_cfg(games: Vec<Option<GameFile>>, extra: &[&str]) -> Zones {
+    let n = games.len();
     let udp: Vec<u16> = (0..n).map(|_| free_udp()).collect();
     let listen: Vec<u16> = (0..n).map(|_| free_tcp()).collect();
     let peers = listen.iter().map(|p| format!("127.0.0.1:{p}")).collect::<Vec<_>>().join(",");
@@ -1207,9 +1230,7 @@ fn start_zones_with(open: bool) -> Zones {
         let dir = std::env::temp_dir().join(format!("mmo-e2e-zone{i}-{}-{}", std::process::id(), free_udp()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("server.key"), &key_hex).unwrap();
-        if open {
-            let mut g = GameFile::default_game();
-            g.walls = Some(vec![]);
+        if let Some(g) = &games[i] {
             std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
         }
         let h = free_tcp();
@@ -1219,6 +1240,7 @@ fn start_zones_with(open: bool) -> Zones {
             .args(["--port", &udp[i].to_string(), "--admin", &format!("127.0.0.1:{h}")])
             .args(["--world-size", "512", "--quiet", "--timeout", "2"])
             .args(["--zone", &format!("{i}/{n}"), "--zone-listen", &format!("127.0.0.1:{}", listen[i]), "--zone-peers", &peers, "--zone-public", &public])
+            .args(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -1232,6 +1254,104 @@ fn start_zones_with(open: bool) -> Zones {
         z.push(srv);
     }
     Zones { z, listen }
+}
+
+/// Two zone-line maps, "town" and "crypt", on open ground. Town has a door to the crypt and a well that drops you
+/// elsewhere in town; the crypt has stairs back up, and you arrive standing on them.
+fn start_zone_lines() -> Zones {
+    let place = |name: &str, x: f32, y: f32, r: f32, exit: Option<(&str, f32, f32)>| proto::game::Place {
+        name: name.into(),
+        x,
+        y,
+        r,
+        title: String::new(),
+        exit: exit.map(|(zone, x, y)| proto::game::Exit { zone: zone.into(), x, y }),
+    };
+    let mut town = GameFile::default_game();
+    town.walls = Some(vec![]);
+    town.places.push(place("crypt door", 100.0, 100.0, 6.0, Some(("crypt", 300.0, 300.0))));
+    town.places.push(place("well", 100.0, 200.0, 4.0, Some(("", 400.0, 400.0))));
+    let mut crypt = GameFile::default_game();
+    crypt.walls = Some(vec![]);
+    crypt.places.push(place("stairs up", 300.0, 300.0, 6.0, Some(("town", 120.0, 100.0))));
+    start_zones_cfg(vec![Some(town), Some(crypt)], &["--zone-lines", "--zone-names", "town,crypt"])
+}
+
+/// Steer straight at (x, y) until `done` says stop (or the time runs out).
+fn walk_to(c: &mut Client, x: f32, y: f32, mut done: impl FnMut(&Client) -> bool) {
+    let t = Instant::now();
+    while !done(c) {
+        assert!(t.elapsed() < Duration::from_secs(30), "never got there: at {:?}, heading for ({x}, {y})", c.pos());
+        let (px, py) = c.pos();
+        let (dx, dy) = (x - px, y - py);
+        let d = dx.hypot(dy).max(0.001);
+        c.send_input((dx / d * 127.0) as i8, (dy / d * 127.0) as i8);
+        c.pump(40);
+    }
+}
+
+#[test]
+fn zone_lines_take_a_player_through_an_exit_to_another_map_and_signing_in_finds_them_there() {
+    let zs = start_zone_lines();
+    assert_eq!((state(&zs.z[0])["zone"]["lines"].clone(), state(&zs.z[1])["zone"]["names"][1].clone()), (true.into(), "crypt".into()));
+    let id = proto::secure::new_identity();
+    let mut a = connect_as(&zs.z[0], id);
+    a.send_input(0, 0);
+    a.pump(200);
+    walk_to(&mut a, 100.0, 100.0, |c| c.redirect.is_some());
+    let r = a.redirect.unwrap();
+    assert_eq!((r.zone, r.port), (1, zs.z[1].udp.port()));
+
+    // In the crypt, where the door said, standing on the stairs up: arriving in an exit does not take you through.
+    let mut b = connect_as(&zs.z[1], id);
+    b.send_input(0, 0);
+    b.pump(1500);
+    let (bx, by) = b.pos();
+    assert!((bx - 300.0).hypot(by - 300.0) < 1.0, "arrived at ({bx:.1}, {by:.1})");
+    assert!(b.redirect.is_none(), "sent straight back up the stairs");
+    assert_eq!(state(&zs.z[1])["net"]["restored"], 1);
+    wait_for_clients(&zs.z[0], 0);
+    drop(b);
+    wait_for_clients(&zs.z[1], 0);
+
+    // Signing in to the town again: it only has a note that they went to the crypt, so it sends them there...
+    let mut c = connect_as(&zs.z[0], id);
+    c.send_input(0, 0);
+    let t = Instant::now();
+    while c.redirect.is_none() {
+        assert!(t.elapsed() < Duration::from_secs(5), "the town kept a player who lives in the crypt");
+        c.send_input(0, 0);
+        c.pump(50);
+    }
+    assert_eq!(c.redirect.unwrap().zone, 1);
+    assert_eq!(state(&zs.z[0])["net"]["sent_on"], 1);
+    // ...where the crypt has them as it saved them.
+    let mut d = connect_as(&zs.z[1], id);
+    d.send_input(0, 0);
+    d.pump(300);
+    let (dx, dy) = d.pos();
+    assert!((dx - 300.0).hypot(dy - 300.0) < 1.0, "the crypt lost them: ({dx:.1}, {dy:.1})");
+
+    // And back up the stairs (step off them first, then on): the town has them again, at the top.
+    walk_to(&mut d, 300.0, 320.0, |c| (c.pos().1 - 300.0) > 10.0);
+    walk_to(&mut d, 300.0, 300.0, |c| c.redirect.is_some());
+    assert_eq!(d.redirect.unwrap().zone, 0);
+    let mut e = connect_as(&zs.z[0], id);
+    e.send_input(0, 0);
+    e.pump(300);
+    let (ex, ey) = e.pos();
+    assert!((ex - 120.0).hypot(ey - 100.0) < 1.0, "came up at ({ex:.1}, {ey:.1})");
+}
+
+#[test]
+fn an_exit_on_the_same_map_moves_anyone_and_a_guest_cannot_leave_the_map() {
+    let zs = start_zone_lines();
+    let mut g = connect(&zs.z[0]);
+    g.send_input(0, 0);
+    g.pump(200);
+    walk_to(&mut g, 100.0, 100.0, |c| c.heard.iter().any(|m| m.from == 0 && m.text.contains("signed-in")));
+    assert!(g.redirect.is_none());
+    walk_to(&mut g, 100.0, 200.0, |c| (c.pos().0 - 400.0).hypot(c.pos().1 - 400.0) < 1.0);
 }
 
 fn bot_xs(srv: &Srv) -> Vec<f64> {
@@ -1299,7 +1419,16 @@ fn a_player_who_crosses_the_border_is_handed_to_the_next_zone_and_keeps_their_ch
         assert!(t.elapsed() < Duration::from_secs(8), "old zone kept the player");
         a.pump(100);
     }
-    assert_eq!(saved_rows(&zs.z[0]), 0, "a handed-over player must not be saved by the zone they left");
+    // What it keeps is only a note of where the character went, so signing in there sends them on.
+    assert_eq!(saved_zones(&zs.z[0]), vec![Some(1)], "the zone they left keeps a note, not the character");
+}
+
+/// The zone each saved player is marked as having moved to (None for a character that lives here).
+fn saved_zones(srv: &Srv) -> Vec<Option<u64>> {
+    let conn = rusqlite::Connection::open_with_flags(srv.dir.join("data/world.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let mut q = conn.prepare("SELECT data FROM players").unwrap();
+    let rows = q.query_map([], |r| r.get::<_, String>(0)).unwrap();
+    rows.map(|d| serde_json::from_str::<serde_json::Value>(&d.unwrap()).unwrap()["zone"].as_u64()).collect()
 }
 
 #[test]
@@ -1312,7 +1441,10 @@ fn guests_are_stopped_at_the_border() {
         g.send_input(127, 0);
         g.pump(30);
     }
-    assert!(g.pos().0 <= 256.0, "a guest cannot be handed over, so it must stay in its zone");
+    // Stop and let prediction settle on what the server says: a step it ran ahead past the border is taken back.
+    g.send_input(0, 0);
+    g.pump(200);
+    assert!(g.pos().0 <= 256.0, "a guest cannot be handed over, so it must stay in its zone: at {:?}", g.pos());
     assert!(g.redirect.is_none());
 }
 
@@ -1412,6 +1544,44 @@ fn frames(c: &ffi::C, secs: u64, mut done: impl FnMut(&ffi::C) -> bool) -> bool 
         std::thread::sleep(Duration::from_millis(16));
     }
     false
+}
+
+/// A world too big to send its walls inline: the library joins with none, asks for the tiles around the player,
+/// takes the replies, and says when a reply is for walls that have since changed.
+#[test]
+fn the_c_client_library_streams_the_walls_by_tile() {
+    let (srv, web) = start_web(&["--world-size", "8000"]);
+    let info = play_info(web);
+    assert!(info.contains(r#""inline":false"#), "{info}");
+    let c = ffi::connect(srv.udp.port(), &info, None);
+    assert!(frames(&c, 5, |c| ffi::me(c).is_some()), "never in the world");
+    assert_eq!(unsafe { mmo_client::mmo_walls_ready(c.0) }, 0, "no tiles yet");
+    let me = ffi::me(&c).unwrap();
+    let mut buf = [0 as std::ffi::c_char; 2048];
+    let n = unsafe { mmo_client::mmo_tiles_wanted(c.0, me.x, me.y, buf.as_mut_ptr(), buf.len()) };
+    assert!(n > 0);
+    let path = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_str().unwrap().to_string();
+    assert!(path.starts_with("/play/tiles?v="), "{path}");
+    assert_eq!(unsafe { mmo_client::mmo_tiles_wanted(c.0, me.x, me.y, buf.as_mut_ptr(), buf.len()) }, 0, "asked once");
+    let (st, _, body) = web_get_bytes(web, &path, false);
+    assert_eq!(st, 200);
+    assert_eq!(unsafe { mmo_client::mmo_put_tiles(c.0, body.as_ptr(), body.len()) }, 1);
+    assert_eq!(unsafe { mmo_client::mmo_walls_ready(c.0) }, 1);
+    // Too small a buffer is refused without losing the request.
+    let mut tiny = [0 as std::ffi::c_char; 8];
+    let far = if me.x > 4000.0 { me.x - 3000.0 } else { me.x + 3000.0 };
+    assert_eq!(unsafe { mmo_client::mmo_tiles_wanted(c.0, far, me.y, tiny.as_mut_ptr(), tiny.len()) }, -1);
+    assert!(unsafe { mmo_client::mmo_tiles_wanted(c.0, far, me.y, buf.as_mut_ptr(), buf.len()) } > 0);
+    // The console edits the walls: the server answers the old version with 409, and a fresh /play/info puts the
+    // library right.
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["walls"] = serde_json::json!([[10.0, 10.0, 30.0, 30.0]]);
+    assert_eq!(http(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    assert_eq!(web_get_bytes(web, &path, false).0, 409);
+    let fresh = std::ffi::CString::new(play_info(web)).unwrap();
+    assert_eq!(unsafe { mmo_client::mmo_set_walls(c.0, fresh.as_ptr()) }, 1);
+    assert_eq!(unsafe { mmo_client::mmo_set_walls(c.0, fresh.as_ptr()) }, 0, "already has them");
+    assert_eq!(unsafe { mmo_client::mmo_walls_ready(c.0) }, 1, "one wall comes inline");
 }
 
 #[test]
@@ -1925,6 +2095,19 @@ fn web_get(web: SocketAddr, path: &str) -> (u16, String) {
     (status, out.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
 }
 
+/// A GET's status, head and body as bytes, optionally saying it takes gzip.
+fn web_get_bytes(web: SocketAddr, path: &str, gzip: bool) -> (u16, String, Vec<u8>) {
+    let mut s = std::net::TcpStream::connect(web).unwrap();
+    let enc = if gzip { "Accept-Encoding: gzip, br\r\n" } else { "" };
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n{enc}Connection: close\r\n\r\n").as_bytes()).unwrap();
+    let mut out = Vec::new();
+    s.read_to_end(&mut out).unwrap();
+    let end = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let head = String::from_utf8_lossy(&out[..end]).into_owned();
+    let status = head.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    (status, head, out[end + 4..].to_vec())
+}
+
 #[test]
 fn a_big_world_streams_its_walls_by_area_instead_of_sending_them_all() {
     let (srv, web) = start_web(&["--world-size", "8000"]);
@@ -1936,31 +2119,45 @@ fn a_big_world_streams_its_walls_by_area_instead_of_sending_them_all() {
     assert_eq!(info["boxes"].as_array().unwrap().len(), 0, "walls must not ride along with the join info");
     let ver = walls["ver"].as_str().unwrap().to_string();
 
-    // Two neighbouring chunks, together a few boxes; each box carries its id and appears in each chunk it touches.
-    let (st, body) = web_get(web, "/play/walls?c=0,0;1,0;2,3");
+    // Three tiles, binary: each box carries its id and appears in each tile it touches. A reply names its version,
+    // so it may be cached for good.
+    let (st, head, body) = web_get_bytes(web, &format!("/play/tiles?v={ver}&c=0,0;1,0;2,3"), false);
     assert_eq!(st, 200);
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["ver"].as_str().unwrap(), ver);
-    let chunks = v["chunks"].as_object().unwrap();
-    assert_eq!(chunks.len(), 3);
-    for (k, list) in chunks {
-        let (cx, cy): (f64, f64) = { let mut p = k.split(','); (p.next().unwrap().parse().unwrap(), p.next().unwrap().parse().unwrap()) };
-        for b in list.as_array().unwrap() {
-            let (x0, y0, x1, y1) = (b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap(), b[4].as_f64().unwrap());
-            assert!(x1 >= cx * 256.0 && x0 < (cx + 1.0) * 256.0 && y1 >= cy * 256.0 && y0 < (cy + 1.0) * 256.0, "{k}: {b}");
+    assert!(head.contains("immutable"), "{head}");
+    let (v, tiles) = proto::tiles::decode(&body).expect("a tiles reply");
+    assert_eq!(format!("{v:016x}"), ver);
+    assert_eq!(tiles.len(), 3);
+    for ((cx, cy), list) in &tiles {
+        let (cx, cy) = (*cx as f32, *cy as f32);
+        for t in list {
+            let b = t.b;
+            assert!(b.x1 >= cx * 256.0 && b.x0 < (cx + 1.0) * 256.0 && b.y1 >= cy * 256.0 && b.y0 < (cy + 1.0) * 256.0, "({cx}, {cy}): {b:?}");
         }
     }
-    // All chunks together hold every wall exactly as the full dump does.
-    let (_, all) = web_get(web, "/play/walls?all=1");
-    let all: serde_json::Value = serde_json::from_str(&all).unwrap();
-    assert_eq!(all["chunks"]["all"].as_array().unwrap().len() as u64, count);
+    // Gzipped for a client that takes it, and the same once unpacked.
+    let all: Vec<String> = (0..32).flat_map(|y| (0..32).map(move |x| format!("{x},{y}"))).collect();
+    let row = format!("/play/tiles?v={ver}&c={}", all[..64].join(";"));
+    let (_, head, gz) = web_get_bytes(web, &row, true);
+    assert!(head.contains("Content-Encoding: gzip"), "{head}");
+    let mut plain = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut plain).unwrap();
+    assert_eq!(plain, web_get_bytes(web, &row, false).2);
+    // Every tile, 64 at a time, holds every wall.
+    let mut ids = std::collections::HashSet::new();
+    for part in all.chunks(64) {
+        let (_, _, body) = web_get_bytes(web, &format!("/play/tiles?v={ver}&c={}", part.join(";")), false);
+        ids.extend(proto::tiles::decode(&body).unwrap().1.into_iter().flat_map(|(_, l)| l.into_iter().map(|t| t.id)));
+    }
+    assert_eq!(ids.len() as u64, count);
     // The console's view agrees with what the browsers get.
     let (_, g) = json(&srv, "GET", "/api/world", "");
     assert_eq!(g["boxes"].as_array().unwrap().len() as u64, count);
+    assert_eq!(g["class"].as_array().unwrap().len() as u64, count);
 
-    // Asking for the whole world a chunk at a time is refused.
+    // Asking for the whole world a tile at a time is refused, and so is an old version.
     let many: Vec<String> = (0..65).map(|i| format!("{i},0")).collect();
-    assert_eq!(web_get(web, &format!("/play/walls?c={}", many.join(";"))).0, 400);
+    assert_eq!(web_get(web, &format!("/play/tiles?c={}", many.join(";"))).0, 400);
+    assert_eq!(web_get(web, "/play/tiles?v=0123456789abcdef&c=0,0").0, 409);
 
     // Editing the walls changes the version, so open pages know to start over.
     let (_, mut game) = json(&srv, "GET", "/api/game", "");
@@ -1997,6 +2194,14 @@ fn a_world_file_supplies_the_walls_is_served_as_is_and_reloads_live() {
     let ver = info["world"]["ver"].as_str().unwrap().to_string();
     let (s, body) = web_get(web, "/play/world");
     assert_eq!((s, body.as_str()), (200, file("").as_str()));
+    // Or in parts: the head has the footprints, the tree comes with its tile.
+    assert_eq!(info["world"]["parts"], true);
+    let head: serde_json::Value = serde_json::from_str(&web_get(web, "/play/world/head").1).unwrap();
+    assert_eq!((head["objects"].as_array().unwrap().len(), head["size"].clone()), (1, 1024.into()));
+    let (s, tiles) = web_get(web, &format!("/play/world/tiles?v={ver}&c=1,1;0,0"));
+    let tiles: serde_json::Value = serde_json::from_str(&tiles).unwrap();
+    assert_eq!((s, tiles["tiles"]["1,1"][0]["t"].clone(), tiles["tiles"]["0,0"].clone()), (200, "tree".into(), serde_json::json!([])));
+    assert_eq!(web_get(web, "/play/world/tiles?v=0000000000000001&c=0,0").0, 409);
     // Regenerate (here: add a wall) and reload: applied live, new version.
     std::fs::write(&path, file(r#",{"t":"crag","b":[500,500,540,540],"solid":true}"#)).unwrap();
     let (s, r) = json(&srv, "POST", "/api/world/reload", "");
@@ -2134,4 +2339,299 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     assert_eq!(json(&srv, "POST", "/api/blocks", "nope").0, 400);
     assert_eq!(json(&srv, "POST", "/api/blocks/clear", "").1["removed"], 3);
     assert_eq!(total(&srv), 0);
+}
+
+/// The day's schedule rides along in /play/info (with a sample moment for clients to check their sums against);
+/// the console can make it any time of day now, which is kept, and a new schedule applies live.
+#[test]
+fn the_daylight_schedule_is_published_moved_and_kept() {
+    let (srv, web) = start_web(&[]);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let d = &info["daylight"];
+    assert_eq!((d["mode"].clone(), d["day_minutes"].clone()), ("cycle".into(), 24.0.into()), "the default cycle: {d}");
+    let sample = d["sample"].as_array().unwrap();
+    // The schedule as the game file has it is the published one less the sample (a cycle names its night share).
+    let mut v = d.clone();
+    v.as_object_mut().unwrap().remove("sample");
+    let schedule: proto::daylight::Daylight = serde_json::from_value(v).unwrap();
+    assert!((schedule.phase(sample[0].as_f64().unwrap()) - sample[1].as_f64().unwrap()).abs() < 1e-9);
+
+    // Midnight now: published, and saved in the game file.
+    let (s, r) = json(&srv, "POST", "/api/daylight", r#"{"phase":0.8}"#);
+    assert_eq!(s, 200, "{r}");
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let phase = info["daylight"]["sample"][1].as_f64().unwrap();
+    assert!((phase - 0.8).abs() < 0.001, "phase {phase}");
+    assert!(std::fs::read_to_string(srv.dir.join("game.json")).unwrap().contains("\"daylight\""));
+
+    // A clock schedule applies live (no restart, nobody dropped); its time cannot be moved, and nonsense is refused.
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["daylight"] = serde_json::json!({"mode": "clock", "sunrise": "06:00", "sunset": "18:00", "utc_offset_minutes": 0});
+    let (s, r) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!((s, r["reset"].clone()), (200, false.into()), "{r}");
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    assert_eq!((info["daylight"]["mode"].clone(), info["daylight"]["night_share"].clone()), ("clock".into(), 0.5.into()));
+    assert_eq!(json(&srv, "POST", "/api/daylight", r#"{"phase":0.2}"#).0, 409);
+    game["daylight"] = serde_json::json!({"mode": "cycle", "day_minutes": 0, "night_share": 0.3});
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 400);
+    // The lamp and the fire are block materials like any other.
+    let (s, r) = json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"cd"]]}"#);
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(json(&srv, "GET", "/api/blocks", "").1["cols"][0][3], "cd");
+}
+
+/// A weather zone (a place and a weather) is told to clients while it is on, and switches live.
+#[test]
+fn weather_zones_are_published_and_switch_live() {
+    let (srv, web) = start_web(&[]);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["weather"] = serde_json::json!([{"name": "red mist", "color": "#aa1111", "intensity": 0.8, "sight_mult": 0.5, "drain": []},
+        {"name": "healing light", "color": "#ffd86b", "intensity": 0.4, "drain": [{"attr": "health", "per_sec": 5.0}]}]);
+    let places = game["places"].as_array_mut().unwrap();
+    places.push(serde_json::json!({"name": "ruin", "x": 200.0, "y": 200.0, "r": 30.0}));
+    places.push(serde_json::json!({"name": "spring", "x": 100.0, "y": 300.0, "r": 4.0}));
+    game["zones"] = serde_json::json!([{"name": "haunt", "place": "ruin", "weather": "red mist", "height": 40.0},
+        {"name": "well", "place": "spring", "weather": "healing light", "height": 6.0}]);
+    let (s, r) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!((s, r["reset"].clone()), (200, false.into()), "{r}");
+    let zones = |web| {
+        let t = Instant::now();
+        loop {
+            let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+            let z = info["weather_zones"].clone();
+            if z.as_array().is_some_and(|a| !a.is_empty()) || t.elapsed() > Duration::from_secs(2) {
+                return z;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let z = zones(web);
+    assert_eq!(z.as_array().map(|a| a.len()), Some(2), "{z}");
+    assert_eq!((z[0]["name"].clone(), z[0]["color"].clone(), z[0]["r"].clone(), z[0]["height"].clone()), ("haunt".into(), "#aa1111".into(), 30.0.into(), 40.0.into()));
+    let (s, _) = json(&srv, "POST", "/api/zone", r#"{"name":"haunt","on":false}"#);
+    assert_eq!(s, 200);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    assert_eq!(info["weather_zones"].as_array().unwrap().len(), 1, "only the well is left on");
+    assert_eq!(json(&srv, "POST", "/api/zone", r#"{"name":"nowhere","on":true}"#).0, 404);
+    let st = json(&srv, "GET", "/api/state?limit=0", "").1;
+    assert_eq!(st["director"]["zones"], serde_json::json!([{"name": "haunt", "on": false}, {"name": "well", "on": true}]));
+}
+
+/// Places with a title are locations: /play/info lists them for clients to name as players walk in and out, a title
+/// set in the console applies live, and a bad one is refused.
+#[test]
+fn titled_places_are_published_as_locations_live() {
+    let (srv, web) = start_web(&[]);
+    let titles = |web| -> Vec<String> {
+        let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+        info["locations"].as_array().unwrap().iter().map(|l| l["title"].as_str().unwrap().to_string()).collect()
+    };
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    let before = titles(web);
+    let places = game["places"].as_array_mut().unwrap();
+    places.push(serde_json::json!({"name": "ashby", "x": 200.0, "y": 200.0, "r": 30.0, "title": "Ashby Crossing"}));
+    places.push(serde_json::json!({"name": "spawn-b", "x": 100.0, "y": 300.0, "r": 4.0}));
+    let (s, r) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!((s, r["reset"].clone()), (200, false.into()), "{r}");
+    let after = titles(web);
+    assert_eq!(after.len(), before.len() + 1, "only the titled place is a location: {after:?}");
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let ashby = info["locations"].as_array().unwrap().iter().find(|l| l["title"] == "Ashby Crossing").cloned().unwrap();
+    assert_eq!((ashby["x"].clone(), ashby["y"].clone(), ashby["r"].clone()), (200.0.into(), 200.0.into(), 30.0.into()));
+    assert!(std::fs::read_to_string(srv.dir.join("game.json")).unwrap().contains("Ashby Crossing"), "kept in the game file");
+    let last = game["places"].as_array().unwrap().len() - 1;
+    game["places"][last]["title"] = " padded".into();
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 400);
+}
+
+/// A local event: a player walking into the plaza starts it (`when` players), it puts a banner across the screens
+/// of those there and nobody else's, and rewards them with items in their bags.
+#[test]
+fn players_gathering_start_a_local_event_that_tells_and_rewards_only_those_there() {
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-ev-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.events.push(proto::game::EventDef {
+        name: "defend".into(),
+        place: Some("plaza".into()),
+        when: Some(proto::game::When::Players { count: 1 }),
+        steps: vec![
+            proto::game::Step::Announce { text: "Hold the plaza!".into(), banner: true, nearby: true },
+            proto::game::Step::Reward { item: "medkit".into(), count: 2, everyone: false },
+        ],
+        ..Default::default()
+    });
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir, &[]);
+    let (px, py) = (200.0, 200.0); // the default plaza, radius 20
+    // Someone far off, well outside the plaza and its surroundings.
+    let mut far = connect_as(&srv, proto::secure::new_identity());
+    far.send_input(0, 0);
+    far.pump(200);
+    walk_to(&mut far, 470.0, 470.0, |c| (c.pos().0 - 470.0).hypot(c.pos().1 - 470.0) < 4.0);
+    far.send_input(0, 0);
+    far.pump(300);
+    let far_bag = far.bag.clone(); // (whatever they picked up on the way)
+    // Someone who goes to the plaza.
+    let mut near = connect_as(&srv, proto::secure::new_identity());
+    near.send_input(0, 0);
+    near.pump(200);
+    walk_to(&mut near, px, py, |c| c.heard.iter().any(|m| m.from == 0 && m.channel == proto::chat::channel::BANNER));
+    near.send_input(0, 0);
+    let t = Instant::now();
+    while !near.bag.iter().any(|&(item, n)| item == 1 && n >= 2) {
+        assert!(t.elapsed() < Duration::from_secs(5), "no reward in the bag: {:?}", near.bag);
+        near.send_input(0, 0);
+        near.pump(50);
+    }
+    far.pump(300);
+    assert!(!far.heard.iter().any(|m| m.text.contains("Hold the plaza")), "the far player heard a nearby message");
+    assert_eq!(far.bag, far_bag, "and was not rewarded");
+    let st = state(&srv);
+    assert_eq!(st["director"]["events"][0]["last"], "succeeded", "{}", st["director"]);
+    // It does not start again straight away (cooldown), though the player is still there.
+    near.pump(1500);
+    assert_eq!(state(&srv)["director"]["events"][0]["fired"], 1);
+}
+
+/// Clear down: built blocks all at once, by account or in an area; ground items all or in an area.
+#[test]
+fn clear_down_takes_blocks_and_ground_items_by_owner_or_area() {
+    let srv = start(&[]);
+    let total = |srv: &Srv| json(srv, "GET", "/api/blocks", "").1["total"].as_u64().unwrap();
+    // Two columns near (7, 7) and one far away, nobody's.
+    assert_eq!(json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"00"],[4,3,"1"],[100,100,"2"]]}"#).0, 200);
+    assert_eq!(total(&srv), 4);
+    let (s, r) = json(&srv, "POST", "/api/blocks/clear", r#"{"x":7,"y":7,"r":6}"#);
+    assert_eq!((s, r["removed"].clone()), (200, 3.into()), "only the near ones: {r}");
+    assert_eq!(total(&srv), 1);
+    // Someone's account: nothing of theirs here, so nothing goes; "" is nobody's, which is what is left.
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", r#"{"owner":"00000000000000aa"}"#).1["removed"], 0);
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", r#"{"owner":""}"#).1["removed"], 1);
+    // Everything, as before (an empty body).
+    assert_eq!(json(&srv, "POST", "/api/blocks", r#"{"cols":[[3,3,"0"]]}"#).0, 200);
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", "").1["removed"], 1);
+    // Bad filters are refused rather than read as "everything".
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", r#"{"place":"nowhere"}"#).0, 404);
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", r#"{"x":1}"#).0, 404);
+    assert_eq!(json(&srv, "POST", "/api/blocks/clear", r#"{"radius":1}"#).0, 400);
+    // Ground items: some at the plaza, some elsewhere.
+    let (_, game) = json(&srv, "GET", "/api/game", "");
+    let item = game["items"][0]["name"].as_str().unwrap().to_string();
+    let plaza = &game["places"][0];
+    assert_eq!(json(&srv, "POST", "/api/ground", &format!(r#"{{"item":"{item}","count":3,"place":{}}}"#, plaza["name"])).0, 200);
+    assert_eq!(json(&srv, "POST", "/api/ground", &format!(r#"{{"item":"{item}","count":2,"x":500,"y":20}}"#)).0, 200);
+    let (s, r) = json(&srv, "POST", "/api/ground/clear", &format!(r#"{{"place":{}}}"#, plaza["name"]));
+    assert_eq!((s, r["removed"].clone()), (200, 3.into()), "{r}");
+    assert_eq!(json(&srv, "POST", "/api/ground/clear", "").1["removed"], 2);
+}
+
+// ---------------------------------------------------------------------------
+// Names
+
+/// Tick both clients until `c` hears a line from the server (id 0) and return it.
+fn server_says(c: &mut Client, others: &mut [&mut Client]) -> String {
+    let before = c.heard.len();
+    for _ in 0..40 {
+        c.tick();
+        for o in others.iter_mut() {
+            o.tick();
+        }
+        if let Some(m) = c.heard[before..].iter().find(|m| m.from == 0) {
+            return m.text.clone();
+        }
+    }
+    panic!("the server never answered");
+}
+
+fn names_of(web: SocketAddr, ids: &[u32]) -> serde_json::Value {
+    let (code, body) = web_get(web, &format!("/play/names?ids={}", ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")));
+    assert_eq!(code, 200, "{body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+#[test]
+fn players_claim_names_that_stay_theirs_and_everyone_can_look_them_up() {
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-names-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let up = |dir: &PathBuf| {
+        let w: SocketAddr = format!("127.0.0.1:{}", free_tcp()).parse().unwrap();
+        let srv = start_in(dir.clone(), &["--web", &w.to_string()]);
+        let t = Instant::now();
+        while std::net::TcpStream::connect(w).is_err() {
+            assert!(t.elapsed() < Duration::from_secs(5), "web gateway never came up");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        (srv, w)
+    };
+    let (ana_id, bob_id) = (proto::secure::new_identity(), proto::secure::new_identity());
+    {
+        let (srv, web) = up(&dir);
+        let mut ana = connect_as(&srv, ana_id);
+        let mut bob = connect_as(&srv, bob_id);
+        let mut guest = connect(&srv);
+        ana.say(proto::chat::channel::NAME, "  Ana   Lee ");
+        assert_eq!(server_says(&mut ana, &mut [&mut bob, &mut guest]), "You are now known as Ana Lee.");
+        assert!(bob.heard.iter().all(|m| m.text != "Ana Lee"), "a name claim is never routed to anyone");
+
+        // Everyone's name, from the web gateway: a claimed one, a given one, a guest, a bot by its type.
+        let s = state(&srv);
+        let bot = s["e"].as_array().unwrap().iter().find(|e| e[4] == 0 && e[3].as_i64().unwrap_or(-1) >= 0).map(|e| e[0].as_u64().unwrap() as u32);
+        let mut ids = vec![ana.entity, bob.entity, guest.entity];
+        ids.extend(bot);
+        let n = names_of(web, &ids);
+        assert_eq!(n[ana.entity.to_string()], "Ana Lee");
+        let bob_given = n[bob.entity.to_string()].as_str().unwrap().to_string();
+        assert!(proto::names::clean(&bob_given).is_ok(), "an unclaimed account still has a name: {bob_given}");
+        assert_eq!(n[guest.entity.to_string()], "Guest");
+        if let Some(bot) = bot {
+            assert!(n[bot.to_string()].as_str().unwrap().chars().next().unwrap().is_uppercase(), "{n}");
+        }
+        assert!(names_of(web, &[ana.entity ^ (1 << 24)]).as_object().unwrap().is_empty(), "a stale id (old generation) has no name");
+        assert_eq!(web_get(web, &format!("/play/names?ids={}", vec!["1"; 300].join(","))).0, 400);
+
+        // Taken (case and marks do not count), not allowed, and guests cannot.
+        bob.say(proto::chat::channel::NAME, "ana-lee");
+        assert!(server_says(&mut bob, &mut [&mut ana]).contains("is taken"));
+        bob.say(proto::chat::channel::NAME, "Admin");
+        assert!(server_says(&mut bob, &mut [&mut ana]).contains("reserved"));
+        guest.say(proto::chat::channel::NAME, "Somebody");
+        assert!(server_says(&mut guest, &mut [&mut ana]).contains("Guests cannot"));
+
+        // The console sees names too, and chat lines carry the speaker's.
+        let s = state(&srv);
+        assert_eq!(s["names"][ana.entity.to_string()], "Ana Lee");
+        ana.say(proto::chat::channel::SAY, "hello");
+        for _ in 0..10 {
+            ana.tick();
+        }
+        let (_, chat) = json(&srv, "GET", "/api/chat", "");
+        assert!(chat["lines"].as_array().unwrap().iter().any(|l| l[3] == "hello" && l[4] == "Ana Lee"), "{chat}");
+
+        let status = Command::new("kill").arg("-TERM").arg(srv.child.id().to_string()).status().unwrap();
+        assert!(status.success());
+        let mut srv = srv;
+        let t = Instant::now();
+        while srv.child.try_wait().unwrap().is_none() {
+            assert!(t.elapsed() < Duration::from_secs(5), "server did not exit on SIGTERM");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::mem::forget(std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep")));
+    }
+    // After a restart the name is still Ana's: taken while she is away, and hers again when she is back.
+    let (srv, web) = up(&dir);
+    let mut bob = connect_as(&srv, bob_id);
+    bob.say(proto::chat::channel::NAME, "Ana Lee");
+    assert!(server_says(&mut bob, &mut []).contains("is taken"), "a saved name stays taken while its player is offline");
+    let mut ana = connect_as(&srv, ana_id);
+    ana.tick();
+    assert_eq!(names_of(web, &[ana.entity])[ana.entity.to_string()], "Ana Lee");
+    // And she can change it, which frees the old one.
+    ana.say(proto::chat::channel::NAME, "Ana Grey");
+    assert_eq!(server_says(&mut ana, &mut [&mut bob]), "You are now known as Ana Grey.");
+    bob.say(proto::chat::channel::NAME, "Ana Lee");
+    assert_eq!(server_says(&mut bob, &mut [&mut ana]), "You are now known as Ana Lee.");
+    drop(srv);
+    let _ = std::fs::remove_dir_all(dir);
 }

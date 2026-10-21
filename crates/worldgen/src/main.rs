@@ -601,7 +601,55 @@ impl Layout {
 }
 
 /// The whole world as the JSON value written to the file.
+/// A generated world, ready to write: everything but the objects as a value, and each object as its own JSON text
+/// (a few dozen bytes, where a JSON value is ten times that), so a 65,536 unit world of six million objects fits in
+/// the memory of a small server.
+pub struct Generated {
+    head: Value,
+    objects: Vec<String>,
+    pub solid: usize,
+}
+
+impl Generated {
+    pub fn objects(&self) -> usize {
+        self.objects.len()
+    }
+
+    /// Write the world file, exactly as `serde_json` would write `to_value()`; returns the bytes written.
+    pub fn write(&self, out: &mut impl std::io::Write) -> std::io::Result<usize> {
+        // Keys come out sorted, so the objects go where the empty list is in the head.
+        let head = self.head.to_string();
+        let at = head.find(r#""objects":[]"#).expect("the head has an empty object list");
+        let mut n = 0;
+        let mut put = |b: &[u8]| -> std::io::Result<()> {
+            n += b.len();
+            out.write_all(b)
+        };
+        put(head[..at].as_bytes())?;
+        put(br#""objects":["#)?;
+        for (i, o) in self.objects.iter().enumerate() {
+            if i > 0 {
+                put(b",")?;
+            }
+            put(o.as_bytes())?;
+        }
+        put(b"]")?;
+        put(head[at + r#""objects":[]"#.len()..].as_bytes())?;
+        Ok(n)
+    }
+
+    pub fn to_value(&self) -> Value {
+        let mut v = self.head.clone();
+        v["objects"] = Value::Array(self.objects.iter().map(|o| serde_json::from_str(o).expect("written by us")).collect());
+        v
+    }
+}
+
 pub fn generate(p: &Params) -> Value {
+    build(p).to_value()
+}
+
+pub fn build(p: &Params) -> Generated {
     let size = p.size;
     let mut rng = Rng(p.seed ^ 0x5EED_0F_3A7);
     let land = Land { size, seed: p.seed, hills: p.hills };
@@ -676,13 +724,15 @@ pub fn generate(p: &Params) -> Value {
 
     // Scenery: forests where a slow noise says so, meadows elsewhere, kept off water, buildings and streets;
     // a belt of forest just past the edge and rocks on the mountains beyond.
-    let mut objects: Vec<Value> = Vec::new();
+    let mut objects: Vec<String> = Vec::new();
+    let mut solid = 0;
     for s in &l.things {
         let mut o = json!({ "t": s.t, "b": [r2(s.b[0]), r2(s.b[1]), r2(s.b[2]), r2(s.b[3])], "v": s.v, "y": r2(s.base) });
         if s.solid {
             o["solid"] = true.into();
+            solid += 1;
         }
-        objects.push(o);
+        objects.push(o.to_string());
     }
     let near_thing = |x: f32, y: f32, pad: f32| {
         cells.get(&((x / 64.0).floor() as i32, (y / 64.0).floor() as i32)).is_some_and(|v| {
@@ -730,15 +780,18 @@ pub fn generate(p: &Params) -> Value {
             }
             let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(rng.range(0.0, std::f32::consts::TAU)), "v": rng.v() });
             // Trunks and stones are solid where they stand (bushes are walked through): a square footprint the
-            // size of the trunk or stone, if it is inside the world, where the engine makes it a wall.
+            // size of the trunk or stone, if it is inside the world, where the engine makes it a wall. `scenery`
+            // tells clients this file draws it, so they add no block of their own.
             if let Some(h) = scenery_half(t, s) {
                 let (x0, y0, x1, y1) = (r2(x - h), r2(y - h), r2(x + h), r2(y + h));
                 if x0 >= 0.0 && y0 >= 0.0 && x1 <= size as f64 && y1 <= size as f64 {
                     o["solid"] = true.into();
+                    o["scenery"] = true.into();
                     o["b"] = json!([x0, y0, x1, y1]);
+                    solid += 1;
                 }
             }
-            objects.push(o);
+            objects.push(o.to_string());
         }
     }
     let lakes: Vec<Value> = l.things.iter().filter(|s| s.t == "lake").map(|s| json!({ "b": [r2(s.b[0]), r2(s.b[1]), r2(s.b[2]), r2(s.b[3])], "level": r2(s.base - 0.45) })).collect();
@@ -746,7 +799,7 @@ pub fn generate(p: &Params) -> Value {
         .iter()
         .map(|r| json!({ "half_width": RIVER_HALF, "pts": r.pts.iter().map(|&(x, y, lvl)| json!([r1(x), r1(y), r2(water_level(lvl))])).collect::<Vec<_>>() }))
         .collect();
-    json!({
+    let head = json!({
         "format": 1,
         "generator": format!("worldgen {} (fantasy)", env!("CARGO_PKG_VERSION")),
         "size": size,
@@ -754,8 +807,9 @@ pub fn generate(p: &Params) -> Value {
         "recipe": p.recipe(),
         "heights": { "x0": -margin, "y0": -margin, "cell": cell, "w": n, "h": n, "lo": lo, "hi": hi, "u16le": base64(&bytes) },
         "water": { "rivers": rivers, "lakes": lakes },
-        "objects": objects,
-    })
+        "objects": [],
+    });
+    Generated { head, objects, solid }
 }
 
 fn main() {
@@ -794,15 +848,22 @@ fn main() {
     if !(64.0..=65536.0).contains(&p.size) {
         usage();
     }
-    let w = generate(&p);
-    let text = w.to_string();
-    std::fs::write(&out, &text).unwrap_or_else(|e| {
+    let w = build(&p);
+    // Written beside the target and renamed into place, so a reader never sees half a file.
+    let tmp = format!("{out}.tmp");
+    let written = std::fs::File::create(&tmp).and_then(|f| {
+        let mut f = std::io::BufWriter::with_capacity(1 << 20, f);
+        let n = w.write(&mut f)?;
+        std::io::Write::flush(&mut f)?;
+        Ok(n)
+    });
+    let n = written.and_then(|n| std::fs::rename(&tmp, &out).map(|_| n)).unwrap_or_else(|e| {
+        let _ = std::fs::remove_file(&tmp);
         eprintln!("{out}: {e}");
         std::process::exit(1)
     });
-    let objs = w["objects"].as_array().map_or(0, |a| a.len());
-    let solid = w["objects"].as_array().map_or(0, |a| a.iter().filter(|o| o["solid"] == true).count());
-    println!("wrote {out}: {} KB, {objs} objects ({solid} solid), {} rivers, {} lakes", text.len() / 1024, w["water"]["rivers"].as_array().map_or(0, |a| a.len()), w["water"]["lakes"].as_array().map_or(0, |a| a.len()));
+    let water = &w.head["water"];
+    println!("wrote {out}: {} KB, {} objects ({} solid), {} rivers, {} lakes", n / 1024, w.objects(), w.solid, water["rivers"].as_array().map_or(0, |a| a.len()), water["lakes"].as_array().map_or(0, |a| a.len()));
 }
 
 fn usage() -> ! {
@@ -936,10 +997,19 @@ mod tests {
     }
 
     #[test]
+    fn the_streamed_file_is_the_value_written_out() {
+        let g = build(&Params { size: 1024.0, seed: 3, ..Params::default() });
+        let mut out = Vec::new();
+        let n = g.write(&mut out).unwrap();
+        assert_eq!((String::from_utf8(out).unwrap(), n), (g.to_value().to_string(), g.to_value().to_string().len()));
+        assert_eq!(g.solid, g.to_value()["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true).count());
+    }
+
+    #[test]
     fn trees_and_rocks_are_solid_where_they_stand_and_bushes_are_not() {
         let w = generate(&Params { size: 1024.0, ..Params::default() });
         let objs = w["objects"].as_array().unwrap();
-        let solid = |t: &str| objs.iter().filter(|o| o["t"] == t && o["solid"] == true).count();
+        let solid = |t: &str| objs.iter().filter(|o| o["t"] == t && o["solid"] == true && o["scenery"] == true).count();
         assert!(solid("tree") > 200, "{} solid trees", solid("tree"));
         assert!(solid("rock") > 0 && solid("bush") == 0);
         // Each footprint is inside the world and centred on the object.

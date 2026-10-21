@@ -29,6 +29,14 @@
 //! Known limits: guests have no identity to hand over, so they are stopped at the
 //! border; actions do not cross a border (a ghost cannot be hit); only adjacent zones
 //! see each other, so a strip must be wider than the interest radius.
+//!
+//! Zone lines (`--zone-lines`): instead of strips of one world, each zone is a map of its own (its own world and
+//! game file; attributes, actions and settings must still match, since the client's handshake checks them). Nobody
+//! crosses by walking off an edge and there is no border feed: a player crosses by walking into a place with an
+//! `exit` naming another zone (`net::exits`), which hands them over exactly as above, arriving where the exit says.
+//!
+//! Either way, the zone a player left keeps a marker (`Record::zone`) instead of their character, so signing in
+//! there later sends them straight on to the zone that has it.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, TcpListener, TcpStream};
@@ -68,6 +76,10 @@ pub struct ZoneCfg {
     /// Public UDP address of every zone, by index: what clients are redirected to.
     pub public: Vec<SocketAddrV4>,
     pub secret: Vec<u8>,
+    /// Zone lines: every zone is its own map, joined by exits, rather than a strip of one world.
+    pub lines: bool,
+    /// Every zone's name, by index, for exits to name where they lead.
+    pub names: Vec<String>,
 }
 
 /// Counters the admin state shows. Shared with the I/O threads.
@@ -88,7 +100,16 @@ pub struct ZoneShared {
     pub count: u8,
     pub lo: f32,
     pub hi: f32,
+    pub lines: bool,
+    pub names: Vec<String>,
     pub stats: ZoneStats,
+}
+
+impl ZoneShared {
+    /// The zone an exit names, by name (or by its index written as a number).
+    pub fn named(&self, name: &str) -> Option<u8> {
+        self.names.iter().position(|n| n.eq_ignore_ascii_case(name)).or_else(|| name.parse::<usize>().ok().filter(|&i| i < self.count as usize)).map(|i| i as u8)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -244,8 +265,11 @@ impl Zone {
         let shared = Arc::new(ZoneShared {
             index: cfg.index,
             count: cfg.count,
-            lo: width * cfg.index as f32,
-            hi: if cfg.index + 1 == cfg.count { world_size } else { width * (cfg.index + 1) as f32 },
+            // A zone of zone lines owns the whole of its own map.
+            lo: if cfg.lines { 0.0 } else { width * cfg.index as f32 },
+            hi: if cfg.lines || cfg.index + 1 == cfg.count { world_size } else { width * (cfg.index + 1) as f32 },
+            lines: cfg.lines,
+            names: cfg.names.clone(),
             stats: ZoneStats::default(),
         });
         let key = mac_key(&cfg.secret);
@@ -353,7 +377,10 @@ impl Zone {
                 let mut conn: Option<TcpStream> = None;
                 for o in rx {
                     let id = o.id;
-                    let sent = (|| -> std::io::Result<bool> {
+                    // A connection kept from an earlier handoff may have been closed by the peer while idle: if it
+                    // fails, connect afresh and try once more before calling the handoff failed.
+                    let reused = conn.is_some();
+                    let mut attempt = || -> std::io::Result<bool> {
                         if conn.is_none() {
                             let addr = std::net::ToSocketAddrs::to_socket_addrs(&peer)?.next().ok_or_else(|| std::io::Error::other("no address"))?;
                             let s = TcpStream::connect_timeout(&addr, Duration::from_millis(800))?;
@@ -365,11 +392,21 @@ impl Zone {
                             conn = Some(s);
                         }
                         let s = conn.as_mut().unwrap();
-                        write_frame(s, &key, &Frame { from, seq: seq.fetch_add(1, Ordering::Relaxed), id: hex(&o.id), rec: o.rec })?;
-                        let mut ack = [0u8; 1];
-                        s.read_exact(&mut ack)?;
-                        Ok(ack[0] == 1)
-                    })();
+                        let r = (|| {
+                            write_frame(s, &key, &Frame { from, seq: seq.fetch_add(1, Ordering::Relaxed), id: hex(&o.id), rec: o.rec.clone() })?;
+                            let mut ack = [0u8; 1];
+                            s.read_exact(&mut ack)?;
+                            Ok(ack[0] == 1)
+                        })();
+                        if r.is_err() {
+                            conn = None;
+                        }
+                        r
+                    };
+                    let sent = match attempt() {
+                        Err(_) if reused => attempt(),
+                        r => r,
+                    };
                     match sent {
                         Ok(true) => {
                             let _ = etx.send(Event::Acked(id));
@@ -390,7 +427,8 @@ impl Zone {
         let mut feed_out = Vec::new();
         let feed_ctr = Arc::new(AtomicU64::new(seq0));
         for (j, peer) in cfg.peers.iter().enumerate() {
-            let adjacent = j + 1 == cfg.index as usize || j == cfg.index as usize + 1;
+            // Separate maps have no border to see across.
+            let adjacent = !cfg.lines && (j + 1 == cfg.index as usize || j == cfg.index as usize + 1);
             if !adjacent || j >= cfg.count as usize {
                 feed_out.push(None);
                 continue;
@@ -421,6 +459,12 @@ impl Zone {
             feed_out.push(Some(tx));
         }
         Ok(Zone { shared, size: world_size, cfg, out, events, inbox, feed_out, feed_ctr, ghost_in, ghosts: HashMap::new(), last_feed: vec![0; cfg_count] })
+    }
+
+    /// Hand a player's character to another zone (an exit, or a strip border). True if it is on its way; the caller
+    /// marks the client `Handing` and the acknowledgement turns that into a redirect.
+    pub fn send(&self, to: u8, id: [u8; 32], rec: Record) -> bool {
+        to != self.cfg.index && matches!(self.out.get(to as usize), Some(Some(tx)) if tx.send(Out { id, rec }).is_ok())
     }
 
     /// Which zone owns an x coordinate.
@@ -536,7 +580,7 @@ impl Zone {
 
     /// Once a tick, after the sim step: take in parked characters, finish and start
     /// handoffs, and keep guests inside the strip.
-    pub fn tick(&mut self, sim: &mut Sim, clients: &mut Clients, tx: &mut Tx, scratch: &mut Vec<u8>) {
+    pub fn tick(&mut self, sim: &mut Sim, clients: &mut Clients, store: Option<&crate::store::Store>, tx: &mut Tx, scratch: &mut Vec<u8>) {
         let hz = sim.tick_hz;
         while let Ok((id, rec)) = self.inbox.try_recv() {
             clients.incoming.insert(id, (rec, sim.tick));
@@ -574,6 +618,16 @@ impl Zone {
             let Some(c) = slot else { continue };
             let x = sim.ents.x[c.slot];
             match c.zstate {
+                // Zone lines: crossings start at exits (net::exits), not at the edges of a strip.
+                ZState::Here | ZState::Retry { .. } if self.cfg.lines => {
+                    if let ZState::Retry { at } = c.zstate {
+                        if sim.tick >= at {
+                            // Still standing in the exit counts as walking into it again, so it is tried again.
+                            c.zstate = ZState::Here;
+                            c.exit_in = None;
+                        }
+                    }
+                }
                 ZState::Here | ZState::Retry { .. } => {
                     if let ZState::Retry { at } = c.zstate {
                         if sim.tick < at {
@@ -613,11 +667,9 @@ impl Zone {
             }
         }
         self.send_feeds(sim, clients);
-        // The new zone owns the character now: free the entity without saving over it.
+        // The new zone owns the character now: free the entity, leaving only a note of where it went.
         for sid in gone {
-            if let Some(c) = clients.remove(sid) {
-                sim.ents.despawn(c.slot);
-            }
+            crate::net::drop_client(sim, clients, store, sid);
         }
     }
 }
@@ -640,7 +692,7 @@ mod tests {
         let addr = l.local_addr().unwrap();
         let mut c = TcpStream::connect(addr).unwrap();
         let (mut s, _) = l.accept().unwrap();
-        let f = Frame { from: 1, seq: 9, id: hex(&[7; 32]), rec: Record { x: 3.0, y: 4.0, attrs: [("health".to_string(), 50.0)].into(), inv: vec![("medkit".to_string(), 2)] } };
+        let f = Frame { from: 1, seq: 9, id: hex(&[7; 32]), rec: Record { x: 3.0, y: 4.0, attrs: [("health".to_string(), 50.0)].into(), inv: vec![("medkit".to_string(), 2)], name: String::new(), zone: None } };
         write_frame(&mut c, &key, &f).unwrap();
         let got = read_frame(&mut s, &key).unwrap().unwrap();
         assert_eq!((got.from, got.seq, unhex(&got.id), got.rec.x), (1, 9, Some([7; 32]), 3.0));

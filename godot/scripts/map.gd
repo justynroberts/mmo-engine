@@ -38,7 +38,7 @@ func _draw() -> void:
 		return origin + p / world * side
 	for p in others:
 		draw_circle(to.call(p), 2.5, Color("ffd27a"))
-	# You: an arrow pointing the way the camera faces (forward is away from the camera).
+	# You: an arrow pointing the way you are going (the way you last went, standing still).
 	var c: Vector2 = to.call(me)
 	var fwd := Vector2(-sin(facing), -cos(facing))
 	var right := Vector2(fwd.y, -fwd.x)

@@ -29,6 +29,13 @@ pub struct Record {
     /// Carried items by name, so a changed item list never scrambles a bag.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inv: Vec<(String, u8)>,
+    /// The display name the player claimed (`proto::names`), empty if they never did.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Set when the player left this zone for another (`--zone` worlds): that zone has their character now, and
+    /// signing in here sends them there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<u8>,
 }
 
 pub type PlayerId = [u8; 32];
@@ -230,6 +237,21 @@ impl Store {
         rec
     }
 
+    /// Every claimed name and whose it is, for keeping names unique. Runs before the tick loop starts.
+    pub fn names(&self) -> Vec<(PlayerId, String)> {
+        let Ok(conn) = self.read.lock() else { return Vec::new() };
+        let Ok(mut q) = conn.prepare("SELECT id, data FROM players") else { return Vec::new() };
+        let rows = q.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?)));
+        let mut out = Vec::new();
+        for (id, data) in rows.into_iter().flatten().flatten() {
+            let (Ok(id), Ok(rec)) = (PlayerId::try_from(id.as_slice()), serde_json::from_str::<Record>(&data)) else { continue };
+            if !rec.name.is_empty() {
+                out.push((id, rec.name));
+            }
+        }
+        out
+    }
+
     /// Delete players not saved for `max_age_secs`. Returns how many went. Runs before
     /// the tick loop starts, so it may take its time.
     pub fn expire(&self, max_age_secs: i64) -> usize {
@@ -271,7 +293,7 @@ mod tests {
     }
 
     fn rec(x: f32, hp: f32) -> Record {
-        Record { x, y: x * 2.0, attrs: BTreeMap::from([("health".to_string(), hp), ("energy".to_string(), 50.0)]), inv: Vec::new() }
+        Record { x, y: x * 2.0, attrs: BTreeMap::from([("health".to_string(), hp), ("energy".to_string(), 50.0)]), inv: Vec::new(), name: String::new(), zone: None }
     }
 
     #[test]

@@ -139,17 +139,30 @@ const TOOLS: readonly { tool: ShapeTool; label: string; icon: ReactNode; hint: s
   { tool: 'add', label: 'Add', icon: <Plus {...ICON} aria-hidden />, hint: 'Drag a rectangle to put one there. It clears whatever it covers, and the land is levelled round it.' },
 ]
 
-export function WorldTab({ s, land, liveSize, blocks }: { s: Shaper; land: WorldData | null; liveSize: number; blocks: number }) {
+export function WorldTab({ s, land, liveSize, blocks, places }: { s: Shaper; land: WorldData | null; liveSize: number; blocks: number; places: string[] }) {
   const r = s.recipe
+  // Clear down: what goes (blocks or ground items), whose blocks, and where.
   const [confirmClear, setConfirmClear] = useState(false)
   const [cleared, setCleared] = useState<string | null>(null)
-  const clearBlocks = () => {
+  const [what, setWhat] = useState<'blocks' | 'ground'>('blocks')
+  const [whose, setWhose] = useState('*') // '*' anyone's, '' nobody's (guests'), else an account tag
+  const [where, setWhere] = useState('') // '' everywhere, else a place
+  const [owners, setOwners] = useState<string[]>([])
+  useEffect(() => {
+    fetch('/api/blocks')
+      .then((res) => res.json() as Promise<{ owners?: string[] }>)
+      .then((b) => setOwners(b.owners ?? []))
+      .catch(() => undefined)
+  }, [blocks])
+  const clearDown = () => {
     setConfirmClear(false)
-    fetch('/api/blocks/clear', { method: 'POST', headers: { 'X-Admin': '1' } })
+    const body = { ...(what === 'blocks' && whose !== '*' ? { owner: whose } : {}), ...(where ? { place: where } : {}) }
+    fetch(`/api/${what}/clear`, { method: 'POST', headers: { 'X-Admin': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then((res) => res.json() as Promise<{ removed?: number; error?: string }>)
-      .then((b) => setCleared(b.error ?? `Removed ${b.removed ?? 0} block(s).`))
+      .then((b) => setCleared(b.error ?? `Removed ${b.removed ?? 0} ${what === 'blocks' ? 'block(s)' : 'item pile(s)'}.`))
       .catch((e: unknown) => setCleared(String(e)))
   }
+  const scope = `${what === 'blocks' ? (whose === '*' ? 'every block' : whose === '' ? 'every block nobody owns' : `every block ${whose} built`) : 'every item on the ground'}${where ? ` at ${where}` : ''}`
   const cur = TOOLS.find((t) => t.tool === s.tool) ?? TOOLS[0]!
   const count = (w: WorldData) => `${w.objects.length.toLocaleString()} objects, ${w.objects.filter((o) => o.solid).length.toLocaleString()} solid, ${w.rivers.length} rivers, ${w.lakes.length} lakes`
   return (
@@ -217,24 +230,43 @@ export function WorldTab({ s, land, liveSize, blocks }: { s: Shaper; land: World
         <p className="text-fg-3 pt-1">Edits stay with the recipe: change the seed and they apply to the new land. A removal takes whatever is at that point.</p>
       </section>
 
-      <section aria-label="Built blocks" className="cell py-2">
-        <h2 className="lbl pb-1">Built blocks</h2>
+      <section aria-label="Clear down" className="cell py-2">
+        <h2 className="lbl pb-1">Clear down</h2>
         <p className="text-fg-2 pb-2" aria-live="polite">
           {cleared ?? `${blocks.toLocaleString()} block(s) built by players. They stay when the world changes, except where a new wall stands.`}
         </p>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-3 gap-2 items-end">
+          <SelectField
+            label="Take away"
+            value={what}
+            options={[
+              { value: 'blocks', label: 'built blocks' },
+              { value: 'ground', label: 'items on the ground' },
+            ]}
+            onChange={(v) => setWhat(v as 'blocks' | 'ground')}
+          />
+          <SelectField
+            label="Built by"
+            value={what === 'blocks' ? whose : '*'}
+            options={[{ value: '*', label: 'anyone' }, { value: '', label: 'nobody (guests)' }, ...owners.map((o) => ({ value: o, label: o }))]}
+            onChange={setWhose}
+            className={what === 'blocks' ? '' : 'opacity-40 pointer-events-none'}
+          />
+          <SelectField label="Where" value={where} options={[{ value: '', label: 'everywhere' }, ...places.map((p) => ({ value: p, label: p }))]} onChange={setWhere} />
+        </div>
+        <div className="flex gap-2 pt-2">
           {confirmClear ? (
             <>
-              <button type="button" className="btn btn-primary" onClick={clearBlocks}>
-                Remove all {blocks.toLocaleString()}
+              <button type="button" className="btn btn-primary" onClick={clearDown}>
+                Remove {scope}
               </button>
               <button type="button" className="btn" onClick={() => setConfirmClear(false)}>
                 Keep them
               </button>
             </>
           ) : (
-            <button type="button" className="btn" disabled={blocks === 0} onClick={() => setConfirmClear(true)}>
-              Clear all blocks
+            <button type="button" className="btn" onClick={() => setConfirmClear(true)}>
+              Clear down…
             </button>
           )}
         </div>

@@ -3,15 +3,26 @@
 //! The server reads only what the simulation needs: the size, the footprints of the solid objects, which
 //! become its walls, and the ground's heights, which say which layer each built block column starts in.
 //! Everything else in the file (water, scenery, what each object is) means nothing here and is passed to
-//! clients byte for byte at `/play/world`, for a client theme to draw.
+//! clients for a client theme to draw: whole at `/play/world`, or, so that no client handles a big world's million
+//! trees at once, as a head (`/play/world/head`: the file with only its footprint objects, those without a point
+//! `p`) and its point objects by tile (`/play/world/tiles`). Both are slices of the file's own bytes. A solid object
+//! with a point `p` (or marked `scenery`) is still a wall; its class only tells clients the file draws it (a trunk,
+//! a rock), so they do not add a block for it.
+//!
+//! Loading is slow for a big world (parse, index, compress), so it never runs on the sim thread: at start-up it runs
+//! before the tick does, and a live reload runs on the admin connection's thread (`crate::statics::prepare`).
 
+use proto::tiles::{class, TileSet};
 use proto::world::Aabb;
+use serde_json::value::RawValue;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Most solid objects a world file may have (trees and stones are solid too, so a big forest has many).
-pub const MAX_SOLIDS: usize = 200_000;
+/// Most solid objects a world file may have in all. What really bounds a world is `proto::tiles::MAX_PER_TILE`
+/// (what any one client or request handles); this only caps the server's memory (about 50 bytes a wall).
+pub const MAX_SOLIDS: usize = 4_000_000;
 
 pub struct WorldFile {
     pub path: PathBuf,
@@ -19,7 +30,17 @@ pub struct WorldFile {
     /// Changes whenever the file's contents do; clients refetch when it does.
     pub ver: u64,
     pub size: f32,
-    pub boxes: Vec<Aabb>,
+    /// The file gzipped, made the first time a client asks for it whole.
+    gz: std::sync::OnceLock<Arc<Vec<u8>>>,
+    /// The file with only its footprint objects, plain and gzipped.
+    pub head: Arc<Vec<u8>>,
+    pub head_gz: Arc<Vec<u8>>,
+    /// The point objects by tile (`proto::tiles::TILE`, counted from (0, 0); scenery past the edge is in tiles -1 and
+    /// beyond): where each one's text is in `bytes`.
+    points: HashMap<(i32, i32), Vec<(u32, u32)>>,
+    pub point_count: usize,
+    /// The solid objects, indexed by tile, with their classes.
+    pub tiles: Arc<TileSet>,
     pub terrain: Terrain,
 }
 
@@ -101,38 +122,197 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The parts of a world file the server reads. Parsed straight from the bytes with nothing else kept: everything a
+/// theme wants (scenery, water) is skipped as it streams past, and objects are reduced to their solid footprints
+/// one at a time, so a world of a million objects costs its footprints, not a tree of JSON values ten times the file.
+#[derive(serde::Deserialize)]
+struct FileIn<'a> {
+    #[serde(default)]
+    format: Value,
+    #[serde(default)]
+    size: Value,
+    #[serde(default)]
+    heights: Value,
+    #[serde(borrow)]
+    objects: Option<&'a RawValue>,
+}
+
+/// The objects, one at a time: the solid ones' footprints (unchecked yet: the size may come after the objects) with
+/// their index in the file, and where each object's text is, split into footprints and points.
+#[derive(Default)]
+struct Objects {
+    found: Vec<(usize, Option<[f32; 4]>, u8)>,
+    over: bool,
+    /// Address ranges of the text: footprint objects, and point objects with their position.
+    feet: Vec<(usize, usize)>,
+    points: Vec<(usize, usize, f32, f32)>,
+}
+
+#[derive(serde::Deserialize)]
+struct ObjIn {
+    #[serde(default)]
+    solid: Value,
+    #[serde(default)]
+    scenery: Value,
+    #[serde(default)]
+    b: Value,
+    #[serde(default)]
+    p: Value,
+}
+
+impl<'de> serde::Deserialize<'de> for Objects {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Objects, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Objects;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an array of objects")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Objects, A::Error> {
+                use serde::de::Error;
+                let mut out = Objects::default();
+                let mut i = 0;
+                while let Some(raw) = seq.next_element::<&'de RawValue>()? {
+                    let text = raw.get();
+                    let o: ObjIn = serde_json::from_str(text).map_err(A::Error::custom)?;
+                    let point = o.p[0].is_number() && o.p[1].is_number();
+                    if o.solid == true && !out.over {
+                        let b: Vec<f32> = o.b.as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).map(|n| n as f32).collect()).unwrap_or_default();
+                        let b = (b.len() == 4).then(|| [b[0], b[1], b[2], b[3]]);
+                        // A solid object at a point is drawn there by the theme (a trunk, a rock), so it is scenery
+                        // whether or not it says so: files made before the mark get it right too.
+                        out.found.push((i, b, if o.scenery == true || point { class::SCENERY } else { class::WALL }));
+                        out.over = out.found.len() > MAX_SOLIDS;
+                    }
+                    let at = (text.as_ptr() as usize, text.as_ptr() as usize + text.len());
+                    match (o.p[0].as_f64(), o.p[1].as_f64()) {
+                        (Some(x), Some(y)) => out.points.push((at.0, at.1, x as f32, y as f32)),
+                        _ => out.feet.push(at),
+                    }
+                    i += 1;
+                }
+                Ok(out)
+            }
+        }
+        d.deserialize_seq(V)
+    }
+}
+
 pub fn load(path: &Path) -> Result<WorldFile, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("{}: not JSON: {e}", path.display()))?;
-    if v["format"].as_u64() != Some(1) {
+    let v: FileIn = serde_json::from_slice(&bytes).map_err(|e| format!("{}: not JSON: {e}", path.display()))?;
+    let base = bytes.as_ptr() as usize;
+    if v.format.as_u64() != Some(1) {
         return Err(format!("{}: not a format 1 world file", path.display()));
     }
-    let size = v["size"].as_f64().ok_or("world file has no size")? as f32;
+    let size = v.size.as_f64().ok_or("world file has no size")? as f32;
     if !(64.0..=proto::world::MAX_WORLD_SIZE as f32).contains(&size) {
         return Err(format!("world size {size} is outside 64..={}", proto::world::MAX_WORLD_SIZE));
     }
-    let mut boxes = Vec::new();
-    for (i, o) in v["objects"].as_array().ok_or("world file has no objects")?.iter().enumerate() {
-        if o["solid"] != true {
-            continue;
-        }
-        let b: Vec<f32> = o["b"].as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).map(|n| n as f32).collect()).unwrap_or_default();
-        if b.len() != 4 || !(b[0] < b[2] && b[1] < b[3]) || b[0] < 0.0 || b[1] < 0.0 || b[2] > size || b[3] > size {
-            return Err(format!("object {i}: a solid object needs a footprint b = [x0, y0, x1, y1] inside the world"));
-        }
-        boxes.push(Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] });
+    let list = v.objects.ok_or("world file has no objects")?;
+    let solids: Objects = serde_json::from_str(list.get()).map_err(|e| format!("{}: objects: {e}", path.display()))?;
+    if solids.over {
+        return Err(format!("more than {MAX_SOLIDS} solid objects"));
     }
-    if boxes.len() > MAX_SOLIDS {
-        return Err(format!("{} solid objects; at most {MAX_SOLIDS}", boxes.len()));
+    let (mut boxes, mut classes) = (Vec::with_capacity(solids.found.len()), Vec::with_capacity(solids.found.len()));
+    for (i, b, c) in solids.found {
+        match b {
+            Some(b) if b[0] < b[2] && b[1] < b[3] && b[0] >= 0.0 && b[1] >= 0.0 && b[2] <= size && b[3] <= size => {
+                boxes.push(Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] });
+                classes.push(c);
+            }
+            _ => return Err(format!("object {i}: a solid object needs a footprint b = [x0, y0, x1, y1] inside the world")),
+        }
     }
+    let tiles = Arc::new(TileSet::build(size, boxes, classes)?);
     // Heights only place block columns, so a world whose heights cannot be read still runs, on flat ground.
-    let terrain = Terrain::parse(&v["heights"]).unwrap_or_else(|e| {
+    let terrain = Terrain::parse(&v.heights).unwrap_or_else(|e| {
         eprintln!("{}: {e}; built blocks will sit as if the ground were flat", path.display());
         Terrain::default()
     });
     let h = blake3::hash(&bytes);
     let ver = u64::from_le_bytes(h.as_bytes()[..8].try_into().unwrap());
-    Ok(WorldFile { path: path.to_path_buf(), bytes: Arc::new(bytes), ver, size, boxes, terrain })
+    // The head: the file as it is, with the object list cut down to the footprints.
+    let (lo, hi) = (list.get().as_ptr() as usize - base, list.get().as_ptr() as usize - base + list.get().len());
+    let mut head = Vec::with_capacity(lo + bytes.len() - hi + solids.feet.len() * 128);
+    head.extend_from_slice(&bytes[..lo]);
+    head.push(b'[');
+    for (n, &(a, b)) in solids.feet.iter().enumerate() {
+        if n > 0 {
+            head.push(b',');
+        }
+        head.extend_from_slice(&bytes[a - base..b - base]);
+    }
+    head.push(b']');
+    head.extend_from_slice(&bytes[hi..]);
+    let mut points: HashMap<(i32, i32), Vec<(u32, u32)>> = HashMap::new();
+    for &(a, b, x, y) in &solids.points {
+        let t = ((x / proto::tiles::TILE).floor() as i32, (y / proto::tiles::TILE).floor() as i32);
+        points.entry(t).or_default().push(((a - base) as u32, (b - base) as u32));
+    }
+    let head_gz = Arc::new(gzip(&head, 6));
+    Ok(WorldFile {
+        path: path.to_path_buf(),
+        bytes: Arc::new(bytes),
+        ver,
+        size,
+        gz: Default::default(),
+        head: Arc::new(head),
+        head_gz,
+        point_count: solids.points.len(),
+        points,
+        tiles,
+        terrain,
+    })
+}
+
+impl WorldFile {
+    /// The whole file gzipped (made once, on the caller's thread).
+    pub fn gz(&self) -> Arc<Vec<u8>> {
+        self.gz.get_or_init(|| Arc::new(gzip(&self.bytes, 6))).clone()
+    }
+
+    /// `/play/world/tiles`: each wanted tile's point objects, as the file has them, or None for too many tiles.
+    pub fn points_json(&self, want: &[(i32, i32)]) -> Option<Vec<u8>> {
+        if want.len() > proto::tiles::MAX_PER_REQUEST {
+            return None;
+        }
+        let mut o = format!("{{\"ver\":\"{:016x}\",\"tile\":{},\"tiles\":{{", self.ver, proto::tiles::TILE).into_bytes();
+        for (n, &(cx, cy)) in want.iter().enumerate() {
+            if n > 0 {
+                o.push(b',');
+            }
+            o.extend_from_slice(format!("\"{cx},{cy}\":[").as_bytes());
+            for (k, &(a, b)) in self.points.get(&(cx, cy)).map_or(&[][..], Vec::as_slice).iter().enumerate() {
+                if k > 0 {
+                    o.push(b',');
+                }
+                o.extend_from_slice(&self.bytes[a as usize..b as usize]);
+            }
+            o.push(b']');
+        }
+        o.extend_from_slice(b"}}");
+        Some(o)
+    }
+}
+
+/// Parse `cx,cy;cx,cy` where a tile may be negative (scenery past the world's edge). None if any part is not a pair.
+pub fn parse_tiles(list: &str) -> Option<Vec<(i32, i32)>> {
+    list.split(';')
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            let (a, b) = t.split_once(',')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        })
+        .collect()
+}
+
+/// `bytes` gzipped at `level` (1 fast .. 9 small).
+pub fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
+    use std::io::Write;
+    let mut e = flate2::write::GzEncoder::new(Vec::with_capacity(bytes.len() / 4), flate2::Compression::new(level));
+    let _ = e.write_all(bytes);
+    e.finish().unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -151,12 +331,40 @@ mod tests {
             {"t":"house","b":[10,10,30,20],"solid":true},
             {"t":"tree","p":[50,50]},
             {"t":"square","b":[100,100,140,140]},
-            {"t":"anything at all","b":[200,200,210,260],"solid":true,"whatever":{"a":1}}]}"#);
+            {"t":"anything at all","b":[200,200,210,260],"solid":true,"whatever":{"a":1}},
+            {"t":"tree","p":[300,300],"b":[299.5,299.5,300.5,300.5],"solid":true,"scenery":true},
+            {"t":"rock","p":[400,400],"b":[399.5,399.5,400.5,400.5],"solid":true}]}"#);
         let w = load(&p).unwrap();
         assert_eq!(w.size, 512.0);
-        assert_eq!(w.boxes.len(), 2);
-        assert_eq!((w.boxes[1].x0, w.boxes[1].y1), (200.0, 260.0));
+        assert_eq!(w.tiles.boxes.len(), 4);
+        assert_eq!((w.tiles.boxes[1].x0, w.tiles.boxes[1].y1), (200.0, 260.0));
+        assert_eq!(w.tiles.class, vec![class::WALL, class::WALL, class::SCENERY, class::SCENERY], "a solid point is scenery, marked or not");
         assert_eq!(w.bytes.len(), std::fs::read(&p).unwrap().len());
+        let mut back = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&w.gz()[..]), &mut back).unwrap();
+        assert_eq!(back, *w.bytes, "the gzipped copy is the file");
+    }
+
+    #[test]
+    fn the_file_splits_into_a_head_of_footprints_and_point_objects_by_tile() {
+        let p = write(r#"{"format":1,"size":1024, "water":{"rivers":[]},"objects":[
+            {"t":"house","b":[10,10,30,20],"solid":true},
+            {"t":"tree","p":[50.5,60]},
+            {"t":"rock", "p":[300,10],"b":[299,9,301,11],"solid":true,"scenery":true},
+            {"t":"spire","p":[-40,700]}],"heights":null}"#);
+        let w = load(&p).unwrap();
+        let head: Value = serde_json::from_slice(&w.head).unwrap();
+        assert_eq!(head["objects"], serde_json::json!([{"t":"house","b":[10,10,30,20],"solid":true}]), "only footprints");
+        assert_eq!((head["size"].clone(), head["water"].clone()), (1024.into(), serde_json::json!({"rivers": []})), "the rest as it was");
+        assert_eq!(w.point_count, 3);
+        let t: Value = serde_json::from_slice(&w.points_json(&[(0, 0), (1, 0), (-1, 2), (3, 3)]).unwrap()).unwrap();
+        assert_eq!(t["ver"], format!("{:016x}", w.ver));
+        assert_eq!(t["tiles"]["0,0"], serde_json::json!([{"t":"tree","p":[50.5,60]}]));
+        assert_eq!(t["tiles"]["1,0"][0]["t"], "rock");
+        assert_eq!(t["tiles"]["-1,2"][0]["t"], "spire", "scenery past the edge is in a negative tile");
+        assert_eq!(t["tiles"]["3,3"], serde_json::json!([]));
+        assert!(w.points_json(&vec![(0, 0); proto::tiles::MAX_PER_REQUEST + 1]).is_none());
+        assert_eq!(parse_tiles("-1,2;0,0"), Some(vec![(-1, 2), (0, 0)]));
     }
 
     #[test]
@@ -167,6 +375,7 @@ mod tests {
             (r#"{"format":1,"size":512,"objects":[{"solid":true,"b":[10,10,5,20]}]}"#, "footprint"),
             (r#"{"format":1,"size":512,"objects":[{"solid":true,"b":[10,10,600,20]}]}"#, "footprint"),
             ("not json", "JSON"),
+            (format!(r#"{{"format":1,"size":512,"objects":[{}]}}"#, vec![r#"{"solid":true,"b":[1,1,2,2]}"#; proto::tiles::MAX_PER_TILE + 1].join(",")).as_str(), "tile at (0, 0)"),
         ] {
             let e = load(&write(text)).err().unwrap_or_default();
             assert!(e.contains(why), "{text}: {e}");

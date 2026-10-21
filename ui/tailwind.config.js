@@ -9,6 +9,7 @@ export default {
       colors: {
         bg: 'var(--color-bg)',
         'bg-2': 'var(--color-bg-2)',
+        'bg-3': 'var(--color-bg-3)',
         line: 'var(--color-line)',
         fg: 'var(--color-fg)',
         'fg-2': 'var(--color-fg-2)',
@@ -16,7 +17,7 @@ export default {
         accent: 'var(--color-accent)',
         'accent-ink': 'var(--color-accent-ink)',
       },
-      fontFamily: { mono: ['"Martian Mono"', 'ui-monospace', 'monospace'] },
+      fontFamily: { sans: ['"Instrument Sans Variable"', '"Instrument Sans"', 'system-ui', 'sans-serif'], mono: ['"Martian Mono"', 'ui-monospace', 'monospace'] },
     },
   },
   plugins: [],

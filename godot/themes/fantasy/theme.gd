@@ -1,6 +1,7 @@
 extends "res://scripts/theme.gd"
 ## The fantasy look: KayKit characters, dungeon keeps, Medieval Village houses, forests, crags, rivers and lakes
-## under a daylight sky, on Forward+ (bloom, SSAO, volumetric fog, water with depth and foam).
+## under a sky that runs through day, dusk and night with the weather in it, on Forward+ (bloom, SSAO, volumetric
+## fog, water with depth and foam).
 ##
 ## It only draws: where things are and what they are comes from the world file (WORLD.md), so a different
 ## world is a different run of the generator, not a change here. Each object type maps to a builder below, and
@@ -9,7 +10,19 @@ extends "res://scripts/theme.gd"
 const PROP_CHUNK := 128.0
 var terrain_mat: ShaderMaterial
 var water_mat: ShaderMaterial
-var rain := GPUParticles3D.new()
+var rain := GPUParticles3D.new()   # whatever the weather drops: rain, snow or dust
+var sky_mat: ShaderMaterial
+var _kind := ""           # what the weather looks like: "" clear, rain, snow, storm, fog, dust
+var _flash := 0.0         # lightning, fading
+# Weather changes ease in over WEATHER_SECS: every look below heads for what the new weather wants a little each
+# frame, and what falls from the sky thins out before it turns into something else.
+const WEATHER_SECS := 10.0
+var _wx_want := {"k": 0.0, "cover": 0.5, "dark": 0.0, "wind": 0.3, "storm": 0.0, "thick": 1.0, "sky": 0.0, "col": Color("8899aa")}
+var _wx := _wx_want.duplicate()   # where the look is now, on its way to _wx_want
+var _rain_kind := ""      # what the particles are set up to drop now ("" none)
+var _rain_ratio := 0.0    # how hard they fall now, 0 .. 1
+var _rain_want := 0.0     # how hard the weather wants them to fall
+var _next_flash := 0.0
 var meshes := {}             # path -> Mesh, pulled out of the glTF pieces once
 var _built_bodies := 0       # how many KayKit characters were made (for the smoke test)
 
@@ -19,14 +32,14 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color("4d79b3")
-	sky_mat.sky_horizon_color = Color("c9d8e0")
-	sky_mat.ground_horizon_color = Color("c9d8e0")
-	sky_mat.ground_bottom_color = Color("3d4a33")
-	sky_mat.sun_angle_max = 20.0
+	sky_mat = ShaderMaterial.new()
+	sky_mat.shader = load("res://themes/fantasy/sky.gdshader")
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
+	# The sky changes every frame (the clouds drift), and the light comes from colours, not the sky, so a small
+	# radiance map redrawn as it goes is all reflections need.
+	sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	sky.radiance_size = Sky.RADIANCE_SIZE_64
 	e.background_mode = Environment.BG_SKY
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
@@ -52,6 +65,7 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	e.volumetric_fog_albedo = Color("dfe8ee")
 	e.volumetric_fog_anisotropy = 0.35
 	e.volumetric_fog_length = 140.0
+	e.volumetric_fog_sky_affect = 0.0 # the haze is in the air around us, not painted over the sky
 	env.environment = e
 	add_child(env)
 	_env = e
@@ -66,7 +80,7 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	sun.directional_shadow_max_distance = 90.0
 	add_child(sun)
 	_clear = {"fog": e.fog_density, "fog_color": e.fog_light_color, "vol": e.volumetric_fog_density, "vol_albedo": e.volumetric_fog_albedo,
-		"sun": sun.light_energy, "ambient": e.ambient_light_energy}
+		"sun": sun.light_energy, "ambient": e.ambient_light_energy, "ambient_color": e.ambient_light_color, "sun_color": sun.light_color}
 	# Rain (or whatever falls in the current weather): streaks in a box that follows the camera.
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
@@ -153,8 +167,8 @@ func ground_material() -> Material:
 
 ## Building blocks from the Medieval Village textures, tiled so each block shows one texture repeat: the eight
 ## textures as they are, then glass, and the dressed stone tinted three ways (slate, moss, sandstone).
-const BLOCK_TEXTURES := ["RockTrim", "WoodTrim", "RedBrick", "Plaster", "Brick", "UnevenBrick", "RoundTiles", "MetalOrnaments", "", "RockTrim", "RockTrim", "RockTrim"]
-const BLOCK_TINTS := {9: Color(0.55, 0.6, 0.72), 10: Color(0.7, 0.85, 0.55), 11: Color(1.15, 0.95, 0.68)}
+const BLOCK_TEXTURES := ["RockTrim", "WoodTrim", "RedBrick", "Plaster", "Brick", "UnevenBrick", "RoundTiles", "MetalOrnaments", "", "RockTrim", "RockTrim", "RockTrim", "", "RockTrim"]
+const BLOCK_TINTS := {9: Color(0.55, 0.6, 0.72), 10: Color(0.7, 0.85, 0.55), 11: Color(1.15, 0.95, 0.68), 13: Color(0.45, 0.38, 0.34)}
 
 func block_material(kind: int) -> Material:
 	kind = clampi(kind, 0, BLOCK_TEXTURES.size() - 1)
@@ -174,21 +188,110 @@ func block_material(kind: int) -> Material:
 	return m
 
 func frame(center: Vector2, camera_zoom: float) -> void:
-	# Rain starts below the camera so no streak brushes past the lens.
-	rain.global_position = Vector3(center.x, height(center.x, center.y) + minf(14.0, camera_zoom * 0.5), center.y)
+	# Rain starts below the camera so no streak brushes past the lens; snow and dust fill the air around us.
+	var above := minf(14.0, camera_zoom * 0.5) if _rain_kind in ["rain", "storm"] else 6.0
+	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
+	super.frame(center, camera_zoom)
+
+## Sun, moon, light, fog and sky for the time of day (the server's schedule) and the weather.
+func _daylight_frame(dt: float) -> void:
+	var sun_dir := sun_direction()
+	var day := smoothstep(-0.1, 0.12, sun_dir.y)
+	var dusk := 1.0 - smoothstep(0.0, 0.3, absf(sun_dir.y))
+	_ease_weather(dt)
+	var k: float = _wx["k"]
+	var col: Color = _wx["col"]
+	var cover: float = _wx["cover"]
+	var dark: float = _wx["dark"]
+	var storm: float = _wx["storm"]
+	darkness = clampf(1.0 - day + dark * 0.6, 0.0, 1.0)
+	# Lightning in a storm: a double flash every few seconds, once the storm has built up.
+	if storm > 0.6:
+		_next_flash -= dt
+		if _next_flash <= 0.0:
+			_flash = 1.0
+			_next_flash = randf_range(3.0, 10.0) if randf() > 0.3 else 0.18
+	_flash = maxf(0.0, _flash - dt * 7.0)
+	sky_mat.set_shader_parameter("sun_dir", sun_dir)
+	sky_mat.set_shader_parameter("day", day)
+	sky_mat.set_shader_parameter("dusk", dusk)
+	sky_mat.set_shader_parameter("cover", cover)
+	sky_mat.set_shader_parameter("dark", dark)
+	sky_mat.set_shader_parameter("tint", Vector3(col.r, col.g, col.b).lerp(Vector3(0.55, 0.58, 0.62), 0.5))
+	sky_mat.set_shader_parameter("flash", _flash)
+	sky_mat.set_shader_parameter("clock", Time.get_ticks_msec() / 1000.0)
+	sky_mat.set_shader_parameter("wind", _wx["wind"])
+	# By day the sun lights the world; by night a dim blue moon from the other side does.
+	var light_dir := sun_dir if sun_dir.y > -0.05 else -sun_dir
+	_sun.transform.basis = Basis.looking_at(-light_dir, Vector3.FORWARD if absf(light_dir.y) > 0.99 else Vector3.UP)
+	var warm := (_clear["sun_color"] as Color).lerp(Color("ffb27a"), dusk * 0.7)
+	_sun.light_color = warm if sun_dir.y > -0.05 else Color("9db4ff")
+	var sun_energy: float = _clear["sun"] * (0.25 + 0.75 * day) if sun_dir.y > -0.05 else 0.22
+	_sun.light_energy = sun_energy * (1.0 - (0.55 + 0.2 * storm) * k)
+	var e := _env
+	e.ambient_light_color = Color("2a3552").lerp(_clear["ambient_color"], day)
+	e.ambient_light_energy = _clear["ambient"] * (0.55 + 0.45 * day) * (1.0 - 0.35 * k) + _flash * 1.5
+	var fog_day: Color = (_clear["fog_color"] as Color).lerp(Color("e0a07a"), dusk * 0.35)
+	var fog := Color("141b28").lerp(fog_day, day)
+	var thick: float = _wx["thick"]
+	e.fog_light_color = fog.lerp(col.darkened(0.2 * (1.0 - day)), 0.6 * k)
+	e.fog_density = _clear["fog"] + 0.012 * k * thick
+	e.volumetric_fog_density = _clear["vol"] + 0.02 * k * thick
+	e.volumetric_fog_albedo = (_clear["vol_albedo"] as Color).lerp(col, 0.5 * k).darkened(0.6 * (1.0 - day))
+	# Weather closes over the sky as it thickens; fog all but hides it.
+	var sky_cover: float = _wx["sky"]
+	e.volumetric_fog_sky_affect = clampf(0.35 * k * thick, 0.0, 0.9) * sky_cover
+	e.fog_sky_affect = clampf(0.25 * k * thick, 0.0, 0.8) * sky_cover
+
+## Move every part of the weather's look a step toward the new weather, so a change takes about WEATHER_SECS: most of
+## the way in the first few seconds and settling gently, the way weather really rolls in.
+func _ease_weather(dt: float) -> void:
+	var a := 1.0 - exp(-dt * 3.0 / WEATHER_SECS) # 95% of the way after WEATHER_SECS
+	for key in _wx_want:
+		if key == "col":
+			_wx["col"] = (_wx["col"] as Color).lerp(_wx_want["col"], a)
+		else:
+			_wx[key] = lerpf(_wx[key], _wx_want[key], a)
+	# Rain, snow or dust: fades in and out at the same pace, and thins away before turning into something else.
+	var want_kind := _kind if _kind in ["rain", "storm", "snow", "dust"] else ""
+	if want_kind != _rain_kind:
+		_rain_ratio = maxf(0.0, _rain_ratio - dt / (WEATHER_SECS * 0.4))
+		if _rain_ratio <= 0.0:
+			_rain_kind = want_kind
+			if _rain_kind != "":
+				_set_rain(_rain_kind, float(_wx_want["k"]), _wx_want["col"])
+	else:
+		_rain_ratio = move_toward(_rain_ratio, _rain_want if _rain_kind != "" else 0.0, dt / WEATHER_SECS)
+	rain.emitting = _rain_kind != "" and _rain_ratio > 0.0
+	rain.amount_ratio = _rain_ratio
 
 ## One cell of the world: each object drawn by its type, and every piece of the same kind in the cell sharing
 ## one MultiMesh, so a town is a few dozen draws.
 func build_cell(cx: int, cy: int) -> Node3D:
 	var node := Node3D.new()
 	var batch := {}
+	var lights := []
 	for o in world.in_cell(cx, cy):
 		var t := String(o.get("t", ""))
 		match t:
 			"house":
 				node.add_child(_build_house(o["b"], float(o.get("y", 0.0)), int(o.get("v", 0)), batch))
+				# Every third house hangs a lantern by its south wall.
+				if absi(int(o.get("v", 0))) % 3 == 0:
+					var b: Array = o["b"]
+					var at := Vector3((float(b[0]) + float(b[2])) / 2.0, 0.0, float(b[3]) + 0.35)
+					at.y = height(at.x, at.z) + 2.4
+					node.add_child(_lantern(at))
+					lights.append([at, "lantern"])
 			"keep", "castle", "tower", "wall", "block":
 				node.add_child(_keep(o, batch))
+				# Braziers burn at two corners of a keep, a castle or a tower.
+				if t in ["keep", "castle", "tower"]:
+					var b: Array = o["b"]
+					for c in [Vector2(float(b[0]) - 1.2, float(b[1]) - 1.2), Vector2(float(b[2]) + 1.2, float(b[3]) + 1.2)]:
+						var at := Vector3(c.x, height(c.x, c.y), c.y)
+						node.add_child(_brazier(at))
+						lights.append([at + Vector3(0, 2.0, 0), "torch"])
 			"crag":
 				var b: Array = o["b"]
 				var short := minf(float(b[2]) - float(b[0]), float(b[3]) - float(b[1]))
@@ -200,7 +303,14 @@ func build_cell(cx: int, cy: int) -> Node3D:
 				node.add_child(_dock(b, float(o.get("y", 0.0)) - 0.45, int(o.get("v", 0))))
 			"tree", "tree_bare", "bush", "rock", "boulder", "spire":
 				_prop(o, batch)
-			"city", "square":
+			"square":
+				# A campfire in the middle of every square (the heights already level it).
+				var b: Array = o["b"]
+				var at := Vector3((float(b[0]) + float(b[2])) / 2.0, 0.0, (float(b[1]) + float(b[3])) / 2.0)
+				at.y = height(at.x, at.z)
+				node.add_child(_campfire(at))
+				lights.append([at + Vector3(0, 1.2, 0), "fire"])
+			"city":
 				pass # open ground: the heights already level it
 			_:
 				if o.get("solid", false):
@@ -209,7 +319,89 @@ func build_cell(cx: int, cy: int) -> Node3D:
 		var m := _mesh(path)
 		if m:
 			node.add_child(_multi(m, batch[path], _tint(path)))
+	add_lights(world.key(cx, cy), lights)
 	return node
+
+# ------------------------------------------------------------------------------------- what burns at night
+
+## A ring of stones round a fire.
+func _campfire(at: Vector3) -> Node3D:
+	var n := Node3D.new()
+	n.position = at
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.55
+	tm.outer_radius = 0.95
+	ring.mesh = tm
+	ring.scale = Vector3(1, 0.45, 1)
+	ring.material_override = _plain_mat(Color("5c5650"))
+	n.add_child(ring)
+	var logs := MeshInstance3D.new()
+	var lm := CylinderMesh.new()
+	lm.top_radius = 0.09
+	lm.bottom_radius = 0.09
+	lm.height = 1.1
+	logs.mesh = lm
+	logs.rotation = Vector3(0, 0.4, PI / 2)
+	logs.position.y = 0.12
+	logs.material_override = _plain_mat(Color("4a3020"))
+	n.add_child(logs)
+	var f := flame(1.6)
+	f.position.y = 0.2
+	n.add_child(f)
+	return n
+
+## An iron bowl of fire on a post.
+func _brazier(at: Vector3) -> Node3D:
+	var n := Node3D.new()
+	n.position = at
+	var post := MeshInstance3D.new()
+	var pm := CylinderMesh.new()
+	pm.top_radius = 0.07
+	pm.bottom_radius = 0.1
+	pm.height = 1.6
+	post.mesh = pm
+	post.position.y = 0.8
+	post.material_override = _plain_mat(Color("2e2c2a"))
+	n.add_child(post)
+	var bowl := MeshInstance3D.new()
+	var bm := CylinderMesh.new()
+	bm.top_radius = 0.45
+	bm.bottom_radius = 0.2
+	bm.height = 0.3
+	bowl.mesh = bm
+	bowl.position.y = 1.7
+	bowl.material_override = post.material_override
+	n.add_child(bowl)
+	var f := flame(1.1)
+	f.position.y = 1.85
+	n.add_child(f)
+	return n
+
+## A glowing lantern on a short bracket.
+func _lantern(at: Vector3) -> Node3D:
+	var n := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.28, 0.4, 0.28)
+	n.mesh = bm
+	n.position = at
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color("ffd98c")
+	m.emission_enabled = true
+	m.emission = Color("ffc060")
+	m.emission_energy_multiplier = 2.5
+	n.material_override = m
+	n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return n
+
+var _plain_mats := {}
+func _plain_mat(c: Color) -> StandardMaterial3D:
+	if not _plain_mats.has(c):
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.roughness = 0.9
+		_plain_mats[c] = m
+	return _plain_mats[c]
 
 ## Scenery: a model of the object's kind, picked by its variant, at its scale and turn, on the ground.
 func _prop(o: Dictionary, batch: Dictionary) -> void:
@@ -255,29 +447,97 @@ func entity_node(id: int, mine: bool, opts: Dictionary) -> Node3D:
 func loot_node(item: Dictionary) -> Node3D:
 	return _gem_node(str(item.get("color", "#ffffff")), bool(item.get("rare", false)))
 
+## The server's weather: where the look should end up. _ease_weather takes it there over WEATHER_SECS.
 func apply_weather(w: Dictionary) -> void:
-	var e := _env
-	if w.is_empty():
-		e.fog_density = _clear["fog"]
-		e.fog_light_color = _clear["fog_color"]
-		e.volumetric_fog_density = _clear["vol"]
-		e.volumetric_fog_albedo = _clear["vol_albedo"]
-		e.ambient_light_energy = _clear["ambient"]
-		_sun.light_energy = _clear["sun"]
-		rain.emitting = false
-		return
-	var k := clampf(float(w.get("intensity", 0.5)), 0.0, 1.0)
-	var col := Color(str(w.get("color", "#8899aa")))
-	e.fog_density = _clear["fog"] + 0.012 * k
-	e.fog_light_color = (_clear["fog_color"] as Color).lerp(col, 0.6)
-	e.volumetric_fog_density = _clear["vol"] + 0.02 * k
-	e.volumetric_fog_albedo = (_clear["vol_albedo"] as Color).lerp(col, 0.5)
-	e.ambient_light_energy = _clear["ambient"] * (1.0 - 0.35 * k)
-	_sun.light_energy = _clear["sun"] * (1.0 - 0.55 * k)
-	var streak := (rain.draw_pass_1 as BoxMesh).material as StandardMaterial3D
-	streak.albedo_color = Color(col.lightened(0.4), 0.35 + 0.3 * k)
-	rain.amount_ratio = clampf(0.25 + k, 0.0, 1.0)
-	rain.emitting = true
+	_weather = w
+	_kind = weather_kind(w)
+	var k := clampf(float(w.get("intensity", 0.5)), 0.0, 1.0) if not w.is_empty() else 0.0
+	var clear := _kind == ""
+	_wx_want = {
+		"k": k,
+		"cover": 0.5 if clear else clampf(0.55 + 0.45 * k, 0.0, 1.0), # fair-weather cumulus when clear
+		"dark": 0.0 if clear else (0.35 + 0.45 * k if _kind == "storm" else 0.15 + 0.35 * k),
+		"wind": 0.3 if clear else (1.0 if _kind == "storm" else 0.4 + 0.5 * k),
+		"storm": 1.0 if _kind == "storm" else 0.0,
+		"thick": 2.5 if _kind == "fog" else 1.0,
+		"sky": 0.0 if clear else 1.0,
+		# Clearing keeps the old tint while it thins out, rather than flashing grey.
+		"col": Color(str(w.get("color", "#8899aa"))) if not clear else _wx_want["col"],
+	}
+	_rain_want = 0.0 if not _kind in ["rain", "storm", "snow", "dust"] else (1.0 if _kind == "storm" else clampf(0.25 + k, 0.0, 1.0))
+	if _kind == _rain_kind and _rain_kind != "":
+		_set_rain(_rain_kind, k, _wx_want["col"]) # the same kind, harder or softer: no need to thin out first
+
+func snap_weather() -> void:
+	_wx = _wx_want.duplicate()
+	_rain_kind = _kind if _kind in ["rain", "storm", "snow", "dust"] else ""
+	_rain_ratio = _rain_want if _rain_kind != "" else 0.0
+	if _rain_kind != "":
+		_set_rain(_rain_kind, float(_wx_want["k"]), _wx_want["col"])
+
+## Set the particles up for a kind of weather (they fall at amount_ratio, which _ease_weather moves).
+func _set_rain(kind: String, k: float, col: Color) -> void:
+	var pm := rain.process_material as ParticleProcessMaterial
+	var mesh := rain.draw_pass_1 as BoxMesh
+	var m := mesh.material as StandardMaterial3D
+	match kind:
+		"snow": # slow flakes that drift and swirl
+			pm.direction = Vector3(0.25, -1, 0.1)
+			pm.spread = 18.0
+			pm.initial_velocity_min = 3.0
+			pm.initial_velocity_max = 5.0
+			pm.turbulence_enabled = true
+			pm.turbulence_noise_strength = 2.0
+			pm.emission_box_extents = Vector3(40, 8, 40)
+			mesh.size = Vector3(0.09, 0.09, 0.09)
+			m.albedo_color = Color(1, 1, 1, 0.85)
+			rain.lifetime = 5.0
+		"dust": # grit blown sideways
+			pm.direction = Vector3(1, -0.08, 0.25)
+			pm.spread = 10.0
+			pm.initial_velocity_min = 12.0
+			pm.initial_velocity_max = 18.0
+			pm.turbulence_enabled = true
+			pm.turbulence_noise_strength = 1.0
+			pm.emission_box_extents = Vector3(45, 6, 45)
+			mesh.size = Vector3(0.6, 0.06, 0.06) # streaks along the wind
+			m.albedo_color = Color(col.lightened(0.15), 0.55)
+			rain.lifetime = 2.5
+		_: # rain, and a storm's heavier rain
+			pm.direction = Vector3(0.15, -1, 0.05) if kind == "rain" else Vector3(0.35, -1, 0.1)
+			pm.spread = 3.0
+			pm.initial_velocity_min = 38.0
+			pm.initial_velocity_max = 48.0
+			pm.turbulence_enabled = false
+			pm.emission_box_extents = Vector3(45, 1, 45)
+			mesh.size = Vector3(0.025, 0.9, 0.025)
+			m.albedo_color = Color(col.lightened(0.4), 0.35 + 0.3 * k)
+			rain.lifetime = 0.45
+
+func weather_drawn() -> String:
+	return _kind
+
+## A zone up close: fog that fills the place (volumetric, so lights and the sun shine through it), glowing faintly in
+## its colour, inside the mist wall the base theme draws for seeing it from afar.
+func zone_mist(z: Dictionary) -> Node3D:
+	var n := super.zone_mist(z)
+	var r := float(z["r"])
+	var h := float(z.get("height", 30.0))
+	var k := clampf(float(z.get("intensity", 0.5)), 0.0, 1.0)
+	var col := Color(str(z.get("color", "#888888")))
+	var fv := FogVolume.new()
+	fv.shape = RenderingServer.FOG_VOLUME_SHAPE_CYLINDER
+	fv.size = Vector3(r * 2.0, h, r * 2.0)
+	fv.position.y = h / 2.0
+	var fm := FogMaterial.new()
+	fm.density = 0.04 + 0.3 * k
+	fm.albedo = col
+	fm.emission = col * (0.08 + 0.12 * k)
+	fm.height_falloff = 0.08
+	fm.edge_fade = 0.25
+	fv.material = fm
+	n.add_child(fv)
+	return n
 
 
 ## The map (M): the meadow shaded by the hills, water, and each object coloured by its type.
@@ -318,6 +578,8 @@ func smoke_checks() -> Array:
 	for c in _chunks.values():
 		batched += (c as Node).find_children("*", "MultiMeshInstance3D", true, false).size()
 	return [
+		["the sky is the day and night sky", sky_mat != null and sky_mat.shader != null, "phase %.2f" % day_phase()],
+		["the world has fires, braziers and lanterns", _sources.size() > 0, "%d places with lights" % _sources.size()],
 		["fantasy theme built kit pieces", batched > 0, "%d batches" % batched],
 		["characters are KayKit models", _built_bodies > 0, "%d made" % _built_bodies],
 		["ground built from the heights", _terrain.size() > 0, "%d chunks" % _terrain.size()],

@@ -1,4 +1,5 @@
 import * as Tabs from '@radix-ui/react-tabs'
+import { CloudSun, HardDrives, Lightning, MapTrifold, Pulse, Robot, SlidersHorizontal, type Icon } from '@phosphor-icons/react'
 import God, { type Drop } from './components/God'
 import { motion, useReducedMotion } from 'framer-motion'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -7,7 +8,8 @@ import { Builder, initialBuilder, type BuilderState } from './components/Builder
 import { ChatPanel } from './components/Chat'
 import { ActionsEditor, AttrsEditor, BotsEditor, ItemsEditor } from './components/Editors'
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
-import { StatusBar } from './components/StatusBar'
+import { Header, NetworkPanel } from './components/StatusBar'
+import type { Daylight } from './daylight'
 import { WorldView } from './components/WorldView'
 import { WorldTab, useShaper } from './components/WorldTab'
 import type { BlockCol } from './components/mapLook'
@@ -15,38 +17,28 @@ import { parseWorld, type WorldData } from './world'
 const Scene3D = lazy(() => import('./components/Scene3D'))
 import { addWall, needsReset, newPlace, newRoute, normWall } from './gameEdit'
 
-const TABS: readonly (readonly [string, string])[] = [
-  ['bots', 'Bots'],
-  ['builder', 'Builder'],
-  ['world', 'World'],
-  ['god', 'God'],
-  ['attrs', 'Attributes'],
-  ['actions', 'Actions'],
-  ['items', 'Items'],
-  ['entity', 'Entity'],
-  ['chat', 'Chat'],
-  ['connect', 'Connect'],
-  ['raw', 'JSON'],
+/** The console's sections, by what a game master does: each says what is inside it, and the ones that work on the
+ * map show it beside them. */
+type Section = 'live' | 'world' | 'bots' | 'sky' | 'events' | 'rules' | 'server'
+const SECTIONS: readonly { id: Section; name: string; what: string; icon: Icon; map: boolean; title: string; help: string }[] = [
+  { id: 'live', name: 'Live', what: 'Map, who is on, chat', icon: Pulse, map: true, title: 'The world right now', help: 'Click anyone on the map to see their attributes, follow them, take control of a bot or remove it. Chat shows what is being said.' },
+  { id: 'world', name: 'World', what: 'Terrain, places, clear down', icon: MapTrifold, map: true, title: 'The world', help: 'Make the land from a recipe and apply it live, mark places and routes for bots, and clear away what players leave behind.' },
+  { id: 'bots', name: 'Bots', what: 'Types, spawning, loot', icon: Robot, map: true, title: 'Bots', help: 'What kinds of bot there are, how they behave and what they drop, and putting more of them into the world.' },
+  { id: 'sky', name: 'Sky', what: 'Day, weather, zones', icon: CloudSun, map: false, title: 'Sky and weather', help: 'When it is light and dark, the weather everywhere, and weather that stays over one place: mist, storms, a healing spring.' },
+  { id: 'events', name: 'Events', what: 'What happens, when', icon: Lightning, map: false, title: 'Events', help: 'World and local events, raids and bosses: scripts that run over time, with banners, waves, a fight to win in time and rewards. Started by hand, on a timer, when players gather, at a time of day, or after another event.' },
+  { id: 'rules', name: 'Rules', what: 'Attributes, actions, items', icon: SlidersHorizontal, map: false, title: 'Game rules', help: 'What every character has (health, energy), what they can do to each other, and the items in the world. Some changes restart the world: the header says when.' },
+  { id: 'server', name: 'Server', what: 'Connect, network, JSON', icon: HardDrives, map: false, title: 'Server', help: 'How players connect, how the server is coping, and the whole game file as JSON.' },
 ]
+/** Pages within a section, where it has more than one. */
+const SUBS: Partial<Record<Section, readonly (readonly [string, string])[]>> = {
+  live: [['inspect', 'Inspect'], ['chat', 'Chat']],
+  world: [['terrain', 'Terrain'], ['build', 'Places, routes and walls']],
+  bots: [['types', 'Bot types'], ['spawn', 'Spawn and scatter']],
+  rules: [['attrs', 'Attributes'], ['actions', 'Actions'], ['items', 'Items']],
+  server: [['connect', 'Connect'], ['network', 'Network'], ['json', 'Game file (JSON)']],
+}
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
-
-function useTheme() {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
-  const toggle = useCallback(() => {
-    setDark((d) => {
-      const next = !d
-      document.documentElement.classList.toggle('dark', next)
-      try {
-        localStorage.setItem('theme', next ? 'dark' : 'light')
-      } catch {
-        /* storage can be blocked; the choice just won't persist */
-      }
-      return next
-    })
-  }, [])
-  return { dark, toggle }
-}
 
 /** Poll the server's state a few times a second without piling up requests. */
 function useState_(onState: (s: State | null) => void) {
@@ -121,7 +113,7 @@ function useDrive(id: number | null, action: string | undefined, onLost: () => v
 }
 
 export default function App() {
-  const { dark, toggle } = useTheme()
+  const dark = true // the console is near-black only
   const reduce = useReducedMotion()
   const stateRef = useRef<State | null>(null)
   const [stats, setStats] = useState<State | null>(null)
@@ -133,7 +125,41 @@ export default function App() {
   const [live, setLive] = useState<GameFile | null>(null)
   const [draft, setDraft] = useState<GameFile | null>(null)
   const [raw, setRaw] = useState<{ text: string; error: string | null } | null>(null)
-  const [tab, setTab] = useState('bots')
+  // Where we are: a section and, for those that have them, a page within it (kept in the address, #bots/spawn).
+  const [section, setSectionState] = useState<Section>(() => {
+    const h = location.hash.slice(1).split('/')[0] as Section
+    return SECTIONS.some((x) => x.id === h) ? h : 'live'
+  })
+  const [subs, setSubs] = useState<Partial<Record<Section, string>>>(() => {
+    const [h, p] = location.hash.slice(1).split('/')
+    return h && p ? { [h as Section]: p } : {}
+  })
+  const subOf = (id: Section) => subs[id] ?? SUBS[id]?.[0]?.[0] ?? ''
+  const setSub = (id: Section, v: string) => setSubs((cur) => ({ ...cur, [id]: v }))
+  const setSection = (id: Section) => setSectionState(id)
+  useEffect(() => {
+    const p = subs[section]
+    const h = `#${section}${p ? `/${p}` : ''}`
+    if (location.hash !== h) history.pushState(null, '', h) // so Back goes to the last section
+  }, [section, subs])
+  // Back, forward and pasted links move between sections too.
+  useEffect(() => {
+    const on = () => {
+      const [h, p] = location.hash.slice(1).split('/')
+      if (SECTIONS.some((x) => x.id === h)) {
+        setSectionState(h as Section)
+        if (p) setSubs((cur) => ({ ...cur, [h as Section]: p }))
+      }
+    }
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
+  // The map's edit modes, as they were named before the console had sections.
+  const tab = section === 'world' ? (subOf('world') === 'build' ? 'builder' : 'world') : section === 'bots' ? 'god' : section
+  const onDaylight = (d: Daylight) => {
+    setLive((l) => (l ? { ...l, daylight: d } : l))
+    setDraft((g) => (g ? { ...g, daylight: d } : g))
+  }
   const [selected, setSelected] = useState<number | null>(null)
   const [possessed, setPossessed] = useState<number | null>(null)
   const [follow, setFollow] = useState(false)
@@ -305,12 +331,17 @@ export default function App() {
   const rawText = raw ? raw.text : draft ? JSON.stringify(draft, null, 2) : ''
 
   const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: reduce ? 0 : 0.15, ease: 'easeOut' as const } }
-  const body = (child: React.ReactNode) => <motion.div {...fade}>{child}</motion.div>
+  const loading = <p className="text-fg-3 py-4">Loading the game file…</p>
+  const cur = SECTIONS.find((x) => x.id === section) ?? SECTIONS[0]!
+  const sub = subOf(section)
+  const go = (id: Section) => {
+    // Half-typed JSON is dropped when you leave it; the draft keeps its last valid state.
+    if (id !== 'server') setRaw(null)
+    if (id !== 'bots') setDrop(null)
+    setSection(id)
+  }
 
-  return (
-    <div className="min-h-full lg:h-screen flex flex-col">
-      <StatusBar s={stats} online={online} dark={dark} onTheme={toggle} />
-      <main className="flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_34rem] grid-rows-[min(60vh,420px)_auto] lg:grid-rows-1">
+  const mapView = (
         <div className="relative min-h-0">
   {!view3d ? (
           <WorldView
@@ -348,7 +379,10 @@ export default function App() {
             selected={selected}
             onSelect={(id) => {
               setSelected(id)
-              if (id !== null) setTab('entity')
+              if (id !== null) {
+                setSection('live')
+                setSub('live', 'inspect')
+              }
             }}
             follow={follow}
             interest={live?.interest_radius ?? 128}
@@ -377,7 +411,10 @@ export default function App() {
                 selected={selected}
                 onSelect={(id) => {
                   setSelected(id)
-                  if (id !== null) setTab('entity')
+                  if (id !== null) {
+                setSection('live')
+                setSub('live', 'inspect')
+              }
                 }}
                 follow={follow}
                 interest={live?.interest_radius ?? 128}
@@ -387,132 +424,137 @@ export default function App() {
           <div role="group" aria-label="Map view" className="absolute top-2 right-2 flex border border-line bg-bg">
             {([['2D', false], ['3D', true]] as const).map(([l, v]) => (
               <button key={l} type="button" aria-pressed={view3d === v} onClick={() => setView3d(v)}
-                className={`lbl h-7 px-3 cursor-pointer border-0 ${view3d === v ? 'bg-accent text-accent-ink' : 'bg-transparent'}`}>
+                className={`text-label font-semibold h-7 px-3 cursor-pointer border-0 ${view3d === v ? 'bg-accent text-accent-ink' : 'bg-transparent text-fg-2'}`}>
                 {l}
               </button>
             ))}
           </div>
         </div>
-        <aside className="flex flex-col lg:min-h-0 border-t lg:border-t-0 lg:border-l border-line">
-          <Tabs.Root
-            value={tab}
-            onValueChange={(v) => {
-              // Half-typed JSON is dropped when you leave the JSON tab; the draft keeps its last valid state.
-              if (v !== 'raw') setRaw(null)
-              if (v !== 'god') setDrop(null)
-              setTab(v)
-            }} className="flex flex-col lg:min-h-0 lg:flex-1">
-            <Tabs.List aria-label="Sections" className="cell flex px-2 overflow-x-auto shrink-0">
-              {TABS.map(([v, l]) => (
-                <Tabs.Trigger key={v} value={v} className="tab">
-                  {l}
-                </Tabs.Trigger>
-              ))}
-            </Tabs.List>
-            <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto px-4 pb-4">
-              <Tabs.Content value="bots" tabIndex={-1}>
-                {body(
-                  draft ? (
-                    <BotsEditor game={draft} setGame={setGame} liveCounts={liveCounts} onSpawn={spawn} onKillAll={killAll} />
-                  ) : (
-                    <p className="text-fg-3 py-4">Loading game file…</p>
-                  ),
-                )}
-              </Tabs.Content>
-              <Tabs.Content value="builder" tabIndex={-1}>
-                {body(
-                  draft ? (
-                    <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} worldBoxes={world?.boxes ?? []} worldSize={world?.size ?? 2048} worldFile={!!land} />
-                  ) : (
-                    <p className="text-fg-3 py-4">Loading game file…</p>
-                  ),
-                )}
-              </Tabs.Content>
-              <Tabs.Content value="world" tabIndex={-1}>
-                {body(<WorldTab s={shaper} land={land} liveSize={world?.size ?? 2048} blocks={stats?.blocks?.total ?? 0} />)}
-              </Tabs.Content>
-              <Tabs.Content value="god" tabIndex={-1}>
-                {body(
-                  draft ? (
-                    <God game={draft} live={live} setGame={setGame} director={stats?.director} drop={drop} setDrop={setDrop} note={note} />
-                  ) : (
-                    <p className="text-fg-3 py-4">Loading game file…</p>
-                  ),
-                )}
-              </Tabs.Content>
-              <Tabs.Content value="attrs" tabIndex={-1}>
-                {body(draft && <AttrsEditor game={draft} setGame={setGame} />)}
-              </Tabs.Content>
-              <Tabs.Content value="actions" tabIndex={-1}>
-                {body(draft && <ActionsEditor game={draft} setGame={setGame} />)}
-              </Tabs.Content>
-              <Tabs.Content value="items" tabIndex={-1}>
-                {body(draft && <ItemsEditor game={draft} setGame={setGame} />)}
-              </Tabs.Content>
-              <Tabs.Content value="entity" tabIndex={-1}>
-                {body(
-                  <EntityPanel
-                    s={stats}
-                    game={live}
-                    selected={selected}
-                    possessed={possessed}
-                    follow={follow}
-                    onFollow={setFollow}
-                    onSelect={setSelected}
-                    onPossess={setPossessed}
-                    onKill={kill}
-                    actionName={firstAction}
-                  />,
-                )}
-              </Tabs.Content>
-              <Tabs.Content value="chat" tabIndex={-1}>
-                {body(<ChatPanel selected={selected} active={tab === 'chat'} />)}
-              </Tabs.Content>
-              <Tabs.Content value="connect" tabIndex={-1}>
-                {body(<ConnectPanel info={info} />)}
-              </Tabs.Content>
-              <Tabs.Content value="raw" tabIndex={-1}>
-                {body(
-                  <RawPanel
-                    text={rawText}
-                    error={raw?.error ?? null}
-                    onText={(text) => {
-                      try {
-                        const g = JSON.parse(text) as GameFile
-                        setDraft(g)
-                        setRaw({ text, error: null })
-                      } catch (e) {
-                        setRaw({ text, error: String(e) })
-                      }
-                      setResult(null)
-                    }}
-                  />,
-                )}
-              </Tabs.Content>
-            </div>
-          </Tabs.Root>
-          <footer className="border-t border-line px-4 py-2 shrink-0 sticky bottom-0 bg-bg" aria-label="Apply changes">
-            <div className="flex items-center gap-2">
-              <button type="button" className={`btn ${dirty ? 'btn-primary' : ''}`} disabled={!dirty || applying} onClick={() => void apply()}>
-                {applying ? 'Applying…' : 'Apply'}
-              </button>
-              <button type="button" className="btn" disabled={!dirty || applying} onClick={() => { setDraft(live); setRaw(null); setResult(null) }}>
-                Revert
-              </button>
-              <span className="text-fg-3 truncate">
-                {dirty ? (reset ? 'Changes the wire format: restarts the world' : 'Bot changes only: applies live') : 'In sync with the server'}
+  )
+
+  const page = (id: Section): React.ReactNode => {
+    switch (id) {
+      case 'live':
+        return sub === 'chat' ? (
+          <ChatPanel selected={selected} active={section === 'live'} />
+        ) : (
+          <EntityPanel s={stats} game={live} selected={selected} possessed={possessed} follow={follow} onFollow={setFollow} onSelect={setSelected} onPossess={setPossessed} onKill={kill} actionName={firstAction} />
+        )
+      case 'world':
+        return sub === 'build' ? (
+          draft ? <Builder game={draft} setGame={setGame} b={b} setB={setB} finishRoute={finishRoute} note={note} worldBoxes={world?.boxes ?? []} worldSize={world?.size ?? 2048} worldFile={!!land} /> : loading
+        ) : (
+          <WorldTab s={shaper} land={land} liveSize={world?.size ?? 2048} blocks={stats?.blocks?.total ?? 0} places={(live?.places ?? []).map((p) => p.name)} />
+        )
+      case 'bots':
+        return draft ? (
+          sub === 'spawn' ? (
+            <God part="bots" game={draft} live={live} setGame={setGame} director={stats?.director} drop={drop} setDrop={setDrop} note={note} onDaylight={onDaylight} />
+          ) : (
+            <BotsEditor game={draft} setGame={setGame} liveCounts={liveCounts} onSpawn={spawn} onKillAll={killAll} />
+          )
+        ) : (
+          loading
+        )
+      case 'sky':
+      case 'events':
+        return draft ? <God part={id} game={draft} live={live} setGame={setGame} director={stats?.director} drop={drop} setDrop={setDrop} note={note} onDaylight={onDaylight} /> : loading
+      case 'rules':
+        if (!draft) return loading
+        return sub === 'actions' ? <ActionsEditor game={draft} setGame={setGame} /> : sub === 'items' ? <ItemsEditor game={draft} setGame={setGame} /> : <AttrsEditor game={draft} setGame={setGame} />
+      case 'server':
+        return sub === 'network' ? (
+          <NetworkPanel s={stats} />
+        ) : sub === 'json' ? (
+          <RawPanel
+            text={rawText}
+            error={raw?.error ?? null}
+            onText={(text) => {
+              try {
+                const g = JSON.parse(text) as GameFile
+                setDraft(g)
+                setRaw({ text, error: null })
+              } catch (e) {
+                setRaw({ text, error: String(e) })
+              }
+              setResult(null)
+            }}
+          />
+        ) : (
+          <ConnectPanel info={info} />
+        )
+    }
+  }
+
+  return (
+    <div className="console min-h-full lg:h-screen flex flex-col">
+      <Header
+        s={stats}
+        online={online}
+        dirty={dirty}
+        restarts={reset}
+        applying={applying}
+        onApply={() => void apply()}
+        onRevert={() => {
+          setDraft(live)
+          setRaw(null)
+          setResult(null)
+        }}
+        result={result}
+      />
+      <Tabs.Root value={section} onValueChange={(v) => go(v as Section)} className="flex-1 flex flex-col lg:min-h-0">
+        <nav aria-label="Sections" className="shrink-0">
+        <Tabs.List aria-label="Sections" className="flex border-b border-line overflow-x-auto">
+          {SECTIONS.map((x) => (
+            <Tabs.Trigger key={x.id} value={x.id} className="navtab" aria-label={x.name} aria-describedby={`what-${x.id}`}>
+              <x.icon size={22} weight={section === x.id ? 'regular' : 'light'} aria-hidden className="shrink-0 mt-0.5" />
+              <span className="min-w-0">
+                <span className="block font-semibold leading-5">{x.name}</span>
+                <span id={`what-${x.id}`} className="what">
+                  {x.what}
+                </span>
               </span>
-            </div>
-            <div aria-live="polite" className="min-h-6">
-              {result && (
-                <p role={result.ok ? 'status' : 'alert'} className={result.ok ? 'text-fg-2' : 'text-accent'}>
-                  {result.text}
-                </p>
-              )}
-            </div>
-          </footer>
-        </aside>
-      </main>
+            </Tabs.Trigger>
+          ))}
+        </Tabs.List>
+        </nav>
+        <main className={`flex-1 lg:min-h-0 ${cur.map ? 'grid grid-cols-1 grid-rows-[min(60vh,440px)_auto] lg:grid-rows-1 lg:grid-cols-[minmax(0,1fr)_34rem]' : 'flex flex-col'}`}>
+          {cur.map && mapView}
+          {SECTIONS.map((x) => (
+            <Tabs.Content
+              key={x.id}
+              value={x.id}
+              tabIndex={-1}
+              className={x.map ? 'lg:min-h-0 lg:overflow-y-auto border-t lg:border-t-0 lg:border-l border-line' : 'lg:min-h-0 lg:overflow-y-auto flex-1'}
+            >
+              <motion.div {...fade} className={`px-5 py-4 grid gap-4 content-start ${x.map ? '' : 'max-w-[900px]'}`}>
+                <div className="grid gap-1">
+                  <h2 className="page-title">{x.title}</h2>
+                  <p className="page-help">{x.help}</p>
+                </div>
+                {SUBS[x.id] && (
+                  <div role="tablist" aria-label={`${x.name} pages`} className="flex border-b border-line -mt-1">
+                    {SUBS[x.id]!.map(([v, l]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        role="tab"
+                        aria-selected={subOf(x.id) === v}
+                        data-state={subOf(x.id) === v ? 'active' : 'inactive'}
+                        className="tab"
+                        onClick={() => setSub(x.id, v)}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div>{page(x.id)}</div>
+              </motion.div>
+            </Tabs.Content>
+          ))}
+        </main>
+      </Tabs.Root>
     </div>
   )
 }

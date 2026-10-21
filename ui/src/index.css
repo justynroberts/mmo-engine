@@ -1,13 +1,14 @@
 /* MIT License - Copyright (c) fintonlabs.com */
+@import '@fontsource-variable/instrument-sans';
+/* The play page keeps its own HUD face; the console is Instrument Sans throughout. */
 @import '@fontsource/martian-mono/400.css';
 @import '@fontsource/martian-mono/500.css';
-@import '@fontsource/martian-mono/700.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --radius-sm: 2px;
+  --radius-sm: 4px;
   --color-bg: #e9e6df;
   --color-bg-2: #e0ddd5;
   --color-line: #c5c1b6;
@@ -18,12 +19,13 @@
   --color-accent-ink: #fff7f0;
 }
 .dark {
-  --color-bg: #0b0c0f;
-  --color-bg-2: #111318;
-  --color-line: #262a32;
-  --color-fg: #e8e8e4;
-  --color-fg-2: #b4b7be;
-  --color-fg-3: #8a8e97;
+  --color-bg: #0c0d10;
+  --color-bg-2: #14161b;   /* inputs, the nav, a hovered row: a step up from the page */
+  --color-bg-3: #1b1e25;   /* the selected tab, a pressed button */
+  --color-line: #262a33;
+  --color-fg: #ecebe6;
+  --color-fg-2: #b9bcc4;
+  --color-fg-3: #8d919b;
   --color-accent: #ff7a2e;
   --color-accent-ink: #1a0b02;
 }
@@ -47,7 +49,7 @@ body {
 }
 
 @layer components {
-  .lbl { @apply text-label uppercase tracking-[0.08em] text-fg-3; }
+  .lbl { @apply text-[11px] leading-4 uppercase tracking-[0.08em] text-fg-3; }
   .cell { @apply border-b border-line; }
   /* Inputs are underlines on the grid, not boxes. */
   .field {
@@ -69,6 +71,47 @@ body {
   .tab { @apply lbl h-8 px-2 border-b-2 border-transparent bg-transparent cursor-pointer; transition: color 150ms ease-out; }
   .tab:hover { color: var(--color-fg); }
   .tab[data-state='active'] { color: var(--color-fg); border-bottom-color: var(--color-accent); }
+
+  /* ---------------------------------------------------------------------------------------------
+     The console (index.html): an admin console, not a terminal. One proportional face, sentence-case
+     labels, boxed inputs, roomier buttons; sections are tabs that say what is inside them. Scoped to
+     .console so the play page keeps its HUD look.
+     --------------------------------------------------------------------------------------------- */
+  .console {
+    font-family: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 22px;
+    font-feature-settings: 'tnum' 1;
+  }
+  .console .text-label { font-size: 12px; line-height: 16px; }
+  .console .text-base { font-size: 14px; line-height: 22px; }
+  .console .text-head { font-size: 20px; line-height: 28px; }
+  .console .lbl { @apply normal-case tracking-normal text-fg-3; font-size: 12px; line-height: 16px; }
+  .console h2.lbl, .console h3.lbl { @apply text-[15px] leading-6 font-semibold text-fg; }
+  .console .field {
+    @apply bg-bg-2 border border-line px-2 h-8 rounded-sm;
+  }
+  .console textarea.field { @apply h-auto py-2; }
+  .console .field:focus { border-color: var(--color-accent); }
+  .console .btn { @apply h-8 px-3 bg-bg-2 whitespace-nowrap; }
+  .console .btn-primary { background: var(--color-accent); }
+  /* A button that is a switch shows its state: on is lit. */
+  .console .btn[aria-pressed='true'] { border-color: var(--color-accent); color: var(--color-fg); background: var(--color-bg-3); }
+  .console .tab { @apply text-[14px] normal-case tracking-normal text-fg-3 px-3; }
+  .console .tab:hover, .console .tab[data-state='active'] { color: var(--color-fg); }
+  /* The main sections: icon, name and what is inside, like an index. */
+  .navtab {
+    @apply flex items-start gap-3 min-w-[10rem] px-4 pt-3 pb-[10px] border-0 border-r border-b-2 border-solid bg-transparent text-left cursor-pointer text-fg-2;
+    border-right-color: var(--color-line);
+    border-bottom-color: transparent;
+    transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
+  }
+  .navtab:hover { background: var(--color-bg-2); color: var(--color-fg); }
+  .navtab[data-state='active'] { background: var(--color-bg-3); color: var(--color-fg); border-bottom-color: var(--color-accent); }
+  .navtab .what { @apply block text-label text-fg-3 pt-0.5; }
+  .navtab[data-state='active'] .what { color: var(--color-fg-2); }
+  .page-title { @apply text-head font-semibold text-fg m-0; }
+  .page-help { @apply text-fg-3 m-0 max-w-[62ch]; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -124,6 +167,7 @@ body {
 @layer components {
   .hud { color: var(--hud); font-family: 'Martian Mono', ui-monospace, monospace; }
   .hud-dim { color: var(--hud-dim); }
+  @keyframes hud-loc-in { from { opacity: 0; } to { opacity: 1; } }
   .hud-panel { background: var(--hud-panel); border: 1px solid var(--hud-edge); }
   .hud-btn {
     @apply inline-flex items-center justify-center gap-2 h-8 min-w-8 px-2 rounded-sm cursor-pointer select-none;

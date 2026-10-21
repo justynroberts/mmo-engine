@@ -7,7 +7,7 @@ extends Node3D
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue.
-## Screenshots: --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --shot FILE --shot_after SECONDS saves a frame and quits.
+## Screenshots: --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
@@ -15,6 +15,13 @@ var theme: Node3D        # the look: see scripts/theme.gd
 var world: RefCounted    # the world as data: see scripts/world_data.gd
 
 var args := {}
+## Zone lines: after an exit hands us to another zone, the scene reloads to load that zone's world. This says where
+## to connect (host, udp, web), which identity to keep (a test's throwaway one too) and the zone's name. It is static,
+## so it outlives the reload.
+static var _hop := {}
+var _hopping := false     # leaving: the dark is coming down
+var _arriving := false    # arrived: lift the dark once we are in the world
+var my_identity := ""
 var info := {}
 var info_text := ""
 var net: Object
@@ -22,11 +29,24 @@ var hud: CanvasLayer
 var cam := Camera3D.new()
 var yaw := 0.0
 var zoom := 17.0
+var heading := 0.0        # the way we are going, in the camera's terms (yaw), kept while we stand still
+var has_lit := false      # the game has a `lit` attribute: lights are known to the server, so you can sneak
+var lit_of := {}          # entity id -> whether its light is on (as the snapshots say)
+var my_lit := true        # ours, as the server has it
+
+var _heading_from := Vector2.ZERO
+var fpv := false          # first person: the camera at our eyes, the mouse looks (V, or scroll all the way in)
+var look_pitch := -0.12   # up and down in first person, radians
+const LOOK := 0.0035      # radians per pixel of mouse movement
 var ents := {}      # id -> Node3D
 var gems := {}      # ground id -> Node3D
 const MapScript := preload("res://scripts/map.gd")
 var world_map: Control
 var weather := {}         # what /play/info says now: {name, color, intensity}, empty for clear sky
+var _shown_weather := {}  # what the theme is drawing: a zone's weather where we stand, else `weather`
+var _in_zone := ""        # the weather zone we are in, "" for none
+var locations: Array = [] # /play/info "locations": titled places, {title, x, y, r}
+var _here := ""           # the title of the location we are in, "" for none
 var weather_poll := 0.0
 var boxes: Array = []
 var last_stream := Vector2(-1e9, -1e9)
@@ -59,9 +79,9 @@ var smoke_log: Array[String] = []
 # Building: blocks on one grid in all three directions (/play/info "build"), fetched from /play/blocks. Layer z
 # fills heights z * block to (z + 1) * block everywhere, so blocks line up however the ground runs.
 const GROUND := -128      # the layer of something on the bare ground
-const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL]
+const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL, KEY_BRACKETLEFT, KEY_BRACKETRIGHT]
 var build := {}           # /play/info "build"; empty if the server does not offer it
-var building := false     # build mode (B)
+var building := false     # build mode (B toggles, Esc leaves); otherwise action mode. Only with build offered.
 var build_kind := 0
 var blocks := {}          # column key (cy << 15 | cx) -> {"b": base layer, "k": "..01" (a layer each), "o": owners}
 var block_owners := []    # owner tags, as /play/blocks numbers them (1 = the first)
@@ -69,14 +89,44 @@ var my_tag := ""          # the tag our own blocks carry
 var my_layer := GROUND    # the layer our feet are in
 var blocks_ver := 0
 var blocks_poll := 0.0
+var tiles_poll := 0.0
+var tiles_busy := false
+var world_from_boxes := false # no world file: the walls are what is drawn
+var world_parts := false      # the world file comes as a head and point objects by tile
+var world_ver := ""
+var world_tiles := {}         # Vector2i tile -> true, for the tiles whose point objects are in
+var world_poll := 0.0
+var world_busy := false
 var blocks_busy := false
 var ghost := MeshInstance3D.new()       # where the next block would go
-var break_mark := MeshInstance3D.new()  # the block a right click would take out
+var break_mark := MeshInstance3D.new()  # the block holding the right button would take out
+# Breaking takes a moment of holding the right button: cracks spread over the block, then it crumbles. Holding on
+# while sweeping across blocks carries on to the next.
+const BREAK_SECS := 0.45
+var cracks := MeshInstance3D.new()      # the cracks, over the block being broken
+var _crack_tex: Array[Texture2D] = []   # four stages, each with more cracks than the last
+var _break_cell := Vector3i(-1, -1, 0)
+var _break_t := 0.0
+var _break_why := Vector3i(-1, -1, 0)   # the block we last said could not be broken, so it is said once
+var _break_sent := {}                   # cell -> when we broke it, so it crumbles once and is not sent twice
+var _debris: Array = []                 # flying pieces: {node, vel, spin, life, age, floor}
+var crumbled := 0                       # blocks seen to crumble (the smoke test checks it)
+# Names: the web gateway's /play/names, asked for the ids we do not know yet and refreshed now and then (players rename).
+var names := {}           # entity id -> name
+var _names_want := {}     # ids to ask about next
+var _names_busy := false
+var _names_poll := 0.0
+var _names_refresh := 0.0
 var aim_place := Vector3i(-1, -1, 0)    # cell x, cell y, layer; x < 0 for none
 var aim_break := Vector3i(-1, -1, 0)
 
 func _ready() -> void:
 	args = _parse_args()
+	for k in ["host", "udp", "web"]:
+		if _hop.has(k):
+			args[k] = _hop[k]
+	if _hop.has("to"):
+		args.erase("walk") # where --walk pointed was on the map we left
 	smoke = args.has("smoke")
 	if args.has("fullscreen"):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -90,9 +140,14 @@ func _ready() -> void:
 	hud.add_child(world_map)
 	hud.slot_pressed.connect(func(i: int): net.use_slot(i))
 	hud.material_pressed.connect(func(i: int): build_kind = i)
+	hud.mode_pressed.connect(func(): _set_building(not building))
 	hud.chat_submitted.connect(_on_chat)
+	hud.ability_pressed.connect(_on_ability)
 	if smoke:
 		hud.status.text = "smoke test"
+	if _hop.has("to"):
+		hud.travel("Travelling to %s" % _hop["to"], 0.0)
+		_arriving = true
 	_start()
 
 func _parse_args() -> Dictionary:
@@ -123,6 +178,17 @@ func _fetch(url: String) -> String:
 		return ""
 	return (res[3] as PackedByteArray).get_string_from_utf8()
 
+## A GET's status and body as bytes (gzip is taken and undone by HTTPRequest).
+func _fetch_raw(url: String) -> Array:
+	var r := HTTPRequest.new()
+	add_child(r)
+	if r.request(url) != OK:
+		r.queue_free()
+		return [0, PackedByteArray()]
+	var res: Array = await r.request_completed
+	r.queue_free()
+	return [res[1], res[3]]
+
 func _fail(msg: String) -> void:
 	push_error(msg)
 	hud.status.text = msg
@@ -137,32 +203,38 @@ func _start() -> void:
 	if info_text == "":
 		return _fail("could not reach http://%s/play/info" % args["web"])
 	info = JSON.parse_string(info_text)
-	var w: Dictionary = info.get("walls", {})
-	if not w.get("inline", true):
-		# A big world streams its walls. This slice fetches them all once, which is fine to a few thousand boxes.
-		var all_text := await _fetch("http://%s/play/walls?all=1" % args["web"])
-		var all: Array = JSON.parse_string(all_text).get("chunks", {}).get("all", [])
-		var parts: PackedStringArray = []
-		for b in all:
-			parts.append("[%s,%s,%s,%s]" % [String.num(b[1]), String.num(b[2]), String.num(b[3]), String.num(b[4])])
-		# The text is passed on untouched except for the boxes, because whole numbers must stay integers for the SDK.
-		info_text = info_text.replace("\"boxes\":[]", "\"boxes\":[" + ",".join(parts) + "]")
-		info = JSON.parse_string(info_text)
+	# A big world streams its walls by tile as you move (_poll_tiles); a small one sends them here.
 	boxes = info.get("boxes", [])
 	# The world: the server's world file if it has one, else just its walls on flat ground.
 	if info.get("world") is Dictionary:
-		var text := await _fetch("http://%s/play/world" % args["web"])
+		# A server that splits its world file sends the head (buildings, heights, water) now and the trees and rocks
+		# by tile as we move (_poll_world), so a big world costs what is near, not the whole file.
+		var wi: Dictionary = info["world"]
+		world_parts = bool(wi.get("parts", false))
+		world_ver = String(wi.get("ver", ""))
+		var text := await _fetch("http://%s/play/world%s" % [args["web"], "/head" if world_parts else ""])
 		world = WorldData.from_file(text) if text != "" else null
 		if world == null:
 			return _fail("could not read the world file at http://%s/play/world" % args["web"])
 	else:
 		world = WorldData.from_boxes(float(info.get("world_size", 1024)), boxes)
+		world_from_boxes = true
 	var theme_name := String(args.get("theme", "fantasy" if ResourceLoader.exists("res://themes/fantasy/theme.gd") else "plain"))
 	if not ResourceLoader.exists("res://themes/%s/theme.gd" % theme_name):
 		return _fail("no theme called '%s' (looked for res://themes/%s/theme.gd)" % [theme_name, theme_name])
 	theme = load("res://themes/%s/theme.gd" % theme_name).new()
 	add_child(theme)
+	if args.has("time"):
+		theme.time_override = float(args["time"])
+	for a in info.get("attrs", []):
+		has_lit = has_lit or String(a.get("name", "")) == "lit"
 	theme.setup(info, world)
+	theme.set_zones(info.get("weather_zones", []) if info.get("weather_zones") is Array else [])
+	locations = info.get("locations", []) if info.get("locations") is Array else []
+	# One picture of the world serves the minimap and the world map (M).
+	var map_img: Image = theme.map_image(512)
+	hud.set_map(map_img, world.size)
+	world_map.build(map_img, world.size)
 	var w0 = info.get("weather")
 	if w0 is Dictionary:
 		_apply_weather.call_deferred(w0)
@@ -196,6 +268,16 @@ func _start() -> void:
 		break_mark.material_override = mat.duplicate()
 		break_mark.visible = false
 		add_child(break_mark)
+		var cm := BoxMesh.new()
+		cm.size = Vector3(bs, bs, bs) * 1.02
+		cracks.mesh = cm
+		var cmat := StandardMaterial3D.new()
+		cmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		cracks.material_override = cmat
+		cracks.visible = false
+		add_child(cracks)
+		_crack_tex = _make_cracks()
 		var names := []
 		var swatches := []
 		for i in int(build.get("kinds", 4)):
@@ -207,25 +289,46 @@ func _start() -> void:
 	net = ClassDB.instantiate("MmoClient")
 	add_child(net)
 	net.chat_heard.connect(func(from: int, channel: int, text: String):
-		hud.say("[color=#9fe8e0]#%d%s[/color] %s" % [from, "!" if channel == 1 else "", text]))
+		if from == 0:
+			hud.say("[color=#ffd27a]%s[/color]" % text)
+			if channel == 3: # a banner: an event's news, across the screen too
+				hud.announce(text)
+		else:
+			var who := "You" if from == net.get_self_id() else _name(from)
+			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))
 	var id := _identity()
+	my_identity = id
 	var err: String = net.connect_to(String(args["host"]), int(args["udp"]), info_text, id)
 	if err != "":
 		return _fail(err)
+	# Zone lines: a handoff lands on another map, so we load it ourselves (_hop_zone) rather than just reconnect.
+	if info.get("zone_lines", false) == true:
+		net.set_follow_redirects(false)
 	my_tag = net.account_tag()
+	if args.has("name") and args["name"] is String:
+		net.set_display_name(String(args["name"]))
 	if smoke:
 		_smoke()
 	if args.has("map"):
 		_toggle_map.call_deferred()
+	if args.has("build"):
+		_set_building(true)
+	if args.has("fpv"):
+		_set_fpv(true)
+		if args.has("pitch"):
+			look_pitch = clampf(float(args["pitch"]), -1.4, 1.4)
 	if args.has("shot"):
 		await get_tree().create_timer(float(args.get("shot_after", "5"))).timeout
 		get_viewport().get_texture().get_image().save_png(String(args["shot"]))
+		print("SHOT %s: phase %.2f darkness %.2f, torch %s, %d light(s) burning, %d in view" % [args["shot"], theme.day_phase(), theme.darkness, theme.torch_lit(), theme.lights_burning(), ents.size()])
 		get_tree().quit(0)
 
 func _identity() -> String:
 	var path := "user://identity.txt"
-	if smoke:
-		return net.new_identity()
+	if _hop.has("identity"):
+		return String(_hop["identity"])
+	if smoke or args.has("shot"):
+		return net.new_identity() # a test or a screenshot never plays as (or renames) the player's own character
 	if FileAccess.file_exists(path):
 		return FileAccess.get_file_as_string(path).strip_edges()
 	var id: String = net.new_identity()
@@ -240,10 +343,12 @@ func _identity() -> String:
 func _nameplate(n: Node3D, id: int, mine: bool) -> void:
 	var top := 2.75
 	var tag := Label3D.new()
-	tag.text = "#%d" % id
+	tag.text = "#%d" % (id & 0xFFFFFF) # the low bits are the slot, the high ones its generation
+	tag.visible = not mine            # your own name is on your frame, not over your head
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	tag.pixel_size = 0.01
 	tag.font_size = 30
+	tag.font = HudScript.BODY
 	tag.outline_size = 8
 	tag.modulate = Color("ffe9a8") if mine else Color("f2f2f2")
 	tag.position.y = top + 0.4
@@ -291,6 +396,10 @@ func _process(delta: float) -> void:
 		return
 	t_total += delta
 	var status: int = net.get_status()
+	if status == 4:
+		if not _hopping:
+			_hop_zone()
+		return
 	var list: Array = net.entities()
 	var self_id: int = net.get_self_id()
 	var seen := {}
@@ -309,7 +418,21 @@ func _process(delta: float) -> void:
 		var hp := clampf(float(e.get(health_idx, health_max)) / health_max, 0.0, 1.0) if health_idx != "" else 1.0
 		var air := clampf(float(e.get("airborne", 0.0)) / air_max, 0.0, 1.0) if air_max > 0.0 else 0.0
 		_animate(id, node, np, hp, mine, delta, self_id, air)
+		# Sneaking: in the dark, someone whose light is out shows no name and no health bar (and carries no torch).
+		if not mine and node.has_node("tag"):
+			var label := node.get_node("tag") as Label3D
+			var nm := _name(id)
+			if label.text != nm:
+				label.text = nm
+		var unlit := has_lit and float(e.get("lit", 1.0)) < 0.5
+		lit_of[id] = not unlit
+		if not mine and node.has_node("tag"):
+			var hide: bool = unlit and theme.darkness > 0.5
+			(node.get_node("tag") as Label3D).visible = not hide
+			if hide:
+				_set_health_bar(node, hp, false)
 		if mine:
+			my_lit = not unlit
 			me_pos = p
 			my_layer = layer
 		elif node.has_node("body"):
@@ -333,49 +456,222 @@ func _process(delta: float) -> void:
 			c[0].queue_free()
 			corpses.erase(c)
 	_sync_ground()
+	_poll_names(delta, list)
 	_poll_blocks(delta)
+	_show_weather()
+	if self_id != 0:
+		_where()
+	_poll_tiles(delta)
+	_poll_world(delta)
 	_aim()
+	_mine(delta)
+	_fly_debris(delta)
 	hud.set_bag(net.bag())
 	_camera()
 	_weather(delta)
 	if world_map.visible:
-		var others := []
+		var around := []
 		for e in list:
 			if e["id"] != self_id:
-				others.append(e["position"])
-		world_map.update_markers(me_pos, yaw, others)
+				around.append(e["position"])
+		world_map.update_markers(me_pos, heading, around)
 	_drive()
+	if me_pos.distance_to(_heading_from) > 0.05:
+		var d := me_pos - _heading_from
+		heading = atan2(-d.x, -d.y) # so (-sin, -cos) of it is the way we went, as forward is for yaw
+		_heading_from = me_pos
 	stream_t += delta
 	if stream_t > 0.4 and me_pos.distance_to(last_stream) > 20.0:
 		stream_t = 0.0
 		last_stream = me_pos
 		theme.update(me_pos)
-	if theme.has_method("frame"):
-		theme.frame(me_pos, zoom)
+	# Everyone near us carries a torch at night; the theme gives the nearest ones real light.
+	var me_node: Node3D = ents.get(self_id)
+	var carried := []
+	for id in ents:
+		var p: Vector3 = (ents[id] as Node3D).position
+		if id != self_id and lit_of.get(id, true) and Vector2(p.x, p.z).distance_squared_to(me_pos) < 1600.0:
+			carried.append(p)
+	# Our light, for the server (the library sends it when no other action is going, and repeats it).
+	if has_lit:
+		net.set_light(theme.torch_lit())
+	theme.set_characters(me_node.position if me_node else Vector3(me_pos.x, _height(me_pos.x, me_pos.y), me_pos.y), carried)
+	theme.frame(me_pos, zoom)
 	target_ring.visible = target_id != 0 and ents.has(target_id)
 	if target_ring.visible:
 		target_ring.position = (ents[target_id] as Node3D).position + Vector3(0, 0.06, 0)
-	var tgt := ""
-	if target_id != 0 and ents.has(target_id):
-		tgt = "target #%d" % target_id
-		for e in list:
-			if e["id"] == target_id and health_idx != "":
-				tgt += "   %s %d" % [health_idx, int(e.get(health_idx, 0))]
+	var me_e := {}
+	var tgt_e := {}
+	for e in list:
+		if e["id"] == self_id:
+			me_e = e
+		elif e["id"] == target_id:
+			tgt_e = e
+	if target_id != 0 and ents.has(target_id) and not tgt_e.is_empty():
+		hud.set_target(_name(target_id), "%d u away" % int(_dist_to(target_id)), _bars(tgt_e, false))
 	else:
 		target_id = 0
-	if t_total < notice_until:
-		tgt = notice
-	hud.target.text = tgt
-	if Input.is_key_pressed(KEY_SPACE) and not hud.typing() and not smoke:
+		hud.set_target("", "", [])
+	var cls := String(args.get("class", "knight"))
+	var badges := []
+	if god:
+		badges.append("GOD")
+	if has_lit and not my_lit and theme.darkness > 0.5:
+		badges.append("SNEAKING")
+	if _in_zone != "":
+		badges.append(_in_zone.to_upper())
+	hud.set_player(_name(self_id) if self_id != 0 else cls.capitalize(), cls.capitalize(), cls.left(1).to_upper(), _bars(me_e, true), badges)
+	var others := []
+	for e in list:
+		if e["id"] != self_id:
+			others.append(e["position"])
+	hud.update_minimap(me_pos, heading, others)
+	if Input.is_key_pressed(KEY_SPACE) and not building and not hud.typing() and not smoke:
 		_attack() # holding Space keeps swinging, at the action's cooldown
-	var names := ["connecting", "connected", "refused", "closed"]
 	# The server sends only the nearest max_visible within interest_radius; say so when that is what you are seeing.
 	var cap := int(info.get("max_visible", 0))
-	var crowd := "   nearest %d shown, more around" % cap if cap > 0 and list.size() >= cap else ""
-	var sky := "   %s" % String(weather["name"]).to_upper() if not weather.is_empty() else ""
-	var mode := "   BUILD %s" % theme.block_name(build_kind).to_upper() if building else ""
+	var crowd := ", nearest %d shown" % cap if cap > 0 and list.size() >= cap else ""
+	var sky := String(_shown_weather.get("name", "clear")).capitalize() if not _shown_weather.is_empty() else "Clear"
+	var when := HudScript.time_words(theme.day_phase(), theme.daylight_night(theme.daylight))
+	var place := _here if _here != "" else _in_zone.capitalize() if _in_zone != "" else "The wilds"
+	hud.set_info(place, "%s, %s   %d, %d" % [when, sky, me_pos.x, me_pos.y], int(net.get_rtt_ms()), crowd)
+	hud.set_mode(building, not build.is_empty(), theme.block_name(build_kind))
 	hud.show_materials(building, build_kind)
-	hud.status.text = "%s   %d ms   %d, %d   %d in view%s%s%s%s" % [names[clampi(status, 0, 3)], int(net.get_rtt_ms()), me_pos.x, me_pos.y, list.size(), crowd, sky, "   GOD" if god else "", mode]
+	hud.set_abilities(theme.torch_mode, theme.torch_lit(), building, world_map.visible, not build.is_empty())
+	if status > 1:
+		hud.status.text = ["", "", "The server refused the connection.", "Disconnected from the server."][clampi(status, 0, 3)]
+	if _arriving and status == 1 and ents.has(self_id):
+		_arriving = false
+		hud.arrive()
+
+## A zone line handed us to another zone: darken the screen, then reload the scene against that zone, keeping our
+## identity, so its world loads and its server restores the character it was just handed.
+func _hop_zone() -> void:
+	_hopping = true
+	var m: Dictionary = net.moved()
+	var z := int(m.get("zone", -1))
+	var webs = info.get("zones")
+	var web := String(webs[z]) if webs is Array and z >= 0 and z < webs.size() and webs[z] is String else ""
+	if web == "":
+		return _fail("handed to zone %d, which has no web address (the server's --zone-web)" % z)
+	var names = info.get("zone_names")
+	var where := String(names[z]).capitalize() if names is Array and z >= 0 and z < names.size() else "zone %d" % z
+	_hop = {"host": String(m["host"]), "udp": str(m["port"]), "web": web.trim_prefix("http://").trim_prefix("https://").trim_suffix("/"), "identity": my_identity, "to": where}
+	hud.travel("Travelling to %s" % where)
+	await get_tree().create_timer(0.7).timeout
+	get_tree().reload_current_scene()
+
+# ---------------------------------------------------------------- names
+
+## What to call an entity: its name once the gateway has told us, its number until then.
+func _name(id: int) -> String:
+	if names.has(id):
+		return names[id]
+	_names_want[id] = true
+	return "#%d" % (id & 0xFFFFFF)
+
+func _poll_names(delta: float, list: Array) -> void:
+	_names_refresh -= delta
+	if _names_refresh <= 0.0:
+		# Players can rename at any time: ask again about everyone in view every few seconds.
+		_names_refresh = 6.0
+		for e in list:
+			_names_want[int(e["id"])] = true
+	_names_poll -= delta
+	if _names_busy or _names_poll > 0.0 or _names_want.is_empty():
+		return
+	_names_poll = 0.5
+	_names_busy = true
+	var ids: Array = _names_want.keys().slice(0, 256)
+	for id in ids:
+		_names_want.erase(id)
+	var text := await _fetch("http://%s/play/names?ids=%s" % [args["web"], ",".join(ids.map(func(i): return str(i)))])
+	_names_busy = false
+	var got = JSON.parse_string(text) if text != "" else null
+	if got is Dictionary:
+		for k in got:
+			names[int(k)] = String(got[k])
+
+# ---------------------------------------------------------------- walls by tile
+
+## A world that streams its walls: fetch the /play/tiles the library asks for around us and hand them to it, so
+## prediction collides with them. With no world file the walls are also what we draw, so they are added to the
+## world as they come and the cells they land in are redrawn.
+func _poll_tiles(delta: float) -> void:
+	tiles_poll -= delta
+	if tiles_busy or tiles_poll > 0.0:
+		return
+	tiles_poll = 0.25
+	var path: String = net.tiles_wanted(me_pos)
+	if path == "":
+		return
+	tiles_busy = true
+	var res := await _fetch_raw("http://%s%s" % [args["web"], path])
+	tiles_busy = false
+	if int(res[0]) == 200 and net.put_tiles(res[1]):
+		if world_from_boxes:
+			theme.invalidate(world.add_boxes(_tile_boxes(res[1])))
+		return
+	if int(res[0]) == 200 or int(res[0]) == 409:
+		# The walls changed on the server: start again from a fresh /play/info.
+		var text := await _fetch("http://%s/play/info" % args["web"])
+		if text != "":
+			net.set_walls(text)
+	else:
+		net.tiles_failed()
+
+## The world file's point objects (trees, rocks) for the 5x5 tiles around us, fetched as we move; tiles more than
+## three away are let go. Each tile that arrives or goes has its cells redrawn.
+func _poll_world(delta: float) -> void:
+	if not world_parts or world_busy or world == null:
+		return
+	world_poll -= delta
+	if world_poll > 0.0:
+		return
+	world_poll = 0.3
+	var t := Vector2i(int(floor(me_pos.x / WorldData.TILE)), int(floor(me_pos.y / WorldData.TILE)))
+	for k in world_tiles.keys():
+		if absi(k.x - t.x) > 3 or absi(k.y - t.y) > 3:
+			world_tiles.erase(k)
+			theme.invalidate(world.drop_points(k.x, k.y))
+	var want: PackedStringArray = []
+	for j in range(t.y - 2, t.y + 3):
+		for i in range(t.x - 2, t.x + 3):
+			if not world_tiles.has(Vector2i(i, j)):
+				want.append("%d,%d" % [i, j])
+	if want.is_empty():
+		return
+	world_busy = true
+	var text := await _fetch("http://%s/play/world/tiles?v=%s&c=%s" % [args["web"], world_ver, ";".join(want)])
+	world_busy = false
+	var d = JSON.parse_string(text) if text != "" else null
+	if not d is Dictionary:
+		world_poll = 2.0 # unreachable, or the world changed under us: try again later
+		return
+	var tiles: Dictionary = d.get("tiles", {})
+	for k in tiles:
+		var p := String(k).split(",")
+		var at := Vector2i(int(p[0]), int(p[1]))
+		world_tiles[at] = true
+		theme.invalidate(world.set_points(at.x, at.y, tiles[k]))
+
+## The boxes in a /play/tiles reply (proto::tiles): [id, x0, y0, x1, y1, class] each.
+static func _tile_boxes(b: PackedByteArray) -> Array:
+	var out := []
+	if b.size() < 11 or b[0] != 1:
+		return out
+	var p := 11
+	for t in b.decode_u16(9):
+		if p + 8 > b.size():
+			return out
+		var k := b.decode_u32(p + 4)
+		p += 8
+		for i in k:
+			if p + 21 > b.size():
+				return out
+			out.append([b.decode_u32(p), b.decode_float(p + 4), b.decode_float(p + 8), b.decode_float(p + 12), b.decode_float(p + 16), b[p + 20]])
+			p += 21
+	return out
 
 # ---------------------------------------------------------------- building
 
@@ -405,6 +701,7 @@ func _poll_blocks(delta: float) -> void:
 		var cy := int(c[1])
 		var k := cy << 15 | cx
 		var kinds := String(c[3])
+		_crumble_gone(cx, cy, blocks.get(k, {}), int(c[2]), kinds)
 		changed[k] = true
 		if kinds == "":
 			blocks.erase(k)
@@ -414,6 +711,227 @@ func _poll_blocks(delta: float) -> void:
 	blocks_ver = int(d.get("ver", blocks_ver))
 	if not changed.is_empty():
 		theme.set_blocks(blocks, changed.keys())
+
+## Blocks that were in a column and are not now crumble, if they are near enough to see (anyone's, not only ours;
+## ours already crumbled when we broke them).
+func _crumble_gone(cx: int, cy: int, was: Dictionary, base: int, kinds: String) -> void:
+	if was.is_empty():
+		return
+	var bs := float(build["block"])
+	if me_pos.distance_to(Vector2((cx + 0.5) * bs, (cy + 0.5) * bs)) > 80.0:
+		return
+	var old := String(was["k"])
+	var b0 := int(was["b"])
+	for i in old.length():
+		if old[i] == ".":
+			continue
+		var z := b0 + i
+		var j := z - base
+		if kinds != "" and j >= 0 and j < kinds.length() and kinds[j] != ".":
+			continue
+		var cell := Vector3i(cx, cy, z)
+		if _break_sent.has(cell):
+			_break_sent.erase(cell)
+			continue
+		_crumble(cell, theme.block_kind(old[i]))
+
+## Holding the right button on a block (build mode): cracks spread, then it breaks and crumbles. The cracks start over
+## on whatever block the pointer moves to, so sweeping clears a row.
+func _mine(delta: float) -> void:
+	# Right button, X, or Shift with the left button (easier on a trackpad).
+	var pressed := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or Input.is_key_pressed(KEY_X) \
+		or (Input.is_key_pressed(KEY_SHIFT) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or args.has("breaking")
+	var held: bool = building and pressed and not hud.typing()
+	var cell := aim_break
+	for c in _break_sent.keys():
+		if t_total - float(_break_sent[c]) > 2.0:
+			_break_sent.erase(c) # the server never took it away (or we missed the change): let it be tried again
+	if held:
+		ghost.visible = false # while breaking, the cracks are what matters, not where a block would go
+	# Say once why the block under the pointer will not break.
+	if held and cell.x >= 0 and cell != _break_why and not _break_sent.has(cell):
+		if not _in_reach(cell):
+			_notice("too far to reach that block: get closer")
+			_break_why = cell
+		elif not _breakable(cell):
+			_notice("that block is someone else's")
+			_break_why = cell
+	if not held:
+		_break_why = Vector3i(-1, -1, 0)
+	if not held or cell.x < 0 or _break_sent.has(cell) or not _in_reach(cell) or not _breakable(cell):
+		_break_t = 0.0
+		_break_cell = Vector3i(-1, -1, 0)
+		cracks.visible = false
+		return
+	if cell != _break_cell:
+		_break_cell = cell
+		_break_t = 0.0
+	_break_t += delta
+	var f := clampf(_break_t / BREAK_SECS, 0.0, 1.0)
+	var bs := float(build["block"])
+	var at := Vector3((cell.x + 0.5) * bs, (cell.z + 0.5) * bs, (cell.y + 0.5) * bs)
+	# A small shudder that grows as it gives.
+	cracks.position = at + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.03 * f
+	cracks.visible = true
+	break_mark.visible = false # the cracks show which block it is
+	(cracks.material_override as StandardMaterial3D).albedo_texture = _crack_tex[mini(int(f * 4.0), 3)]
+	if f >= 1.0:
+		_build(false)
+		_break_sent[cell] = t_total
+		_crumble(cell, _kind_at(cell))
+		cracks.visible = false
+		_break_t = 0.0
+
+## The material of the block in a cell, by index (0 if there is none).
+func _kind_at(cell: Vector3i) -> int:
+	var c: Dictionary = blocks.get(cell.y << 15 | cell.x, {})
+	if c.is_empty():
+		return 0
+	var i := cell.z - int(c["b"])
+	var k := String(c["k"])
+	return theme.block_kind(k[i]) if i >= 0 and i < k.length() and k[i] != "." else 0
+
+## A block breaks apart: pieces of it in its own material burst out, tumble, land and fade, with a puff of dust.
+func _crumble(cell: Vector3i, kind: int) -> void:
+	crumbled += 1
+	var bs := float(build["block"])
+	var at := Vector3((cell.x + 0.5) * bs, (cell.z + 0.5) * bs, (cell.y + 0.5) * bs)
+	var base_mat = theme.block_material(kind)
+	var floor_y := _ground_under(at)
+	for i in 10:
+		var piece := MeshInstance3D.new()
+		var m := BoxMesh.new()
+		var sz := bs * randf_range(0.16, 0.3)
+		m.size = Vector3(sz, sz * randf_range(0.6, 1.0), sz * randf_range(0.7, 1.0))
+		piece.mesh = m
+		if base_mat is StandardMaterial3D:
+			var mat := (base_mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			piece.material_override = mat
+		else:
+			piece.material_override = base_mat
+		piece.position = at + Vector3(randf_range(-0.35, 0.35), randf_range(-0.35, 0.35), randf_range(-0.35, 0.35)) * bs
+		piece.rotation = Vector3(randf() * TAU, randf() * TAU, randf() * TAU)
+		add_child(piece)
+		var out := (piece.position - at).normalized()
+		_debris.append({"node": piece, "vel": out * randf_range(1.5, 4.0) + Vector3.UP * randf_range(2.0, 5.0),
+			"spin": Vector3(randf_range(-9, 9), randf_range(-9, 9), randf_range(-9, 9)), "life": randf_range(0.9, 1.4), "age": 0.0,
+			"floor": floor_y + sz * 0.5, "size": sz})
+	var dust := CPUParticles3D.new()
+	dust.one_shot = true
+	dust.explosiveness = 1.0
+	dust.amount = 18
+	dust.lifetime = 0.7
+	dust.position = at
+	dust.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	dust.emission_box_extents = Vector3.ONE * bs * 0.45
+	dust.direction = Vector3.UP
+	dust.spread = 80.0
+	dust.initial_velocity_min = 0.5
+	dust.initial_velocity_max = 1.6
+	dust.gravity = Vector3(0, -1.0, 0)
+	dust.scale_amount_min = 0.7
+	dust.scale_amount_max = 1.6
+	# Soft round puffs facing the camera, not balls.
+	var dm := QuadMesh.new()
+	dm.size = Vector2.ONE * bs * 0.5
+	dust.mesh = dm
+	var dmat := StandardMaterial3D.new()
+	dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	dmat.vertex_color_use_as_albedo = true
+	dmat.albedo_texture = _puff_tex()
+	dust.material_override = dmat
+	var ramp := Gradient.new()
+	ramp.set_color(0, Color(0.8, 0.76, 0.68, 0.45))
+	ramp.set_color(1, Color(0.8, 0.76, 0.68, 0.0))
+	dust.color_ramp = ramp
+	add_child(dust)
+	dust.emitting = true
+	get_tree().create_timer(1.2).timeout.connect(dust.queue_free)
+
+var _puff: Texture2D
+## A soft round spot, white in the middle and clear at the edge, for dust.
+func _puff_tex() -> Texture2D:
+	if _puff == null:
+		var g := Gradient.new()
+		g.set_color(0, Color(1, 1, 1, 1))
+		g.set_color(1, Color(1, 1, 1, 0))
+		var t := GradientTexture2D.new()
+		t.gradient = g
+		t.fill = GradientTexture2D.FILL_RADIAL
+		t.fill_from = Vector2(0.5, 0.5)
+		t.fill_to = Vector2(1.0, 0.5)
+		t.width = 64
+		t.height = 64
+		_puff = t
+	return _puff
+
+## Move the pieces of broken blocks: gravity, a bounce or two on the ground, then they shrink away.
+func _fly_debris(delta: float) -> void:
+	for i in range(_debris.size() - 1, -1, -1):
+		var d: Dictionary = _debris[i]
+		var n: MeshInstance3D = d["node"]
+		d["age"] += delta
+		var t: float = d["age"] / d["life"]
+		if t >= 1.0:
+			n.queue_free()
+			_debris.remove_at(i)
+			continue
+		var v: Vector3 = d["vel"]
+		v.y -= 18.0 * delta
+		n.position += v * delta
+		if n.position.y < d["floor"]:
+			n.position.y = d["floor"]
+			v = Vector3(v.x * 0.5, -v.y * 0.3, v.z * 0.5)
+			d["spin"] = d["spin"] * 0.5
+		d["vel"] = v
+		n.rotation += d["spin"] * delta
+		if t > 0.6:
+			var k := 1.0 - (t - 0.6) / 0.4
+			n.scale = Vector3.ONE * maxf(k, 0.01)
+			if n.material_override is StandardMaterial3D:
+				(n.material_override as StandardMaterial3D).albedo_color.a = k
+
+## Where a falling piece lands: the top of the ground or of the blocks under it.
+func _ground_under(at: Vector3) -> float:
+	var bs := float(build["block"])
+	var cx := int(floor(at.x / bs))
+	var cy := int(floor(at.z / bs))
+	var y := _height(at.x, at.z)
+	var c: Dictionary = blocks.get(cy << 15 | cx, {})
+	if not c.is_empty():
+		var z := int(floor(at.y / bs))
+		var k := String(c["k"])
+		for i in range(z - int(c["b"]) - 1, -1, -1):
+			if i < k.length() and k[i] != ".":
+				return maxf(y, (int(c["b"]) + i + 1) * bs)
+	return y
+
+## Crack pictures for a block giving way: lines that branch out from near the middle, more at each stage.
+func _make_cracks() -> Array[Texture2D]:
+	var out: Array[Texture2D] = []
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for stage in 4:
+		for line in 3 + stage * 2:
+			var p := Vector2(32 + rng.randf_range(-10, 10), 32 + rng.randf_range(-10, 10))
+			var a := rng.randf() * TAU
+			for step in 10 + stage * 4:
+				a += rng.randf_range(-0.6, 0.6)
+				p += Vector2(cos(a), sin(a)) * 2.0
+				if p.x < 0 or p.y < 0 or p.x >= 64 or p.y >= 64:
+					break
+				# Two pixels wide, so they read from a few blocks away.
+				for o in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)]:
+					var q: Vector2i = Vector2i(p) + o
+					if q.x < 64 and q.y < 64:
+						img.set_pixelv(q, Color(0.03, 0.025, 0.02, 0.95))
+		out.append(ImageTexture.create_from_image(img.duplicate()))
+	return out
 
 ## A column's layers as a bit mask, bit k for a block in its base layer + k.
 func _mask(kinds: String) -> int:
@@ -462,6 +980,17 @@ func _in_reach(cell: Vector3i) -> bool:
 		feet = _col_base(int(floor(me_pos.x / bs)), int(floor(me_pos.y / bs)))
 	return me_pos.distance_to(centre) <= reach and absf((cell.z - feet + 0.5) * bs) <= reach
 
+## Whether a block in this cell would land on us: the server's own test (sim.rs cell_free), within half a block
+## plus our radius and in our feet's layer. Such a build is refused, so it gets no ghost (in first person the
+## ghost would be all round the camera).
+func _on_me(cell: Vector3i) -> bool:
+	var bs := float(build["block"])
+	var r := float(info.get("entity_radius", 0.5))
+	var feet := my_layer
+	if feet == GROUND:
+		feet = _col_base(int(floor(me_pos.x / bs)), int(floor(me_pos.y / bs)))
+	return absf(me_pos.x - (cell.x + 0.5) * bs) < bs / 2.0 + r and absf(me_pos.y - (cell.y + 0.5) * bs) < bs / 2.0 + r and cell.z == feet
+
 ## In build mode: follow the mouse ray through the block grid. The first block it meets is the one a right click
 ## breaks, and the empty cell just before it is where a left click builds; where the ray meets the ground first,
 ## a block goes in that cell's lowest layer. Green in reach, red out of it (or, for a break, not yours).
@@ -473,7 +1002,7 @@ func _aim() -> void:
 	if not building or build.is_empty() or world_map.visible:
 		return
 	var bs := float(build["block"])
-	var mp := get_viewport().get_mouse_position()
+	var mp := _pointer()
 	var from := cam.project_ray_origin(mp)
 	var dir := cam.project_ray_normal(mp)
 	var prev := Vector3i(-1, -1, 0)
@@ -491,6 +1020,8 @@ func _aim() -> void:
 				break
 			prev = cell
 		t += 0.1
+	if aim_place.x >= 0 and _on_me(aim_place):
+		aim_place = Vector3i(-1, -1, 0)
 	if aim_place.x >= 0:
 		ghost.visible = true
 		ghost.position = Vector3((aim_place.x + 0.5) * bs, (aim_place.z + 0.5) * bs, (aim_place.y + 0.5) * bs)
@@ -519,6 +1050,24 @@ func _build(place: bool) -> void:
 ## The input's argument for a build or break: the layer in the low byte, the material in the high one.
 func _build_arg(layer: int, kind: int) -> int:
 	return (layer & 0xff) | kind << 8
+
+## Whether a straight walk from a to b (a body wide) meets no solid footprint the world data holds.
+func _path_clear(a: Vector2, b: Vector2) -> bool:
+	var r := float(info.get("entity_radius", 0.5)) + 0.3
+	var lo := Vector2(minf(a.x, b.x) - r, minf(a.y, b.y) - r)
+	var hi := Vector2(maxf(a.x, b.x) + r, maxf(a.y, b.y) + r)
+	for cy in range(int(floor(lo.y / world.CELL)), int(floor(hi.y / world.CELL)) + 1):
+		for cx in range(int(floor(lo.x / world.CELL)), int(floor(hi.x / world.CELL)) + 1):
+			for o in world.in_cell(cx, cy):
+				if not o.get("solid", false) or not o.has("b"):
+					continue
+				var f: Array = o["b"]
+				# Sample the walk every half unit against the footprint grown by the body.
+				for i in 21:
+					var p := a.lerp(b, i / 20.0)
+					if p.x > float(f[0]) - r and p.x < float(f[2]) + r and p.y > float(f[1]) - r and p.y < float(f[3]) + r:
+						return false
+	return true
 
 ## Move a character, face where it is going, and pick its animation from what changed since last frame.
 ## The protocol has no death or attack events, so they are read off the snapshots: health dropping is a hit,
@@ -633,7 +1182,7 @@ func _beside_nearest_building() -> String:
 	var best := "%f,%f" % [me_pos.x, me_pos.y]
 	var best_d := 1e12
 	for o in world.objects:
-		if not o.get("solid", false):
+		if not o.get("solid", false) or o.get("scenery", false):
 			continue
 		var b: Array = o["b"]
 		var c := Vector2((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
@@ -655,16 +1204,63 @@ func _weather(delta: float) -> void:
 	if fresh is Dictionary and str(fresh.get("content_hash", "")) == str(info.get("content_hash", "")):
 		var w = fresh.get("weather")
 		_apply_weather(w if w is Dictionary else {})
+		# The schedule can be edited live (the console's God tab): take it as it is now.
+		if fresh.get("daylight") is Dictionary:
+			theme.set_daylight(fresh["daylight"])
+		theme.set_zones(fresh.get("weather_zones", []) if fresh.get("weather_zones") is Array else [])
+		locations = fresh.get("locations", []) if fresh.get("locations") is Array else []
 
 func _apply_weather(w: Dictionary) -> void:
 	if w == weather:
 		return
 	weather = w
-	theme.apply_weather(w)
 	if w.is_empty():
 		hud.say("[color=#9fe8e0]The sky clears.[/color]")
+		hud.announce("The sky clears")
 	else:
 		hud.say("[color=#9fe8e0]Weather: %s.[/color]" % str(w.get("name", "")))
+		hud.announce(str(w.get("name", "")).capitalize(), Color(str(w.get("color", "#9fe8e0"))).lightened(0.3))
+	_show_weather()
+
+## Which titled place we stand in: the smallest one round us, so a village inside a forest is the village. We are
+## still in a place until LEAVE_MARGIN past its edge, so walking along the edge does not flicker the title.
+const LEAVE_MARGIN := 3.0
+func _where() -> void:
+	var best := ""
+	var best_r := INF
+	for l in locations:
+		var r := float(l.get("r", 0.0)) + (LEAVE_MARGIN if String(l.get("title", "")) == _here else 0.0)
+		if me_pos.distance_to(Vector2(float(l.get("x", 0.0)), float(l.get("y", 0.0)))) <= r and r < best_r:
+			best = String(l.get("title", ""))
+			best_r = r
+	if best == _here:
+		return
+	if best != "":
+		hud.show_location(best)
+		hud.say("[color=#ffd27a]%s[/color]" % best)
+	else:
+		hud.show_location(_here, true)
+	_here = best
+
+## What the theme draws: inside a weather zone its weather, elsewhere the weather everywhere (as the server applies
+## their effects). Called every frame; only a change reaches the theme.
+func _show_weather() -> void:
+	var z: Dictionary = theme.zone_at(me_pos)
+	var name := String(z.get("name", ""))
+	if name != _in_zone:
+		if name != "":
+			hud.say("[color=%s]You walk into the %s.[/color]" % [str(z.get("color", "#9fe8e0")), name])
+			hud.announce(name.capitalize(), Color(str(z.get("color", "#9fe8e0"))).lightened(0.3))
+		elif _in_zone != "":
+			hud.say("[color=#9fe8e0]You leave the %s.[/color]" % _in_zone)
+		_in_zone = name
+	var w: Dictionary = weather if z.is_empty() else {"name": z["weather"], "color": z["color"], "intensity": z["intensity"]}
+	if w != _shown_weather:
+		_shown_weather = w
+		theme.apply_weather(w)
+		# A change eases in over ten seconds, but the weather we find on joining is simply there.
+		if t_total < 3.0:
+			theme.snap_weather()
 
 func _height(x: float, y: float) -> float:
 	return theme.height(x, y) if theme else 0.0
@@ -681,7 +1277,19 @@ func _stand_height(p: Vector2, layer: int) -> float:
 func _swatch(kind: int) -> Texture2D:
 	var m = theme.block_material(kind)
 	if m is StandardMaterial3D and m.albedo_texture:
-		return m.albedo_texture
+		# A tinted texture (one stone three ways) shows its tint, or the swatches would look alike.
+		var src: Image = m.albedo_texture.get_image() if m.albedo_color != Color.WHITE else null
+		if src == null:
+			return m.albedo_texture
+		var img := src.duplicate() as Image
+		if img.is_compressed():
+			img.decompress()
+		img.convert(Image.FORMAT_RGBA8)
+		img.resize(32, 32)
+		for y in 32:
+			for x in 32:
+				img.set_pixel(x, y, img.get_pixel(x, y) * m.albedo_color)
+		return ImageTexture.create_from_image(img)
 	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
 	img.fill(m.albedo_color if m is StandardMaterial3D else Color.GRAY)
 	return ImageTexture.create_from_image(img)
@@ -738,6 +1346,20 @@ func _sync_ground() -> void:
 
 func _camera() -> void:
 	var me: Node3D = ents.get(net.get_self_id())
+	if me:
+		me.visible = not fpv # our own body would fill the view
+	# The mouse is ours to look with in first person, except while it is needed for the map or typing.
+	var grab: bool = fpv and not world_map.visible and not hud.typing()
+	var mode := Input.MOUSE_MODE_CAPTURED if grab else Input.MOUSE_MODE_VISIBLE
+	if Input.mouse_mode != mode:
+		Input.mouse_mode = mode
+	if fpv:
+		var feet := me.position.y if me else _height(me_pos.x, me_pos.y)
+		var eye := Vector3(me_pos.x, feet + 1.7 * theme.entity_scale, me_pos.y)
+		cam.position = eye
+		# Looking along the way W walks: (-sin yaw, -cos yaw) in the ground plane, tipped by the pitch.
+		cam.look_at(eye + Vector3(-sin(yaw) * cos(look_pitch), sin(look_pitch), -cos(yaw) * cos(look_pitch)))
+		return
 	var c := Vector3(me_pos.x, (me.position.y if me else _height(me_pos.x, me_pos.y)) + 1.0, me_pos.y)
 	var pitch := deg_to_rad(42.0)
 	cam.position = c + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * zoom
@@ -788,54 +1410,96 @@ func _drive() -> void:
 	var right := Vector2(cos(yaw), -sin(yaw))
 	net.set_move(fwd * f + right * r)
 
+## First person on or off. Aiming (targeting, building) then goes through the crosshair in the middle.
+func _set_fpv(on: bool) -> void:
+	fpv = on
+	look_pitch = -0.12
+	hud.set_crosshair(on)
+
+## Where the pointer aims: the mouse, or in first person the crosshair.
+func _pointer() -> Vector2:
+	return get_viewport().get_visible_rect().size / 2.0 if fpv else get_viewport().get_mouse_position()
+
 func _unhandled_input(ev: InputEvent) -> void:
 	if net == null:
 		return
+	if ev is InputEventMouseMotion and fpv and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		yaw -= ev.relative.x * LOOK
+		look_pitch = clampf(look_pitch - ev.relative.y * LOOK, -1.4, 1.4)
+		return
 	if ev is InputEventMouseButton and ev.pressed:
+		# Scrolling in past the closest view goes into first person, and scrolling out comes back.
 		if ev.button_index == MOUSE_BUTTON_WHEEL_UP:
+			if not fpv and zoom <= 8.0:
+				_set_fpv(true)
 			zoom = clampf(zoom - 2.0, 8.0, 60.0)
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			zoom = clampf(zoom + 2.0, 8.0, 60.0)
-		elif ev.button_index == MOUSE_BUTTON_LEFT and building:
-			_build(true)
-		elif ev.button_index == MOUSE_BUTTON_RIGHT and building:
-			_build(false)
+			if fpv:
+				_set_fpv(false)
+			else:
+				zoom = clampf(zoom + 2.0, 8.0, 60.0)
+		elif building:
+			# The right button breaks by being held (_mine), not by a click.
+			if ev.button_index == MOUSE_BUTTON_LEFT and not ev.shift_pressed:
+				_build(true)
 		elif ev.button_index == MOUSE_BUTTON_LEFT:
-			_pick(ev.position)
+			_pick(_pointer())
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
 		var k: int = ev.keycode
+		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
-			hud.chat_in.grab_focus()
-		elif k == KEY_TAB:
-			_cycle_target()
-		elif k == KEY_SPACE:
-			_attack()
+			hud.open_chat()
+		elif k == KEY_F1:
+			hud.toggle_help()
 		elif k == KEY_G:
 			_toggle_god()
 		elif k == KEY_J:
 			net.act(ACT_JUMP, 0)
 		elif k == KEY_M:
 			_toggle_map()
-		elif k == KEY_B and not build.is_empty():
-			building = not building
-		elif k == KEY_ESCAPE and building:
-			building = false
-		elif building and MATERIAL_KEYS.has(k) and MATERIAL_KEYS.find(k) < int(build.get("kinds", 4)):
-			build_kind = MATERIAL_KEYS.find(k)
-		elif k == KEY_ESCAPE and world_map.visible:
-			world_map.visible = false
+		elif k == KEY_V:
+			_set_fpv(not fpv)
+		elif k == KEY_L:
+			_cycle_torch()
 		elif k == KEY_F11:
 			var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
-		elif k == KEY_F:
-			net.pickup()
-		elif k >= KEY_1 and k <= KEY_8:
-			if ev.shift_pressed:
-				net.drop_slot(k - KEY_1)
-			else:
-				net.use_slot(k - KEY_1)
+		elif k == KEY_ESCAPE and world_map.visible:
+			world_map.visible = false
+		elif k == KEY_ESCAPE and hud.help.visible:
+			hud.toggle_help()
+		elif k == KEY_B:
+			_set_building(not building)
+		elif building:
+			# Build mode: the number row picks a material and nothing else, so it never doubles as an item key.
+			if k == KEY_ESCAPE:
+				_set_building(false)
+			elif MATERIAL_KEYS.has(k) and MATERIAL_KEYS.find(k) < int(build.get("kinds", 4)):
+				build_kind = MATERIAL_KEYS.find(k)
+		else:
+			# Action mode: fight, target and items.
+			if k == KEY_ESCAPE and fpv:
+				_set_fpv(false)
+			elif k == KEY_TAB:
+				_cycle_target()
+			elif k == KEY_SPACE:
+				_attack()
+			elif k == KEY_F:
+				net.pickup()
+			elif k >= KEY_1 and k <= KEY_8:
+				if ev.shift_pressed:
+					net.drop_slot(k - KEY_1)
+				else:
+					net.use_slot(k - KEY_1)
+
+## Switch between action mode and build mode. There is no build mode when the server offers no building.
+func _set_building(on: bool) -> void:
+	building = on and not build.is_empty()
 
 func _on_chat(text: String) -> void:
+	if text.begins_with("/name "):
+		net.set_display_name(text.trim_prefix("/name ").strip_edges())
+		return
 	var shout := text.begins_with("!")
 	net.say(text.trim_prefix("!").strip_edges(), shout)
 
@@ -845,7 +1509,7 @@ func _on_chat(text: String) -> void:
 ## The world map (M): the theme paints the picture once; you and what is around you are drawn on top.
 func _toggle_map() -> void:
 	if not world_map.visible and not world_map.built:
-		world_map.build(theme.map_image(640), world.size)
+		world_map.build(theme.map_image(512), world.size)
 	world_map.visible = not world_map.visible
 
 func _attack() -> void:
@@ -888,6 +1552,38 @@ func _nearest_in(r: float) -> int:
 func _notice(text: String) -> void:
 	notice = text
 	notice_until = t_total + 2.5
+	hud.notify(text)
+
+func _cycle_torch() -> void:
+	theme.torch_mode = (theme.torch_mode + 1) % 3
+	_notice(["Torch: lit when it is dark", "Torch: always lit", "Torch: out"][theme.torch_mode])
+
+## The action bar's ability buttons do what their keys do.
+func _on_ability(name: String) -> void:
+	match name:
+		"attack":
+			_attack()
+		"jump":
+			net.act(ACT_JUMP, 0)
+		"torch":
+			_cycle_torch()
+		"map":
+			_toggle_map()
+		"build":
+			_set_building(not building)
+
+## The frame bars for an entity: every replicated attribute except the bookkeeping ones (airborne, lit).
+func _bars(e: Dictionary, mine: bool) -> Array:
+	var out := []
+	for a in info.get("attrs", []):
+		var n := String(a["name"])
+		if not a.get("replicated", false) or n == "airborne" or n == "lit" or not e.has(n):
+			continue
+		var mx := maxf(float(a["max"]), 1.0)
+		var v := float(e[n])
+		var col := Color("c23b2e") if n == health_idx else Color("3f7fd0") if n.contains("energy") or n.contains("mana") else Color("d0a03f")
+		out.append([n, v / mx, "%d / %d" % [int(v), int(mx)] if mine else "%d%%" % int(round(v / mx * 100.0)), col])
+	return out
 
 ## God mode lives on the server (admin API, loopback only): your attributes are held at full every tick.
 func _toggle_god() -> void:
@@ -948,10 +1644,12 @@ func _request_text(url: String, method: int, body: String) -> int:
 	r.request(url, ["Content-Type: application/json", "X-Admin: 1"], method, body)
 	var res: Array = await r.request_completed
 	r.queue_free()
+	if res[1] != 200:
+		print("%s said %d: %s" % [url, res[1], (res[3] as PackedByteArray).get_string_from_utf8().left(300)])
 	return res[1]
 
 func _check(name: String, ok: bool, extra := "") -> void:
-	smoke_log.append("%s %s %s" % ["PASS" if ok else "FAIL", name, extra])
+	smoke_log.append("%s %s %s  (%.1f s)" % ["PASS" if ok else "FAIL", name, extra, Time.get_ticks_msec() / 1000.0])
 	print(smoke_log[-1])
 	if not ok:
 		print("SMOKE FAIL")
@@ -969,7 +1667,7 @@ func _smoke() -> void:
 	var ok := await _wait(10.0, func(): return net.get_status() == 1 and net.get_self_id() != 0 and ents.has(net.get_self_id()))
 	_check("joins and sees itself", ok, "id=%d" % net.get_self_id())
 	_check("replicated attribute present", health_idx != "", health_idx)
-	_check("world loaded and themed", world != null and theme != null, "%d objects" % world.objects.size())
+	_check("world loaded and themed", world != null and theme != null, "%d objects, %d by tile so far" % [world.objects.size(), world.point_count()])
 	# Walk east; if a wall happens to be in the way, try the other directions.
 	var start := me_pos
 	for dir in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
@@ -981,6 +1679,9 @@ func _smoke() -> void:
 			break
 	net.set_move(Vector2.ZERO)
 	_check("walks", me_pos.distance_to(start) > 5.0, "moved %.1f" % me_pos.distance_to(start))
+	if world_parts:
+		var streamed := await _wait(5.0, func(): return world.point_count() > 0 and world_tiles.size() >= 9)
+		_check("trees and rocks stream in by tile", streamed, "%d objects in %d tiles" % [world.point_count(), world_tiles.size()])
 	# Whatever the theme wants checked about its own drawing.
 	for c in theme.smoke_checks():
 		_check(String(c[0]), bool(c[1]), String(c[2]))
@@ -997,8 +1698,11 @@ func _smoke() -> void:
 		var bs := float(build["block"])
 		var built := -1
 		var base := 0
-		for off in [Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4)]:
+		for off in [Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4), Vector2(3, 3), Vector2(-3, -3), Vector2(3, -3), Vector2(-3, 3)]:
 			var at: Vector2 = me_pos + off
+			# Trees and rocks are solid: build where the walk onto the block is not through a trunk.
+			if not _path_clear(me_pos, at):
+				continue
 			var c := Vector2i(int(floor(at.x / bs)), int(floor(at.y / bs)))
 			base = _col_base(c.x, c.y)
 			net.act_arg(int(build["act_build"]), c.x | c.y << 15, _build_arg(base, 2))
@@ -1019,11 +1723,12 @@ func _smoke() -> void:
 			net.set_move((top - me_pos).normalized())
 			ok = await _wait(3.0, func(): return my_layer == base + 1)
 			net.set_move(Vector2.ZERO)
-			_check("climbs onto it", ok, "layer %d (block in %d) at %.1f, %.1f" % [my_layer, base, me_pos.x, me_pos.y])
+			_check("climbs onto it", ok, "layer %d (block in %d, ground layer %d) at %.1f, %.1f, %.1f from the block, started %.1f away" % [my_layer, base, _col_base(int(floor(back.x / bs)), int(floor(back.y / bs))), me_pos.x, me_pos.y, me_pos.distance_to(top), back.distance_to(top)])
 			var drawn: Node3D = ents.get(net.get_self_id())
-			await get_tree().create_timer(0.5).timeout
 			var block_top := (base + 1) * bs
-			_check("and is drawn on top", drawn != null and drawn.position.y > block_top - 0.2, "y %.2f, block top %.2f" % [drawn.position.y if drawn else -1.0, block_top])
+			# The drawn character eases up onto the block, so give it a moment to arrive.
+			ok = await _wait(2.0, func(): return drawn != null and drawn.position.y > block_top - 0.2)
+			_check("and is drawn on top", ok, "y %.2f, block top %.2f" % [drawn.position.y if drawn else -1.0, block_top])
 			net.set_move((back - me_pos).normalized())
 			ok = await _wait(3.0, func(): return my_layer == GROUND)
 			net.set_move(Vector2.ZERO)
@@ -1040,6 +1745,36 @@ func _smoke() -> void:
 			blocks_poll = 0.2
 			ok = await _wait(3.0, func(): return not blocks.has(built))
 			_check("and breaks that too", ok, "")
+			_check("blocks that go crumble", crumbled >= 2, "%d crumbled" % crumbled)
+			# Night: the time of day comes from the schedule as the server works it out, the torch lights, and a
+			# lamp block gives light.
+			var dl: Dictionary = info.get("daylight", {}) if info.get("daylight") is Dictionary else {}
+			var smp: Array = dl.get("sample", [0, -1])
+			var mine: float = theme.daylight_phase(dl, float(smp[0]))
+			_check("works out the time of day as the server does", absf(mine - float(smp[1])) < 1e-6, "%.6f vs %.6f (%s)" % [mine, float(smp[1]), dl.get("mode", "?")])
+			var was: float = theme.time_override
+			theme.time_override = 0.8
+			ok = await _wait(3.0, func(): return theme.darkness > 0.8 and theme.torch_lit())
+			_check("at night our torch is lit", ok, "darkness %.2f" % theme.darkness)
+			net.act_arg(int(build["act_build"]), bx | by << 15, _build_arg(base, 12))
+			blocks_poll = 0.2
+			ok = await _wait(3.0, func(): return blocks.has(built) and String(blocks[built]["k"]).begins_with("c"))
+			await get_tree().create_timer(0.5).timeout
+			_check("a lamp block gives light", ok and theme.lights_burning() > 0, "%s, %d light(s)" % [blocks.get(built, {}), theme.lights_burning()])
+			if has_lit:
+				# Sneak: put the light out at night and the server knows (everyone else then hides our name).
+				theme.torch_mode = 2
+				ok = await _wait(5.0, func(): return not my_lit)
+				_check("putting the light out tells the server (sneaking)", ok, "lit %s" % my_lit)
+				theme.torch_mode = 0
+				ok = await _wait(5.0, func(): return my_lit)
+				_check("and lighting it again", ok, "lit %s" % my_lit)
+			theme.time_override = 0.25
+			ok = await _wait(3.0, func(): return theme.lights_burning() == 0 and not theme.torch_lit())
+			_check("and at noon the lights are out", ok, "%d light(s)" % theme.lights_burning())
+			theme.time_override = was
+			net.act_arg(int(build["act_break"]), bx | by << 15, _build_arg(base, 0))
+			blocks_poll = 0.2
 	# Weather: define one, start it from the admin side, and the client should pick it up and make it rain.
 	var admin_url := "http://%s" % args["admin"]
 	var got := await _fetch(admin_url + "/api/game")
@@ -1059,10 +1794,36 @@ func _smoke() -> void:
 		weather_poll = 0.0
 		ok = await _wait(10.0, func(): return weather.get("name", "") == "smoke-rain")
 		_check("client shows the weather", ok, str(weather))
+		_check("and the theme draws it", theme.weather_drawn() != "", theme.weather_drawn())
 		await _post(admin_url + "/api/weather", {"name": null})
 		weather_poll = 0.0
 		ok = await _wait(10.0, func(): return weather.is_empty())
 		_check("and clears it", ok, str(weather))
+		# A weather zone round us: drawn as mist, and inside it its weather is the one we see; switched off live.
+		var g2 := await _fetch(admin_url + "/api/game")
+		var pl := g2.find("[", g2.find('"places"')) + 1 # the list's first character, however it is spaced
+		if pl > 0 and not g2.contains('"zones"'):
+			var empty := g2.substr(pl).strip_edges().begins_with("]")
+			g2 = g2.insert(pl, '{"name":"smoke-haunt","x":%d,"y":%d,"r":15,"title":"Smoke Hollow"}' % [int(me_pos.x), int(me_pos.y)] + ("" if empty else ","))
+			g2 = '{"zones":[{"name":"smoke-mist","place":"smoke-haunt","weather":"smoke-rain"}],' + g2.substr(1)
+			if not g2.contains('"events"'):
+				g2 = '{"events":[{"name":"smoke-raid","place":"smoke-haunt","steps":[{"kind":"announce","text":"The smoke rises","banner":true,"nearby":true}]}],' + g2.substr(1)
+			_check("a weather zone is defined", await _request_text(admin_url + "/api/game", HTTPClient.METHOD_PUT, g2) == 200, "")
+			weather_poll = 0.0
+			ok = await _wait(10.0, func(): return theme.zone_count() > 0 and _in_zone == "smoke-mist")
+			_check("it is drawn and we are in it", ok, "%d zone(s), in '%s'" % [theme.zone_count(), _in_zone])
+			_check("and its weather is what we see", theme.weather_drawn() != "", theme.weather_drawn())
+			ok = await _wait(10.0, func(): return _here == "Smoke Hollow")
+			_check("its title is the location we are in", ok, "'%s'" % _here)
+			_check("and it fades in", await _wait(3.0, func(): return hud.location.modulate.a > 0.9), "alpha %.2f" % hud.location.modulate.a)
+			# An event's banner, to those nearby: across our screen.
+			_check("an event can be started", await _post(admin_url + "/api/events/fire", {"name": "smoke-raid"}) == 200, "")
+			ok = await _wait(5.0, func(): return hud.banner.text == "The smoke rises" and hud.banner.modulate.a > 0.5)
+			_check("its banner goes across the screen", ok, "'%s'" % hud.banner.text)
+			_check("it switches off live", await _post(admin_url + "/api/zone", {"name": "smoke-mist", "on": false}) == 200, "")
+			weather_poll = 0.0
+			ok = await _wait(10.0, func(): return theme.zone_count() == 0 and _in_zone == "")
+			_check("and is gone", ok, "%d zone(s)" % theme.zone_count())
 	var items: Array = info.get("items", [])
 	if items.is_empty():
 		print("SMOKE ok (no items defined)")

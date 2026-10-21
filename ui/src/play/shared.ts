@@ -1,4 +1,5 @@
 import type { PlayInfo } from './client'
+import { NameBook } from './names'
 
 /** What the 3D scene works out each frame and the HUD reads. */
 export interface Target {
@@ -19,9 +20,58 @@ export interface Weather {
   intensity: number
 }
 
+/** A weather zone that is on (/play/info weather_zones): its weather stands over a place. */
+export interface ZoneView extends Weather {
+  /** The weather's name (`name` is the zone's). */
+  weather: string
+  x: number
+  y: number
+  r: number
+  height: number
+}
+
+/** The zone (smallest, where they overlap) holding (x, y), or null. */
+export function zoneAt(zones: readonly ZoneView[], x: number, y: number): ZoneView | null {
+  let best: ZoneView | null = null
+  for (const z of zones) if ((x - z.x) ** 2 + (y - z.y) ** 2 <= z.r * z.r && (!best || z.r < best.r)) best = z
+  return best
+}
+
+/** A titled place (/play/info locations): players are told its title as they walk in and out. */
+export interface LocationView {
+  title: string
+  x: number
+  y: number
+  r: number
+}
+
+/** How far past a location's edge we still count as in it, so walking along the edge does not flicker its title. */
+export const LEAVE_MARGIN = 3
+
+/** The title of the location holding (x, y), the smallest where they overlap (a village inside a forest is the
+ *  village), or null. `here` is the one we were in: we stay in it until LEAVE_MARGIN past its edge. */
+export function locationAt(locs: readonly LocationView[], x: number, y: number, here: string | null): string | null {
+  let best: LocationView | null = null
+  let bestR = Infinity
+  for (const l of locs) {
+    const r = l.r + (l.title === here ? LEAVE_MARGIN : 0)
+    if ((x - l.x) ** 2 + (y - l.y) ** 2 <= r * r && r < bestR) {
+      best = l
+      bestR = r
+    }
+  }
+  return best?.title ?? null
+}
+
 export interface Shared {
-  /** What the server says the weather is; the scene draws it, the HUD names it. */
+  /** What the server says the weather is everywhere. */
   weather: Weather | null,
+  /** Weather zones that are on. */
+  zones: ZoneView[]
+  /** Titled places. */
+  locations: LocationView[]
+  /** What the scene is drawing where we stand: a zone's weather inside one, else `weather`. The HUD names it. */
+  shown: Weather | null
   target: Target | null
   /** An entity the player chose by clicking or pressing T; null means "whatever is nearest". */
   selected: number | null
@@ -30,9 +80,11 @@ export interface Shared {
   items: NonNullable<PlayInfo['items']>
   /** Camera distance multiplier, 0.5 (close) to 1.8 (far). */
   zoom: number
+  /** What everyone is called (/play/names). */
+  names: NameBook
 }
 
-export const newShared = (): Shared => ({ weather: null, target: null, selected: null, fps: 0, items: [], zoom: 1 })
+export const newShared = (): Shared => ({ weather: null, zones: [], locations: [], shown: null, target: null, selected: null, fps: 0, items: [], zoom: 1, names: new NameBook() })
 
 export const ZOOM_MIN = 0.5
 export const ZOOM_MAX = 1.8

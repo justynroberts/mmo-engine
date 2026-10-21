@@ -4,9 +4,28 @@
 //! zap), applies delta snapshots with the same `ClientView` a game client would
 //! use, acks them, and measures input-to-ack latency. Because it decodes every
 //! snapshot, it also catches protocol corruption, not just throughput problems.
+//!
+//! Bad networks are emulated per bot: a one-way delay, jitter (which reorders) and loss in each direction
+//! (`--latency`, `--jitter`, `--loss`), and a second, worse link for the last `--slow` bots. The summary reports
+//! the two groups apart, so a run shows whether the slow ones cost the others anything.
 
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
+
+/// A bot's network: each packet, either way, is lost with probability `loss` or else arrives `delay` plus up to
+/// `jitter` later (so packets can overtake each other).
+#[derive(Clone, Copy, Default)]
+struct Link {
+    delay: Duration,
+    jitter: Duration,
+    loss: f32,
+}
+
+impl Link {
+    fn is_perfect(&self) -> bool {
+        self.delay.is_zero() && self.jitter.is_zero() && self.loss <= 0.0
+    }
+}
 
 use proto::game::GameFile;
 use proto::secure::{from_hex32, ClientHs, HsError, Session};
@@ -31,6 +50,12 @@ struct Config {
     /// Fixed identity for bot 0 (from --account/--passphrase or --recovery-code).
     identity: Option<[u8; 32]>,
     print_recovery: bool,
+    /// Every bot's network, and the last `slow` bots' instead.
+    link: Link,
+    slow: usize,
+    slow_link: Link,
+    /// How often an emulated link delivers packets, per second.
+    link_hz: u32,
 }
 
 fn usage(msg: &str) -> ! {
@@ -38,7 +63,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -58,7 +83,13 @@ fn parse_args() -> Config {
         persist: false,
         identity: None,
         print_recovery: false,
+        link: Link::default(),
+        slow: 0,
+        slow_link: Link { delay: Duration::from_millis(400), jitter: Duration::from_millis(150), loss: 0.10 },
+        link_hz: 100,
     };
+    let ms = |v: String, n: &str| Duration::from_secs_f64(v.parse::<f64>().unwrap_or_else(|_| usage(&format!("bad {n}"))).max(0.0) / 1000.0);
+    let pct = |v: String, n: &str| (v.parse::<f32>().unwrap_or_else(|_| usage(&format!("bad {n}"))) / 100.0).clamp(0.0, 1.0);
     let (mut account, mut pass): (Option<String>, Option<String>) = (None, None);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -87,6 +118,14 @@ fn parse_args() -> Config {
                 c.identity = Some(proto::secure::parse_recovery_code(&val(a)).unwrap_or_else(|| usage("that recovery code has a typo in it")))
             }
             "--print-recovery" => c.print_recovery = true,
+            "--latency" => c.link.delay = ms(val(a), a),
+            "--jitter" => c.link.jitter = ms(val(a), a),
+            "--loss" => c.link.loss = pct(val(a), a),
+            "--slow" => c.slow = val(a).parse().unwrap_or_else(|_| usage("bad --slow")),
+            "--slow-latency" => c.slow_link.delay = ms(val(a), a),
+            "--slow-jitter" => c.slow_link.jitter = ms(val(a), a),
+            "--slow-loss" => c.slow_link.loss = pct(val(a), a),
+            "--link-hz" => c.link_hz = val(a).parse().unwrap_or_else(|_| usage("bad --link-hz")),
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -130,6 +169,74 @@ struct Bot {
     chat: proto::chat::ChatClient,
     chat_n: u32,
     chat_buf: Vec<u8>,
+    /// The emulated network: packets on their way in and out, each with when it arrives.
+    link: Link,
+    slow: bool,
+    link_rng: Rng,
+    inbox: Vec<(Instant, Vec<u8>)>,
+    outbox: Vec<(Instant, Vec<u8>)>,
+}
+
+impl Bot {
+    fn arrives(&mut self, now: Instant) -> Option<Instant> {
+        if self.link.loss > 0.0 && self.link_rng.f32() < self.link.loss {
+            return None;
+        }
+        let j = if self.link.jitter.is_zero() { Duration::ZERO } else { self.link.jitter.mul_f32(self.link_rng.f32()) };
+        Some(now + self.link.delay + j)
+    }
+
+    /// Send over the emulated link (straight out when it is perfect).
+    fn send(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.link.is_perfect() {
+            return self.sock.send(bytes);
+        }
+        if let Some(at) = self.arrives(Instant::now()) {
+            self.outbox.push((at, bytes.to_vec()));
+        }
+        Ok(bytes.len())
+    }
+
+    /// Put out what is due, and take in everything that has reached the socket onto the emulated link.
+    fn pump(&mut self, now: Instant, buf: &mut [u8]) {
+        let mut i = 0;
+        while i < self.outbox.len() {
+            if self.outbox[i].0 <= now {
+                let (_, p) = self.outbox.swap_remove(i);
+                let _ = self.sock.send(&p);
+            } else {
+                i += 1;
+            }
+        }
+        while let Ok(n) = self.sock.recv(buf) {
+            if let Some(at) = self.arrives(now) {
+                self.inbox.push((at, buf[..n].to_vec()));
+            }
+        }
+    }
+
+    /// The next packet that has arrived, copied into `buf`: from the socket on a perfect link, else the emulated
+    /// one's earliest due packet. None when nothing is waiting.
+    fn recv(&mut self, now: Instant, buf: &mut [u8]) -> Option<usize> {
+        if self.link.is_perfect() {
+            return self.sock.recv(buf).ok();
+        }
+        let i = (0..self.inbox.len()).filter(|&i| self.inbox[i].0 <= now).min_by_key(|&i| self.inbox[i].0)?;
+        let (_, p) = self.inbox.swap_remove(i);
+        let n = p.len().min(buf.len());
+        buf[..n].copy_from_slice(&p[..n]);
+        Some(n)
+    }
+}
+
+/// What one group of bots saw.
+#[derive(Default)]
+struct Group {
+    snaps: u64,
+    rtts: Vec<u32>,
+    reconnects: u64,
+    missing_baseline: u64,
+    stale: u64,
 }
 
 #[derive(Default)]
@@ -236,10 +343,20 @@ fn main() {
             chat: Default::default(),
             chat_n: 0,
             chat_buf: Vec::new(),
+            link: if i >= cfg.bots.saturating_sub(cfg.slow) { cfg.slow_link } else { cfg.link },
+            slow: i >= cfg.bots.saturating_sub(cfg.slow),
+            link_rng: Rng::new(cfg.seed.wrapping_mul(7_919).wrapping_add(i as u64 * 31)),
+            inbox: Vec::new(),
+            outbox: Vec::new(),
         });
     }
 
-    let dt = Duration::from_secs_f64(1.0 / cfg.hz as f64);
+    // With an emulated network the loop runs at --link-hz, delivering packets when they are due, and the bots still
+    // send input at --hz; without one it runs at --hz as it always did.
+    let emulated = !cfg.link.is_perfect() || (cfg.slow > 0 && !cfg.slow_link.is_perfect());
+    let passes = if emulated { (cfg.link_hz / cfg.hz).max(1) } else { 1 };
+    let dt = Duration::from_secs_f64(1.0 / (cfg.hz * passes) as f64);
+    let mut groups = [Group::default(), Group::default()];
     let start = Instant::now();
     let mut next = start + dt;
     let mut buf = [0u8; 2048];
@@ -276,6 +393,8 @@ fn main() {
         }
         next += dt;
         tick += 1;
+        // Inputs, hellos and chat go out on every `passes`-th pass; every pass delivers what has arrived.
+        let input_pass = tick % passes as u64 == 0;
 
         // Ramp connections up gradually.
         let should = (((start.elapsed().as_secs_f64()) * cfg.ramp as f64) as usize).min(cfg.bots);
@@ -289,10 +408,14 @@ fn main() {
             if matches!(b.state, State::Idle | State::Rejected | State::Untrusted) {
                 continue;
             }
-            // Receive everything waiting.
+            // Receive everything waiting (on an emulated link, everything that is due).
+            let g = b.slow as usize;
+            if !b.link.is_perfect() {
+                b.pump(Instant::now(), &mut buf);
+            }
             loop {
-                match b.sock.recv(&mut buf) {
-                    Ok(n) if n > 0 => {
+                match b.recv(Instant::now(), &mut buf) {
+                    Some(n) if n > 0 => {
                         let t = Instant::now();
                         b.last_rx = t;
                         match buf[0] {
@@ -375,6 +498,7 @@ fn main() {
                                 match decode_snapshot(inner, &defs, &mut b.view) {
                                     Ok(info) if !info.stale => {
                                         tot.snaps += 1;
+                                        groups[g].snaps += 1;
                                         tot.snap_bytes += n as u64;
                                         tot.visible += b.view.entries().len() as u64;
                                         w_snaps += 1;
@@ -409,37 +533,49 @@ fn main() {
                                                 let us = (t - at).as_micros() as u32;
                                                 rtts.push(us);
                                                 window_rtts.push(us);
+                                                groups[g].rtts.push(us);
                                                 b.rtt_seq = s;
                                             }
                                         }
                                     }
-                                    Ok(_) => tot.stale += 1,
-                                    Err(DecodeError::MissingBaseline) => tot.missing_baseline += 1,
+                                    Ok(_) => {
+                                        tot.stale += 1;
+                                        groups[g].stale += 1;
+                                    }
+                                    Err(DecodeError::MissingBaseline) => {
+                                        tot.missing_baseline += 1;
+                                        groups[g].missing_baseline += 1;
+                                    }
                                     Err(_) => tot.decode_err += 1,
                                 }
                             }
                             _ => tot.decode_err += 1,
                         }
                     }
-                    Ok(_) => {}
-                    Err(_) => break, // WouldBlock
+                    Some(_) => {}
+                    None => break, // nothing (more) has arrived
                 }
+            }
+            if !input_pass {
+                continue;
             }
 
             match b.state {
                 State::Connecting => {
                     if b.last_hello.elapsed() >= Duration::from_millis(250) {
                         // HELLO until a CHALLENGE arrives, then CONNECT until the ACCEPT does.
-                        let _ = match b.hs.connect_packet() {
-                            Some(c) => b.sock.send(c),
-                            None => b.sock.send(&b.hs.hello()),
+                        let pkt = match b.hs.connect_packet() {
+                            Some(c) => c.to_vec(),
+                            None => b.hs.hello().to_vec(),
                         };
+                        let _ = b.send(&pkt);
                         b.last_hello = Instant::now();
                     }
                 }
                 State::Playing => {
                     // Server restarted, dropped us or changed content: start over with fresh keys.
                     if b.last_rx.elapsed() > Duration::from_secs(3) {
+                        groups[g].reconnects += 1;
                         b.hs = new_hs(&cfg, bi, hash);
                         b.session = None;
                         b.chat = Default::default();
@@ -491,7 +627,7 @@ fn main() {
                     if b.chat.outgoing(&mut b.chat_buf) {
                         if let Some(sess) = b.session.as_mut() {
                             if sess.seal(&b.chat_buf, &mut sealed) {
-                                let _ = b.sock.send(&sealed);
+                                let _ = b.send(&sealed);
                             }
                         }
                     }
@@ -515,7 +651,7 @@ fn main() {
                     );
                     if let Some(sess) = b.session.as_mut() {
                         if sess.seal(&out, &mut sealed) {
-                            match b.sock.send(&sealed) {
+                            match b.send(&sealed) {
                                 Ok(_) => tot.inputs_sent += 1,
                                 Err(_) => tot.send_errors += 1,
                             }
@@ -526,7 +662,7 @@ fn main() {
             }
         }
 
-        if last_report.elapsed() >= Duration::from_secs(1) {
+        if input_pass && last_report.elapsed() >= Duration::from_secs(1) {
             let secs = last_report.elapsed().as_secs_f64();
             window_rtts.sort_unstable();
             let playing = bots.iter().filter(|b| b.state == State::Playing).count();
@@ -609,6 +745,28 @@ fn main() {
     if cfg.chat > 0.0 {
         let pending: usize = bots.iter().map(|b| b.chat.unsent()).sum();
         println!("chat: lines sent {}, lines received {} (say is heard nearby, shout by all), malformed {}, still unacknowledged {}", tot.chat_sent, tot.chat_rx, tot.chat_bad, pending);
+    }
+    if cfg.slow > 0 {
+        // The two groups apart: the question is whether the slow ones cost the others anything.
+        for (g, name) in [(0usize, "normal"), (1, "slow")] {
+            let n = if g == 0 { cfg.bots - cfg.slow.min(cfg.bots) } else { cfg.slow.min(cfg.bots) };
+            let l = if g == 0 { cfg.link } else { cfg.slow_link };
+            let gr = &mut groups[g];
+            gr.rtts.sort_unstable();
+            let playing = bots.iter().filter(|b| b.slow == (g == 1) && b.state == State::Playing).count();
+            println!(
+                "group {name:>6} ({n} bots, {:.0}+{:.0} ms, {:.0}% loss each way): playing {playing}, snapshots {:.1}/s per bot, input->ack p50 {:.1} p99 {:.1} ms, reconnects {}, missing baseline {}, stale {}",
+                l.delay.as_secs_f64() * 1000.0,
+                l.jitter.as_secs_f64() * 1000.0,
+                l.loss * 100.0,
+                gr.snaps as f64 / wall / n.max(1) as f64,
+                pct(&gr.rtts, 0.5) as f64 / 1000.0,
+                pct(&gr.rtts, 0.99) as f64 / 1000.0,
+                gr.reconnects,
+                gr.missing_baseline,
+                gr.stale
+            );
+        }
     }
     println!("tester late ticks {late_ticks} of {tick} (if high, the load generator, not the server, is the bottleneck)");
 }

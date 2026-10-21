@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 mod interp;
 
 use proto::chat::{self, ChatClient};
+use proto::tiles::TileStream;
 use proto::world::World;
 use proto::Predictor;
 use proto::secure::{self, ClientHs, Session};
@@ -25,6 +26,9 @@ pub const MMO_CONNECTING: i32 = 0;
 pub const MMO_PLAYING: i32 = 1;
 pub const MMO_REJECTED: i32 = 2;
 pub const MMO_CLOSED: i32 = 3;
+/// The server handed us to another zone and we were asked not to follow by ourselves (`mmo_follow_redirects`):
+/// `mmo_moved` says where to go.
+pub const MMO_MOVED: i32 = 4;
 
 /// One entity as the client last saw it. Positions are world units.
 #[repr(C)]
@@ -85,6 +89,9 @@ pub struct Client {
     action: u8,
     target: u32,
     arg: u16,
+    /// Whether our light is on (None until the host says), and whether the server still has to hear it.
+    light: Option<bool>,
+    light_dirty: bool,
     sent: Vec<(u32, Instant)>,
     rtt_ms: f32,
     last_rx: Instant,
@@ -95,12 +102,18 @@ pub struct Client {
     ents: Vec<MmoEntity>,
     err: String,
     world: World,
+    /// The walls by tile, when the world streams them (`/play/info` walls.inline false).
+    tiles: Option<TileStream>,
     pred: Option<Predictor>,
     hist: interp::History,
     t0: Instant,
     last_poll: Instant,
     /// Where our own entity is drawn: the prediction, smoothed.
     vis: Option<(f32, f32)>,
+    /// Follow a zone handoff by reconnecting here (strips of one world), or stop and say where (`MMO_MOVED`) so
+    /// the host can load the new zone's map first (zone lines).
+    follow: bool,
+    moved: Option<wire::Redirect>,
 }
 
 fn new_hs(c: &Client) -> ClientHs {
@@ -200,6 +213,19 @@ pub unsafe extern "C" fn mmo_recovery_code(identity: *const c_char, out: *mut c_
     code.len() as i32
 }
 
+/// The walls `/play/info` carries inline, or, for a world that streams them, none yet and a stream to fetch them by.
+fn walls_of(v: &serde_json::Value, size: f32) -> (Vec<proto::Aabb>, Option<TileStream>) {
+    if v["walls"]["inline"] == false {
+        let ver = v["walls"]["ver"].as_str().and_then(|h| u64::from_str_radix(h, 16).ok()).unwrap_or(0);
+        return (Vec::new(), Some(TileStream::new(size, ver)));
+    }
+    let boxes = v["boxes"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|b| Some(proto::Aabb { x0: b[0].as_f64()? as f32, y0: b[1].as_f64()? as f32, x1: b[2].as_f64()? as f32, y1: b[3].as_f64()? as f32 })).collect())
+        .unwrap_or_default();
+    (boxes, None)
+}
+
 /// Start connecting. `info_json` is the server's `/play/info` document (fetch it over HTTP from the
 /// web gateway); it carries the pinned server key, the content hash and the attribute schema.
 /// `identity` is 64 hex characters, or NULL to play as a guest (no saved character).
@@ -218,16 +244,10 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
     let Some(hash) = v["content_hash"].as_str().and_then(|h| u64::from_str_radix(h, 16).ok()) else { return fail("info_json: bad content_hash") };
     let Some(defs) = defs_from_info(&v) else { return fail("info_json: bad attribute schema") };
     let size = v["world_size"].as_f64().unwrap_or(0.0) as u32;
-    let boxes: Vec<proto::Aabb> = v["boxes"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|b| Some(proto::Aabb { x0: b[0].as_f64()? as f32, y0: b[1].as_f64()? as f32, x1: b[2].as_f64()? as f32, y1: b[3].as_f64()? as f32 })).collect())
-        .unwrap_or_default();
-    if v["walls"]["inline"] == false && boxes.is_empty() {
-        return fail("info_json: this world streams its walls; fetch /play/walls?all=1 and put its \"all\" array in \"boxes\" before connecting");
-    }
     if size == 0 {
         return fail("info_json: no world_size");
     }
+    let (boxes, tiles) = walls_of(&v, size as f32);
     let world = World::from_boxes(size as f32, v["seed"].as_u64().unwrap_or(0), boxes);
     let hz = v["hz"].as_u64().unwrap_or(20).clamp(1, 120) as u32;
     let id = match cstr(identity) {
@@ -271,6 +291,8 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         action: 0,
         target: 0,
         arg: 0,
+        light: None,
+        light_dirty: false,
         sent: Vec::new(),
         rtt_ms: 0.0,
         last_rx: now,
@@ -281,11 +303,14 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         ents: Vec::new(),
         err: String::new(),
         world,
+        tiles,
         pred: None,
         hist: Default::default(),
         t0: now,
         last_poll: now,
         vis: None,
+        follow: true,
+        moved: None,
     };
     c.hs = new_hs(&c);
     Box::into_raw(Box::new(c))
@@ -356,8 +381,14 @@ impl Client {
                 let Some(inner) = s.open(p, scratch) else { return };
                 if let Some(r) = wire::decode_redirect(inner) {
                     // The zone we were in handed us over: same identity, new server.
-                    let to = SocketAddr::from((r.ip, r.port));
-                    self.restart(to);
+                    if self.follow {
+                        let to = SocketAddr::from((r.ip, r.port));
+                        self.restart(to);
+                    } else {
+                        self.status = MMO_MOVED;
+                        self.session = None;
+                        self.moved = Some(r);
+                    }
                 } else if inner.first() == Some(&kind::INVENTORY) {
                     if let Some(b) = wire::decode_inventory(inner) {
                         self.bag = b;
@@ -414,6 +445,14 @@ impl Client {
         }
         if let Some(p) = self.pred.as_mut() {
             p.apply_input(&self.world, self.seq, self.dir.0, self.dir.1);
+        }
+        // The light rides an input with nothing else to say, so it never takes an attack's or a build's place; it
+        // repeats now and then because the server resets it when a character respawns.
+        if self.action == 0 {
+            if let Some(on) = self.light.filter(|_| self.light_dirty || self.seq % 60 == 0) {
+                (self.action, self.target, self.arg) = (proto::game::ACT_LIGHT, 0, on as u16);
+                self.light_dirty = false;
+            }
         }
         wire::encode_input(
             &mut plain,
@@ -474,14 +513,14 @@ impl Client {
 #[no_mangle]
 pub unsafe extern "C" fn mmo_poll(c: *mut Client) -> i32 {
     let Some(c) = c.as_mut() else { return MMO_CLOSED };
-    if c.status == MMO_REJECTED || c.status == MMO_CLOSED {
+    if c.status == MMO_REJECTED || c.status == MMO_CLOSED || c.status == MMO_MOVED {
         return c.status;
     }
     let mut buf = [0u8; 2048];
     let mut scratch = Vec::new();
     while let Ok(n) = c.sock.recv(&mut buf) {
         c.on_packet(&buf[..n], &mut scratch);
-        if c.status == MMO_REJECTED {
+        if c.status == MMO_REJECTED || c.status == MMO_MOVED {
             return c.status;
         }
     }
@@ -549,6 +588,76 @@ pub unsafe extern "C" fn mmo_set_column(c: *mut Client, cx: u32, cy: u32, base: 
     }
 }
 
+/// For a world that streams its walls: the `/play/tiles` request to make for the player at (x, y), written to `out`
+/// as a NUL-terminated path with query. Returns its length, 0 when nothing is missing (or the walls came inline),
+/// or -1 if `cap` is too small. Fetch it and hand the reply to `mmo_put_tiles`; if the fetch fails, call
+/// `mmo_tiles_failed`. Call it as the player moves; it asks for each tile once.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_tiles_wanted(c: *mut Client, x: f32, y: f32, out: *mut c_char, cap: usize) -> i32 {
+    let Some(t) = c.as_mut().and_then(|c| c.tiles.as_mut()) else { return 0 };
+    let want = t.wanted(x, y);
+    if want.is_empty() {
+        return 0;
+    }
+    let list: Vec<String> = want.iter().map(|(x, y)| format!("{x},{y}")).collect();
+    let path = format!("/play/tiles?v={:016x}&c={}", t.ver, list.join(";"));
+    if path.len() + 1 > cap {
+        t.retry();
+        return -1;
+    }
+    std::ptr::copy_nonoverlapping(path.as_ptr(), out as *mut u8, path.len());
+    *out.add(path.len()) = 0;
+    path.len() as i32
+}
+
+/// A `/play/tiles` reply. Returns 1 once its walls are in prediction, 0 if it is for walls that have since changed
+/// (or the server answered 409): fetch `/play/info` again and give it to `mmo_set_walls`.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_put_tiles(c: *mut Client, bytes: *const u8, len: usize) -> i32 {
+    let Some(c) = c.as_mut() else { return 0 };
+    let Some(t) = c.tiles.as_mut() else { return 0 };
+    if bytes.is_null() || !t.put(std::slice::from_raw_parts(bytes, len)) {
+        return 0;
+    }
+    c.world.set_boxes(t.boxes().into_iter().map(|(_, b, _)| b).collect());
+    1
+}
+
+/// A `/play/tiles` fetch failed: the tiles it asked for are asked for again next time.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_tiles_failed(c: *mut Client) {
+    if let Some(t) = c.as_mut().and_then(|c| c.tiles.as_mut()) {
+        t.retry();
+    }
+}
+
+/// True once every wall near the player is in (always, for walls that came inline): before then prediction may
+/// walk through a wall the server will not.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_walls_ready(c: *const Client) -> i32 {
+    c.as_ref().is_some_and(|c| c.tiles.as_ref().is_none_or(TileStream::ready)) as i32
+}
+
+/// Adopt the walls of a fresh `/play/info` (the console edited them, or `mmo_put_tiles` said they changed). Returns
+/// 1 if they changed.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_set_walls(c: *mut Client, info_json: *const c_char) -> i32 {
+    let (Some(c), Some(info)) = (c.as_mut(), cstr(info_json)) else { return 0 };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(info) else { return 0 };
+    let (boxes, tiles) = walls_of(&v, c.world.size);
+    let same = match (&c.tiles, &tiles) {
+        (Some(a), Some(b)) => a.ver == b.ver,
+        (None, None) => c.world.boxes == boxes,
+        _ => false,
+    };
+    if same {
+        return 0;
+    }
+    c.tiles = tiles;
+    c.world.set_boxes(boxes);
+    1
+}
+
 /// The tag `/play/blocks` gives as the owner of the blocks you build (16 hex digits, NUL-terminated; `out`
 /// holds 17 bytes). Empty for a guest, whose blocks nobody owns.
 #[no_mangle]
@@ -569,6 +678,19 @@ pub unsafe extern "C" fn mmo_act(c: *mut Client, action: u8, target: u32) {
     mmo_act_arg(c, action, target, 0);
 }
 
+/// Your light (a torch, a lantern) on or off. Only means something when the game has a `lit` attribute: then other
+/// players' clients hide your name in the dark while it is out, and bots see you less far at night (sneaking). The
+/// library tells the server in an input that carries no other action, so it never displaces one.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_set_light(c: *mut Client, on: i32) {
+    if let Some(c) = c.as_mut() {
+        if c.light != Some(on != 0) {
+            c.light = Some(on != 0);
+            c.light_dirty = true;
+        }
+    }
+}
+
 /// An action with its extra argument (0..65535): for build and break, `layer & 0xff | material << 8`, the layer
 /// -128..127 and the material 0..build.kinds-1.
 #[no_mangle]
@@ -585,7 +707,38 @@ pub unsafe extern "C" fn mmo_act_arg(c: *mut Client, action: u8, target: u32, ar
 pub unsafe extern "C" fn mmo_say(c: *mut Client, channel: u8, text: *const c_char) {
     if let (Some(c), Some(t)) = (c.as_mut(), cstr(text)) {
         if !t.trim().is_empty() {
-            c.chat.say(channel.min(1), t.trim());
+            c.chat.say(channel.min(proto::chat::channel::SHOUT), t.trim());
+        }
+    }
+}
+
+/// Whether to follow a zone handoff by reconnecting (1, the default: right for strips of one world, which share the
+/// map) or to stop with `MMO_MOVED` (0: zone lines, where the host loads the new zone's map and connects again).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_follow_redirects(c: *mut Client, on: i32) {
+    if let Some(c) = c.as_mut() {
+        c.follow = on != 0;
+    }
+}
+
+/// After `MMO_MOVED`: the zone we were handed to, by index (its web address is `/play/info` zones[index]), and its
+/// game address. Returns 1 and fills them in, or 0 if we have not moved.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_moved(c: *const Client, zone: *mut u8, ip: *mut u8, port: *mut u16) -> i32 {
+    let Some(r) = c.as_ref().and_then(|c| c.moved.as_ref()) else { return 0 };
+    *zone = r.zone;
+    std::ptr::copy_nonoverlapping(r.ip.as_ptr(), ip, 4);
+    *port = r.port;
+    1
+}
+
+/// Ask to be known by `name` (`proto::names::clean` says what is allowed). The server answers with a chat line
+/// from id 0 ("You are now known as ...", or why not); everyone's names are at the web gateway's `/play/names`.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_set_name(c: *mut Client, name: *const c_char) {
+    if let (Some(c), Some(t)) = (c.as_mut(), cstr(name)) {
+        if !t.trim().is_empty() {
+            c.chat.say(proto::chat::channel::NAME, t.trim());
         }
     }
 }

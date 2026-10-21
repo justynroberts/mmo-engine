@@ -52,22 +52,35 @@ try:
     st = api(base, "/api/state")[1]
     check("server has players from encrypted bots", st["clients"] >= 50, f"clients={st['clients']}")
 
+    # The console's sections and the pages inside them, by the names the old flat tabs had.
+    PAGES = {"Bots": ("Bots", "Bot types"), "Spawn": ("Bots", "Spawn and scatter"), "Builder": ("World", "Places, routes and walls"),
+             "Terrain": ("World", "Terrain"), "Attributes": ("Rules", "Attributes"), "Actions": ("Rules", "Actions"), "Items": ("Rules", "Items"),
+             "Entity": ("Live", "Inspect"), "Chat": ("Live", "Chat"), "Connect": ("Server", "Connect"), "Network": ("Server", "Network"),
+             "JSON": ("Server", "Game file (JSON)"), "Sky": ("Sky", None), "Events": ("Events", None)}
+
+    def open_page(pg, name):
+        section, sub = PAGES[name]
+        pg.get_by_role("tab", name=section, exact=True).click()
+        if sub:
+            pg.get_by_role("tab", name=sub, exact=True).click()
+        time.sleep(0.2)
+
     with sync_playwright() as pw:
         br = pw.chromium.launch(args=["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
-        TABS = ["Bots", "Builder", "Attributes", "Actions", "Items", "Entity", "Chat", "Connect", "JSON"]
-        for theme in ("dark", "light"):
+        TABS = ["Bots", "Spawn", "Terrain", "Builder", "Sky", "Events", "Attributes", "Actions", "Items", "Entity", "Chat", "Connect", "Network", "JSON"]
+        for theme in ("dark",):  # the console is near-black only
             ctx = br.new_context(viewport={"width": 1440, "height": 900}, color_scheme=theme)
             pg = ctx.new_page()
             errors = []
             pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
             pg.on("pageerror", lambda e: errors.append(str(e)))
             pg.goto(base + "/")
-            pg.wait_for_selector("text=LIVE", timeout=8000)
+            pg.wait_for_selector("text=Server running", timeout=8000)
             check(f"[{theme}] page loads live with no console errors", not errors, str(errors))
-            check(f"[{theme}] theme follows the system preference", ("dark" in (pg.evaluate("document.documentElement.className"))) == (theme == "dark"))
+            check(f"[{theme}] the console is dark", "dark" in pg.evaluate("document.documentElement.className"))
             for t in TABS:
-                pg.get_by_role("tab", name=t, exact=True).click()
-                time.sleep(0.3)
+                open_page(pg, t)
+                time.sleep(0.1)
                 pg.add_script_tag(path=str(AXE)) if not pg.evaluate("!!window.axe") else None
                 res = pg.evaluate("axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21aa','best-practice']}).then(r=>r.violations.map(v=>({id:v.id,impact:v.impact,n:v.nodes.length,t:v.nodes.slice(0,3).map(n=>n.target.join(' ')+' :: '+(n.failureSummary||'').split('\\n').slice(0,3).join(' | '))})))")
                 check(f"[{theme}] accessibility, {t} tab: no axe violations", not res, json.dumps(res)[:900])
@@ -76,7 +89,7 @@ try:
 
         # --- behaviour tests (dark theme, desktop)
         ctx = br.new_context(viewport={"width": 1440, "height": 900}, color_scheme="dark")
-        pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
+        pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=Server running")
         time.sleep(1)
 
         # Canvas click selects an entity (initial view is fitted, so screen position is computable).
@@ -99,12 +112,12 @@ try:
             check("clicking an entity on the map selects it", False, "no isolated entity found")
 
         # Bot-only edit applies live and changes the population.
-        pg.get_by_role("tab", name="Bots", exact=True).click()
+        open_page(pg, "Bots")
         before = api(base, "/api/state")[1]
         cnt = pg.get_by_label("Spawn count").first
         cnt.fill("20")
         check("Apply button enables when the draft differs", pg.get_by_role("button", name="Apply", exact=True).is_enabled())
-        check("bot-only change says it applies live", pg.locator("text=Bot changes only").count() == 1)
+        check("bot-only change says it applies live", pg.locator("text=they apply live").count() == 1)
         pg.get_by_role("button", name="Apply", exact=True).click()
         pg.wait_for_selector("text=Applied live", timeout=5000)
         time.sleep(0.6)
@@ -120,7 +133,7 @@ try:
         check("Spawn 10 adds ten bots", n2 == 30, f"{n2}")
 
         # ---- Visual builder: places, routes, rules, test bot, all through the real UI.
-        pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.4)
+        open_page(pg, "Builder"); time.sleep(0.4)
         cv = pg.locator("canvas[role=img]")
         def cpos(wx, wy):
             bb = cv.bounding_box(); sc = min(bb["width"], bb["height"]) / 1024
@@ -172,11 +185,11 @@ try:
             if any(l[3] == "oyez" for l in lines): break
             time.sleep(0.3)
         check("a rule made bots speak through the chat channel", any(l[3] == "oyez" for l in lines), str(lines[-3:]))
-        pg.get_by_role("tab", name="Chat", exact=True).click(); time.sleep(1.4)
+        open_page(pg, "Chat"); time.sleep(1.4)
         check("the Chat tab shows what bots said", pg.locator("li:has-text('oyez')").count() >= 1)
 
         # ---- Map editor: draw a wall on the map, apply it live, hand the walls back to the generator.
-        pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.4)
+        open_page(pg, "Builder"); time.sleep(0.4)
         n_generated = len(api(base, "/api/world")[1]["boxes"])
         pg.get_by_role("button", name="Draw wall").click()
         a = cpos(40, 960); b2 = cpos(140, 1000)
@@ -190,7 +203,7 @@ try:
         pg.get_by_role("button", name="Back to generated").click(); time.sleep(0.3)
         pg.get_by_role("button", name="Apply", exact=True).click(); pg.wait_for_selector("text=Applied live", timeout=5000); time.sleep(0.8)
         check("back to generated walls restores the seed's world", len(api(base, "/api/world")[1]["boxes"]) == n_generated)
-        pg.get_by_role("tab", name="Builder", exact=True).click(); time.sleep(0.3)
+        open_page(pg, "Builder"); time.sleep(0.3)
         pg.get_by_role("button", name="Drop test bot").click()
         pg.mouse.click(*cpos(200, 200)); time.sleep(0.8)
         guards2 = [r for r in api(base, "/api/state")[1]["e"] if r[3] == gi]
@@ -207,7 +220,7 @@ try:
         pg.get_by_role("button", name="Revert").click(); time.sleep(0.3)
 
         # Possession with the keyboard.
-        pg.get_by_role("tab", name="Entity", exact=True).click()
+        open_page(pg, "Entity")
         bot = next(r for r in api(base, "/api/state")[1]["e"] if r[3] == 0)
         pg.get_by_role("button", name=f"#{bot[0] & 0xFFFFFF} drifter", exact=False).first.click()
         pg.get_by_role("button", name="Possess").click(); time.sleep(0.4)
@@ -220,7 +233,7 @@ try:
         check("releasing hands the bot back to the AI", me[4] == 0, str(me[:5]))
 
         # Validation errors surface and nothing changes.
-        pg.get_by_role("tab", name="Attributes", exact=True).click()
+        open_page(pg, "Attributes")
         h0 = api(base, "/api/state")[1]["hash"]
         pg.get_by_label("Min", exact=True).first.fill("500")
         pg.get_by_role("button", name="Apply", exact=True).click()
@@ -240,32 +253,32 @@ try:
         check("edit was saved to game.json", '"max": 250' in (work / "game.json").read_text())
 
         # Raw JSON.
-        pg.get_by_role("tab", name="JSON", exact=True).click()
+        open_page(pg, "JSON")
         ta = pg.locator("textarea")
         ta.fill("{ not json")
         check("invalid JSON shows an error", pg.locator("[role=alert]").count() >= 1)
         # Rename propagation through the form.
-        pg.get_by_role("tab", name="Attributes", exact=True).click()
-        pg.get_by_role("tab", name="JSON", exact=True).click()
+        open_page(pg, "Attributes")
+        open_page(pg, "JSON")
         txt = ta.input_value()
         check("draft is restored from the last good state", '"attrs"' in txt)
 
-        # Theme persistence.
-        pg.get_by_role("button", name="Switch to light theme").click()
-        pg.reload(); pg.wait_for_selector("text=LIVE")
-        check("theme choice survives a reload", "dark" not in pg.evaluate("document.documentElement.className"))
+        # The console is near-black only: no theme switch, still dark after a reload.
+        pg.reload(); pg.wait_for_selector("text=Server running")
+        check("the console has no theme switch and stays dark", pg.get_by_role("button", name="Switch to light theme").count() == 0
+              and "dark" in pg.evaluate("document.documentElement.className"))
         ctx.close()
 
         # Keyboard-only: arrow keys move between tabs (Radix roving focus).
-        ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
+        ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=Server running")
         pg.get_by_role("tab", name="Bots", exact=True).focus(); pg.keyboard.press("ArrowRight"); pg.wait_for_timeout(300)
-        check("arrow keys switch tabs", pg.get_by_role("tab", name="Builder", exact=True).get_attribute("data-state") == "active")
+        check("arrow keys switch tabs", pg.get_by_role("tab", name="Sky", exact=True).get_attribute("data-state") == "active")
         ctx.close()
 
         # 3D view: renders, lists entities, selects on click, switches back.
         ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page()
         errs3 = []; pg.on("pageerror", lambda e: errs3.append(str(e)))
-        pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
+        pg.goto(base + "/"); pg.wait_for_selector("text=Server running")
         pg.get_by_role("button", name="3D", exact=True).click(); pg.wait_for_timeout(2500)
         legend = pg.get_by_role("list", name="Legend").inner_text()
         check("3D view shows a legend with live counts", "drifter" in legend and "players" in legend, legend.replace("\n", " "))
@@ -278,41 +291,56 @@ try:
         check("switching back to 2D restores the map", pg.get_by_role("img", name="Top-down map").count() == 1)
         ctx.close()
 
-        # The God tab: weather, events and spawning, built and used from the console.
+        # Weather (the Sky section), events and spawning (Bots), built and used from the console.
         ctx = br.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page()
         gerr = []; pg.on("pageerror", lambda e: gerr.append(str(e)))
-        pg.goto(base + "/"); pg.wait_for_selector("text=LIVE")
-        pg.get_by_role("tab", name="God", exact=True).click(); time.sleep(0.3)
+        pg.goto(base + "/"); pg.wait_for_selector("text=Server running")
+        open_page(pg, "Sky")
         pg.get_by_label("Add a weather from a preset").select_option("fog")
+        check("a weather can be added from a preset", pg.get_by_label("Weather", exact=True).count() >= 1)
+        open_page(pg, "Events")
         pg.get_by_label("Add an event from a preset").select_option("wave")
-        check("a weather and an event can be added from presets", pg.get_by_label("Weather", exact=True).count() >= 1 and pg.get_by_role("list", name="Steps of wave").count() == 1)
-        check("a new event cannot be fired before it is applied", pg.get_by_role("button", name="Fire now").is_disabled())
+        check("an event can be added from a preset", pg.get_by_role("list", name="Steps of wave").count() == 1)
+        check("a new event cannot be started before it is applied", pg.get_by_role("button", name="Start now").is_disabled())
+        pg.get_by_label("Add an event from a preset").select_option("raid")
+        check("a raid preset has a timeline and steps for failing", pg.get_by_role("list", name="Steps of raid").count() == 1 and pg.get_by_role("list", name="If raid fails").count() == 1)
         pg.add_script_tag(path=str(AXE))
         res = pg.evaluate("axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21aa','best-practice']}).then(r=>r.violations.map(v=>({id:v.id,n:v.nodes.length,t:v.nodes.slice(0,2).map(n=>n.target.join(' '))})))")
-        check("God tab: no axe violations", not res, json.dumps(res)[:600])
-        if SHOTS: pg.screenshot(path=str(SHOTS / "god.png"))
+        check("Events page: no axe violations", not res, json.dumps(res)[:600])
+        if SHOTS: pg.screenshot(path=str(SHOTS / "events.png"))
         c_before = api(base, "/api/state")[1]["clients"]
         pg.get_by_role("button", name="Apply", exact=True).click(); pg.wait_for_selector("text=Applied live", timeout=5000); time.sleep(0.8)
         check("weather and events apply live without dropping players", api(base, "/api/state")[1]["clients"] >= c_before - 2, f"{c_before} -> {api(base, '/api/state')[1]['clients']}")
+        open_page(pg, "Sky")
         pg.get_by_role("button", name="fog", exact=True).click(); time.sleep(0.6)
         check("the fog button starts the weather", (api(base, "/api/state")[1].get("director", {}).get("weather") or {}).get("name") == "fog")
         pg.wait_for_selector("text=Now: fog", timeout=4000)
         pg.get_by_role("button", name="Clear sky").click(); time.sleep(0.6)
         check("Clear sky ends it", api(base, "/api/state")[1]["director"]["weather"] is None)
         n0 = api(base, "/api/state?limit=6000")[1]["live"]
-        pg.get_by_role("button", name="Fire now").click(); time.sleep(1.0)
+        open_page(pg, "Events")
+        pg.get_by_role("button", name="Start now").first.click(); time.sleep(1.0)
         st = api(base, "/api/state?limit=6000")[1]
         check("firing the wave event spawns bots", st["live"] >= n0 + 8, f"{n0} -> {st['live']}")
         check("the event's announcement is in the chat from the server", any(l[1] == 0 and "Intruders" in l[3] for l in api(base, "/api/chat")[1]["lines"]))
         check("the log lists what happened", "wave" in pg.get_by_role("region", name="What happened").inner_text())
+        # The raid: it starts, the console shows it running (waiting before its first wave), and Stop ends it.
+        pg.get_by_role("button", name="Start now").last.click()
+        pg.wait_for_selector("text=Running: step", timeout=5000)
+        runs = api(base, "/api/state")[1]["director"].get("runs", [])
+        check("a started raid is running and waiting", any(r["name"] == "raid" and r["waiting"] for r in runs), json.dumps(runs))
+        check("its warning went out as a banner", any(l[1] == 0 and l[2] == 3 and "Raiders" in l[3] for l in api(base, "/api/chat")[1]["lines"]))
+        pg.get_by_role("button", name="Stop", exact=True).click(); time.sleep(1.2)
+        check("Stop ends it", not api(base, "/api/state")[1]["director"].get("runs") and pg.get_by_text("last stopped").count() == 1)
         # Spawn by clicking the map.
+        open_page(pg, "Spawn")
         pg.get_by_role("region", name="Spawn bots").get_by_label("Where").select_option("@map")
         pg.get_by_role("button", name="Arm the map").click()
         n1 = api(base, "/api/state?limit=6000")[1]["live"]
         m = pg.get_by_role("img", name="Top-down map"); box = m.bounding_box()
         m.click(position={"x": box["width"] * 0.5, "y": box["height"] * 0.5}); time.sleep(0.8)
         check("clicking the armed map drops bots there", api(base, "/api/state?limit=6000")[1]["live"] >= n1 + 5)
-        check("the God tab raised no page errors", not gerr, str(gerr))
+        check("the Sky, Events and Bots pages raised no page errors", not gerr, str(gerr))
         ctx.close()
 
         # The play page: sign in with a passphrase, walk, chat, and see the recovery code.
@@ -430,7 +458,7 @@ try:
         ctx.close()
 
         # Phone width: no horizontal scroll.
-        ctx = br.new_context(viewport={"width": 390, "height": 800}); pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=LIVE"); time.sleep(0.5)
+        ctx = br.new_context(viewport={"width": 390, "height": 800}); pg = ctx.new_page(); pg.goto(base + "/"); pg.wait_for_selector("text=Server running"); time.sleep(0.5)
         sw = pg.evaluate("document.documentElement.scrollWidth"); cw = pg.evaluate("document.documentElement.clientWidth")
         check("no horizontal scroll at 390 px", sw <= cw + 1, f"scrollWidth {sw} > {cw}")
         if SHOTS: pg.screenshot(path=str(SHOTS / "phone.png"))
