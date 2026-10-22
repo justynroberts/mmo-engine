@@ -164,7 +164,7 @@ export function WorldTab({ s, land, liveSize, blocks, places }: { s: Shaper; lan
   }
   const scope = `${what === 'blocks' ? (whose === '*' ? 'every block' : whose === '' ? 'every block nobody owns' : `every block ${whose} built`) : 'every item on the ground'}${where ? ` at ${where}` : ''}`
   const cur = TOOLS.find((t) => t.tool === s.tool) ?? TOOLS[0]!
-  const count = (w: WorldData) => `${w.objects.length.toLocaleString()} objects, ${w.objects.filter((o) => o.solid).length.toLocaleString()} solid, ${w.rivers.length} rivers, ${w.lakes.length} lakes`
+  const count = (w: WorldData) => `${w.objects.length.toLocaleString()} objects, ${w.objects.filter((o) => o.solid).length.toLocaleString()} solid, ${w.rivers.length} rivers, ${w.lakes.length} lakes, ${w.roads.length} roads`
   return (
     <>
       <section aria-label="Live world" className="cell py-2">
@@ -192,6 +192,7 @@ export function WorldTab({ s, land, liveSize, blocks, places }: { s: Shaper; lan
           onChange={(v) => s.set({ ...r, size: Number(v) })}
         />
         <Toggle label="Walled city" checked={r.city} onChange={(v) => s.set({ ...r, city: v })} />
+        <Toggle label="Roads" checked={r.roads !== false} onChange={(v) => s.set({ ...r, roads: v })} />
         <Toggle label="Usual rivers" checked={r.rivers === null} onChange={(v) => s.set({ ...r, rivers: v ? null : 2 })} />
         {DIALS.map(([k, label]) => (
           <Range key={k} label={label} value={r[k]} min={0} max={3} step={0.25} mark={1} unit="×" onChange={(v) => s.set({ ...r, [k]: v })} />

@@ -2,6 +2,7 @@ target/
 *.log
 ui/node_modules/
 ui/dist/
+ui/dist-mcp/
 # local runtime state
 /game.json
 /server.key
@@ -16,3 +17,4 @@ __pycache__/
 /world.json
 /world.*.json
 *.swp
+/dist/

@@ -7,21 +7,25 @@
 //! A `/play/tiles` reply, little-endian:
 //!
 //! ```text
-//! u8 format (1) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n × entry
+//! u8 format (2) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n × entry | u16 m | m × u16 road
 //! entry: u32 id | f32 x0 | f32 y0 | f32 x1 | f32 y1 | u8 class        (21 bytes)
+//! road:  the tile's road cells, each `row * 64 + column` of its 64 × 64 cells of `world::ROAD_CELL` units
 //! ```
 //!
 //! A box that touches several tiles is in each, with the same id. Boxes are the server's f32s bit for bit, so
-//! prediction collides with exactly what the server does.
+//! prediction collides with exactly what the server does, and road cells are the server's own, so prediction
+//! speeds up on exactly the ground the server does.
 
 use std::collections::HashMap;
 
 use crate::wire::{put_u16, put_u32, put_u64, put_u8, Reader};
-use crate::world::Aabb;
+use crate::world::{road_key, Aabb, ROAD_CELL};
 
 /// Edge of a tile, in world units.
 pub const TILE: f32 = 256.0;
-pub const FORMAT: u8 = 1;
+pub const FORMAT: u8 = 2;
+/// Road cells along a tile's edge.
+pub const ROAD_CELLS: u32 = (TILE / ROAD_CELL) as u32;
 /// Most tiles one request may ask for.
 pub const MAX_PER_REQUEST: usize = 64;
 /// Most boxes that may touch one tile: what keeps any one request, and any one client's world, bounded.
@@ -63,6 +67,46 @@ pub struct TileSet {
     pub boxes: Vec<Aabb>,
     pub class: Vec<u8>,
     tiles: HashMap<(u16, u16), Vec<u32>>,
+    /// Road cells by tile, each as its index in the tile (`row * ROAD_CELLS + column`).
+    roads: HashMap<(u16, u16), Vec<u16>>,
+}
+
+/// A road as a world file has it: a centre line and how far either side of it the road runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Road {
+    pub half_width: f32,
+    pub pts: Vec<(f32, f32)>,
+}
+
+/// The road cells (`world::road_key`) whose centre is within a road's half width of its centre line, inside a world
+/// `size` across. Worked out once, on the server: clients are sent the cells, never the lines.
+pub fn road_cells(size: f32, roads: &[Road]) -> Vec<u32> {
+    let last = ((size / ROAD_CELL) as u32).saturating_sub(1);
+    let mut out = std::collections::HashSet::new();
+    for r in roads {
+        let hw = r.half_width.max(0.0);
+        for seg in r.pts.windows(2) {
+            let ((ax, ay), (bx, by)) = (seg[0], seg[1]);
+            let cell = |v: f32| ((v.max(0.0) / ROAD_CELL) as u32).min(last);
+            let (cx0, cx1) = (cell(ax.min(bx) - hw), cell(ax.max(bx) + hw));
+            let (cy0, cy1) = (cell(ay.min(by) - hw), cell(ay.max(by) + hw));
+            let (abx, aby) = (bx - ax, by - ay);
+            let len2 = (abx * abx + aby * aby).max(1e-6);
+            for cy in cy0..=cy1 {
+                for cx in cx0..=cx1 {
+                    let (px, py) = ((cx as f32 + 0.5) * ROAD_CELL, (cy as f32 + 0.5) * ROAD_CELL);
+                    let k = (((px - ax) * abx + (py - ay) * aby) / len2).clamp(0.0, 1.0);
+                    let (dx, dy) = (ax + abx * k - px, ay + aby * k - py);
+                    if dx * dx + dy * dy <= hw * hw {
+                        out.insert(road_key(cx, cy));
+                    }
+                }
+            }
+        }
+    }
+    let mut v: Vec<u32> = out.into_iter().collect();
+    v.sort_unstable();
+    v
 }
 
 impl TileSet {
@@ -89,7 +133,32 @@ impl TileSet {
                 }
             }
         }
-        Ok(TileSet { ver: h ^ boxes.len() as u64, size, boxes, class, tiles })
+        Ok(TileSet { ver: h ^ boxes.len() as u64, size, boxes, class, tiles, roads: HashMap::new() })
+    }
+
+    /// Add road cells (`world::road_key`s): each goes to the tile it is in, and the version changes with them.
+    pub fn with_roads(mut self, cells: &[u32]) -> TileSet {
+        self.roads.clear();
+        let mut h = self.ver;
+        for &k in cells {
+            let (cx, cy) = (k & 0xffff, k >> 16);
+            let t = ((cx / ROAD_CELLS) as u16, (cy / ROAD_CELLS) as u16);
+            self.roads.entry(t).or_default().push(((cy % ROAD_CELLS) * ROAD_CELLS + cx % ROAD_CELLS) as u16);
+            h = (h ^ k as u64).wrapping_mul(0x100000001b3);
+        }
+        self.ver = if cells.is_empty() { self.ver } else { h ^ 0x0ad5 };
+        self
+    }
+
+    /// Every road cell, as `world::road_key`s.
+    pub fn road_cells(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.roads.iter().flat_map(|(&t, c)| c.iter().map(move |&i| tile_road_key(t, i))).collect();
+        v.sort_unstable();
+        v
+    }
+
+    pub fn has_roads(&self) -> bool {
+        !self.roads.is_empty()
     }
 
     /// Boxes in the fullest tile.
@@ -120,6 +189,11 @@ impl TileSet {
                 }
                 put_u8(&mut out, self.class[i as usize]);
             }
+            let roads = self.roads.get(&(cx, cy)).map_or(&[][..], Vec::as_slice);
+            put_u16(&mut out, roads.len() as u16);
+            for &c in roads {
+                put_u16(&mut out, c);
+            }
         }
         Some(out)
     }
@@ -136,8 +210,16 @@ pub fn parse_list(list: &str) -> Option<Vec<(u16, u16)>> {
         .collect()
 }
 
-/// A reply: its version and each tile's boxes. None if it is cut short or not this format.
-pub fn decode(bytes: &[u8]) -> Option<(u64, Vec<((u16, u16), Vec<TileBox>)>)> {
+/// A road cell's `world::road_key` from its tile and its index in the tile.
+pub fn tile_road_key(t: (u16, u16), i: u16) -> u32 {
+    road_key(t.0 as u32 * ROAD_CELLS + i as u32 % ROAD_CELLS, t.1 as u32 * ROAD_CELLS + i as u32 / ROAD_CELLS)
+}
+
+/// One tile of a reply: where it is, its boxes, and its road cells (indexes in the tile).
+pub type Tile = ((u16, u16), Vec<TileBox>, Vec<u16>);
+
+/// A reply: its version and each tile. None if it is cut short or not this format.
+pub fn decode(bytes: &[u8]) -> Option<(u64, Vec<Tile>)> {
     let mut r = Reader::new(bytes);
     if r.u8()? != FORMAT {
         return None;
@@ -157,7 +239,15 @@ pub fn decode(bytes: &[u8]) -> Option<(u64, Vec<((u16, u16), Vec<TileBox>)>)> {
             let b = Aabb { x0: f()?, y0: f()?, x1: f()?, y1: f()? };
             v.push(TileBox { id, b, class: r.u8()? });
         }
-        tiles.push(((cx, cy), v));
+        let m = r.u16()? as usize;
+        if m > (ROAD_CELLS * ROAD_CELLS) as usize {
+            return None;
+        }
+        let mut roads = Vec::with_capacity(m);
+        for _ in 0..m {
+            roads.push(r.u16()?.min((ROAD_CELLS * ROAD_CELLS - 1) as u16));
+        }
+        tiles.push(((cx, cy), v, roads));
     }
     Some((ver, tiles))
 }
@@ -171,6 +261,8 @@ pub struct TileStream {
     size: f32,
     boxes: HashMap<u32, (Aabb, u8, u32)>,
     held: HashMap<(u16, u16), Vec<u32>>,
+    /// Each held tile's road cells, as `world::road_key`s.
+    roads: HashMap<(u16, u16), Vec<u32>>,
     pending: Vec<(u16, u16)>,
     at: Option<(i32, i32)>,
 }
@@ -228,11 +320,12 @@ impl TileStream {
             self.retry();
             return false;
         }
-        for (t, boxes) in tiles {
+        for (t, boxes, roads) in tiles {
             self.pending.retain(|p| *p != t);
             if self.held.contains_key(&t) {
                 continue;
             }
+            self.roads.insert(t, roads.into_iter().map(|i| tile_road_key(t, i)).collect());
             let mut ids = Vec::with_capacity(boxes.len());
             for tb in boxes {
                 ids.push(tb.id);
@@ -245,6 +338,7 @@ impl TileStream {
     }
 
     fn drop_tile(&mut self, t: (u16, u16)) {
+        self.roads.remove(&t);
         for id in self.held.remove(&t).unwrap_or_default() {
             if let Some(e) = self.boxes.get_mut(&id) {
                 e.2 -= 1;
@@ -259,6 +353,13 @@ impl TileStream {
     pub fn boxes(&self) -> Vec<(u32, Aabb, u8)> {
         let mut v: Vec<(u32, Aabb, u8)> = self.boxes.iter().map(|(&id, &(b, c, _))| (id, b, c)).collect();
         v.sort_unstable_by_key(|e| e.0);
+        v
+    }
+
+    /// Every road cell held, as `world::road_key`s.
+    pub fn roads(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.roads.values().flatten().copied().collect();
+        v.sort_unstable();
         v
     }
 
@@ -295,13 +396,37 @@ mod tests {
     }
 
     /// The same bytes are decoded in ui/src/play/walls.test.ts: change both together.
-    pub const FIXTURE: &str = "015d68e04ca311b33f0300000000000200000000000000000028410000a2410000f04100002042000100000000007a43cdcccc3d000096430000a0400101000000010000000100000000007a43cdcccc3d000096430000a040010300030000000000";
+    pub const FIXTURE: &str = "02605a76d9b199f5850300000000000200000000000000000028410000a2410000f04100002042000100000000007a43cdcccc3d000096430000a0400102007e007f0001000000010000000100000000007a43cdcccc3d000096430000a0400102004000410003000300000000000000";
 
     #[test]
     fn the_browser_fixture_is_what_the_server_sends() {
-        let s = TileSet::build(1024.0, vec![bx(10.5, 20.25, 30.0, 40.0), bx(250.0, 0.1, 300.0, 5.0)], vec![0, 1]).unwrap();
+        let s = TileSet::build(1024.0, vec![bx(10.5, 20.25, 30.0, 40.0), bx(250.0, 0.1, 300.0, 5.0)], vec![0, 1])
+            .unwrap()
+            .with_roads(&road_cells(1024.0, &[Road { half_width: 2.0, pts: vec![(250.0, 6.0), (262.0, 6.0)] }]));
         let hex: String = s.encode(&[(0, 0), (1, 0), (3, 3)]).unwrap().iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(hex, FIXTURE);
+        assert_eq!(hex, FIXTURE, "{hex}");
+    }
+
+    #[test]
+    fn roads_become_the_cells_whose_middle_they_cover_and_travel_with_their_tiles() {
+        // A road along y = 6, 2 either side, from x 250 to 262: the cells of row 1 (centres y 6) from x 248 to 264.
+        let cells = road_cells(1024.0, &[Road { half_width: 2.0, pts: vec![(250.0, 6.0), (262.0, 6.0)] }]);
+        assert_eq!(cells, (62..=65).map(|cx| road_key(cx, 1)).collect::<Vec<_>>());
+        assert!(road_cells(1024.0, &[Road { half_width: 1.0, pts: vec![(-50.0, -50.0), (-10.0, -10.0)] }]).is_empty(), "nothing outside the world");
+        let s = TileSet::build(1024.0, vec![], vec![]).unwrap();
+        let ver = s.ver;
+        let s = s.with_roads(&cells);
+        assert_ne!(s.ver, ver, "roads change the version");
+        assert_eq!(s.road_cells(), cells);
+        let (_, tiles) = decode(&s.encode(&[(0, 0), (1, 0)]).unwrap()).unwrap();
+        assert_eq!((tiles[0].2.len(), tiles[1].2.len()), (2, 2), "two cells either side of the tile edge at x 256");
+        let s = TileSet::build(4096.0, vec![], vec![]).unwrap().with_roads(&cells);
+        let mut c = TileStream::new(4096.0, s.ver);
+        let want = c.wanted(10.0, 10.0);
+        assert!(c.put(&s.encode(&want).unwrap()));
+        assert_eq!(c.roads(), cells);
+        c.wanted(1800.0, 10.0);
+        assert!(c.roads().is_empty(), "far tiles take their roads with them");
     }
 
     #[test]

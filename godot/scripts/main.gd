@@ -4,13 +4,15 @@ extends Node3D
 ## theme (res://themes/<name>/theme.gd, the contract is scripts/theme.gd) draws it. --theme NAME picks one;
 ## the default is fantasy when it is there, else plain.
 ##
-## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
+## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue.
 ## Screenshots: --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
+const SoundScript := preload("res://scripts/sound.gd")
+const JoinScript := preload("res://scripts/join.gd")
 var theme: Node3D        # the look: see scripts/theme.gd
 var world: RefCounted    # the world as data: see scripts/world_data.gd
 
@@ -22,10 +24,22 @@ static var _hop := {}
 var _hopping := false     # leaving: the dark is coming down
 var _arriving := false    # arrived: lift the dark once we are in the world
 var my_identity := ""
+var _was_in := false       # we have seen ourselves in the world on this connection's server
+var _retries := 0          # reconnects tried before ever getting in
+var join: CanvasLayer      # the join screen (scripts/join.gd) while it is up, for a client started without --host
 var info := {}
 var info_text := ""
 var net: Object
 var hud: CanvasLayer
+var sound: Node           # what the player hears: scripts/sound.gd
+var _listen_in := 0.0     # until the next look round for what to hear
+var _music_pick := ""     # the piece the moment calls for, and since when (music changes only once it has settled)
+var _music_since := 0.0
+var _fight_at := -100.0   # when we last struck or were struck: the music turns to battle for a while after
+var _step_from := Vector2.INF
+var _step_dist := 0.0
+var _surface := ""
+var _bag_count := -1
 var cam := Camera3D.new()
 var yaw := 0.0
 var zoom := 17.0
@@ -135,6 +149,11 @@ func _ready() -> void:
 	_build_scene()
 	hud = HudScript.new()
 	add_child(hud)
+	sound = SoundScript.new()
+	add_child(sound)
+	# Screenshots, smoke tests and --mute play nothing.
+	if smoke or args.has("shot") or args.has("mute"):
+		sound.mode = 2
 	world_map = MapScript.new()
 	world_map.visible = false
 	hud.add_child(world_map)
@@ -148,7 +167,24 @@ func _ready() -> void:
 	if _hop.has("to"):
 		hud.travel("Travelling to %s" % _hop["to"], 0.0)
 		_arriving = true
+	# Packaged and double-clicked, there are no arguments: ask which server and what to be called.
+	if not OS.get_cmdline_user_args().has("--host") and _hop.is_empty() and not smoke and not args.has("shot"):
+		_ask_join("")
+		return
 	_start()
+
+func _ask_join(why: String) -> void:
+	join = JoinScript.new()
+	add_child(join)
+	join.fail(why)
+	join.chosen.connect(func(server: String, who: String):
+		join = null
+		# "host" alone means the usual web port; the game's UDP port comes from /play/info.
+		args["web"] = server if ":" in server else "%s:7790" % server
+		args["host"] = server.get_slice(":", 0)
+		args["name"] = who
+		args["joined"] = true
+		_start())
 
 func _parse_args() -> Dictionary:
 	var a := {"host": "127.0.0.1", "udp": "7777", "web": "127.0.0.1:8081", "admin": "127.0.0.1:7780"}
@@ -191,6 +227,11 @@ func _fetch_raw(url: String) -> Array:
 
 func _fail(msg: String) -> void:
 	push_error(msg)
+	if args.has("joined") and net == null:
+		# Not in yet: back to the join screen to try another address.
+		args.erase("joined")
+		_ask_join(msg)
+		return
 	hud.status.text = msg
 	if smoke:
 		print("SMOKE FAIL: ", msg)
@@ -203,6 +244,8 @@ func _start() -> void:
 	if info_text == "":
 		return _fail("could not reach http://%s/play/info" % args["web"])
 	info = JSON.parse_string(info_text)
+	if args.has("joined"):
+		args["udp"] = str(int(info.get("udp_port", 7777)))
 	# A big world streams its walls by tile as you move (_poll_tiles); a small one sends them here.
 	boxes = info.get("boxes", [])
 	# The world: the server's world file if it has one, else just its walls on flat ground.
@@ -291,8 +334,9 @@ func _start() -> void:
 	net.chat_heard.connect(func(from: int, channel: int, text: String):
 		if from == 0:
 			hud.say("[color=#ffd27a]%s[/color]" % text)
-			if channel == 3: # a banner: an event's news, across the screen too
+			if channel == 3: # a banner: an event's news, across the screen too, with a horn
 				hud.announce(text)
+				sound.play("horn", -3.0, 0.0)
 		else:
 			var who := "You" if from == net.get_self_id() else _name(from)
 			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))
@@ -396,6 +440,15 @@ func _process(delta: float) -> void:
 		return
 	t_total += delta
 	var status: int = net.get_status()
+	if status == 1 and not _was_in and ents.has(net.get_self_id()):
+		_was_in = true
+	# Never got in: the first launch compiles shaders and can stall long enough for the handshake to lapse. Try again.
+	if status == 3 and not _was_in and _retries < 3 and not smoke:
+		_retries += 1
+		if net.connect_to(String(args["host"]), int(args["udp"]), info_text, my_identity) == "":
+			if args.has("name") and args["name"] is String:
+				net.set_display_name(String(args["name"]))
+			return
 	if status == 4:
 		if not _hopping:
 			_hop_zone()
@@ -466,7 +519,11 @@ func _process(delta: float) -> void:
 	_aim()
 	_mine(delta)
 	_fly_debris(delta)
-	hud.set_bag(net.bag())
+	var bag: Array = net.bag()
+	hud.set_bag(bag)
+	_hear_bag(bag)
+	_footsteps()
+	_listen(delta)
 	_camera()
 	_weather(delta)
 	if world_map.visible:
@@ -793,6 +850,8 @@ func _kind_at(cell: Vector3i) -> int:
 
 ## A block breaks apart: pieces of it in its own material burst out, tumble, land and fade, with a puff of dust.
 func _crumble(cell: Vector3i, kind: int) -> void:
+	var edge: float = theme.block_size() if theme else 2.0
+	sound.play("break", SoundScript.at_distance(Vector2((cell.x + 0.5) * edge, (cell.y + 0.5) * edge).distance_to(me_pos), 50.0) - 2.0)
 	crumbled += 1
 	var bs := float(build["block"])
 	var at := Vector3((cell.x + 0.5) * bs, (cell.z + 0.5) * bs, (cell.y + 0.5) * bs)
@@ -1045,6 +1104,8 @@ func _build(place: bool) -> void:
 		_notice("that block is someone else's")
 		return
 	net.act_arg(int(build["act_build"] if place else build["act_break"]), cell.x | cell.y << 15, _build_arg(cell.z, build_kind))
+	if place:
+		sound.play("place", -4.0)
 	blocks_poll = minf(blocks_poll, 0.12)
 
 ## The input's argument for a build or break: the layer in the low byte, the material in the high one.
@@ -1116,6 +1177,15 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 		node.rotation.y = lerp_angle(node.rotation.y, atan2(vel.x, vel.z), minf(1.0, delta * 12.0))
 	if hp < t["hp"] - 0.001 and moved.length() <= 12.0:
 		t["hit_at"] = t_total
+		var near := Vector2(np.x, np.z).distance_to(me_pos)
+		if mine:
+			sound.play("hurt", -2.0)
+			sound.play("hit", -3.0)
+			_fight_at = t_total
+		elif near < 40.0:
+			sound.play("hit", SoundScript.at_distance(near) - 3.0)
+			if near < action_range + 4.0:
+				_fight_at = t_total
 		_damage_number(np, (t["hp"] - hp) * health_max, mine)
 		if animated:
 			node.hurt()
@@ -1225,12 +1295,162 @@ func _apply_weather(w: Dictionary) -> void:
 ## Which titled place we stand in: the smallest one round us, so a village inside a forest is the village. We are
 ## still in a place until LEAVE_MARGIN past its edge, so walking along the edge does not flicker the title.
 const LEAVE_MARGIN := 3.0
+## What to hear here, a couple of times a second: how much sea is round us, how near a river is, the trees, the houses,
+## the nearest fire, how high we stand, the weather and the hour; then a place's own sound and music, if we are in one.
+func _listen(delta: float) -> void:
+	_listen_in -= delta
+	if _listen_in > 0.0 or sound == null or theme == null:
+		return
+	_listen_in = 0.4
+	var p := me_pos
+	var dark: float = theme.darkness
+	var sea := 0.0
+	var trees := 0
+	var houses := 0
+	var fire_d := INF
+	if world:
+		if world.has_sea:
+			var wet := 0.0
+			var all := 0.0
+			for r in [18.0, 40.0, 75.0]:
+				for k in 12:
+					var a := k * TAU / 12.0
+					var wgt: float = 18.0 / r
+					all += wgt
+					if theme.height(p.x + cos(a) * r, p.y + sin(a) * r) < world.sea_level:
+						wet += wgt
+			sea = clampf(wet / all * 2.4, 0.0, 1.0)
+		var cx := floori(p.x / world.CELL)
+		var cy := floori(p.y / world.CELL)
+		for i in range(cx - 1, cx + 2):
+			for j in range(cy - 1, cy + 2):
+				for o in world.in_cell(i, j):
+					var t := String(o.get("t", ""))
+					var at: Vector2 = WorldData.centre(o)
+					var d := at.distance_to(p)
+					if t == "tree" and d < 45.0:
+						trees += 1
+					elif t == "house" and d < 70.0:
+						houses += 1
+					elif t == "square" or t == "keep" or t == "castle" or t == "tower":
+						fire_d = minf(fire_d, d - (0.0 if t == "square" else 12.0))
+	var forest := clampf(trees / 16.0, 0.0, 1.0)
+	var kind := String(theme.weather_drawn())
+	var w := {
+		"sea": sea,
+		"river": (1.0 - smoothstep(6.0, 50.0, _river_distance(p))) * 0.9,
+		"forest": forest * (1.0 - dark) * (1.0 - sea * 0.5),
+		"night": dark * clampf(0.35 + forest, 0.0, 1.0) * (1.0 - sea * 0.6),
+		"rain": 1.0 if kind == "rain" or kind == "storm" else 0.0,
+		"wind": clampf(0.2 + clampf(theme.height(p.x, p.y) / 25.0, 0.0, 1.0) * 0.6 + (0.45 if kind in ["storm", "snow", "dust"] else 0.0) + sea * 0.2, 0.0, 1.0),
+		"fire": 1.0 - smoothstep(3.0, 20.0, fire_d),
+		"town": clampf(houses / 8.0, 0.0, 1.0) * (1.0 - dark * 0.6),
+	}
+	# A place with a sound of its own brings it up and takes the land's own sounds down by half.
+	var zone := _sound_zone(p)
+	var own := String(zone.get("sound", ""))
+	if own != "":
+		for k in w:
+			w[k] = float(w[k]) * 0.5
+		w[own] = 1.0
+	sound.want = w
+	# Music: a fight first, then the place's own, then a town, then the night or the day. It changes only once the
+	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
+	var fighting := t_total - _fight_at < 8.0
+	var m := String(zone.get("music", ""))
+	if fighting:
+		m = "battle"
+	elif m == "":
+		m = "town" if houses >= 6 else ("night" if dark > 0.55 else "explore")
+	if m != _music_pick:
+		_music_pick = m
+		_music_since = t_total
+	if fighting or t_total - _music_since > 3.0:
+		sound.music_for = _music_pick
+
+## The smallest place round a point that has a sound or music of its own (/play/info locations), or {}.
+func _sound_zone(p: Vector2) -> Dictionary:
+	var best := {}
+	var best_r := INF
+	for l in locations:
+		if String(l.get("sound", "")) == "" and String(l.get("music", "")) == "":
+			continue
+		var r := float(l.get("r", 0.0))
+		if p.distance_to(Vector2(float(l.get("x", 0.0)), float(l.get("y", 0.0)))) <= r and r < best_r:
+			best = l
+			best_r = r
+	return best
+
+## Distance to the nearest river's middle (INF with none near).
+func _river_distance(p: Vector2) -> float:
+	var best := INF
+	if world == null:
+		return best
+	for r in world.rivers:
+		var pts: Array = r["pts"]
+		for k in range(0, pts.size() - 1):
+			var a := Vector2(pts[k][0], pts[k][1])
+			if absf(a.x - p.x) > 120.0 or absf(a.y - p.y) > 120.0:
+				continue
+			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+			best = minf(best, Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p))
+	return best
+
+## What is underfoot: water (a river, the sea, a lake), a road, the cobbles of a town, or grass.
+func _underfoot(p: Vector2) -> String:
+	if world == null:
+		return "grass"
+	if world.has_sea and theme.height(p.x, p.y) < world.sea_level + 0.05:
+		return "water"
+	if _river_distance(p) < 5.0:
+		return "water"
+	var cx := floori(p.x / world.CELL)
+	var cy := floori(p.y / world.CELL)
+	for s in world.road_segments(cx, cy):
+		if Geometry2D.get_closest_point_to_segment(p, Vector2(s[0], s[1]), Vector2(s[2], s[3])).distance_to(p) < float(s[4]):
+			return "stone" if float(s[4]) >= 3.4 else "road"
+	for o in world.in_cell(cx, cy):
+		if (o.get("t", "") == "square" or o.get("t", "") == "city") and o.has("b"):
+			var b: Array = o["b"]
+			if p.x > float(b[0]) and p.x < float(b[2]) and p.y > float(b[1]) and p.y < float(b[3]):
+				return "stone"
+	return "grass"
+
+## A footstep every couple of units walked, on whatever is underfoot; a splash stepping into water.
+func _footsteps() -> void:
+	if _step_from == Vector2.INF:
+		_step_from = me_pos
+	var d := me_pos.distance_to(_step_from)
+	_step_from = me_pos
+	if d > 6.0: # a teleport, not a step
+		return
+	_step_dist += d
+	if _step_dist < 2.3:
+		return
+	_step_dist = 0.0
+	var s := _underfoot(me_pos)
+	if s == "water" and _surface != "water" and _surface != "":
+		sound.play("splash", -6.0)
+	_surface = s
+	sound.play("step_" + s, -11.0 if s == "grass" else -9.0, 0.1)
+
+## Something came into the bag or went out of it.
+func _hear_bag(bag: Array) -> void:
+	var n := 0
+	for s in bag:
+		n += int(s.get("count", 1))
+	if _bag_count >= 0 and n > _bag_count:
+		sound.play("pickup", -4.0)
+	elif _bag_count >= 0 and n < _bag_count:
+		sound.play("drop", -5.0)
+	_bag_count = n
+
 func _where() -> void:
 	var best := ""
 	var best_r := INF
 	for l in locations:
 		var r := float(l.get("r", 0.0)) + (LEAVE_MARGIN if String(l.get("title", "")) == _here else 0.0)
-		if me_pos.distance_to(Vector2(float(l.get("x", 0.0)), float(l.get("y", 0.0)))) <= r and r < best_r:
+		if String(l.get("title", "")) != "" and me_pos.distance_to(Vector2(float(l.get("x", 0.0)), float(l.get("y", 0.0)))) <= r and r < best_r:
 			best = String(l.get("title", ""))
 			best_r = r
 	if best == _here:
@@ -1238,6 +1458,7 @@ func _where() -> void:
 	if best != "":
 		hud.show_location(best)
 		hud.say("[color=#ffd27a]%s[/color]" % best)
+		sound.play("chime", -9.0, 0.0)
 	else:
 		hud.show_location(_here, true)
 	_here = best
@@ -1457,6 +1678,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			net.act(ACT_JUMP, 0)
 		elif k == KEY_M:
 			_toggle_map()
+		elif k == KEY_N:
+			_notice(sound.cycle())
 		elif k == KEY_V:
 			_set_fpv(not fpv)
 		elif k == KEY_L:
@@ -1528,6 +1751,8 @@ func _attack() -> void:
 		_float_text((ents[target_id] as Node3D).position, "dodge", Color("9fe8e0"))
 	net.act(attack_id, target_id)
 	next_swing = t_total + 0.5
+	sound.play("swing", -2.0)
+	_fight_at = t_total
 	var me: Node3D = ents.get(net.get_self_id())
 	if me and me.has_method("attack"):
 		_face(me, (ents[target_id] as Node3D).position)
@@ -1668,6 +1893,20 @@ func _smoke() -> void:
 	_check("joins and sees itself", ok, "id=%d" % net.get_self_id())
 	_check("replicated attribute present", health_idx != "", health_idx)
 	_check("world loaded and themed", world != null and theme != null, "%d objects, %d by tile so far" % [world.objects.size(), world.point_count()])
+	# Sound: every file there, and the listener hearing the land (muted here, so it is what is wanted that counts).
+	var missing := []
+	for n in SoundScript.AMBIENCE:
+		if not ResourceLoader.exists("res://sounds/ambience/%s.ogg" % n):
+			missing.append(n)
+	for n in SoundScript.MUSIC:
+		if not ResourceLoader.exists("res://sounds/music/%s.ogg" % n):
+			missing.append(n)
+	for n in ["swing_1", "hit_1", "hurt", "pickup", "drop", "place", "break", "horn", "chime", "splash", "step_grass_1", "step_road_1", "step_stone_1", "step_water_1"]:
+		if not ResourceLoader.exists("res://sounds/sfx/%s.ogg" % n):
+			missing.append(n)
+	_check("every sound is there", missing.is_empty(), str(missing))
+	ok = await _wait(3.0, func(): return float(sound.want.get("wind", 0.0)) > 0.0 and sound.music_for != "")
+	_check("the land is heard and music is chosen", ok, "wind %.2f, music %s" % [float(sound.want.get("wind", 0.0)), sound.music_for])
 	# Walk east; if a wall happens to be in the way, try the other directions.
 	var start := me_pos
 	for dir in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:

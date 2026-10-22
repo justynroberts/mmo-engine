@@ -116,7 +116,16 @@ pub struct Place {
     /// world, by name), or on this map when `zone` is empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<Exit>,
+    /// What a client plays inside it over the sounds of the land round it (one of `SOUNDS`); empty for nothing extra.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sound: String,
+    /// The music a client plays inside it (one of `MUSIC`); empty for whatever the moment calls for.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub music: String,
 }
+/// The ambiences a place may have, and its music (the client's sounds: godot/sounds, made by scripts/make_audio.py).
+pub const SOUNDS: [&str; 12] = ["sea", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy", "battle"];
+pub const MUSIC: [&str; 7] = ["explore", "town", "night", "battle", "eerie", "holy", "none"];
 fn d_place_r() -> f32 {
     12.0
 }
@@ -209,7 +218,7 @@ pub struct Rule {
 }
 
 pub const MAX_RULES: usize = 16;
-pub const MAX_PLACES: usize = 64;
+pub const MAX_PLACES: usize = 256;
 /// Longest place title players see, in characters.
 pub const MAX_TITLE: usize = 40;
 pub const MAX_ROUTES: usize = 64;
@@ -262,6 +271,9 @@ fn d_sight() -> f32 {
 pub struct GameFile {
     #[serde(default = "d_speed")]
     pub move_speed: f32,
+    /// How much faster than `move_speed` everyone moves on a road (1 = no faster).
+    #[serde(default = "d_road")]
+    pub road_speed: f32,
     #[serde(default = "d_radius")]
     pub entity_radius: f32,
     #[serde(default = "d_interest")]
@@ -296,6 +308,9 @@ pub struct GameFile {
 }
 fn d_speed() -> f32 {
     20.0
+}
+fn d_road() -> f32 {
+    crate::world::ROAD_SPEED
 }
 fn d_radius() -> f32 {
     0.5
@@ -831,9 +846,9 @@ impl GameFile {
         ];
         GameFile {
             places: vec![
-                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None },
-                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None },
-                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None },
+                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None, sound: String::new(), music: String::new() },
+                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None, sound: String::new(), music: String::new() },
+                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None, sound: String::new(), music: String::new() },
             ],
             routes: vec![
                 Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true },
@@ -855,6 +870,7 @@ impl GameFile {
             daylight: None,
             events: Vec::new(),
             move_speed: 20.0,
+            road_speed: crate::world::ROAD_SPEED,
             entity_radius: 0.5,
             interest_radius: 128.0,
             max_visible: 64,
@@ -898,6 +914,9 @@ impl GameFile {
         }
         if !(self.move_speed > 0.0 && self.move_speed <= 1000.0) {
             return Err("move_speed must be in (0, 1000]".into());
+        }
+        if !(self.road_speed >= 1.0 && self.road_speed <= 4.0) {
+            return Err("road_speed must be 1..4 (1 = roads are no faster)".into());
         }
         if !(self.entity_radius >= 0.05 && self.entity_radius <= 16.0) {
             return Err("entity_radius must be 0.05..16".into());
@@ -1023,6 +1042,7 @@ impl GameFile {
             actions,
             replicated,
             move_speed: self.move_speed,
+            road_speed: self.road_speed,
             entity_radius: self.entity_radius,
             interest_radius: self.interest_radius,
             max_visible: self.max_visible as usize,
@@ -1051,6 +1071,12 @@ impl GameFile {
                 if e.zone.is_empty() && (e.x - p.x).hypot(e.y - p.y) <= p.r {
                     return Err(format!("place '{}': an exit on this map must lead somewhere outside the place itself", p.name));
                 }
+            }
+            if !p.sound.is_empty() && !SOUNDS.contains(&p.sound.as_str()) {
+                return Err(format!("place '{}': sound is one of {}", p.name, SOUNDS.join(", ")));
+            }
+            if !p.music.is_empty() && !MUSIC.contains(&p.music.as_str()) {
+                return Err(format!("place '{}': music is one of {}", p.name, MUSIC.join(", ")));
             }
             if p.title.chars().count() > MAX_TITLE || p.title.trim() != p.title || p.title.chars().any(char::is_control) {
                 return Err(format!("place '{}': a title is at most {MAX_TITLE} characters, no leading or trailing spaces", p.name));

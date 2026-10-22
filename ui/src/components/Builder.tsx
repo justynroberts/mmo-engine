@@ -3,7 +3,7 @@ import * as Slider from '@radix-ui/react-slider'
 import { Reorder } from 'framer-motion'
 import { Plus, Trash2 } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
-import type { Act, Archetype, Behaviour, Cond, GameFile, Rule, Seek } from '../api'
+import { MUSIC, SOUNDS, type Act, type Archetype, type Behaviour, type Cond, type GameFile, type Rule, type Seek } from '../api'
 import {
   ACT_KINDS,
   addRule,
@@ -530,6 +530,20 @@ function PlacesSection({ game, setGame, b, setB }: Edit & Pick<Props, 'b' | 'set
               onCommit={(t) => patch(i, { title: t.trim().slice(0, 40) || undefined })}
               className="pt-1"
             />
+            <div className="grid grid-cols-2 gap-x-2 pt-1">
+              <SelectField
+                label="Sound here"
+                value={p.sound ?? ''}
+                options={[{ value: '', label: 'the land’s own' }, ...SOUNDS.map((s) => ({ value: s, label: s }))]}
+                onChange={(s) => patch(i, { sound: s || undefined })}
+              />
+              <SelectField
+                label="Music here"
+                value={p.music ?? ''}
+                options={[{ value: '', label: 'as the moment calls' }, ...MUSIC.map((s) => ({ value: s, label: s }))]}
+                onChange={(s) => patch(i, { music: s || undefined })}
+              />
+            </div>
             <div className="grid grid-cols-3 gap-x-2 pt-1">
               <NumField label="X" value={p.x} onCommit={(n) => patch(i, { x: clamp(n, 0, 65536) })} />
               <NumField label="Y" value={p.y} onCommit={(n) => patch(i, { y: clamp(n, 0, 65536) })} />

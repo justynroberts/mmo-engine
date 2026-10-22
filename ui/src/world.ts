@@ -21,6 +21,12 @@ export interface River {
   pts: [number, number, number][]
 }
 
+/** A road: a centre line and how far either side of it the road runs (the engine makes movement faster on it). */
+export interface Road {
+  half_width: number
+  pts: [number, number][]
+}
+
 export interface Lake {
   b: [number, number, number, number]
   level: number
@@ -40,13 +46,15 @@ export interface Recipe {
   lakes: number
   /** River count, or null for the usual number for the size. */
   rivers: number | null
+  /** Roads between the places, high streets and the city's streets (absent: on). */
+  roads?: boolean
   forest: number
   hills: number
   edits: WorldEdit[]
 }
 
 export function defaultRecipe(size: number, seed: number): Recipe {
-  return { size, seed, city: true, villages: 1, forts: 1, crags: 1, lakes: 1, rivers: null, forest: 1, hills: 1, edits: [] }
+  return { size, seed, city: true, villages: 1, forts: 1, crags: 1, lakes: 1, rivers: null, roads: true, forest: 1, hills: 1, edits: [] }
 }
 
 export interface WorldData {
@@ -56,6 +64,9 @@ export interface WorldData {
   objects: WorldObject[]
   rivers: River[]
   lakes: Lake[]
+  roads: Road[]
+  /** The sea's level, for land with a coast (open sea round it); undefined for land to the edge. */
+  sea?: number
   /** Ground height at a point (0 without heights). */
   height(x: number, y: number): number
   hasHeights: boolean
@@ -74,7 +85,7 @@ interface FileHeights {
 
 /** Read a world file's text; null if it is not one. */
 export function parseWorld(text: string): WorldData | null {
-  let d: { format?: number; size?: number; recipe?: Partial<Recipe>; heights?: FileHeights; water?: { rivers?: River[]; lakes?: Lake[] }; objects?: WorldObject[] }
+  let d: { format?: number; size?: number; recipe?: Partial<Recipe>; heights?: FileHeights; water?: { rivers?: River[]; lakes?: Lake[]; sea?: { level: number } }; roads?: Road[]; objects?: WorldObject[] }
   try {
     d = JSON.parse(text)
   } catch {
@@ -104,7 +115,7 @@ export function parseWorld(text: string): WorldData | null {
     return (a + (b - a) * tx) * (1 - ty) + (c + (e - c) * tx) * ty
   }
   const recipe = d.recipe ? { ...defaultRecipe(d.size, 1), ...d.recipe, edits: d.recipe.edits ?? [] } : undefined
-  return { size: d.size, recipe, objects: d.objects ?? [], rivers: d.water?.rivers ?? [], lakes: d.water?.lakes ?? [], height, hasHeights: heights !== null }
+  return { size: d.size, recipe, objects: d.objects ?? [], rivers: d.water?.rivers ?? [], lakes: d.water?.lakes ?? [], roads: d.roads ?? [], sea: d.water?.sea?.level, height, hasHeights: heights !== null }
 }
 
 /** A world with no file: the server's walls as plain solid blocks on flat ground. */
@@ -114,6 +125,7 @@ export function fromBoxes(size: number, boxes: [number, number, number, number][
     objects: boxes.map((b) => ({ t: 'block', b, solid: true, y: 0 })),
     rivers: [],
     lakes: [],
+    roads: [],
     height: () => 0,
     hasHeights: false,
   }

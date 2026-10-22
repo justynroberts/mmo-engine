@@ -65,6 +65,6 @@ pub struct Prepared {
 
 pub fn prepare(path: &Path, seed: u64) -> Result<Prepared, String> {
     let file = crate::worldfile::load(path)?;
-    let world = World::from_boxes(file.size, seed, file.tiles.boxes.clone());
+    let world = file.world(seed);
     Ok(Prepared { file, world })
 }

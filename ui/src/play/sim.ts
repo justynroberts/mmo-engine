@@ -16,6 +16,11 @@ export const GROUND = -128
 /** Layers a walker steps up without help (proto::world::CLIMB); it drops off any height. */
 export const CLIMB = 1
 const LAST_CELL = (1 << 15) - 1
+/** Edge of a road cell (proto::world::ROAD_CELL), and the road speed when the server does not say. */
+export const ROAD_CELL = 4
+export const ROAD_SPEED = 1.5
+/** A road cell's key (proto::world::road_key). */
+export const roadKey = (cx: number, cy: number) => cx + cy * 65536
 
 /** A built column (proto::world::Column): its base layer and a bit per layer above it. */
 export interface Column {
@@ -35,9 +40,14 @@ export class World {
   private buckets: Map<number, number[]>
   /** The built block columns, by cy << 15 | cx; never with an empty mask. */
   private blocks = new Map<number, Column>()
+  /** The road cells (roadKey), and how much faster movement is on them (the game's road_speed). */
+  private roads: Set<number>
+  readonly roadSpeed: number
 
-  constructor(size: number, boxes: readonly Box[]) {
+  constructor(size: number, boxes: readonly Box[], roads: Iterable<number> = [], roadSpeed = ROAD_SPEED) {
     this.size = f(size)
+    this.roads = new Set(roads)
+    this.roadSpeed = f(roadSpeed)
     this.boxes = boxes.map((b) => [f(b[0]), f(b[1]), f(b[2]), f(b[3])] as const)
     this.gw = Math.ceil(this.size / CELL) + 1
     // Sparse: a 65,536 unit world has a million cells and only a few hold walls.
@@ -54,6 +64,11 @@ export class World {
         else this.buckets.set(k, [i])
       }
     })
+  }
+
+  /** True if the point is on a road cell (proto World::on_road). */
+  onRoad(x: number, y: number): boolean {
+    return this.roads.size > 0 && x >= 0 && y >= 0 && this.roads.has(roadKey(Math.floor(x / ROAD_CELL), Math.floor(y / ROAD_CELL)))
   }
 
   /** Set a column; an empty mask clears it. */
@@ -177,7 +192,8 @@ export function moveVector(dirX: number, dirY: number): [number, number] {
 export function integrate(world: World, x: number, y: number, z: number, dirX: number, dirY: number, speed: number, dt: number, r: number): [number, number, number] {
   const [mx, my] = moveVector(dirX, dirY)
   if (mx === 0 && my === 0) return [x, y, z === GROUND ? z : world.settle(x, y, r, z)]
-  return world.step(x, y, z, f(f(mx * speed) * dt), f(f(my * speed) * dt), r)
+  const s = world.onRoad(x, y) ? f(speed * world.roadSpeed) : speed
+  return world.step(x, y, z, f(f(mx * s) * dt), f(f(my * s) * dt), r)
 }
 
 /** Inputs kept for replay: over three seconds at 20 Hz. */

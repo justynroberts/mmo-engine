@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { KIND_DRIVEN, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
-import { BLOCK, BLOCK_COLOURS, MAP, OPEN, TREES, TYPE_COLOUR, groundColour, hpColor, type BlockCol } from './mapLook'
+import { BLOCK, BLOCK_COLOURS, MAP, OPEN, TREES, TYPE_COLOUR, UNDRAWN, groundColour, hpColor, type BlockCol } from './mapLook'
 import { fromBoxes, type WorldData } from '../world'
 
 interface Props {
@@ -230,10 +230,15 @@ export default function Scene3D(p: Props) {
       const apron = new THREE.Mesh(new THREE.PlaneGeometry(size * 5, size * 5).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: MAP.void }))
       apron.position.y = low - 2
       statics.add(apron)
+      if (land.sea !== undefined) {
+        const sea = new THREE.Mesh(new THREE.PlaneGeometry(size * 5, size * 5).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: MAP.water, transparent: true, opacity: 0.85 }))
+        sea.position.y = land.sea
+        statics.add(sea)
+      }
 
       // Footprints as blocks coloured by type, with a dark rim so their shape reads from far off.
       for (const o of land.objects) {
-        if (!o.b || OPEN.has(o.t) || o.t === 'crag' || o.t === 'lake') continue
+        if (!o.b || OPEN.has(o.t) || UNDRAWN.has(o.t) || o.t === 'crag' || o.t === 'lake') continue
         const [x0, y0, x1, y1] = o.b
         const tall = TALL[o.t] ?? 8
         const bg = new THREE.BoxGeometry(x1 - x0, tall, y1 - y0)
@@ -269,6 +274,31 @@ export default function Scene3D(p: Props) {
         rg.setIndex(idx)
         rg.computeVertexNormals()
         statics.add(new THREE.Mesh(rg, waterMat))
+      }
+
+      // Roads: a ribbon just above the ground, sampled every couple of units so it follows the hills.
+      const roadMat = new THREE.MeshLambertMaterial({ color: MAP.road, side: THREE.DoubleSide })
+      for (const r of land.roads) {
+        const pos: number[] = []
+        const pts: [number, number, number, number][] = []
+        for (let k = 0; k + 1 < r.pts.length; k++) {
+          const [ax, ay] = r.pts[k]!
+          const [bx, by] = r.pts[k + 1]!
+          const len = Math.hypot(bx - ax, by - ay) || 1
+          const n = Math.max(1, Math.ceil(len / 2))
+          for (let i = k === 0 ? 0 : 1; i <= n; i++) pts.push([ax + ((bx - ax) * i) / n, ay + ((by - ay) * i) / n, (-(by - ay) / len) * r.half_width, ((bx - ax) / len) * r.half_width])
+        }
+        for (const [x, y, nx, nz] of pts) pos.push(x + nx - half, land.height(x + nx, y + nz) + 0.15, y + nz - half, x - nx - half, land.height(x - nx, y - nz) + 0.15, y - nz - half)
+        const idx: number[] = []
+        for (let k = 1; k < pts.length; k++) {
+          const i = k * 2
+          idx.push(i - 2, i - 1, i, i - 1, i + 1, i)
+        }
+        const rg = new THREE.BufferGeometry()
+        rg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+        rg.setIndex(idx)
+        rg.computeVertexNormals()
+        statics.add(new THREE.Mesh(rg, roadMat))
       }
 
       // Trees: a trunk and a canopy each, instanced (at most 20000, nearest the middle first if there are more).

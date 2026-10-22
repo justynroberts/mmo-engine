@@ -3,7 +3,7 @@
 // the same memory as a small one. The reply format is proto::tiles (decode it the same way: tiles.test.ts and the
 // Rust tests share a fixture).
 
-import type { Box } from './sim'
+import { roadKey, type Box } from './sim'
 import { playUrl } from './base'
 
 export interface WallsMeta {
@@ -18,22 +18,27 @@ export interface WallsMeta {
 export const WALL = 0
 export const SCENERY = 1
 
+/** Road cells along a tile's edge (proto::tiles::ROAD_CELLS). */
+const ROAD_CELLS = 64
+
 export interface TileBox {
   id: number
   box: Box
   cls: number
 }
 
-/** A /play/tiles reply: its version (16 hex digits) and each tile's boxes. Null if cut short or not format 1. */
-export function decodeTiles(buf: ArrayBuffer): { ver: string; tiles: Map<string, TileBox[]> } | null {
+/** A /play/tiles reply: its version (16 hex digits), each tile's boxes and each tile's road cells (as roadKeys).
+ * Null if cut short or not format 2. */
+export function decodeTiles(buf: ArrayBuffer): { ver: string; tiles: Map<string, TileBox[]>; roads: Map<string, number[]> } | null {
   const v = new DataView(buf)
   let p = 0
   const need = (n: number) => p + n <= v.byteLength
-  if (!need(11) || v.getUint8(0) !== 1) return null
+  if (!need(11) || v.getUint8(0) !== 2) return null
   const ver = v.getBigUint64(1, true).toString(16).padStart(16, '0')
   const n = v.getUint16(9, true)
   p = 11
   const tiles = new Map<string, TileBox[]>()
+  const roads = new Map<string, number[]>()
   for (let t = 0; t < n; t++) {
     if (!need(8)) return null
     const cx = v.getUint16(p, true)
@@ -47,8 +52,18 @@ export function decodeTiles(buf: ArrayBuffer): { ver: string; tiles: Map<string,
       list.push({ id: v.getUint32(p, true), box: [f(4), f(8), f(12), f(16)], cls: v.getUint8(p + 20) })
     }
     tiles.set(`${cx},${cy}`, list)
+    if (!need(2)) return null
+    const m = v.getUint16(p, true)
+    p += 2
+    if (m > ROAD_CELLS * ROAD_CELLS || !need(m * 2)) return null
+    const cells: number[] = []
+    for (let i = 0; i < m; i++, p += 2) {
+      const c = Math.min(v.getUint16(p, true), ROAD_CELLS * ROAD_CELLS - 1)
+      cells.push(roadKey(cx * ROAD_CELLS + (c % ROAD_CELLS), cy * ROAD_CELLS + Math.floor(c / ROAD_CELLS)))
+    }
+    roads.set(`${cx},${cy}`, cells)
   }
-  return { ver, tiles }
+  return { ver, tiles, roads }
 }
 
 type Fetcher = (url: string) => Promise<ArrayBuffer>
@@ -67,6 +82,8 @@ export class WallStore {
   private cls = new Map<number, number>()
   private refs = new Map<number, number>()
   private tiles = new Map<string, number[]>()
+  /** Each held tile's road cells (roadKeys). */
+  private roads = new Map<string, number[]>()
   private pending = new Set<string>()
   private ver = ''
   private streaming = false
@@ -97,6 +114,11 @@ export class WallStore {
   /** Every wall held with what it is: buildings to draw as blocks, scenery the world file already draws. */
   entries(): { box: Box; cls: number }[] {
     return [...this.boxes].map(([id, box]) => ({ box, cls: this.cls.get(id) ?? WALL }))
+  }
+
+  /** Every road cell held (roadKeys). */
+  roadCells(): number[] {
+    return [...this.roads.values()].flat()
   }
 
   /** Walls whose box touches the square of half-width `r` around a point. */
@@ -136,6 +158,7 @@ export class WallStore {
     this.cls.clear()
     this.refs.clear()
     this.tiles.clear()
+    this.roads.clear()
     this.pending.clear()
     this.epoch++
   }
@@ -194,6 +217,7 @@ export class WallStore {
             }
           }
           this.tiles.set(k, ids)
+          this.roads.set(k, reply.roads.get(k) ?? [])
         }
         this.rev++
       })
@@ -214,6 +238,7 @@ export class WallStore {
       } else this.refs.set(id, n)
     }
     this.tiles.delete(k)
+    this.roads.delete(k)
   }
 
   /** True once every tile near the player is in, which is when prediction can be trusted. */

@@ -48,13 +48,14 @@ function AddButton({ label, onClick }: { label: string; onClick: () => void }) {
 // ------------------------------------------------------------------ settings
 
 export function SettingsEditor({ game, setGame }: Edit) {
-  const set = (k: 'move_speed' | 'entity_radius' | 'interest_radius' | 'max_visible') => (n: number) =>
+  const set = (k: 'move_speed' | 'road_speed' | 'entity_radius' | 'interest_radius' | 'max_visible') => (n: number) =>
     setGame({ ...game, [k]: n })
   return (
     <section aria-label="World settings" className="cell py-2">
       <h2 className="lbl pb-1">World settings</h2>
-      <div className="grid grid-cols-4 gap-x-2">
+      <div className="grid grid-cols-5 gap-x-2">
         <NumField label="Speed u/s" value={game.move_speed} onCommit={set('move_speed')} />
+        <NumField label="On roads ×" value={game.road_speed ?? 1.5} onCommit={(n) => set('road_speed')(Math.min(4, Math.max(1, n)))} />
         <NumField label="Radius" value={game.entity_radius} onCommit={set('entity_radius')} />
         <NumField label="Interest" value={game.interest_radius} onCommit={set('interest_radius')} />
         <NumField label="Max seen" value={game.max_visible} onCommit={set('max_visible')} />

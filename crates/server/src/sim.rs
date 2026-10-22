@@ -371,6 +371,8 @@ impl Sim {
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
         let Game { defs, archs, places, routes, items, daylight } = game;
+        let mut world = world;
+        world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
         let grid = Grid::new(world.size, defs.interest_radius, cap);
         Sim {
@@ -572,6 +574,7 @@ impl Sim {
     /// were moved.
     pub fn replace_world(&mut self, world: World, terrain: crate::worldfile::Terrain) -> usize {
         self.world = world;
+        self.world.road_speed = self.defs.road_speed;
         self.terrain = terrain;
         self.nav.clear();
         // Built blocks stay where they are, except those the new world's walls cover or its ground buries.
@@ -1715,7 +1718,7 @@ mod tests {
     #[test]
     fn bots_spawn_in_their_home_place_and_wander_stays_near_it() {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None }];
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None, sound: String::new(), music: String::new() }];
             let mut a = arch("w", Behaviour::Wander, vec![]);
             a.home = Some("home".into());
             a.count = 20;
@@ -1777,7 +1780,7 @@ mod tests {
 
     fn cup_sim(per_tick: u32) -> (Sim, usize) {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None }];
+            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new() }];
             g.archetypes = vec![arch("b", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Goto { place: "far".into() } }])];
         });
         s.replace_world(cup(), Default::default());
@@ -1828,7 +1831,7 @@ mod tests {
             Rule { when: Cond::Always, then: Act::Goto { place: "gate".into() } },
         ];
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None }];
+            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new() }];
             g.archetypes = vec![arch("b", Behaviour::Idle, rules)];
         });
         let p = s.spawn(0).unwrap();

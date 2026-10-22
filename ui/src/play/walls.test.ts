@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { decodeTiles, SCENERY, WALL, WallStore } from './walls'
+import { roadKey } from './sim'
 
-/** proto::tiles::tests::FIXTURE: tiles (0,0), (1,0) and (3,3) of two boxes, the second scenery on a tile border. */
+/** proto::tiles::tests::FIXTURE: tiles (0,0), (1,0) and (3,3) of two boxes, the second scenery on a tile border, and a
+ * road across the border at x 256 (cells 62 to 65 of row 1). */
 const FIXTURE =
-  '015d68e04ca311b33f0300000000000200000000000000000028410000a2410000f04100002042000100000000007a43cdcccc3d000096430000a0400101000000010000000100000000007a43cdcccc3d000096430000a040010300030000000000'
+  '02605a76d9b199f5850300000000000200000000000000000028410000a2410000f04100002042000100000000007a43cdcccc3d000096430000a0400102007e007f0001000000010000000100000000007a43cdcccc3d000096430000a0400102004000410003000300000000000000'
 
 const bytes = (hex: string) => new Uint8Array(hex.match(/../g)!.map((h) => parseInt(h, 16))).buffer
 
@@ -11,14 +13,14 @@ const meta = { ver: '00000000000000aa', tile: 256, count: 3, inline: false }
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
 /** A /play/tiles reply, the way proto::tiles::TileSet::encode writes one. */
-function encode(ver: bigint, tiles: [string, [number, number, number, number, number][]][]): ArrayBuffer {
-  const n = tiles.reduce((a, [, l]) => a + 8 + l.length * 21, 11)
+function encode(ver: bigint, tiles: [string, [number, number, number, number, number][], number[]?][]): ArrayBuffer {
+  const n = tiles.reduce((a, [, l, r]) => a + 8 + l.length * 21 + 2 + (r?.length ?? 0) * 2, 11)
   const v = new DataView(new ArrayBuffer(n))
-  v.setUint8(0, 1)
+  v.setUint8(0, 2)
   v.setBigUint64(1, ver, true)
   v.setUint16(9, tiles.length, true)
   let p = 11
-  for (const [k, list] of tiles) {
+  for (const [k, list, roads = []] of tiles) {
     const [cx, cy] = k.split(',').map(Number) as [number, number]
     v.setUint16(p, cx, true)
     v.setUint16(p + 2, cy, true)
@@ -29,6 +31,12 @@ function encode(ver: bigint, tiles: [string, [number, number, number, number, nu
       ;[x0, y0, x1, y1].forEach((f, i) => v.setFloat32(p + 4 + 4 * i, f, true))
       v.setUint8(p + 20, WALL)
       p += 21
+    }
+    v.setUint16(p, roads.length, true)
+    p += 2
+    for (const c of roads) {
+      v.setUint16(p, c, true)
+      p += 2
     }
   }
   return v.buffer
@@ -53,7 +61,10 @@ function server(boxes: [number, number, number, number][]) {
 describe('decodeTiles', () => {
   it('reads what the server writes, bit for bit', () => {
     const r = decodeTiles(bytes(FIXTURE))!
-    expect(r.ver).toBe('3fb311a34ce0685d')
+    expect(r.ver).toBe('85f599b1d9765a60')
+    expect(r.roads.get('0,0')).toEqual([roadKey(62, 1), roadKey(63, 1)])
+    expect(r.roads.get('1,0')).toEqual([roadKey(64, 1), roadKey(65, 1)])
+    expect(r.roads.get('3,3')).toEqual([])
     expect([...r.tiles.keys()]).toEqual(['0,0', '1,0', '3,3'])
     expect(r.tiles.get('0,0')).toEqual([
       { id: 0, box: [10.5, 20.25, 30, 40], cls: WALL },
@@ -93,6 +104,20 @@ describe('WallStore', () => {
     s.update(20010, 20010)
     await flush()
     expect(s.list()).toEqual([[20000, 20000, 20030, 20030]])
+  })
+
+  it('keeps the road cells of the tiles it holds, and lets them go with the tiles', async () => {
+    const fetcher = async (url: string) => {
+      const keys = new URL(url, 'http://x').searchParams.get('c')!.split(';')
+      return encode(0xaan, keys.map((k): [string, [number, number, number, number, number][], number[]] => [k, [], k === '0,0' ? [126, 127] : []]))
+    }
+    const s = new WallStore(4096, meta, [], [], fetcher)
+    s.update(10, 10)
+    await flush()
+    expect(s.roadCells().sort((a, b) => a - b)).toEqual([roadKey(62, 1), roadKey(63, 1)])
+    s.update(1800, 10)
+    await flush()
+    expect(s.roadCells()).toEqual([])
   })
 
   it('counts a wall on a tile border once', async () => {

@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { Interpolator, type Pos } from './interp'
-import { GROUND, integrate, Predictor, World } from './sim'
+import { GROUND, integrate, Predictor, ROAD_SPEED, roadKey, World } from './sim'
 
 const walls = () => new World(256, [[100, 0, 110, 200], [0, 120, 90, 130]])
 
 describe('prediction', () => {
+  // The same cases as proto::world::tests::a_road_is_faster_from_the_cell_a_tick_starts_in.
+  it('is faster on a road, from the cell a tick starts in', () => {
+    const f = Math.fround
+    const w = new World(512, [], [roadKey(25, 25), roadKey(26, 25)])
+    expect([w.onRoad(100, 100), w.onRoad(107.9, 103.9), w.onRoad(108, 100), w.onRoad(99.9, 101)]).toEqual([true, true, false, false])
+    expect(integrate(w, 101, 102, GROUND, 127, 0, 20, f(0.05), 0.5)[0]).toBe(f(101 + f(f(20 * ROAD_SPEED) * f(0.05))))
+    expect(integrate(w, 99, 102, GROUND, 127, 0, 20, f(0.05), 0.5)[0]).toBe(100)
+    const slow = new World(512, [], [roadKey(25, 25)], 1)
+    expect(integrate(slow, 101, 102, GROUND, 127, 0, 20, f(0.05), 0.5)[0]).toBe(102)
+    expect(w.onRoad(-1, 100)).toBe(false)
+  })
+
   it('stops at walls like the server', () => {
     const w = walls()
     const p = new Predictor(95, 50, 20, 20, 0.5)

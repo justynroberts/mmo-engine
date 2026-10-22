@@ -253,7 +253,8 @@ pub struct Params {
 pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
     let tiles = hs.statics.tiles();
     // Small worlds ship their walls inline; big ones are fetched by tile from /play/tiles.
-    let inline = tiles.boxes.len() <= crate::web::WALLS_INLINE_MAX;
+    // Road cells only travel with tiles, so a world with roads streams them whatever its size.
+    let inline = tiles.boxes.len() <= crate::web::WALLS_INLINE_MAX && !tiles.has_roads();
     let boxes: Vec<[f32; 4]> = if inline { tiles.boxes.iter().map(|b| [b.x0, b.y0, b.x1, b.y1]).collect() } else { Vec::new() };
     let classes: &[u8] = if inline { &tiles.class } else { &[] };
     let now = proto::daylight::now_ms().floor();
@@ -269,6 +270,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "world_size": sim.world.size,
         "seed": sim.world.seed,
         "move_speed": sim.defs.move_speed,
+        "road_speed": sim.defs.road_speed,
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,
@@ -295,8 +297,14 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "daylight": daylight,
         // Weather zones that are on: mist to draw over a place, and inside it the weather instead of the global one.
         "weather_zones": sim.zones,
-        // Places with a title: named locations a client tells the player about as they walk in and out.
-        "locations": sim.places.iter().filter(|p| !p.title.is_empty()).map(|p| json!({"title": p.title, "x": p.x, "y": p.y, "r": p.r})).collect::<Vec<_>>(),
+        // Places with a title (named locations a client tells the player about as they walk in and out), or a sound or
+        // music of their own (what a client plays inside them).
+        "locations": sim.places.iter().filter(|p| !p.title.is_empty() || !p.sound.is_empty() || !p.music.is_empty()).map(|p| {
+            let mut o = json!({"title": p.title, "x": p.x, "y": p.y, "r": p.r});
+            if !p.sound.is_empty() { o["sound"] = json!(p.sound); }
+            if !p.music.is_empty() { o["music"] = json!(p.music); }
+            o
+        }).collect::<Vec<_>>(),
         "zone": hs.zone.as_ref().map(|z| z.index),
         "zones": hs.zone.as_ref().map(|z| (0..z.count).map(|i| hs.zone_web.get(i as usize).cloned()).collect::<Vec<_>>()),
         // Zone lines: each zone is a map of its own, so a client arriving in one loads its world afresh.

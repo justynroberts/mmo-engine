@@ -55,6 +55,15 @@ pub struct Terrain {
     heights: Vec<f32>,
 }
 
+impl WorldFile {
+    /// The collision world this file makes: its walls and its roads.
+    pub fn world(&self, seed: u64) -> proto::World {
+        let mut w = proto::World::from_boxes(self.size, seed, self.tiles.boxes.clone());
+        w.set_roads(self.tiles.road_cells());
+        w
+    }
+}
+
 impl Terrain {
     fn parse(h: &Value) -> Result<Terrain, String> {
         if h.is_null() {
@@ -133,6 +142,8 @@ struct FileIn<'a> {
     size: Value,
     #[serde(default)]
     heights: Value,
+    #[serde(default)]
+    roads: Value,
     #[serde(borrow)]
     objects: Option<&'a RawValue>,
 }
@@ -198,6 +209,33 @@ impl<'de> serde::Deserialize<'de> for Objects {
     }
 }
 
+/// Most points in all the roads of one file: enough for a road network across the largest world.
+const MAX_ROAD_POINTS: usize = 2_000_000;
+
+/// The file's `roads`: `[{"half_width": w, "pts": [[x, y], ...]}]`. None at all is no roads.
+fn parse_roads(v: &Value) -> Result<Vec<proto::tiles::Road>, String> {
+    let Some(list) = v.as_array() else { return Ok(Vec::new()) };
+    let mut out = Vec::with_capacity(list.len());
+    let mut total = 0;
+    for (i, r) in list.iter().enumerate() {
+        let hw = r["half_width"].as_f64().filter(|w| (0.5..=32.0).contains(w)).ok_or(format!("road {i}: half_width must be 0.5 to 32"))? as f32;
+        let pts: Vec<(f32, f32)> = r["pts"]
+            .as_array()
+            .ok_or(format!("road {i}: no pts"))?
+            .iter()
+            .map(|p| Some((p[0].as_f64()? as f32, p[1].as_f64()? as f32)))
+            .collect::<Option<_>>()
+            .filter(|p: &Vec<(f32, f32)>| p.iter().all(|q| q.0.is_finite() && q.1.is_finite()))
+            .ok_or(format!("road {i}: each point is [x, y]"))?;
+        total += pts.len();
+        if total > MAX_ROAD_POINTS {
+            return Err(format!("more than {MAX_ROAD_POINTS} road points"));
+        }
+        out.push(proto::tiles::Road { half_width: hw, pts });
+    }
+    Ok(out)
+}
+
 pub fn load(path: &Path) -> Result<WorldFile, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let v: FileIn = serde_json::from_slice(&bytes).map_err(|e| format!("{}: not JSON: {e}", path.display()))?;
@@ -224,7 +262,8 @@ pub fn load(path: &Path) -> Result<WorldFile, String> {
             _ => return Err(format!("object {i}: a solid object needs a footprint b = [x0, y0, x1, y1] inside the world")),
         }
     }
-    let tiles = Arc::new(TileSet::build(size, boxes, classes)?);
+    let roads = parse_roads(&v.roads)?;
+    let tiles = Arc::new(TileSet::build(size, boxes, classes)?.with_roads(&proto::tiles::road_cells(size, &roads)));
     // Heights only place block columns, so a world whose heights cannot be read still runs, on flat ground.
     let terrain = Terrain::parse(&v.heights).unwrap_or_else(|e| {
         eprintln!("{}: {e}; built blocks will sit as if the ground were flat", path.display());
@@ -380,6 +419,19 @@ mod tests {
             let e = load(&write(text)).err().unwrap_or_default();
             assert!(e.contains(why), "{text}: {e}");
         }
+    }
+
+    #[test]
+    fn roads_become_road_cells_in_the_tiles_and_the_collision_world() {
+        let p = write(r#"{"format": 1, "size": 512, "objects": [], "roads": [{"half_width": 2, "pts": [[100, 102], [140, 102]]}]}"#);
+        let w = load(&p).unwrap();
+        assert!(w.tiles.has_roads());
+        let world = w.world(1);
+        assert!(world.on_road(120.0, 102.0) && !world.on_road(120.0, 110.0));
+        let p = write(r#"{"format": 1, "size": 512, "objects": [], "roads": [{"half_width": 99, "pts": [[1, 1], [2, 2]]}]}"#);
+        assert!(load(&p).err().unwrap().contains("half_width"));
+        let p = write(r#"{"format": 1, "size": 512, "objects": []}"#);
+        assert!(!load(&p).unwrap().tiles.has_roads(), "no roads is fine");
     }
 
     #[test]

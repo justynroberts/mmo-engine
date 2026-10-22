@@ -676,7 +676,7 @@ mod tests {
     fn a_weather_zone_acts_only_inside_its_place_and_events_switch_it() {
         let (mut s, mut d, mut c, _) = setup(|g| {
             g.weather.push(storm());
-            g.places.push(proto::game::Place { name: "haunt".into(), x: 300.0, y: 300.0, r: 20.0, title: String::new(), exit: None });
+            g.places.push(proto::game::Place { name: "haunt".into(), x: 300.0, y: 300.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new() });
             g.zones.push(WeatherZone { name: "red mist".into(), place: "haunt".into(), weather: "storm".into(), active: true, height: 30.0 });
             g.events.push(EventDef { name: "lift".into(), every_secs: 0, chance_pct: 100.0, steps: vec![Step::Zone { zone: "red mist".into(), on: false }], ..EventDef::default() });
         });

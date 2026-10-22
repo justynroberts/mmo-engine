@@ -150,6 +150,8 @@ fn defs_from_info(v: &serde_json::Value) -> Option<Defs> {
         actions: Vec::new(),
         replicated,
         move_speed: v["move_speed"].as_f64()? as f32,
+        // Servers from before roads have none, so the speed there does not matter.
+        road_speed: v["road_speed"].as_f64().unwrap_or(proto::world::ROAD_SPEED as f64) as f32,
         entity_radius: v["entity_radius"].as_f64()? as f32,
         interest_radius: v["interest_radius"].as_f64()? as f32,
         max_visible: 0,
@@ -248,7 +250,8 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         return fail("info_json: no world_size");
     }
     let (boxes, tiles) = walls_of(&v, size as f32);
-    let world = World::from_boxes(size as f32, v["seed"].as_u64().unwrap_or(0), boxes);
+    let mut world = World::from_boxes(size as f32, v["seed"].as_u64().unwrap_or(0), boxes);
+    world.road_speed = defs.road_speed;
     let hz = v["hz"].as_u64().unwrap_or(20).clamp(1, 120) as u32;
     let id = match cstr(identity) {
         None => None,
@@ -620,6 +623,7 @@ pub unsafe extern "C" fn mmo_put_tiles(c: *mut Client, bytes: *const u8, len: us
         return 0;
     }
     c.world.set_boxes(t.boxes().into_iter().map(|(_, b, _)| b).collect());
+    c.world.set_roads(t.roads());
     1
 }
 
@@ -655,6 +659,7 @@ pub unsafe extern "C" fn mmo_set_walls(c: *mut Client, info_json: *const c_char)
     }
     c.tiles = tiles;
     c.world.set_boxes(boxes);
+    c.world.set_roads([]);
     1
 }
 

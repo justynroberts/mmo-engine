@@ -51,7 +51,14 @@ export interface Place {
   title?: string
   /** A zone line: walking in takes a player to (x, y) in `zone` (a zone's name), or on this map if `zone` is empty. */
   exit?: { zone?: string; x: number; y: number }
+  /** The ambience a client plays inside it over the land's own sounds (one of SOUNDS). */
+  sound?: string
+  /** The music a client plays inside it (one of MUSIC). */
+  music?: string
 }
+/** What a place's sound and music may be (proto::game::SOUNDS, MUSIC). */
+export const SOUNDS = ['sea', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town', 'market', 'crypt', 'holy', 'battle'] as const
+export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'none'] as const
 export interface Route {
   name: string
   points: [number, number][]
@@ -165,6 +172,8 @@ export interface DirectorState {
 
 export interface GameFile {
   move_speed: number
+  /** How much faster everyone moves on a road (1 to 4; absent: 1.5). */
+  road_speed?: number
   entity_radius: number
   interest_radius: number
   max_visible: number

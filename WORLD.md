@@ -48,6 +48,10 @@ again (`worldgen --recipe world.json` accepts a whole world file). Every field i
 | `villages`, `forts`, `crags`, `lakes` | How many, as a multiple of the usual number for the size (0 = none, 0..5) |
 | `rivers` | River count (0..12), or null for the usual number |
 | `forest`, `hills` | How wooded, and how tall the hills, as a multiple of usual (0..5) |
+| `roads` | `true` (the default) or `false`: the city's streets, each village's high street, and a road network joining them and the forts |
+| `coast` | Outlines of the land, `[[[x, y], ...], ...]` (three points or more each): land inside, open sea outside, a beach and wadeable shallows between. Without one the land runs to the edge and mountains rise past it |
+| `river_courses` | Rivers along these lines, source to mouth, `[[[x, y], ...], ...]`, each followed with a meander of its own; replaces the rivers the seed lays out. Nothing is laid out across them |
+| `settlements` | Places put where the recipe says before the seed lays out the rest: `[{"t": "city" \| "town" \| "village" \| "fort", "at": [x, y], "name": "...", "side": 240}]` (`side`: a city's width). A town is a long high street with a manor; each is moved a little (and made smaller) if its spot is taken |
 | `edits` | Hand edits, applied in order: `{"remove": [x, y]}` takes away the smallest footprint containing the point (a whole city with everything in it, on its open ground); `{"add": {"t": type, "b": [x0, y0, x1, y1]}}` puts a footprint there and clears what it covers. Types: house, keep, tower, castle, wall, crag, lake, square, city |
 
 Edits go in before the land is shaped, so what they add stands on level ground with rivers bending round it.
@@ -65,6 +69,8 @@ One JSON object.
 | `generator` | Informational |
 | `heights` | The ground, below |
 | `water` | Rivers and lakes, below |
+| `roads` | Roads, below (optional) |
+| `settled` | Where each of the recipe's `settlements` went: `[{"t", "name", "asked": [x, y], "at": [x, y] or null}]` |
 | `objects` | Everything else, below |
 
 Unknown fields are allowed everywhere and ignored by the engine, so a generator can add data for its own
@@ -91,9 +97,23 @@ already in the heights; a theme never has to work them out.
 |---|---|
 | `rivers` | `[{ "half_width": 5, "pts": [[x, y, water_level], ...] }]`, a polyline with the water surface height at each point |
 | `lakes` | `[{ "b": [x0, y0, x1, y1], "level": h }]`, a surface at `level` over the box; the shoreline is where the heights rise above it |
+| `sea` | `{ "level": h }` for land with a coast: open water at `level` everywhere the heights are below it |
 
 Rivers are wadeable (the engine knows nothing of them). A lake is usually also a solid object of type `lake`,
 so it cannot be entered.
+
+### roads
+
+`[{ "half_width": 3, "pts": [[x, y], ...] }]`: each a centre line and how far either side of it the road runs (0.5 to
+32). The engine makes them faster underfoot: it turns them into road cells, 4 units square, whose centres a road
+covers, and everything moves the game file's `road_speed` times as fast (1.5 by default) on them. A theme draws them.
+
+worldgen lays the city's avenues (half width 4) and streets (3.5, paved), each village's high street, roads between
+places (3) and tracks to forts (2.2). The network grows outward from the city: each village and fort in turn is joined
+to the nearest road already laid by the cheapest path over the land (gentle slopes, round anything solid, across as
+little river as it can, along an existing road where one goes the same way), straightened and rounded off. Where a
+road crosses a river the bed is raised to just under the water, a ford (an object of type `ford` marks each), and
+houses line the roads for a little way out of the city's gates.
 
 ### objects
 
@@ -117,7 +137,9 @@ pieces). Only `solid` footprints matter to the engine; `t` is for themes. The ty
 | `crag` | footprint, solid | A rocky mountain; its height is in `heights` |
 | `lake` | footprint, solid | Deep water |
 | `city` | footprint | A city's extent (open ground inside is street) |
-| `square` | footprint | An open square: a plaza, market or village green |
+| `square` | footprint | An open square: a plaza, market or village green (a village is a green on a high street lined with houses, with a church tower and a back lane) |
+| `ford` | point | Where a road wades a river: `r` is the road's direction there |
+| `sea` | footprint, solid, scenery | Open sea past the shallows, as boxes: solid so nobody walks the sea floor, drawn as water (not as a wall) |
 | `tree`, `tree_bare`, `rock` | point, solid | Scenery; the footprint is the trunk or the stone, so it is solid where it stands |
 | `bush` | point | Scenery you walk through |
 | `boulder`, `spire` | point, solid | Big rocks on the mountains past the edge (solid where they reach into the world) |

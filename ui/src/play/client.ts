@@ -17,6 +17,8 @@ export interface PlayInfo {
   world_size: number
   seed: number
   move_speed: number
+  /** How much faster movement is on a road (older servers do not say). */
+  road_speed?: number
   entity_radius: number
   interest_radius: number
   attrs: { name: string; min: number; max: number; bits: number; replicated: boolean }[]
@@ -143,7 +145,7 @@ export class GameClient {
   ) {
     this.defs = defsOf(info)
     this.walls = new WallStore(info.world_size, info.walls, info.boxes, info.box_class)
-    this.world = new World(info.world_size, this.walls.list())
+    this.world = new World(info.world_size, this.walls.list(), this.walls.roadCells(), info.road_speed)
     this.worldRev = this.walls.rev
     this.interp = new Interpolator<Ent>(info.hz)
   }
@@ -164,7 +166,7 @@ export class GameClient {
   private syncWorld() {
     if (this.worldRev === this.walls.rev) return
     this.worldRev = this.walls.rev
-    this.world = new World(this.info.world_size, this.walls.list())
+    this.world = new World(this.info.world_size, this.walls.list(), this.walls.roadCells(), this.info.road_speed)
     for (const c of this.blocks.values()) this.world.setColumn(c.cx, c.cy, { base: c.base, mask: maskOf(c.kinds) })
   }
 

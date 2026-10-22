@@ -13,8 +13,12 @@
 //! and hand edits on top of what the seed lays out (see `Params::from_recipe`). The recipe is written into the
 //! world file, so a world can be opened, edited and made again. Flags given after `--recipe` override it.
 
+mod coast;
+mod roads;
+
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 // ------------------------------------------------------------------------------------------------ random and noise
 
@@ -91,11 +95,41 @@ fn overlaps(a: &Box4, b: &Box4, pad: f32) -> bool {
 struct Layout {
     size: f32,
     things: Vec<Solid>,
+    /// The coastline, if the land has one: nothing is laid out at sea or on the beach.
+    coast: Option<Rc<coast::Coast>>,
+    /// River courses given by the recipe: nothing is laid out across them.
+    courses: Vec<Vec<(f32, f32)>>,
 }
 
 impl Layout {
     fn free(&self, b: &Box4, pad: f32) -> bool {
+        self.clear(b, pad) && self.dry(b)
+    }
+    /// Inside the world and clear of everything laid out so far (wet or not).
+    fn clear(&self, b: &Box4, pad: f32) -> bool {
         b[0] >= 8.0 && b[1] >= 8.0 && b[2] <= self.size - 8.0 && b[3] <= self.size - 8.0 && !self.things.iter().any(|s| overlaps(&s.b, b, pad))
+    }
+    /// True if a box is well inland and clear of the recipe's rivers.
+    fn dry(&self, b: &Box4) -> bool {
+        let corners = [(b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3]), ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)];
+        if let Some(c) = &self.coast {
+            if corners.iter().any(|&(x, y)| c.d(x, y) < 12.0) {
+                return false;
+            }
+        }
+        let keep = RIVER_HALF + RIVER_LIP + 8.0;
+        !self.courses.iter().any(|r| {
+            r.windows(2).any(|w| {
+                let ((ax, ay), (bx, by)) = (w[0], w[1]);
+                // Distance from the segment to the box, closely enough: the box grown by the keep-out, against the segment.
+                let n = ((bx - ax).hypot(by - ay) / 4.0).ceil().max(1.0) as i32;
+                (0..=n).any(|k| {
+                    let t = k as f32 / n as f32;
+                    let (x, y) = (ax + (bx - ax) * t, ay + (by - ay) * t);
+                    x > b[0] - keep && x < b[2] + keep && y > b[1] - keep && y < b[3] + keep
+                })
+            })
+        })
     }
     fn add(&mut self, t: &'static str, b: Box4, v: u32, solid: bool) {
         self.things.push(Solid { t, b, v, base: 0.0, solid });
@@ -119,7 +153,8 @@ impl Layout {
 
 /// A walled city: curtain wall with towers and four gates, avenues to a central plaza and castle with corner
 /// towers, side streets, terraced houses back to back along every street, and an open market square.
-fn city(l: &mut Layout, rng: &mut Rng, cx: f32, cy: f32, side: f32) {
+/// Returns the plaza's size and the city's streets (each a straight line), which become paved roads.
+fn city(l: &mut Layout, rng: &mut Rng, cx: f32, cy: f32, side: f32) -> (f32, Vec<[(f32, f32); 2]>) {
     const WALL: f32 = 3.0;
     const GATE: f32 = 18.0;
     const TOWER: f32 = 9.0;
@@ -172,10 +207,28 @@ fn city(l: &mut Layout, rng: &mut Rng, cx: f32, cy: f32, side: f32) {
     l.add("square", [cx - plaza / 2.0, cy - plaza / 2.0, cx + plaza / 2.0, cy + plaza / 2.0], rng.v(), false);
     let inner = h - WALL / 2.0 - 12.0;
     let mut market = false;
+    // A street runs round inside the wall, and between every row and column of blocks.
+    let ring = h - WALL / 2.0 - 6.0;
+    let mut streets = vec![
+        [(cx - ring, cy - ring), (cx + ring, cy - ring)],
+        [(cx + ring, cy - ring), (cx + ring, cy + ring)],
+        [(cx + ring, cy + ring), (cx - ring, cy + ring)],
+        [(cx - ring, cy + ring), (cx - ring, cy - ring)],
+    ];
     for qx in [-1.0f32, 1.0] {
         for qy in [-1.0f32, 1.0] {
             let (lo_x, hi_x) = if qx < 0.0 { (cx - inner, cx - AVENUE / 2.0) } else { (cx + AVENUE / 2.0, cx + inner) };
             let (lo_y, hi_y) = if qy < 0.0 { (cy - inner, cy - AVENUE / 2.0) } else { (cy + AVENUE / 2.0, cy + inner) };
+            let mut x = lo_x + BLOCK + STREET / 2.0;
+            while x + STREET / 2.0 + BLOCK <= hi_x {
+                streets.push([(x, lo_y - 6.0), (x, hi_y)]);
+                x += BLOCK + STREET;
+            }
+            let mut y = lo_y + 2.0 * ROW + 1.0 + STREET / 2.0;
+            while y + STREET / 2.0 + 2.0 * ROW + 1.0 <= hi_y {
+                streets.push([(lo_x - 6.0, y), (hi_x, y)]);
+                y += 2.0 * ROW + 1.0 + STREET;
+            }
             let mut y = lo_y;
             while y + 2.0 * ROW + 1.0 <= hi_y {
                 let mut x = lo_x;
@@ -205,47 +258,121 @@ fn city(l: &mut Layout, rng: &mut Rng, cx: f32, cy: f32, side: f32) {
             }
         }
     }
+    (plaza, streets)
 }
 
-/// A village: a green with a ring of houses around it, lanes between.
-fn village(l: &mut Layout, rng: &mut Rng) -> bool {
+/// A village along a high street: houses facing the street on both sides with gaps between, a green where the
+/// street widens in the middle, a church tower by the green, and a lane of cottages behind. Returns the street's two
+/// ends, where the roads come in.
+fn village(l: &mut Layout, rng: &mut Rng) -> Option<[(f32, f32); 2]> {
     for _ in 0..60 {
-        let (cx, cy) = (rng.range(120.0, l.size - 120.0), rng.range(120.0, l.size - 120.0));
-        let area = [cx - 75.0, cy - 75.0, cx + 75.0, cy + 75.0];
-        if !l.free(&area, 30.0) {
-            continue;
+        let (cx, cy) = (rng.range(140.0, l.size - 140.0), rng.range(140.0, l.size - 140.0));
+        let half = rng.range(45.0, 80.0);
+        if let Some(ends) = village_at(l, rng, cx, cy, half, false) {
+            return Some(ends);
         }
-        l.add("square", [cx - 14.0, cy - 14.0, cx + 14.0, cy + 14.0], rng.v(), false);
-        let n = 5 + (rng.v() % 5) as usize;
-        let mut placed = 0;
-        for k in 0..n * 6 {
-            if placed >= n {
-                break;
-            }
-            let a = (k as f32 / n as f32) * std::f32::consts::TAU + rng.range(-0.3, 0.3);
-            let r = rng.range(28.0, 58.0);
-            let (w, d) = (rng.range(10.0, 18.0), rng.range(8.0, 13.0));
-            let (w, d) = if a.cos().abs() > a.sin().abs() { (d, w) } else { (w, d) };
-            let (x, y) = (cx + a.cos() * r - w / 2.0, cy + a.sin() * r - d / 2.0);
-            let b = [x, y, x + w, y + d];
-            if l.free(&b, 7.0) {
-                let v = rng.v();
-                l.add("house", b, v, true);
-                placed += 1;
-            }
-        }
-        if rng.f() < 0.5 {
-            let t = 4.5;
-            let (x, y) = (cx + rng.range(-8.0, 8.0), cy - 60.0);
-            let b = [x - t, y - t, x + t, y + t];
-            if l.free(&b, 6.0) {
-                let v = rng.v();
-                l.add("tower", b, v, true);
-            }
-        }
-        return true;
     }
-    false
+    None
+}
+
+/// A village (or, `town`, a market town: a longer street and a manor by the green) with its green at (cx, cy), if
+/// there is room; the street ends, as `village` returns them.
+fn village_at(l: &mut Layout, rng: &mut Rng, cx: f32, cy: f32, half: f32, town: bool) -> Option<[(f32, f32); 2]> {
+    const STREET: f32 = 5.0;
+    {
+        // Room for it among what is already laid out; each house then finds its own dry ground, so a village can
+        // come down to the shore or a river bank.
+        let area = [cx - half - 20.0, cy - half - 20.0, cx + half + 20.0, cy + half + 20.0];
+        let green = [cx - 20.0, cy - 20.0, cx + 20.0, cy + 20.0];
+        if !l.clear(&area, 30.0) || !l.dry(&green) {
+            return None;
+        }
+        // Lay it out as if the street ran east to west, then turn it a quarter for a north-south one.
+        let across = rng.f() < 0.5;
+        let put = |l: &mut Layout, t: &'static str, x0: f32, y0: f32, x1: f32, y1: f32, v: u32, solid: bool| {
+            let (a, b, c, d) = if across { (cx + y0, cy + x0, cx + y1, cy + x1) } else { (cx + x0, cy + y0, cx + x1, cy + y1) };
+            l.add(t, [a.min(c), b.min(d), a.max(c), b.max(d)], v, solid);
+        };
+        let fits = |l: &Layout, x0: f32, y0: f32, x1: f32, y1: f32, pad: f32| {
+            let (a, b, c, d) = if across { (cx + y0, cy + x0, cx + y1, cy + x1) } else { (cx + x0, cy + y0, cx + x1, cy + y1) };
+            l.free(&[a.min(c), b.min(d), a.max(c), b.max(d)], pad)
+        };
+        let green = rng.range(12.0, 16.0);
+        put(l, "square", -green, -green, green, green, rng.v(), false);
+        // A church tower on the green's north side, set back from the street.
+        if rng.f() < 0.7 {
+            let x = rng.range(-green + 6.0, green - 6.0);
+            if fits(l, x - 4.5, -green - 14.0, x + 4.5, -green - 5.0, 3.0) {
+                put(l, "tower", x - 4.5, -green - 14.0, x + 4.5, -green - 5.0, rng.v(), true);
+            }
+        }
+        for side in [-1.0f32, 1.0] {
+            // Frontages: houses shoulder to shoulder with now and then a gap, a few set back.
+            let mut x = -half;
+            while x < half {
+                let w = rng.range(9.0, 15.0);
+                let d = rng.range(8.0, 12.0);
+                let back = if rng.f() < 0.25 { rng.range(2.0, 5.0) } else { 0.0 };
+                let (y0, y1) = if side < 0.0 { (-STREET - back - d, -STREET - back) } else { (STREET + back, STREET + back + d) };
+                let on_green = x + w > -green - 2.0 && x < green + 2.0;
+                if !on_green && rng.f() < 0.85 && fits(l, x, y0, x + w, y1, 1.0) {
+                    put(l, "house", x, y0, x + w, y1, rng.v(), true);
+                }
+                x += w + if rng.f() < 0.3 { rng.range(6.0, 12.0) } else { rng.range(1.5, 3.0) };
+            }
+            // A back lane of cottages, sparser.
+            let mut x = -half * 0.8;
+            while x < half * 0.8 {
+                let w = rng.range(8.0, 12.0);
+                let d = rng.range(7.0, 10.0);
+                let off = STREET + 12.0 + 14.0;
+                let (y0, y1) = if side < 0.0 { (-off - d, -off) } else { (off, off + d) };
+                if rng.f() < 0.5 && fits(l, x, y0, x + w, y1, 4.0) {
+                    put(l, "house", x, y0, x + w, y1, rng.v(), true);
+                }
+                x += w + rng.range(8.0, 18.0);
+            }
+        }
+        // A town's manor house stands behind the green on the south side.
+        if town {
+            let (w, d) = (rng.range(20.0, 28.0), rng.range(16.0, 22.0));
+            if fits(l, -w / 2.0, green + 6.0, w / 2.0, green + 6.0 + d, 3.0) {
+                put(l, "keep", -w / 2.0, green + 6.0, w / 2.0, green + 6.0 + d, rng.v(), true);
+            }
+        }
+        let end = half + 12.0;
+        Some(if across { [(cx, cy - end), (cx, cy + end)] } else { [(cx - end, cy), (cx + end, cy)] })
+    }
+}
+
+/// Lay out a settlement near a point the recipe gives, trying a little way round it if the spot itself is taken.
+/// Where it went: the green's middle (or the fort's), and for a town or village its street's ends.
+fn settle(l: &mut Layout, rng: &mut Rng, s: &Settlement) -> Option<((f32, f32), Option<[(f32, f32); 2]>)> {
+    // Spiral out from the spot, a step at a time; a town or village that does not fit shrinks before it moves far.
+    for k in 0..90 {
+        let (r, a) = (k as f32 * 4.0, k as f32 * 2.39996);
+        let (x, y) = (s.at.0 + r * a.cos(), s.at.1 + r * a.sin());
+        let shrink = 1.0 - (k as f32 / 90.0) * 0.45;
+        match s.kind {
+            "town" | "village" => {
+                let town = s.kind == "town";
+                let half = if town { rng.range(90.0, 120.0) } else { rng.range(45.0, 75.0) } * shrink;
+                if let Some(e) = village_at(l, rng, x, y, half, town) {
+                    return Some(((x, y), Some(e)));
+                }
+            }
+            _ => {
+                let (w, d) = (rng.range(22.0, 34.0), rng.range(18.0, 28.0));
+                let b = [x - w / 2.0, y - d / 2.0, x + w / 2.0, y + d / 2.0];
+                if l.free(&b, 20.0) {
+                    let v = rng.v();
+                    l.add("keep", b, v, true);
+                    return Some(((x, y), None));
+                }
+            }
+        }
+    }
+    None
 }
 
 // ------------------------------------------------------------------------------------------------ land
@@ -260,12 +387,28 @@ struct Land {
     seed: u64,
     /// How tall the hills are (1 = as designed, 0 = flat).
     hills: f32,
+    coast: Option<Rc<coast::Coast>>,
 }
 
+/// The sea's surface, for land with a coast, and the height of the shore just above it.
+const SEA_LEVEL: f32 = 0.0;
+const SHORE: f32 = 1.2;
+/// How far out from the shore the sea floor is shallow enough to wade.
+const SHALLOWS: f32 = 10.0;
+
 impl Land {
-    /// Hills, rising into mountains past the playable edge.
+    /// Hills, rising into mountains past the playable edge; or, with a coast, hills that rise from a beach inland and a
+    /// sea floor that falls away outside it.
     fn raw(&self, x: f32, y: f32) -> f32 {
         let mut h = ((fbm(x / 170.0, y / 170.0, self.seed + 31, 3) - 0.5) * 30.0 + (noise(x / 35.0, y / 35.0, self.seed + 7) - 0.5) * 1.8) * self.hills;
+        if let Some(c) = &self.coast {
+            let d = c.d(x, y);
+            return if d >= 0.0 {
+                SHORE + smooth(0.0, 140.0, d) * (h + 16.0 * self.hills).max(0.0) * 0.85
+            } else {
+                (SHORE + d * 0.45).max(-12.0 + 2.0 * noise(x / 40.0, y / 40.0, self.seed + 11))
+            };
+        }
         let out = (-x).max(x - self.size).max(-y).max(y - self.size);
         if out > 0.0 {
             h += smooth(0.0, 110.0, out) * (55.0 + 30.0 * (fbm(x / 60.0, y / 60.0, self.seed + 3, 4) * 2.0 - 1.0));
@@ -337,6 +480,43 @@ fn rivers(land: &Land, l: &Layout, rng: &mut Rng, count: Option<usize>) -> Vec<R
     out
 }
 
+/// Rivers along the recipe's courses: each line followed in 10 unit steps with a gentle meander of its own, the
+/// level falling (never rising) from source to mouth as the ground does.
+fn courses(land: &Land, list: &[Vec<(f32, f32)>], seed: u64) -> Vec<River> {
+    let mut out = Vec::new();
+    for (k, c) in list.iter().enumerate() {
+        let mut pts: Vec<(f32, f32, f32)> = Vec::new();
+        let mut along = 0.0f32;
+        for w in c.windows(2) {
+            let ((ax, ay), (bx, by)) = (w[0], w[1]);
+            let len = (bx - ax).hypot(by - ay);
+            if len < 1e-3 {
+                continue;
+            }
+            let (nx, ny) = (-(by - ay) / len, (bx - ax) / len);
+            let n = (len / 10.0).ceil() as i32;
+            for i in 0..n {
+                let t = i as f32 / n as f32;
+                // The meander fades out at the course's own points, so the river still passes through each of them.
+                let wiggle = (fbm(along / 90.0, k as f32 * 7.3, seed + 61, 2) - 0.5) * 2.0 * (len * 0.12).min(14.0) * (std::f32::consts::PI * t).sin();
+                let (x, y) = (ax + (bx - ax) * t + nx * wiggle, ay + (by - ay) * t + ny * wiggle);
+                let ground = land.raw(x, y);
+                let lvl = pts.last().map_or(ground, |p| p.2.min(ground));
+                pts.push((x, y, lvl));
+                along += len / n as f32;
+            }
+        }
+        if let Some(&(x, y)) = c.last() {
+            let lvl = pts.last().map_or(land.raw(x, y), |p| p.2.min(land.raw(x, y)));
+            pts.push((x, y, lvl));
+        }
+        if pts.len() >= 2 {
+            out.push(River { pts });
+        }
+    }
+    out
+}
+
 /// Spatial index of river segments by 64 unit cell.
 struct RiverIndex {
     cells: HashMap<(i32, i32), Vec<(usize, usize)>>,
@@ -381,9 +561,11 @@ fn water_level(level: f32) -> f32 {
 /// The ground everywhere: hills, rivers cut into them (a flat bed, a short lip just above the water, then
 /// valley sides, steep in hills), lake beds with ragged shores, crags raised into mountains, and the ground
 /// levelled round buildings and across a city.
-fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverIndex, x: f32, y: f32) -> f32 {
+fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverIndex, road: &roads::Cells, x: f32, y: f32) -> f32 {
     let mut h = land.raw(x, y);
     if let Some((d, lvl)) = ri.at(rivers, x, y) {
+        // Where a road crosses, a ford: the bed comes up to just under the water, so the road wades across.
+        let ford = d <= RIVER_HALF + RIVER_LIP + 2.0 && road.near(x, y, 2.0);
         let bed = lvl - RIVER_DEPTH;
         let top = water_level(lvl) + 0.5;
         h = if d <= RIVER_HALF {
@@ -394,6 +576,9 @@ fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverI
             let bank = 6.0f32.max((h - top) * 1.3);
             h.min(top + (h - top) * smooth(RIVER_HALF + RIVER_LIP, RIVER_HALF + RIVER_LIP + bank, d))
         };
+        if ford {
+            h = h.max(water_level(lvl) - 0.3);
+        }
     }
     let (mut best, mut target) = (0.0f32, h);
     for &i in near {
@@ -480,9 +665,29 @@ pub struct Params {
     /// How wooded the land is (1 = usual, 0 = open meadow) and how tall the hills are (1 = usual, 0 = flat).
     pub forest: f32,
     pub hills: f32,
+    /// Roads between the places, high streets and avenues.
+    pub roads: bool,
+    /// The land's outlines, if it has a coast (sea outside them); none is land to the edge, with mountains past it.
+    pub coast: Vec<Vec<(f32, f32)>>,
+    /// Rivers along these courses, source to mouth, instead of ones the seed lays out.
+    pub courses: Vec<Vec<(f32, f32)>>,
+    /// Places the recipe puts where it wants them, before the seed lays out the rest.
+    pub settlements: Vec<Settlement>,
     /// Hand edits on top of what the seed lays out, applied in order.
     pub edits: Vec<Edit>,
 }
+
+/// A city, town, village or fort at a chosen point (`side`: a city's width).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settlement {
+    pub kind: &'static str,
+    pub at: (f32, f32),
+    pub side: Option<f32>,
+    /// What it is called, carried through to the world file's `settled` list.
+    pub name: Option<String>,
+}
+
+const SETTLEMENT_KINDS: [&str; 4] = ["city", "town", "village", "fort"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
@@ -499,7 +704,7 @@ const ADDABLE: [(&str, bool); 9] =
 
 impl Default for Params {
     fn default() -> Self {
-        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, edits: Vec::new() }
+        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, roads: true, coast: Vec::new(), courses: Vec::new(), settlements: Vec::new(), edits: Vec::new() }
     }
 }
 
@@ -523,12 +728,33 @@ impl Params {
         if let Some(b) = v.get("city") {
             p.city = b.as_bool().ok_or("city must be true or false")?;
         }
+        if let Some(b) = v.get("roads") {
+            p.roads = b.as_bool().ok_or("roads must be true or false")?;
+        }
         for (k, f) in [("villages", &mut p.villages), ("forts", &mut p.forts), ("crags", &mut p.crags), ("lakes", &mut p.lakes), ("forest", &mut p.forest), ("hills", &mut p.hills)] {
             if let Some(n) = num(k, 0.0, 5.0)? {
                 *f = n as f32;
             }
         }
         p.rivers = num("rivers", 0.0, 12.0)?.map(|n| n as usize);
+        let line = |v: &Value, what: String, min: usize| -> Result<Vec<(f32, f32)>, String> {
+            let pts: Option<Vec<(f32, f32)>> = v.as_array().map(|a| a.iter().map(|q| Some((q[0].as_f64()? as f32, q[1].as_f64()? as f32))).collect()).flatten();
+            pts.filter(|p| p.len() >= min && p.len() <= 5000 && p.iter().all(|q| q.0.is_finite() && q.1.is_finite())).ok_or(format!("{what}: a list of at least {min} [x, y] points"))
+        };
+        for (i, o) in v.get("coast").and_then(|c| c.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
+            p.coast.push(line(o, format!("coast {i}"), 3)?);
+        }
+        for (i, r) in v.get("river_courses").and_then(|c| c.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
+            p.courses.push(line(r, format!("river course {i}"), 2)?);
+        }
+        for (i, s) in v.get("settlements").and_then(|c| c.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
+            let t = s.get("t").and_then(|t| t.as_str()).unwrap_or("");
+            let kind = SETTLEMENT_KINDS.iter().find(|k| **k == t).copied().ok_or(format!("settlement {i}: t is one of city, town, village, fort"))?;
+            let at = line(s.get("at").map(|a| Value::Array(vec![a.clone()])).as_ref().unwrap_or(&Value::Null), format!("settlement {i}: at"), 1)?[0];
+            let side = s.get("side").and_then(|v| v.as_f64()).map(|v| (v as f32).clamp(160.0, 800.0));
+            let name = s.get("name").and_then(|n| n.as_str()).map(|n| n.chars().take(60).collect());
+            p.settlements.push(Settlement { kind, at, side, name });
+        }
         for (i, e) in v.get("edits").and_then(|e| e.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
             let pt = |a: &Value, n: usize| -> Option<Vec<f32>> {
                 let a = a.as_array()?;
@@ -566,7 +792,15 @@ impl Params {
             .collect();
         json!({
             "size": self.size, "seed": self.seed, "city": self.city, "villages": self.villages, "forts": self.forts, "crags": self.crags,
-            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "edits": edits,
+            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "roads": self.roads, "edits": edits,
+            "coast": self.coast.iter().map(|o| o.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "river_courses": self.courses.iter().map(|o| o.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "settlements": self.settlements.iter().map(|s| {
+                let mut o = json!({ "t": s.kind, "at": [r1(s.at.0), r1(s.at.1)] });
+                if let Some(side) = s.side { o["side"] = json!(side); }
+                if let Some(n) = &s.name { o["name"] = json!(n); }
+                o
+            }).collect::<Vec<_>>(),
         })
     }
 }
@@ -652,18 +886,47 @@ pub fn generate(p: &Params) -> Value {
 pub fn build(p: &Params) -> Generated {
     let size = p.size;
     let mut rng = Rng(p.seed ^ 0x5EED_0F_3A7);
-    let land = Land { size, seed: p.seed, hills: p.hills };
-    let mut l = Layout { size, things: Vec::new() };
-    if p.city && size >= 1024.0 {
-        let side = (size / 6.0).clamp(240.0, 600.0);
-        let (cx, cy) = (rng.range(0.3, 0.7) * size, rng.range(0.3, 0.7) * size);
-        city(&mut l, &mut rng, cx, cy, side);
+    let coast = (!p.coast.is_empty()).then(|| Rc::new(coast::Coast::new(size, p.coast.clone())));
+    let land = Land { size, seed: p.seed, hills: p.hills, coast: coast.clone() };
+    let mut l = Layout { size, things: Vec::new(), coast: coast.clone(), courses: p.courses.clone() };
+    let mut city_at = None;
+    let given = p.settlements.iter().find(|s| s.kind == "city");
+    if (p.city || given.is_some()) && size >= 1024.0 {
+        let mut side = (size / 6.0).clamp(240.0, 600.0);
+        let (mut cx, mut cy) = (rng.range(0.3, 0.7) * size, rng.range(0.3, 0.7) * size);
+        if let Some(s) = given {
+            (cx, cy) = s.at;
+            side = s.side.unwrap_or(side);
+        }
+        let (plaza, streets) = city(&mut l, &mut rng, cx, cy, side);
+        city_at = Some((cx, cy, side / 2.0, plaza, streets));
+    }
+    let mut streets = Vec::new();
+    // The recipe's own places go in first, where it wants them; then the seed lays out the rest round them.
+    let mut srng = Rng(p.seed ^ 0x5E77);
+    let mut settled: Vec<Value> = Vec::new();
+    for s in &p.settlements {
+        let at = if s.kind == "city" {
+            city_at.as_ref().map(|c| (c.0, c.1))
+        } else {
+            settle(&mut l, &mut srng, s).map(|(at, ends)| {
+                streets.extend(ends);
+                at
+            })
+        };
+        let mut o = json!({ "t": s.kind, "asked": [r1(s.at.0), r1(s.at.1)], "at": at.map(|a| json!([r1(a.0), r1(a.1)])) });
+        if let Some(n) = &s.name {
+            o["name"] = json!(n);
+        }
+        settled.push(o);
     }
     let per = size * size / 1_000_000.0;
     // How many of a thing: the usual number for the size times the recipe's dial (at least one when it is on).
     let n = |usual: f32, dial: f32| if dial <= 0.0 { 0 } else { ((per * usual * dial).round() as usize).max(1) };
     for _ in 0..n(2.5, p.villages) {
-        village(&mut l, &mut rng);
+        if let Some(ends) = village(&mut l, &mut rng) {
+            streets.push(ends);
+        }
     }
     for _ in 0..n(2.0, p.forts) {
         l.scatter(&mut rng, "keep", (18.0, 36.0), (16.0, 32.0), 24.0);
@@ -690,8 +953,72 @@ pub fn build(p: &Params) -> Generated {
             _ => land.raw((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0),
         };
     }
-    let rv = rivers(&land, &l, &mut rng, p.rivers);
+    let rv = if p.courses.is_empty() { rivers(&land, &l, &mut rng, p.rivers) } else { courses(&land, &p.courses, p.seed) };
     let ri = RiverIndex::new(&rv);
+    // Roads, once the rivers are known (they cross them as little as they can), and then the houses that line the
+    // roads out of the city's gates. Their own random stream leaves everything else as it was.
+    let (road_list, road_cells, fords) = if p.roads {
+        let mut net = roads::Net::new(&land, &l, &rv, &ri);
+        let mut places = Vec::new();
+        if let Some((cx, cy, h, plaza, streets)) = &city_at {
+            for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+                let out = (cx + dx * (h + 18.0), cy + dy * (h + 18.0));
+                let inn = (cx + dx * plaza / 2.0, cy + dy * plaza / 2.0);
+                net.lay(roads::Road { half: roads::AVENUE_HALF, pts: vec![out, inn] });
+            }
+            for s in streets {
+                net.lay(roads::Road { half: roads::STREET_HALF, pts: s.to_vec() });
+            }
+        }
+        places.extend(streets.iter().map(|&e| roads::Place::Village(e)));
+        // A fort's track comes to its door, on the side facing the middle of the world.
+        for s in l.things.iter().filter(|s| s.t == "keep") {
+            let (kx, ky) = ((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0);
+            let (mx, my) = city_at.as_ref().map_or((size / 2.0, size / 2.0), |c| (c.0, c.1));
+            let (dx, dy) = (mx - kx, my - ky);
+            let at = if dx.abs() > dy.abs() { (if dx > 0.0 { s.b[2] + 8.0 } else { s.b[0] - 8.0 }, ky) } else { (kx, if dy > 0.0 { s.b[3] + 8.0 } else { s.b[1] - 8.0 }) };
+            places.push(roads::Place::Fort(at));
+        }
+        let mut rrng = Rng(p.seed ^ 0x40AD);
+        let centre = city_at.as_ref().map_or((size / 2.0, size / 2.0), |c| (c.0, c.1));
+        roads::network(&mut net, &places, &mut rrng, centre);
+        let fords = roads::fords(&net);
+        let roads::Net { roads: list, cells, .. } = net;
+        (list, cells, fords)
+    } else {
+        (Vec::new(), roads::Cells::default(), Vec::new())
+    };
+    if let Some(&(cx, cy, h, _, _)) = city_at.as_ref() {
+        let mut srng = Rng(p.seed ^ 0x5B5B);
+        let city_box = [cx - h - 10.0, cy - h - 10.0, cx + h + 10.0, cy + h + 10.0];
+        for r in road_list.iter().filter(|r| r.half >= roads::MAIN_HALF) {
+            for (x, y, a) in roads::along(r, 16.0) {
+                let gate = (x - cx).abs().max((y - cy).abs()) - h;
+                if !(10.0..160.0).contains(&gate) || srng.f() > 0.75 - gate / 400.0 {
+                    continue;
+                }
+                // A house either side, its front a little back from the road, squared to whichever way it runs more.
+                for side in [-1.0f32, 1.0] {
+                    let (w, d) = (srng.range(9.0, 14.0), srng.range(8.0, 11.0));
+                    let off = r.half + 5.0 + d / 2.0;
+                    let (nx, ny) = (-a.sin() * side, a.cos() * side);
+                    let (hx, hy) = (x + nx * off, y + ny * off);
+                    let (bw, bd) = if a.cos().abs() > a.sin().abs() { (w, d) } else { (d, w) };
+                    let b = [hx - bw / 2.0, hy - bd / 2.0, hx + bw / 2.0, hy + bd / 2.0];
+                    let wet = |x: f32, y: f32| ri.at(&rv, x, y).is_some_and(|(d, _)| d < RIVER_HALF + RIVER_LIP + 4.0);
+                    if overlaps(&b, &city_box, 0.0) || !l.free(&b, 2.0) || wet(hx, hy) {
+                        continue;
+                    }
+                    if [(b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3]), (hx, hy)].iter().any(|&(px, py)| road_cells.near(px, py, 0.0)) {
+                        continue;
+                    }
+                    let v = srng.v();
+                    l.add("house", b, v, true);
+                    l.things.last_mut().unwrap().base = land.raw(hx, hy);
+                }
+            }
+        }
+    }
     // Things by 64 unit cell (padded), so each height sample checks only those nearby.
     let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (i, s) in l.things.iter().enumerate() {
@@ -703,7 +1030,7 @@ pub fn build(p: &Params) -> Generated {
         }
     }
     let empty = Vec::new();
-    let h_at = |x: f32, y: f32| height(&land, &l, cells.get(&((x / 64.0).floor() as i32, (y / 64.0).floor() as i32)).unwrap_or(&empty), &rv, &ri, x, y);
+    let h_at = |x: f32, y: f32| height(&land, &l, cells.get(&((x / 64.0).floor() as i32, (y / 64.0).floor() as i32)).unwrap_or(&empty), &rv, &ri, &road_cells, x, y);
 
     // Heightfield over the world plus a margin past each edge, where the mountains are.
     let margin = 256.0f32.min(size / 4.0).max(64.0);
@@ -753,6 +1080,10 @@ pub fn build(p: &Params) -> Generated {
             let out = (-x).max(x - size).max(-y).max(y - size);
             let forest = smooth(0.45, 0.7, fbm(x / 260.0, y / 260.0, p.seed + 50, 3)) * p.forest;
             let wood = p.forest.min(1.0);
+            // With a coast, the world's edge is open sea: nothing grows at sea or on the beach.
+            if land.coast.as_ref().is_some_and(|c| c.d(x, y) < 3.0) {
+                continue;
+            }
             let (t, s): (&str, f32) = if out > 70.0 {
                 if rng.f() < 0.12 { ("spire", rng.range(2.5, 6.0)) } else { continue }
             } else if out > 25.0 {
@@ -778,6 +1109,9 @@ pub fn build(p: &Params) -> Generated {
             if ri.at(&rv, x, y).is_some_and(|(d, _)| d < RIVER_HALF + RIVER_LIP + 2.0) {
                 continue;
             }
+            if out <= 0.0 && road_cells.near(x, y, if tree { 4.0 } else { 2.0 }) {
+                continue;
+            }
             let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(rng.range(0.0, std::f32::consts::TAU)), "v": rng.v() });
             // Trunks and stones are solid where they stand (bushes are walked through): a square footprint the
             // size of the trunk or stone, if it is inside the world, where the engine makes it a wall. `scenery`
@@ -794,6 +1128,20 @@ pub fn build(p: &Params) -> Generated {
             objects.push(o.to_string());
         }
     }
+    for &(x, y, a) in &fords {
+        objects.push(json!({ "t": "ford", "p": [r1(x), r1(y)], "r": r2(a), "v": (x.to_bits() ^ y.to_bits()) }).to_string());
+    }
+    // The open sea, past the shallows, is solid (nobody walks the sea floor); it is drawn as water, so it is scenery.
+    if let Some(c) = &coast {
+        for b in coast::sea_boxes(c, size, SHALLOWS) {
+            objects.push(json!({ "t": "sea", "b": [r2(b[0]), r2(b[1]), r2(b[2]), r2(b[3])], "solid": true, "scenery": true, "v": 0, "y": SEA_LEVEL }).to_string());
+            solid += 1;
+        }
+    }
+    let roads: Vec<Value> = road_list
+        .iter()
+        .map(|r| json!({ "half_width": r.half, "pts": r.pts.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>() }))
+        .collect();
     let lakes: Vec<Value> = l.things.iter().filter(|s| s.t == "lake").map(|s| json!({ "b": [r2(s.b[0]), r2(s.b[1]), r2(s.b[2]), r2(s.b[3])], "level": r2(s.base - 0.45) })).collect();
     let rivers: Vec<Value> = rv
         .iter()
@@ -806,7 +1154,9 @@ pub fn build(p: &Params) -> Generated {
         "seed": p.seed,
         "recipe": p.recipe(),
         "heights": { "x0": -margin, "y0": -margin, "cell": cell, "w": n, "h": n, "lo": lo, "hi": hi, "u16le": base64(&bytes) },
-        "water": { "rivers": rivers, "lakes": lakes },
+        "water": if coast.is_some() { json!({ "rivers": rivers, "lakes": lakes, "sea": { "level": SEA_LEVEL } }) } else { json!({ "rivers": rivers, "lakes": lakes }) },
+        "roads": roads,
+        "settled": settled,
         "objects": [],
     });
     Generated { head, objects, solid }
@@ -902,6 +1252,134 @@ mod tests {
         for bad in [json!({ "size": 10 }), json!({ "forest": -1 }), json!({ "edits": [{ "add": { "t": "spaceship", "b": [0, 0, 9, 9] } }] }), json!({ "edits": [{ "move": 1 }] })] {
             assert!(Params::from_recipe(&bad).is_err(), "{bad}");
         }
+    }
+
+    fn roads_of(w: &Value) -> Vec<(f32, Vec<(f32, f32)>)> {
+        w["roads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["half_width"].as_f64().unwrap() as f32, r["pts"].as_array().unwrap().iter().map(|p| (p[0].as_f64().unwrap() as f32, p[1].as_f64().unwrap() as f32)).collect()))
+            .collect()
+    }
+
+    /// Points along a road's centre line, every unit or so.
+    fn samples(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
+        let mut out = Vec::new();
+        for w in pts.windows(2) {
+            let n = ((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).ceil().max(1.0) as i32;
+            out.extend((0..=n).map(|k| (w[0].0 + (w[1].0 - w[0].0) * k as f32 / n as f32, w[0].1 + (w[1].1 - w[0].1) * k as f32 / n as f32)));
+        }
+        out
+    }
+
+    #[test]
+    fn roads_join_every_village_and_fort_to_the_city_and_go_round_what_is_solid() {
+        for seed in [1, 1066] {
+            let w = world(2048.0, seed);
+            let roads = roads_of(&w);
+            assert!(roads.len() > 20, "seed {seed}: {} roads", roads.len());
+            // Roads that share a 4 unit cell are joined; every road should be joined to every other.
+            let mut owner: HashMap<(i32, i32), usize> = HashMap::new();
+            let mut parent: Vec<usize> = (0..roads.len()).collect();
+            fn find(p: &mut Vec<usize>, i: usize) -> usize {
+                if p[i] != i {
+                    let r = find(p, p[i]);
+                    p[i] = r;
+                }
+                p[i]
+            }
+            for (i, (half, pts)) in roads.iter().enumerate() {
+                for (x, y) in samples(pts) {
+                    let reach = (half / 4.0).ceil() as i32 + 1;
+                    for dj in -reach..=reach {
+                        for di in -reach..=reach {
+                            let c = ((x / 4.0).floor() as i32 + di, (y / 4.0).floor() as i32 + dj);
+                            if let Some(&j) = owner.get(&c) {
+                                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                                parent[a] = b;
+                            } else if di.abs() <= 1 && dj.abs() <= 1 {
+                                owner.insert(c, i);
+                            }
+                        }
+                    }
+                }
+            }
+            let root = find(&mut parent, 0);
+            let apart = (0..roads.len()).filter(|&i| find(&mut parent, i) != root).count();
+            assert!(apart <= roads.len() / 10, "seed {seed}: {apart} of {} roads are not joined to the rest", roads.len());
+            let solids: Vec<[f32; 4]> = w["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["solid"] == true)
+                .map(|o| {
+                    let b = o["b"].as_array().unwrap();
+                    [0, 1, 2, 3].map(|k| b[k].as_f64().unwrap() as f32)
+                })
+                .collect();
+            for (_, pts) in &roads {
+                for (x, y) in samples(pts) {
+                    assert!(!solids.iter().any(|b| x > b[0] + 0.5 && x < b[2] - 0.5 && y > b[1] + 0.5 && y < b[3] - 0.5), "seed {seed}: a road runs through something solid at ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn villages_line_a_street_and_roads_can_be_left_out() {
+        let w = world(2048.0, 5);
+        assert!(count(&w, "house") > 150, "{} houses", count(&w, "house"));
+        let trees: Vec<(f32, f32)> = w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == "tree").map(|o| (o["p"][0].as_f64().unwrap() as f32, o["p"][1].as_f64().unwrap() as f32)).collect();
+        for (half, pts) in roads_of(&w) {
+            for (x, y) in samples(&pts).into_iter().step_by(4) {
+                assert!(!trees.iter().any(|t| (t.0 - x).hypot(t.1 - y) < half), "a tree stands on the road at ({x}, {y})");
+            }
+        }
+        let p = Params::from_recipe(&json!({ "size": 2048, "seed": 5, "roads": false })).unwrap();
+        let bare = generate(&p);
+        assert!(roads_of(&bare).is_empty() && count(&bare, "ford") == 0);
+        assert_eq!(bare["recipe"]["roads"], false);
+    }
+
+    #[test]
+    fn a_coast_makes_an_island_and_the_recipe_puts_its_places_and_rivers_where_it_says() {
+        let island = json!([[[300, 300], [1700, 300], [1700, 1700], [300, 1700]]]);
+        let r = json!({ "size": 2048, "seed": 4, "villages": 0, "forts": 0, "coast": island,
+            "river_courses": [[[1000, 600], [1000, 1000], [1000, 1800]]],
+            "settlements": [{ "t": "city", "at": [700, 700], "side": 240, "name": "Áth Cliath" }, { "t": "town", "at": [1400, 1400], "name": "Corcaigh" },
+                { "t": "village", "at": [600, 1400] }, { "t": "fort", "at": [1400, 600], "name": "Teamhair" }] });
+        let p = Params::from_recipe(&r).unwrap();
+        let w = generate(&p);
+        assert_eq!(generate(&Params::from_recipe(&w["recipe"]).unwrap()).to_string(), w.to_string(), "the recipe round trips");
+        assert_eq!(w["water"]["sea"]["level"], 0.0);
+        // Every place went in, near where it was asked for, and says so by name.
+        let settled = w["settled"].as_array().unwrap();
+        assert_eq!(settled.len(), 4);
+        for s in settled {
+            let (a, b) = (&s["asked"], &s["at"]);
+            let d = (a[0].as_f64().unwrap() - b[0].as_f64().unwrap()).hypot(a[1].as_f64().unwrap() - b[1].as_f64().unwrap());
+            assert!(d < 120.0, "{s}");
+        }
+        assert_eq!(settled[0]["name"], "Áth Cliath");
+        assert_eq!(count(&w, "city"), 1);
+        // The sea is solid scenery, all of it well out from the shore; nothing else stands at sea.
+        let objs = w["objects"].as_array().unwrap();
+        let sea: Vec<&Value> = objs.iter().filter(|o| o["t"] == "sea").collect();
+        assert!(!sea.is_empty() && sea.iter().all(|o| o["solid"] == true && o["scenery"] == true));
+        for o in objs.iter().filter(|o| o["t"] == "house" || o["t"] == "tree") {
+            let (x, y) = if o["t"] == "tree" { (o["p"][0].as_f64().unwrap(), o["p"][1].as_f64().unwrap()) } else { ((o["b"][0].as_f64().unwrap() + o["b"][2].as_f64().unwrap()) / 2.0, (o["b"][1].as_f64().unwrap() + o["b"][3].as_f64().unwrap()) / 2.0) };
+            assert!((300.0..=1700.0).contains(&x) && (300.0..=1700.0).contains(&y), "a {} at sea at ({x}, {y})", o["t"]);
+        }
+        // The river follows its course, and no house stands in it.
+        let river = &w["water"]["rivers"][0]["pts"];
+        assert!(river.as_array().unwrap().iter().all(|p| (p[0].as_f64().unwrap() - 1000.0).abs() < 40.0));
+        for o in objs.iter().filter(|o| o["t"] == "house") {
+            let b = o["b"].as_array().unwrap();
+            assert!(!(b[0].as_f64().unwrap() < 1005.0 && b[2].as_f64().unwrap() > 995.0 && b[1].as_f64().unwrap() > 650.0 && b[3].as_f64().unwrap() < 1650.0), "a house in the river: {o}");
+        }
+        assert!(Params::from_recipe(&json!({ "settlements": [{ "t": "castle", "at": [1, 1] }] })).is_err());
+        assert!(Params::from_recipe(&json!({ "coast": [[[1, 1], [2, 2]]] })).is_err(), "a coast needs three points");
     }
 
     #[test]

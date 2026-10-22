@@ -256,7 +256,7 @@ fn main() {
         std::sync::Arc::new(w)
     });
     let world = match &world_file {
-        Some(w) => proto::World::from_boxes(w.size, cfg.seed, w.tiles.boxes.clone()),
+        Some(w) => w.world(cfg.seed),
         None => game_file.world(cfg.world_size, cfg.seed).unwrap_or_else(|e| {
             eprintln!("{}: {e}", cfg.game.display());
             std::process::exit(1);

@@ -4,7 +4,7 @@ import { rewriteRefs } from './directorEdit'
 /** Everything that changes the wire schema (and so the handshake hash). */
 export function wireOf(g: GameFile): string {
   return JSON.stringify({
-    s: [g.move_speed, g.entity_radius, g.interest_radius, g.max_visible],
+    s: [g.move_speed, g.road_speed ?? 1.5, g.entity_radius, g.interest_radius, g.max_visible],
     a: g.attrs,
     c: g.actions,
   })

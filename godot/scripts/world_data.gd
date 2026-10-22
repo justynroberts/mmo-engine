@@ -11,6 +11,10 @@ var size := 1024.0
 var objects: Array = []          # every object, as in the file
 var rivers: Array = []           # [{half_width, pts: [[x, y, level], ...]}]
 var lakes: Array = []            # [{b, level}]
+var roads: Array = []            # [{half_width, pts: [[x, y], ...]}]
+var has_sea := false             # land with a coast: open sea round it at sea_level
+var sea_level := 0.0
+var _road_segs := {}             # cell key -> [[ax, ay, bx, by, half_width], ...] of the road segments reaching into it
 var has_heights := false
 var _hx0 := 0.0
 var _hy0 := 0.0
@@ -36,6 +40,11 @@ static func from_file(text: String) -> RefCounted:
 	var water: Dictionary = d.get("water", {})
 	w.rivers = water.get("rivers", [])
 	w.lakes = water.get("lakes", [])
+	if water.get("sea") is Dictionary:
+		w.has_sea = true
+		w.sea_level = float(water["sea"].get("level", 0.0))
+	w.roads = d.get("roads", [])
+	w._index_roads()
 	var h: Dictionary = d.get("heights", {})
 	if h.has("u16le"):
 		w._hx0 = float(h["x0"])
@@ -90,6 +99,29 @@ func _index() -> void:
 		if not _cells.has(k):
 			_cells[k] = []
 		_cells[k].append(i)
+
+## Each road segment goes in every cell it (with its width and a little more) reaches.
+func _index_roads() -> void:
+	_road_segs.clear()
+	for r in roads:
+		var hw := float(r.get("half_width", 3.0))
+		var pts: Array = r.get("pts", [])
+		for k in pts.size() - 1:
+			var ax := float(pts[k][0])
+			var ay := float(pts[k][1])
+			var bx := float(pts[k + 1][0])
+			var by := float(pts[k + 1][1])
+			var pad := hw + 2.0
+			for i in range(floori((minf(ax, bx) - pad) / CELL), floori((maxf(ax, bx) + pad) / CELL) + 1):
+				for j in range(floori((minf(ay, by) - pad) / CELL), floori((maxf(ay, by) + pad) / CELL) + 1):
+					var kk := key(i, j)
+					if not _road_segs.has(kk):
+						_road_segs[kk] = []
+					_road_segs[kk].append([ax, ay, bx, by, hw])
+
+## The road segments reaching into a cell.
+func road_segments(cx: int, cy: int) -> Array:
+	return _road_segs.get(key(cx, cy), [])
 
 static func key(cx: int, cy: int) -> int:
 	return cx * 100003 + cy

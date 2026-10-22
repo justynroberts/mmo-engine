@@ -18,7 +18,7 @@ const KEYS := ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", 
 const HELP_ACTION := [["WASD", "move"], ["Q / E", "turn"], ["Mouse wheel", "zoom, in past the closest for first person"],
 	["V", "first person"], ["Click", "target"], ["Tab", "next target"], ["Space", "attack (hold to keep swinging)"],
 	["J", "jump"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "pick up"],
-	["Enter", "chat, start with ! to shout"], ["M", "world map"], ["G", "god mode"], ["F11", "full screen"]]
+	["Enter", "chat, start with ! to shout"], ["M", "world map"], ["N", "sound: all, no music, off"], ["G", "god mode"], ["F11", "full screen"]]
 const HELP_BUILD := [["B", "build mode on and off (Esc leaves)"], ["1-0 - = [ ]", "pick a material"],
 	["Click", "place a block"], ["Hold right click, X or Shift+click", "break one of yours (sweep to keep going)"]]
 

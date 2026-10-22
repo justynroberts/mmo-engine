@@ -19,6 +19,7 @@ a cyberpunk city or a user-built world.
 | `crates/client-ffi`, `crates/godot-ext`, `sdk/` | The client protocol as a C library, and a Godot extension on top of it |
 | `godot/` | The Godot client (`scripts/`) and its themes (`themes/plain`, `themes/fantasy`) |
 | `ui/` | The console: React, TypeScript, Tailwind, Radix, Framer Motion. Served by the server |
+| `ui/mcp/` | The console's functions as an MCP server, so an AI can build and run worlds |
 | `scripts/` | `bench.sh` (pinned load test), `ui_e2e.py` (real-browser UI tests), `godot_e2e.sh` and `build_godot.sh` |
 
 ## Run it
@@ -78,6 +79,20 @@ wall, crag, lake or square; click something to remove it). Every change runs the
 map; Apply puts it live without disconnecting anyone, and saves it as `world.json`, which the server loads on start.
 A different size needs a restart. The recipe travels inside the world file, so the tab always opens on the world as it
 is. See [WORLD.md](WORLD.md).
+
+### Roads, towns and the city
+
+Villages are built along a high street: houses shoulder to shoulder facing it, a green in the middle, a church tower
+and a back lane of cottages. The city's streets and avenues are paved, a street runs round inside its walls, and houses
+line the roads for a little way out of each gate. A road network joins the city, every village and every fort: it
+grows outward from the city, finds the cheapest way over the land (round buildings, up gentle slopes, across as little
+river as it can, merging with roads already going the same way) and wades rivers at fords.
+
+Roads are faster underfoot: everyone, players and bots, moves `road_speed` times as fast on them (1.5 unless the game
+file's World settings say otherwise, 1 to 4). The server turns the roads into road cells, 4 units square, and sends
+them to clients with the walls by tile, so prediction speeds up on exactly the ground the server does. The Godot
+client paints them into the ground (packed earth in the country, cobbles in the city); the console draws them on its
+maps. Turn them off with the World tab's Roads switch (`"roads": false` in a recipe).
 
 ## Building
 
@@ -184,6 +199,56 @@ The console's World tab clears what players leave behind: built blocks (all, one
 or items on the ground, everywhere or inside one place. `POST /api/blocks/clear {"owner": "27e5f44f38eb50e5",
 "place": "plaza"}` and `POST /api/ground/clear {"x": 300, "y": 400, "r": 50}`; every filter given must match, and an
 empty body clears everything.
+
+## Sound and music
+
+Everything the Godot client plays is made by `scripts/make_audio.py` (numpy, scipy and ffmpeg; no samples, nothing to
+license) into `godot/sounds`: twelve seamless ambience loops, the effects, and six pieces of music in the old Irish
+modes (a slow air for the open land, a jig for towns, a night piece, a battle piece, the eerie and the holy), played on
+a plucked harp, a low whistle, a fiddle, drones and a bodhrán.
+
+The client listens to the land as you move (`scripts/sound.gd`, fed by `main.gd`): how much sea is round you, how near
+a river is, the trees, the houses, the nearest fire, how high you stand, the weather and the hour, and blends the sea,
+river, birdsong or crickets and owls, wind, rain, fire and town murmur to match, easing between them. Music follows the
+moment: a fight (struck or striking) turns it to battle, a town to the jig, nightfall to the night piece. A place can
+have its own `sound` (sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle) and `music`
+(explore, town, night, battle, eerie, holy, none): inside it, its sound comes up over the land's and its music plays.
+Set them in the console's place editor or through the MCP. Effects: footsteps by what is underfoot (grass, road,
+cobbles, water), a splash wading in, swings and hits, pickups and drops, placing and breaking blocks, a horn under
+event banners and a chime walking into a named place. N cycles sound and music, music off, and silence.
+
+## Building worlds with an AI (MCP)
+
+Everything the console does is also an MCP server, so an AI assistant (Claude Code, Claude Desktop, any MCP client)
+can build a world by talking to it: mark places and name them, make bot types and home them, write raids, lay out
+buildings in blocks, change the land's recipe, set the weather and the time, and start events.
+
+```sh
+cd ui && npm run build:mcp                      # writes ui/dist-mcp/mmo-mcp.mjs (one file, no other dependencies)
+claude mcp add mmo -e MMO_ADMIN=http://127.0.0.1:7780 -- node "$PWD/dist-mcp/mmo-mcp.mjs"
+```
+
+The repo's `.mcp.json` registers it for Claude Code sessions opened here. It speaks to the server's admin API, so
+it needs the same access the console has: the admin port only listens on loopback, so for a remote server tunnel
+it first (`ssh -L 7780:127.0.0.1:7780 host`). With zones, each zone has its own admin port; `use_server` switches
+between them.
+
+| Tools | What they do |
+| --- | --- |
+| `overview`, `game_schema`, `get_game` | Where things stand; the game file's types with comments; the file or one section |
+| `upsert`, `rename`, `remove`, `add_preset` | Edit places, routes, bot types, items, weather, weather zones, events, attributes and actions by name, applied live. They use the console's own editing code, so a rename or removal rewrites every rule, home and event step that named it |
+| `set_settings`, `walls`, `put_game` | Movement settings and the daylight schedule; hand-placed walls; the whole file |
+| `list_entities`, `get_entity`, `spawn`, `remove_entities`, `drive`, `release`, `say`, `read_chat` | Who is where, and moving, making and removing bots |
+| `give_item`, `drop_items`, `clear_ground_items`, `god_mode` | Items and players |
+| `set_weather`, `switch_weather_zone`, `set_time`, `event`, `director_status` | The sky and events, now |
+| `build`, `get_blocks`, `clear_blocks` | Blocks: `fill`, `walls` (a building's outline) or `line` over world coordinates, from a layer and so many high, in any of the 14 materials; `air` cuts doors and windows |
+| `get_world`, `world_preview`, `world_apply` | The land: its recipe and what stands on it, a new recipe tried, then made real |
+
+Two guards: a change to attributes, actions or movement settings restarts the world and disconnects everyone, so
+those tools refuse unless called with `allow_restart: true`; and `clear_blocks` / `clear_ground_items` never clear
+the whole world unless asked with `everything: true`. Tools that take things away are marked destructive, so an MCP
+client asks before running them. `node ui/mcp/smoke.mjs http://127.0.0.1:PORT` builds and removes a small scene
+through the MCP protocol against a throwaway server.
 
 ## Items and loot
 
@@ -460,6 +525,7 @@ protocol shrugs off, and the server is back in step a tick or two later.
 ```sh
 cargo test --release                 # 59 proto + 27 server unit tests, 26 end-to-end tests (real server, real UDP and HTTP)
 (cd ui && npm test)                  # 40 unit and accessibility tests
+node ui/mcp/smoke.mjs URL            # the MCP server against a throwaway server's admin URL
 scripts/ui_e2e.py [--shots DIR]      # 106 real-browser checks incl. axe scans of every tab in both themes, and building a place, a route and rules with the mouse
 cargo test -p server --release lane_scaling -- --ignored --nocapture
 ```
@@ -590,5 +656,9 @@ godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081
 scripts/godot_e2e.sh                       # generate a world, boot the server on it, run a scripted session headless (GODOT=, WORLD=, THEME=, NO_WORLD=1)
 godot --path godot -- ... --walk near --zoom 40 --shot out.png --shot_after 10   # screenshot beside the nearest building
 ```
+
+### Packaging it for other players
+
+`scripts/package_godot.sh [server]` builds the extension in release and exports `dist/mmo-client-mac.zip`, a macOS app (Apple silicon) that opens on a join screen asking for the server's address and a name; the address starts as `server` (default: this Mac's LAN address), and both are remembered for next time. A bare host means the web gateway on 7790, and the UDP port comes from `/play/info`. Players need UDP 7777 and TCP 7790 to reach the server. The admin API stays on loopback, so god mode works only on the server's own machine. It needs Godot's macOS export template for 4.6.2. With a Developer ID Application certificate in the keychain, the script signs the app (hardened runtime), notarises it through the `notarytool` keychain profile (or `NOTARY_KEYCHAIN_PROFILE`) and staples the ticket, so it opens on any Mac without warnings. Without the certificate the app is ad-hoc signed and testers must run `xattr -cr` on it first. If the first handshake lapses because a cold first launch is compiling shaders, the client tries again (up to three times) before showing an error.
 
 The extension is built against the Godot 4.6 API and refuses to load in older editors. It now exposes `bag()`, `ground()`, `use_slot()`, `drop_slot()` and `pickup()` (the C SDK has `mmo_bag_*`, `mmo_ground*` and `mmo_item_*` to match). Worlds that stream their walls are fetched by tile as you move (`tiles_wanted`, `put_tiles`, `set_walls`); with no world file the streamed walls are also what the plain theme draws. Weather and the item `usable` flag are not exposed yet.

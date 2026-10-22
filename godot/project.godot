@@ -16,6 +16,7 @@ window/stretch/aspect="keep_height"
 renderer/rendering_method="forward_plus"
 reflections/sky_reflections/roughness_layers=7
 anti_aliasing/quality/msaa_3d=1
+textures/vram_compression/import_etc2_astc=true
 
 [gui]
 

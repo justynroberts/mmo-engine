@@ -37,7 +37,7 @@ Run `npm run build` after editing TypeScript in `ui/src/` (it is the type check)
 
 **Workspace crates**
 - `proto` — everything both sides must agree on: wire format (`wire.rs`, `PROTO_VERSION`), handshake + ChaCha20-Poly1305 sessions (`secure.rs`), delta snapshots (`snapshot.rs`), reliable chat channel (`chat.rs`), game file schema and validation (`game.rs`), the `Defs` derived from it (`defs.rs`, `content_hash`), static world + the movement/collision step (`world.rs`), client prediction (`predict.rs`). Compiled into server and every Rust client so they cannot drift.
-- `server` — single binary. `main.rs` parses flags and runs the fixed tick. `sim.rs` owns the world (SoA entities, spatial grid, bot rules). `net.rs` handles handshakes and DATA packets and builds per-client snapshots, split across `--workers` lanes with `std::thread::scope` (each lane owns a disjoint slice of clients; sim is read-only in that phase, so no locks). `ctl.rs` is the loopback-only admin HTTP API. `web.rs` is the public `--web` gateway: serves `play.html` + `/play/info` + `/play/tiles` (walls by tile) + `/play/world`, and relays WebSocket messages to the UDP port (it never decrypts). `store.rs` is a SQLite writer thread for players and the bot population. `zone.rs` is multi-process scale-out: strips of one world (ownership by x, TCP handoff, border ghosts) or, with `--zone-lines`, separate maps joined by exits on places (`net::exits`; same handoff, and the zone left keeps a `Record::zone` marker that sends a returning player on). `statics.rs` holds the walls by tile and the world file for the admin and web threads, and prepares a reloaded world off the sim thread. `nav.rs` = walkability grid and flow fields that steer bots round walls. `director.rs` = weather and events (God tab), `items.rs` = bags and ground items, `botdir.rs` = hot-reloads `bots.d/*.json`.
+- `server` — single binary. `main.rs` parses flags and runs the fixed tick. `sim.rs` owns the world (SoA entities, spatial grid, bot rules). `net.rs` handles handshakes and DATA packets and builds per-client snapshots, split across `--workers` lanes with `std::thread::scope` (each lane owns a disjoint slice of clients; sim is read-only in that phase, so no locks). `ctl.rs` is the loopback-only admin HTTP API. `web.rs` is the public `--web` gateway: serves `play.html` + `/play/info` + `/play/tiles` (walls by tile) + `/play/world`, and relays WebSocket messages to the UDP port (it never decrypts). `store.rs` is a SQLite writer thread for players and the bot population. `zone.rs` is multi-process scale-out: strips of one world (ownership by x, TCP handoff, border ghosts) or, with `--zone-lines`, separate maps joined by exits on places (`net::exits`; same handoff, and the zone left keeps a `Record::zone` marker that sends a returning player on). `statics.rs` holds the walls by tile and the world file for the admin and web threads, and prepares a reloaded world off the sim thread. `worldgen` (`crates/worldgen`, `roads.rs` for the road network) writes world files with roads that the server reads into road cells. `nav.rs` = walkability grid and flow fields that steer bots round walls. `director.rs` = weather and events (God tab), `items.rs` = bags and ground items, `botdir.rs` = hot-reloads `bots.d/*.json`.
 - `bots` — N real encrypted clients for load testing.
 - `client-ffi` (`mmo-client`) — the client protocol behind a C ABI; header in `sdk/c/mmo_client.h`. `godot-ext` wraps it as a GDExtension (compiles, never loaded in Godot).
 
@@ -60,11 +60,20 @@ The protocol is implemented twice and movement three times. A change to any of t
 - `crates/proto/src/world.rs` + `predict.rs` ↔ `ui/src/play/sim.ts` (f32 rounding via `Math.fround`; `sim.test.ts`).
 - Snapshot interpolation (same approach, not a byte-exact port): `crates/client-ffi/src/interp.rs` ↔ `ui/src/play/interp.ts`.
 - Walls by tile (256 units, `/play/tiles`, binary): `crates/proto/src/tiles.rs` (server and Rust clients) ↔ `ui/src/play/walls.ts` (a shared byte fixture in both tests).
+- Roads: road cells (`World::on_road`, `ROAD_CELL`, `road_key`) and the `road_speed` multiplier in `integrate`, `crates/proto/src/world.rs` ↔ `ui/src/play/sim.ts`; road cells in the tile format, `crates/proto/src/tiles.rs` ↔ `ui/src/play/walls.ts` (the shared fixture includes a road). Road lines are turned into cells only on the server (`tiles::road_cells`).
 - Built block columns and 3D movement (`World::set_column`/`enter`/`settle`/`step`, `integrate` with the feet layer) in `crates/proto/src/world.rs` + `predict.rs` ↔ `ui/src/play/sim.ts` (same cases tested on both sides).
 
 ## UI
 
 `ui/` is React 18 + TypeScript + Tailwind + Radix + Framer Motion + three.js, served by the server from `--ui-dir` (default `ui/dist`). Two apps: the console (`src/App.tsx`, tabs in `src/components/`, talks to `/api/*` with an `X-Admin: 1` header on writes) and the play client (`src/play/`). All play-page colours live in the `.play-skin` block in `ui/src/index.css`, which the 3D scene reads.
+
+## Sound
+
+`godot/sounds` is generated by `scripts/make_audio.py` (rerun it after changing it; the files are committed). `godot/scripts/sound.gd` plays them; `main.gd` (`_listen`, `_footsteps`) decides what is heard. A place's `sound`/`music` must be one of `proto::game::SOUNDS`/`MUSIC`, which must match the files and `sound.gd`'s lists (and `SOUNDS`/`MUSIC` in `ui/src/api.ts`).
+
+## MCP server
+
+`ui/mcp/` exposes the console's functions as MCP tools (`tools.ts`; stdio entry `server.ts`; `npm run build:mcp` → `ui/dist-mcp/mmo-mcp.mjs`). It only calls the admin API, and game file edits go through `gameEdit.ts` / `directorEdit.ts`, so reference rewriting stays in one place. A new console function or admin endpoint should get a tool here too; `mcp/tools.test.ts` and `node mcp/smoke.mjs <admin url>` (against a throwaway server) test them.
 
 ## Docker
 

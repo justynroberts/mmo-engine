@@ -52,6 +52,10 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 var _ground_mat: Material
 
 ## The material the ground is drawn with; a theme overrides it (the mesh itself comes from the heights).
+## The ground's material for one cell: the same everywhere, unless a theme draws something into it (roads).
+func ground_material_at(_cx: int, _cy: int) -> Material:
+	return ground_material()
+
 func ground_material() -> Material:
 	return _ground_mat
 
@@ -134,14 +138,14 @@ func _ground_cell(cx: int, cy: int) -> MeshInstance3D:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
-	mi.material_override = ground_material()
+	mi.material_override = ground_material_at(cx, cy)
 	return mi
 
 ## Everything in one cell of the world. The plain look: solid footprints as grey blocks, nothing else.
 func build_cell(cx: int, cy: int) -> Node3D:
 	var node := Node3D.new()
 	for o in world.in_cell(cx, cy):
-		if o.get("solid", false):
+		if o.get("solid", false) and o.get("t", "") != "sea": # the open sea is solid, but it is water, not a wall
 			node.add_child(block(o))
 	return node
 

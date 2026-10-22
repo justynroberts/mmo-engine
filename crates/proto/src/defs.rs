@@ -49,6 +49,8 @@ pub struct Defs {
     /// Indices into `attrs` of replicated attributes, in wire order.
     pub replicated: Vec<usize>,
     pub move_speed: f32,
+    /// How much faster movement is on a road (`world::World::road_speed`).
+    pub road_speed: f32,
     pub entity_radius: f32,
     pub interest_radius: f32,
     pub max_visible: usize,
@@ -124,6 +126,7 @@ impl Defs {
             actions,
             replicated,
             move_speed: 20.0,
+            road_speed: crate::world::ROAD_SPEED,
             entity_radius: 0.5,
             interest_radius: 128.0,
             max_visible: 64,
@@ -195,6 +198,7 @@ impl Defs {
             }
         }
         h.f32(self.move_speed);
+        h.f32(self.road_speed);
         h.f32(self.entity_radius);
         h.f32(self.interest_radius);
         h.bytes(&(self.max_visible as u32).to_le_bytes());
@@ -230,6 +234,9 @@ mod tests {
         let mut c = Defs::default_game();
         c.move_speed += 1.0;
         assert_ne!(a.content_hash(), c.content_hash());
+        let mut r = Defs::default_game();
+        r.road_speed = 2.0;
+        assert_ne!(a.content_hash(), r.content_hash(), "prediction needs the road speed, so it is in the hash");
         let mut d = Defs::default_game();
         d.actions[0].effects[0] = Effect::AddToTarget { attr: ATTR_HEALTH, delta: -11.0 };
         assert_ne!(a.content_hash(), d.content_hash());

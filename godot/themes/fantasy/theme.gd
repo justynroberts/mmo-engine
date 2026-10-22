@@ -84,23 +84,33 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	# Rain (or whatever falls in the current weather): streaks in a box that follows the camera.
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	pm.emission_box_extents = Vector3(45, 1, 45)
+	pm.emission_box_extents = Vector3(50, 1, 50)
 	pm.direction = Vector3(0.15, -1, 0.05)
 	pm.spread = 3.0
-	pm.initial_velocity_min = 38.0
-	pm.initial_velocity_max = 48.0
+	pm.initial_velocity_min = 18.0
+	pm.initial_velocity_max = 22.0
 	pm.gravity = Vector3.ZERO
 	rain.process_material = pm
 	var streak := BoxMesh.new()
-	streak.size = Vector3(0.025, 0.9, 0.025)
-	var sm := StandardMaterial3D.new()
-	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	sm.albedo_color = Color(0.8, 0.85, 0.95, 0.45)
+	streak.size = Vector3(0.025, 0.55, 0.025)
+	# The drops thin out towards the edge of a circle round us, so the box they fall in never shows its corners.
+	var fall := Shader.new()
+	fall.code = """shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled;
+uniform vec4 tint : source_color = vec4(0.8, 0.85, 0.95, 0.45);
+uniform vec3 center;
+uniform float radius = 50.0;
+void fragment() {
+	vec3 w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	ALBEDO = tint.rgb;
+	ALPHA = tint.a * (1.0 - smoothstep(radius * 0.45, radius, length(w.xz - center.xz)));
+}"""
+	var sm := ShaderMaterial.new()
+	sm.shader = fall
 	streak.material = sm
 	rain.draw_pass_1 = streak
 	rain.amount = 6000
-	rain.lifetime = 0.45
+	rain.lifetime = 0.9
 	rain.visibility_aabb = AABB(Vector3(-50, -25, -50), Vector3(100, 30, 100))
 	rain.emitting = false
 	rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -110,6 +120,9 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	sh.code = """shader_type spatial;
 render_mode specular_disabled;
 uniform float rocky = 0.0; // 1 on crags: rock except in the flattest hollows
+uniform sampler2D road_map : filter_linear, repeat_disable; // a cell's roads: r how much road, g paved (ground_material_at)
+uniform vec2 road_origin;
+uniform float road_on = 0.0;
 varying vec3 wp;
 varying vec3 wn;
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
@@ -129,6 +142,18 @@ void fragment() {
 	float slope = 1.0 - clamp(wn.y, 0.0, 1.0);
 	vec3 rock = vec3(0.47, 0.45, 0.42) * (0.8 + 0.4 * fbm(q * 0.25 + wp.y * 0.1));
 	c = mix(c, rock, max(smoothstep(0.28, 0.5, slope), rocky * smoothstep(0.04, 0.12, slope + 0.05 * n(q * 0.3))));
+	// Roads: packed earth with a ragged grassy edge in the country, cobbles in the city.
+	if (road_on > 0.5) {
+		vec2 rm = texture(road_map, (q - road_origin) / 128.0).rg;
+		float road = smoothstep(0.2, 0.6, rm.r + 0.25 * (n(q * 0.7) - 0.5));
+		vec3 dirt = vec3(0.52, 0.43, 0.30) * (0.86 + 0.22 * fbm(q * 0.9)) * (0.92 + 0.12 * n(q * 3.0));
+		vec2 cq = q * vec2(1.25, 1.6);
+		cq.x += 0.5 * floor(cq.y);
+		vec2 cf = abs(fract(cq) - 0.5);
+		float stone = smoothstep(0.5, 0.38, max(cf.x, cf.y));
+		vec3 cob = mix(vec3(0.27, 0.26, 0.24), vec3(0.55, 0.53, 0.49) * (0.8 + 0.35 * h(floor(cq))), stone);
+		c = mix(c, mix(dirt, cob, smoothstep(0.4, 0.6, rm.g)), road);
+	}
 	c = mix(c, vec3(0.93, 0.95, 0.98), smoothstep(30.0, 42.0, wp.y + 6.0 * n(q * 0.05)) * (1.0 - smoothstep(0.55, 0.8, slope)));
 	ALBEDO = pow(c, vec3(2.2)); // the colours above are sRGB; albedo is linear
 	ROUGHNESS = 1.0;
@@ -146,6 +171,18 @@ void fragment() {
 	sheet.material_override = terrain_mat
 	sheet.position = Vector3(ext.get_center().x, -20.0, ext.get_center().y)
 	add_child(sheet)
+	# The open sea round land with a coast: one surface at sea level reaching far past the world, under the fog.
+	if world.has_sea:
+		var sea := MeshInstance3D.new()
+		var sea_plane := PlaneMesh.new()
+		sea_plane.size = ext.size + Vector2(8192, 8192)
+		sea_plane.subdivide_width = 64
+		sea_plane.subdivide_depth = 64
+		sea.mesh = sea_plane
+		sea.material_override = _water()
+		sea.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		sea.position = Vector3(ext.get_center().x, world.sea_level, ext.get_center().y)
+		add_child(sea)
 	# Water: every river's ribbon and every lake's surface, once.
 	for r in world.rivers:
 		add_child(_river_mesh(r))
@@ -164,6 +201,49 @@ void fragment() {
 
 func ground_material() -> Material:
 	return terrain_mat
+
+## Road map texels along a ground cell's edge (2 units each).
+const ROAD_PX := 64
+## A cell with roads in it gets its own copy of the ground material, with a small map of where the roads run: how
+## much road each texel is (1 on it, fading over a unit and a half at the edge) and whether it is paved (the city's
+## streets and avenues, which are the wide ones).
+func ground_material_at(cx: int, cy: int) -> Material:
+	var segs: Array = world.road_segments(cx, cy)
+	if segs.is_empty():
+		return terrain_mat
+	var n := ROAD_PX
+	var px: float = world.CELL / n
+	var ox: float = cx * world.CELL
+	var oy: float = cy * world.CELL
+	var map := PackedByteArray()
+	map.resize(n * n * 2)
+	for s in segs:
+		var a := Vector2(s[0], s[1])
+		var b := Vector2(s[2], s[3])
+		var hw: float = s[4]
+		var paved := hw >= 3.4
+		var pad := hw + 1.5
+		var i0 := clampi(int((minf(a.x, b.x) - pad - ox) / px), 0, n - 1)
+		var i1 := clampi(int((maxf(a.x, b.x) + pad - ox) / px), 0, n - 1)
+		var j0 := clampi(int((minf(a.y, b.y) - pad - oy) / px), 0, n - 1)
+		var j1 := clampi(int((maxf(a.y, b.y) + pad - oy) / px), 0, n - 1)
+		for j in range(j0, j1 + 1):
+			for i in range(i0, i1 + 1):
+				var p := Vector2(ox + (i + 0.5) * px, oy + (j + 0.5) * px)
+				var v := clampf((hw + 0.75 - Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p)) / 1.5, 0.0, 1.0)
+				if v <= 0.0:
+					continue
+				var at := (j * n + i) * 2
+				var q := int(v * 255.0)
+				if q > map[at]:
+					map[at] = q
+				if paved and q > map[at + 1]:
+					map[at + 1] = q
+	var m := terrain_mat.duplicate() as ShaderMaterial
+	m.set_shader_parameter("road_map", ImageTexture.create_from_image(Image.create_from_data(n, n, false, Image.FORMAT_RG8, map)))
+	m.set_shader_parameter("road_origin", Vector2(ox, oy))
+	m.set_shader_parameter("road_on", 1.0)
+	return m
 
 ## Building blocks from the Medieval Village textures, tiled so each block shows one texture repeat: the eight
 ## textures as they are, then glass, and the dressed stone tinted three ways (slate, moss, sandstone).
@@ -191,6 +271,7 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	# Rain starts below the camera so no streak brushes past the lens; snow and dust fill the air around us.
 	var above := minf(14.0, camera_zoom * 0.5) if _rain_kind in ["rain", "storm"] else 6.0
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
+	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
 	super.frame(center, camera_zoom)
 
 ## Sun, moon, light, fog and sky for the time of day (the server's schedule) and the weather.
@@ -312,6 +393,8 @@ func build_cell(cx: int, cy: int) -> Node3D:
 				lights.append([at + Vector3(0, 1.2, 0), "fire"])
 			"city":
 				pass # open ground: the heights already level it
+			"sea", "ford":
+				pass # the sea is drawn once, as a surface (setup); a ford is the road's own ground under the water
 			_:
 				if o.get("solid", false):
 					node.add_child(block(o)) # a type this theme does not know: draw it plainly
@@ -479,7 +562,7 @@ func snap_weather() -> void:
 func _set_rain(kind: String, k: float, col: Color) -> void:
 	var pm := rain.process_material as ParticleProcessMaterial
 	var mesh := rain.draw_pass_1 as BoxMesh
-	var m := mesh.material as StandardMaterial3D
+	var m := mesh.material as ShaderMaterial
 	match kind:
 		"snow": # slow flakes that drift and swirl
 			pm.direction = Vector3(0.25, -1, 0.1)
@@ -490,7 +573,7 @@ func _set_rain(kind: String, k: float, col: Color) -> void:
 			pm.turbulence_noise_strength = 2.0
 			pm.emission_box_extents = Vector3(40, 8, 40)
 			mesh.size = Vector3(0.09, 0.09, 0.09)
-			m.albedo_color = Color(1, 1, 1, 0.85)
+			m.set_shader_parameter("tint", Color(1, 1, 1, 0.85))
 			rain.lifetime = 5.0
 		"dust": # grit blown sideways
 			pm.direction = Vector3(1, -0.08, 0.25)
@@ -501,18 +584,20 @@ func _set_rain(kind: String, k: float, col: Color) -> void:
 			pm.turbulence_noise_strength = 1.0
 			pm.emission_box_extents = Vector3(45, 6, 45)
 			mesh.size = Vector3(0.6, 0.06, 0.06) # streaks along the wind
-			m.albedo_color = Color(col.lightened(0.15), 0.55)
+			m.set_shader_parameter("tint", Color(col.lightened(0.15), 0.55))
 			rain.lifetime = 2.5
 		_: # rain, and a storm's heavier rain
-			pm.direction = Vector3(0.15, -1, 0.05) if kind == "rain" else Vector3(0.35, -1, 0.1)
+			# About 20 units a second (a storm's a little faster and slanted harder), falling the same height as before.
+			var storm := kind != "rain"
+			pm.direction = Vector3(0.35, -1, 0.1) if storm else Vector3(0.15, -1, 0.05)
 			pm.spread = 3.0
-			pm.initial_velocity_min = 38.0
-			pm.initial_velocity_max = 48.0
+			pm.initial_velocity_min = 22.0 if storm else 17.0
+			pm.initial_velocity_max = 27.0 if storm else 21.0
 			pm.turbulence_enabled = false
-			pm.emission_box_extents = Vector3(45, 1, 45)
-			mesh.size = Vector3(0.025, 0.9, 0.025)
-			m.albedo_color = Color(col.lightened(0.4), 0.35 + 0.3 * k)
-			rain.lifetime = 0.45
+			pm.emission_box_extents = Vector3(50, 1, 50)
+			mesh.size = Vector3(0.025, 0.55, 0.025)
+			m.set_shader_parameter("tint", Color(col.lightened(0.4), 0.35 + 0.3 * k))
+			rain.lifetime = 0.75 if storm else 0.95
 
 func weather_drawn() -> String:
 	return _kind
@@ -551,7 +636,10 @@ func map_image(px: int) -> Image:
 			var e := maxf(step, 2.0)
 			var slope := (height(x - e, y - e) - height(x + e, y + e)) / (2.0 * e)
 			var lit := 0.9 * (1.0 + clampf(slope * 1.2, -0.25, 0.25))
-			img.set_pixel(i, j, Color(0.36 * lit, 0.54 * lit, 0.2 * lit))
+			if world.has_sea and height(x, y) < world.sea_level + 0.1:
+				img.set_pixel(i, j, Color("2f6f8f"))
+			else:
+				img.set_pixel(i, j, Color(0.36 * lit, 0.54 * lit, 0.2 * lit))
 	var px_of := func(x: float, y: float) -> Vector2i:
 		return Vector2i(clampi(int(x / step), 0, px - 1), clampi(int(y / step), 0, px - 1))
 	for r in world.rivers:
@@ -560,6 +648,14 @@ func map_image(px: int) -> Image:
 			for t in 6:
 				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], t / 6.0), lerpf(pts[k][1], pts[k + 1][1], t / 6.0))
 				img.fill_rect(Rect2i(p - Vector2i(1, 1), Vector2i(3, 3)), Color("2f7f8f"))
+	for r in world.roads:
+		var pts: Array = r["pts"]
+		var wide := maxi(1, int(2.0 * float(r.get("half_width", 3.0)) / step))
+		for k in pts.size() - 1:
+			var segs := maxi(1, int(Vector2(pts[k][0], pts[k][1]).distance_to(Vector2(pts[k + 1][0], pts[k + 1][1])) / step))
+			for t in segs + 1:
+				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], float(t) / segs), lerpf(pts[k][1], pts[k + 1][1], float(t) / segs))
+				img.fill_rect(Rect2i(p, Vector2i(wide, wide)), Color("c9b48a"))
 	var colours := {"house": Color("b5523b"), "keep": Color("8d867d"), "castle": Color("8d867d"), "tower": Color("6f6a62"),
 		"wall": Color("5d5850"), "crag": Color("6e675e"), "lake": Color("2f7f8f"), "square": Color("b8a77e"), "city": Color("9b8f72")}
 	for pass_ in 2: # open ground first, then what stands on it

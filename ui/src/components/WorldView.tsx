@@ -2,7 +2,7 @@ import { kindOf } from '../play/blocks'
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, type Place, type Route, type State, type WorldGeom } from '../api'
 import type { Sel, Tool } from './Builder'
-import { BLOCK, BLOCK_COLOURS, MAP, OPEN, TREES, TYPE_COLOUR, groundImage, hpColor, type BlockCol } from './mapLook'
+import { BLOCK, BLOCK_COLOURS, MAP, OPEN, TREES, TYPE_COLOUR, UNDRAWN, groundImage, hpColor, type BlockCol } from './mapLook'
 import { fromBoxes, type WorldData, type WorldEdit } from '../world'
 
 /** When present the map is in builder mode: it shows places and routes and edits them. */
@@ -318,9 +318,16 @@ export function WorldView(p: Props) {
         ctx.fillRect(sx(o.b[0]), sy(o.b[1]), (o.b[2] - o.b[0]) * v.scale, (o.b[3] - o.b[1]) * v.scale)
         ctx.globalAlpha = 1
       }
-      ctx.strokeStyle = MAP.water
       ctx.lineJoin = 'round'
       ctx.lineCap = 'round'
+      ctx.strokeStyle = MAP.road
+      for (const r of look?.land.roads ?? []) {
+        ctx.lineWidth = Math.max(1, r.half_width * 2 * v.scale)
+        ctx.beginPath()
+        r.pts.forEach((p, k) => (k === 0 ? ctx.moveTo(sx(p[0]), sy(p[1])) : ctx.lineTo(sx(p[0]), sy(p[1]))))
+        ctx.stroke()
+      }
+      ctx.strokeStyle = MAP.water
       for (const r of look?.land.rivers ?? []) {
         ctx.lineWidth = Math.max(1.5, r.half_width * 2 * v.scale)
         ctx.beginPath()
@@ -366,7 +373,7 @@ export function WorldView(p: Props) {
 
       // Everything with a footprint, coloured by its type, with a darker rim and an inset line when there is room.
       for (const o of objs) {
-        if (!o.b || OPEN.has(o.t) || !onScreen(o.b)) continue
+        if (!o.b || OPEN.has(o.t) || UNDRAWN.has(o.t) || !onScreen(o.b)) continue
         const x = sx(o.b[0])
         const y = sy(o.b[1])
         const bw = (o.b[2] - o.b[0]) * v.scale

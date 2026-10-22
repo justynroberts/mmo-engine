@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mmo": {
+      "command": "node",
+      "args": ["ui/dist-mcp/mmo-mcp.mjs"],
+      "env": { "MMO_ADMIN": "http://127.0.0.1:7780" }
+    }
+  }
+}

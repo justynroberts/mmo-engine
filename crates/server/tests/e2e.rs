@@ -1266,6 +1266,8 @@ fn start_zone_lines() -> Zones {
         r,
         title: String::new(),
         exit: exit.map(|(zone, x, y)| proto::game::Exit { zone: zone.into(), x, y }),
+        sound: String::new(),
+        music: String::new(),
     };
     let mut town = GameFile::default_game();
     town.walls = Some(vec![]);
@@ -2127,7 +2129,7 @@ fn a_big_world_streams_its_walls_by_area_instead_of_sending_them_all() {
     let (v, tiles) = proto::tiles::decode(&body).expect("a tiles reply");
     assert_eq!(format!("{v:016x}"), ver);
     assert_eq!(tiles.len(), 3);
-    for ((cx, cy), list) in &tiles {
+    for ((cx, cy), list, _) in &tiles {
         let (cx, cy) = (*cx as f32, *cy as f32);
         for t in list {
             let b = t.b;
@@ -2146,7 +2148,7 @@ fn a_big_world_streams_its_walls_by_area_instead_of_sending_them_all() {
     let mut ids = std::collections::HashSet::new();
     for part in all.chunks(64) {
         let (_, _, body) = web_get_bytes(web, &format!("/play/tiles?v={ver}&c={}", part.join(";")), false);
-        ids.extend(proto::tiles::decode(&body).unwrap().1.into_iter().flat_map(|(_, l)| l.into_iter().map(|t| t.id)));
+        ids.extend(proto::tiles::decode(&body).unwrap().1.into_iter().flat_map(|(_, l, _)| l.into_iter().map(|t| t.id)));
     }
     assert_eq!(ids.len() as u64, count);
     // The console's view agrees with what the browsers get.
@@ -2220,6 +2222,46 @@ fn a_world_file_supplies_the_walls_is_served_as_is_and_reloads_live() {
     assert_eq!(json(&srv, "GET", "/api/world", "").1["size"], 1024.0, "the size waits for a restart");
     std::fs::write(&path, "nope").unwrap();
     assert_eq!(json(&srv, "POST", "/api/world/reload", "").0, 400);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Roads in a world file are faster underfoot: the server moves a player on one `road_speed` times as far, and tells
+/// clients the road cells (with the tiles) and the speed (in the join info) so prediction agrees.
+#[test]
+fn a_player_on_a_road_covers_more_ground_than_one_on_grass() {
+    let dir = std::env::temp_dir().join(format!("e2e-road-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("world.json");
+    std::fs::write(&path, r#"{"format":1,"size":1024,"objects":[],"roads":[{"half_width":6,"pts":[[40,300],[1000,300]]}]}"#).unwrap();
+    let p = path.to_string_lossy().to_string();
+    let (srv, web) = start_web(&["--world", &p]);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    assert_eq!((info["road_speed"].as_f64(), info["walls"]["inline"].clone()), (Some(1.5), false.into()), "roads travel with tiles");
+    let ver = info["walls"]["ver"].as_str().unwrap().to_string();
+    let (_, _, body) = web_get_bytes(web, &format!("/play/tiles?v={ver}&c=0,1;3,3"), false);
+    let (_, tiles) = proto::tiles::decode(&body).unwrap();
+    assert!(!tiles[0].2.is_empty() && tiles[1].2.is_empty(), "the road's tile has road cells, a far one none");
+    let mut c = connect(&srv);
+    c.send_input(0, 0);
+    c.pump(200);
+    let mut run = |c: &mut Client, y: f32| {
+        walk_to(c, 100.0, y, |c| (c.pos().0 - 100.0).abs() < 1.0 && (c.pos().1 - y).abs() < 1.0);
+        for _ in 0..6 {
+            c.send_input(0, 0);
+            c.pump(40);
+        }
+        let x0 = c.pos().0;
+        walk(c, 30);
+        for _ in 0..6 {
+            c.send_input(0, 0);
+            c.pump(40);
+        }
+        c.pos().0 - x0
+    };
+    let road = run(&mut c, 300.0);
+    let grass = run(&mut c, 500.0);
+    let k = road / grass;
+    assert!((1.3..1.7).contains(&k), "road {road}, grass {grass}: {k} times as far");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2439,7 +2481,18 @@ fn titled_places_are_published_as_locations_live() {
     let ashby = info["locations"].as_array().unwrap().iter().find(|l| l["title"] == "Ashby Crossing").cloned().unwrap();
     assert_eq!((ashby["x"].clone(), ashby["y"].clone(), ashby["r"].clone()), (200.0.into(), 200.0.into(), 30.0.into()));
     assert!(std::fs::read_to_string(srv.dir.join("game.json")).unwrap().contains("Ashby Crossing"), "kept in the game file");
+    // A sound zone (no title) is published too, with its sound and music; an unknown sound is refused.
     let last = game["places"].as_array().unwrap().len() - 1;
+    game["places"][last]["sound"] = "crypt".into();
+    game["places"][last]["music"] = "eerie".into();
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let zone = info["locations"].as_array().unwrap().iter().find(|l| l["sound"] == "crypt").cloned().unwrap();
+    assert_eq!((zone["title"].clone(), zone["music"].clone()), ("".into(), "eerie".into()));
+    game["places"][last]["sound"] = "bagpipes".into();
+    let (s, r) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert!(s == 400 && r["error"].as_str().unwrap().contains("sound is one of"), "{r}");
+    game["places"][last]["sound"] = "crypt".into();
     game["places"][last]["title"] = " padded".into();
     assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 400);
 }

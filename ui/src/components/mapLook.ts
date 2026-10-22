@@ -19,6 +19,7 @@ export const MAP = {
   sky: '#a9c3d6',
   fog: '#a9bfc9',
   water: '#2f7f8f',
+  road: '#c9b48a',
 } as const
 
 /** Fill colour of a footprint by its type; an unknown type gets the plain stone. */
@@ -37,11 +38,16 @@ export const TYPE_COLOUR: Record<string, string> = {
 
 /** Footprints that are open ground, drawn under everything else. */
 export const OPEN = new Set(['city', 'square'])
+/** Footprints the ground picture already shows (the open sea is solid, but it is water): not drawn as blocks. */
+export const UNDRAWN = new Set(['sea'])
 
 /** Point objects drawn as tree canopies. */
 export const TREES = new Set(['tree', 'tree_bare', 'bush'])
 
 /** Ground colour by height as sRGB 0..1: meadow, rock higher up, snow on the peaks. */
+/** The sea on the ground picture (MAP.water as fractions). */
+const SEA: [number, number, number] = [0x2f / 255 / 0.9, 0x7f / 255 / 0.9, 0x8f / 255 / 0.9]
+
 export function groundColour(h: number): [number, number, number] {
   const k = (a: number, b: number, t: number) => Math.min(1, Math.max(0, (t - a) / (b - a)))
   const rock = k(14, 28, h)
@@ -65,7 +71,8 @@ export function groundImage(w: WorldData, px = 512): HTMLCanvasElement | null {
       const y = (j + 0.5) * step
       const slope = (w.height(x - e, y - e) - w.height(x + e, y + e)) / (2 * e)
       const lit = 0.9 * (1 + Math.max(-0.25, Math.min(0.25, slope * 1.2)))
-      const [r, g, b] = groundColour(w.height(x, y))
+      const ht = w.height(x, y)
+      const [r, g, b] = w.sea !== undefined && ht < w.sea + 0.1 ? SEA : groundColour(ht)
       const o = (j * px + i) * 4
       img.data[o] = Math.min(255, r * lit * 255)
       img.data[o + 1] = Math.min(255, g * lit * 255)

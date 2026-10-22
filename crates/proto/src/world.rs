@@ -47,6 +47,18 @@ pub const CLIMB: i16 = 1;
 /// Block columns per axis the cell key has room for (the largest world is 32768 blocks across).
 pub const BLOCK_GRID: u32 = 1 << 15;
 
+/// Edge of a road cell. Roads are a set of these cells, so whether a point is on a road is one lookup, and the
+/// same lookup in every client (`ui/src/play/sim.ts`).
+pub const ROAD_CELL: f32 = 4.0;
+/// How much faster than on open ground something moves on a road, unless the game file says otherwise.
+pub const ROAD_SPEED: f32 = 1.5;
+
+/// A road cell's key: its column and row, `ROAD_CELL` units each (a 65,536 unit world is 16,384 across).
+#[inline]
+pub fn road_key(cx: u32, cy: u32) -> u32 {
+    cx | cy << 16
+}
+
 /// The base layer of a column whose ground's lowest corner is at height `lowest`: blocks start just below the
 /// ground, so a column never floats.
 pub fn base_layer(lowest: f32) -> i8 {
@@ -132,6 +144,9 @@ pub struct World {
     buckets: Vec<Vec<u32>>,
     /// The block columns players have built (by `block_key`), never with an empty mask.
     blocks: std::collections::HashMap<u32, Column>,
+    /// The road cells (by `road_key`), and how much faster movement is on them (the game file's `road_speed`).
+    roads: std::collections::HashSet<u32>,
+    pub road_speed: f32,
 }
 
 impl World {
@@ -156,7 +171,7 @@ impl World {
         // gets coarser ones so the bucket table stays small (at most about a million buckets).
         let cell = (size / 1024.0).max(16.0);
         let gw = (size / cell).ceil() as usize + 1;
-        let mut w = World { size, seed, boxes: Vec::new(), cell, gw, buckets: vec![Vec::new(); gw * gw], blocks: Default::default() };
+        let mut w = World { size, seed, boxes: Vec::new(), cell, gw, buckets: vec![Vec::new(); gw * gw], blocks: Default::default(), roads: Default::default(), road_speed: ROAD_SPEED };
         w.set_boxes(boxes);
         w
     }
@@ -196,6 +211,22 @@ impl World {
         } else {
             self.blocks.remove(&block_key(cx, cy));
         }
+    }
+
+    /// Replace the road cells (keys from `road_key`).
+    pub fn set_roads(&mut self, cells: impl IntoIterator<Item = u32>) {
+        self.roads = cells.into_iter().collect();
+    }
+
+    pub fn road_count(&self) -> usize {
+        self.roads.len()
+    }
+
+    /// True if the point is on a road cell.
+    #[inline]
+    pub fn on_road(&self, x: f32, y: f32) -> bool {
+        // ROAD_CELL is a power of two, so the division is exact and the browser's floor finds the same cell.
+        !self.roads.is_empty() && x >= 0.0 && y >= 0.0 && self.roads.contains(&road_key((x / ROAD_CELL) as u32, (y / ROAD_CELL) as u32))
     }
 
     pub fn column(&self, cx: u32, cy: u32) -> Option<Column> {
@@ -334,7 +365,7 @@ pub fn move_vector(dir_x: i8, dir_y: i8) -> (f32, f32) {
 }
 
 /// One movement tick, identical on server and (for prediction) client. Standing still still settles: a block
-/// broken underfoot drops you.
+/// broken underfoot drops you. Starting the tick on a road makes it `world.road_speed` times as long.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn integrate(
@@ -352,6 +383,7 @@ pub fn integrate(
     if mx == 0.0 && my == 0.0 {
         return (x, y, if z == GROUND { z } else { world.settle(x, y, r, z) });
     }
+    let speed = if world.on_road(x, y) { speed * world.road_speed } else { speed };
     world.step(x, y, z, mx * speed * dt, my * speed * dt, r)
 }
 
@@ -419,6 +451,22 @@ mod tests {
         let (x, y, _) = integrate(&w, 100.0, 100.0, GROUND, 127, 127, 20.0, 1.0, 0.5);
         let d = ((x - 100.0).powi(2) + (y - 100.0).powi(2)).sqrt();
         assert!((d - 20.0).abs() < 1e-3, "diagonal speed {d}");
+    }
+
+    /// The same cases are in ui/src/play/sim.test.ts.
+    #[test]
+    fn a_road_is_faster_from_the_cell_a_tick_starts_in() {
+        let mut w = World::from_boxes(512.0, 1, vec![]);
+        w.set_roads([road_key(25, 25), road_key(26, 25)]); // x 100..108, y 100..104
+        assert!(w.on_road(100.0, 100.0) && w.on_road(107.9, 103.9) && !w.on_road(108.0, 100.0) && !w.on_road(99.9, 101.0));
+        let (x, _, _) = integrate(&w, 101.0, 102.0, GROUND, 127, 0, 20.0, 0.05, 0.5);
+        assert_eq!(x, 101.0 + 20.0 * ROAD_SPEED * 0.05);
+        let (x, _, _) = integrate(&w, 99.0, 102.0, GROUND, 127, 0, 20.0, 0.05, 0.5);
+        assert_eq!(x, 100.0, "off the road at the start of the tick: the usual speed");
+        w.road_speed = 1.0;
+        let (x, _, _) = integrate(&w, 101.0, 102.0, GROUND, 127, 0, 20.0, 0.05, 0.5);
+        assert_eq!(x, 102.0);
+        assert!(!w.on_road(-1.0, 100.0), "nothing below zero is a road");
     }
 
     #[test]
