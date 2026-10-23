@@ -175,6 +175,72 @@ export interface ItemDef {
   equip?: EquipFile
   /** A mount (0..4): riding it adds this to the `speed` attribute. Absent or 0, not a mount. */
   mount?: number
+  /** How rare it is (absent: common). A drop of a rare one or better is announced. */
+  rarity?: Rarity
+}
+
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
+export const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary']
+/** How each rarity is coloured wherever an item is named. */
+export const RARITY_COLOURS: Record<Rarity, string> = { common: '#d8d8d8', uncommon: '#5fd35f', rare: '#4f9dff', epic: '#b46cff', legendary: '#ff9a2e' }
+
+/** A side players join with /faction; the same side never harms each other. */
+export interface FactionDef {
+  name: string
+  title?: string
+  color?: string
+}
+/** A calling (/class): the spell schools it may use. */
+export interface ClassDef {
+  name: string
+  title?: string
+  schools: string[]
+}
+export interface LootEntry {
+  item: string
+  weight?: number
+  min?: number
+  max?: number
+}
+export interface LootTable {
+  name: string
+  rolls?: number
+  nothing?: number
+  entries: LootEntry[]
+}
+export interface Stack {
+  item: string
+  count?: number
+}
+/** /craft name: takes `needs`, gives `count` of `makes`, optionally only near a place. */
+export interface Recipe {
+  name: string
+  needs: Stack[]
+  makes: string
+  count?: number
+  near?: string
+}
+/** A seed planted beside tilled soil grows in `grow_secs` into a crop that harvests into `yields`. */
+export interface CropDef {
+  name: string
+  seed: string
+  yields: string
+  min?: number
+  max?: number
+  grow_secs?: number
+}
+/** Land players claim with /claim: `size` blocks on a side, `per_player` each. */
+export interface PlotRules {
+  size?: number
+  per_player?: number
+}
+/** A place that gives each party its own copy of these monsters. */
+export interface DungeonDef {
+  name: string
+  place: string
+  bots: { bot: string; count?: number }[]
+  xp?: number
+  reward?: Stack
 }
 export const GEAR_SLOTS = ['weapon', 'armour', 'trinket'] as const
 export type GearSlot = (typeof GEAR_SLOTS)[number]
@@ -214,6 +280,8 @@ export interface Archetype {
   level?: number
   /** What it sells (players talk to one to trade), priced in the game's currency. */
   shop?: ShopItem[]
+  /** A loot table (`GameFile.loot`) rolled when it falls, on top of its drops. */
+  loot?: string
 }
 export interface Drain {
   attr: string
@@ -317,6 +385,14 @@ export interface GameFile {
   quests?: QuestFile[]
   /** The item that is money: what shops take and pay. Applies live. */
   currency?: string
+  /** Sides, classes, loot tables, crafting, farming, land and dungeons. All apply live. */
+  factions?: FactionDef[]
+  classes?: ClassDef[]
+  loot?: LootTable[]
+  recipes?: Recipe[]
+  crops?: CropDef[]
+  plots?: PlotRules
+  dungeons?: DungeonDef[]
 }
 
 export interface Perf {

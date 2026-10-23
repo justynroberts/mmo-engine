@@ -3,13 +3,14 @@
 
 import type { Archetype, EventDef, GameFile, ItemDef, Step, WeatherDef, WeatherZone } from './api'
 import { questProblems, rewriteQuestRefs, uniqueName } from './gameEdit'
+import { rewriteRealmRefs } from './realmEdit'
 
 export type RefKind = 'attr' | 'arch' | 'place' | 'weather' | 'item'
 
 /** Rewrite every weather and event step that mentions `from`. With `to` null the references are removed: a drain,
  * a step, and an event left with no steps. (A deleted place drops its steps rather than widening them to "everywhere".) */
 export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string | null): GameFile {
-  if (!g.weather && !g.events && !g.zones && !g.quests && kind !== 'item') return g
+  if (!g.weather && !g.events && !g.zones && !g.quests && kind !== 'item' && kind !== 'arch' && kind !== 'place') return g
   const weather = (g.weather ?? []).map((w) =>
     kind === 'attr'
       ? { ...w, drain: w.drain.flatMap((d) => (d.attr !== from ? [d] : to === null ? [] : [{ ...d, attr: to }])) }
@@ -87,7 +88,7 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
     if (to === null) delete next.currency
     else next.currency = to
   }
-  return next
+  return rewriteRealmRefs(next, kind, from, to)
 }
 
 export const MAX_ZONES = 32

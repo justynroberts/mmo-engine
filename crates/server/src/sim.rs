@@ -248,13 +248,19 @@ impl Grid {
     /// Calls `f(slot)` for every entity in the 3x3 cells around `(x, y)`.
     /// The caller does the exact distance test. `cell` must be >= the query radius.
     #[inline]
-    pub fn for_neighbours(&self, x: f32, y: f32, mut f: impl FnMut(u32)) {
+    pub fn for_neighbours(&self, x: f32, y: f32, f: impl FnMut(u32)) {
+        self.for_within(x, y, 1, f)
+    }
+
+    /// Everything in the cells within `reach` cells of (x, y) (`for_neighbours` is a reach of 1): at least `reach`
+    /// interest radii in every direction.
+    pub fn for_within(&self, x: f32, y: f32, reach: usize, mut f: impl FnMut(u32)) {
         let cx = ((x / self.cell) as usize).min(self.gw - 1);
         let cy = ((y / self.cell) as usize).min(self.gw - 1);
-        let y0 = cy.saturating_sub(1);
-        let y1 = (cy + 1).min(self.gw - 1);
-        let x0 = cx.saturating_sub(1);
-        let x1 = (cx + 1).min(self.gw - 1);
+        let y0 = cy.saturating_sub(reach);
+        let y1 = (cy + reach).min(self.gw - 1);
+        let x0 = cx.saturating_sub(reach);
+        let x1 = (cx + reach).min(self.gw - 1);
         for gy in y0..=y1 {
             let row = gy * self.gw;
             let a = self.start[row + x0] as usize;

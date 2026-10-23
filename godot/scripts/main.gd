@@ -132,7 +132,7 @@ var smoke_log: Array[String] = []
 # Building: blocks on one grid in all three directions (/play/info "build"), fetched from /play/blocks. Layer z
 # fills heights z * block to (z + 1) * block everywhere, so blocks line up however the ground runs.
 const GROUND := -128      # the layer of something on the bare ground
-const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL, KEY_BRACKETLEFT, KEY_BRACKETRIGHT]
+const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_BACKSLASH]
 var build := {}           # /play/info "build"; empty if the server does not offer it
 var building := false     # build mode (B toggles, Esc leaves); otherwise action mode. Only with build offered.
 var build_kind := 0
@@ -432,6 +432,8 @@ func _start() -> void:
 			hud.say("[color=#e8a0ff]To %s:[/color] [color=#f0d8ff]%s[/color]" % [_name(from), text])
 		elif channel == 6: # party chat
 			hud.say("[color=#8fd3ff][Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
+		elif channel == 7: # guild chat
+			hud.say("[color=#7fe08a][Guild] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
 		else:
 			var who := "You" if from == net.get_self_id() else _name(from)
 			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))

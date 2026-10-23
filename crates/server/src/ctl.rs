@@ -350,7 +350,9 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // Building: blocks on one grid in all three directions; clients fetch them from /play/blocks.
         "build": {
             "block": proto::world::BLOCK, "reach": proto::game::BUILD_REACH, "max_stack": proto::game::MAX_STACK,
-            "kinds": proto::game::BLOCK_KINDS, "act_build": proto::game::ACT_BUILD, "act_break": proto::game::ACT_BREAK,
+            // The materials a player can build (crops come from seeds), then the farming ones by number.
+            "kinds": proto::game::SPROUT, "soil": proto::game::SOIL, "sprout": proto::game::SPROUT, "ripe": proto::game::RIPE,
+            "act_build": proto::game::ACT_BUILD, "act_break": proto::game::ACT_BREAK,
             "climb": proto::world::CLIMB, "ground": proto::world::GROUND,
         },
         "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
@@ -368,8 +370,18 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             if i.value > 0 { v["value"] = json!(i.value); }
             if let Some(e) = &i.equip { v["equip"] = json!({"slot": e.slot as u8, "might": e.might, "toughness": e.toughness}); }
             if i.mount > 0.0 { v["mount"] = json!(i.mount); }
+            if !i.rarity.is_common() { v["rarity"] = json!(i.rarity.title()); }
             v
         }).collect::<Vec<_>>(),
+        // Sides, callings, what can be made and grown, and whether land can be claimed (all reached by "/" commands).
+        "realm": {
+            "factions": &sim.realm.factions,
+            "classes": sim.realm.classes.iter().map(|c| json!({"name": c.name, "title": c.title, "schools": c.schools})).collect::<Vec<_>>(),
+            "recipes": sim.realm.recipes.iter().map(|r| json!({"name": r.name, "makes": r.makes, "count": r.count, "needs": r.needs})).collect::<Vec<_>>(),
+            "crops": sim.realm.crops.iter().map(|c| json!({"name": c.name, "seed": c.seed, "yields": c.yields, "grow_secs": c.grow_secs})).collect::<Vec<_>>(),
+            "plots": sim.realm.plots.as_ref().map(|p| json!({"size": p.size, "per_player": p.per_player})),
+            "dungeons": sim.realm.dungeons.iter().map(|d| json!({"name": d.name, "place": sim.places.get(d.place).map(|p| p.name.clone())})).collect::<Vec<_>>(),
+        },
         // Money, and what each merchant sells (by the name its bots go by).
         "currency": sim.currency.map(|c| sim.items[c].name.clone()),
         "shops": sim.archs.iter().filter(|a| !a.shop.is_empty()).map(|a| (proto::names::bot(&a.name).to_string(),

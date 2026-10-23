@@ -35,6 +35,11 @@ pub mod kind {
     /// Inner: what you wear, `weapon u8 | armour u8 | trinket u8` (item index + 1, 0 for nothing), and whether you
     /// ride (`riding u8`). Sent on a change.
     pub const GEAR: u8 = 0x8E;
+    /// Inner: the crowd beyond what your snapshot carries, `part u8 | parts u8 | n u8 | n x (id u32, x u16, y u16,
+    /// side u8)`: whole world units, `side` the faction (index + 1, 0 for none) with the top bit set for a player.
+    /// A few times a second, in up to `CROWD_PARTS` packets; a client draws them simply and replaces a part's
+    /// entries when that part comes again.
+    pub const CROWD: u8 = 0x8F;
 }
 
 pub mod reject {
@@ -380,6 +385,48 @@ pub fn decode_party(buf: &[u8]) -> Option<Vec<u32>> {
     Some(buf[2..].chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
 }
 
+/// One distant entity in a CROWD packet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct CrowdEntry {
+    pub id: u32,
+    pub x: u16,
+    pub y: u16,
+    /// Faction (index + 1, 0 for none), with `CROWD_PLAYER` set for a player.
+    pub side: u8,
+}
+
+pub const CROWD_PLAYER: u8 = 0x80;
+/// Entries in one CROWD packet (9 bytes each, inside one datagram with room to spare), and most packets per round.
+pub const CROWD_PER_PACKET: usize = 120;
+pub const CROWD_PARTS: usize = 4;
+
+pub fn encode_crowd(out: &mut Vec<u8>, part: u8, parts: u8, list: &[CrowdEntry]) {
+    out.clear();
+    put_u8(out, kind::CROWD);
+    put_u8(out, part);
+    put_u8(out, parts);
+    let n = list.len().min(CROWD_PER_PACKET);
+    put_u8(out, n as u8);
+    for e in &list[..n] {
+        put_u32(out, e.id);
+        out.extend_from_slice(&e.x.to_le_bytes());
+        out.extend_from_slice(&e.y.to_le_bytes());
+        put_u8(out, e.side);
+    }
+}
+
+/// (part, parts, entries)
+pub fn decode_crowd(buf: &[u8]) -> Option<(u8, u8, Vec<CrowdEntry>)> {
+    if buf.len() < 4 || buf[0] != kind::CROWD || buf.len() != 4 + buf[3] as usize * 9 || buf[1] >= buf[2] {
+        return None;
+    }
+    let list = buf[4..]
+        .chunks_exact(9)
+        .map(|c| CrowdEntry { id: u32::from_le_bytes([c[0], c[1], c[2], c[3]]), x: u16::from_le_bytes([c[4], c[5]]), y: u16::from_le_bytes([c[6], c[7]]), side: c[8] })
+        .collect();
+    Some((buf[1], buf[2], list))
+}
+
 pub fn encode_gear(out: &mut Vec<u8>, gear: [u8; 3], riding: bool) {
     out.clear();
     put_u8(out, kind::GEAR);
@@ -417,6 +464,20 @@ pub fn decode_server(buf: &[u8]) -> Option<ServerMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crowds_round_trip_and_fit_a_datagram() {
+        let mut b = Vec::new();
+        let list: Vec<CrowdEntry> = (0..200).map(|i| CrowdEntry { id: 1000 + i, x: i as u16 * 7, y: 65535 - i as u16, side: (i % 3) as u8 | CROWD_PLAYER }).collect();
+        encode_crowd(&mut b, 1, 2, &list);
+        assert!(b.len() + 30 <= MAX_PACKET, "{} bytes", b.len());
+        let (part, parts, got) = decode_crowd(&b).unwrap();
+        assert_eq!((part, parts), (1, 2));
+        assert_eq!(got, list[..CROWD_PER_PACKET].to_vec());
+        assert_eq!(decode_crowd(&b[..b.len() - 1]), None);
+        b[1] = 2;
+        assert_eq!(decode_crowd(&b), None, "part past the parts");
+    }
 
     #[test]
     fn quests_round_trip() {
