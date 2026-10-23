@@ -272,7 +272,7 @@ export const QUESTS_NOTE = [
   'A player holds at most 25 quests at once (taken, not handed in); done quests do not count.',
   'Steps: { kind: "kill", archetype, count 1..65535 } beat bots of a type (counts for everyone who hurt the one that fell); { kind: "visit", place } walk into a place; { kind: "collect", item, count 1..255 } carry items (taken on hand-in); { kind: "talk", archetype } talk to a bot of a type.',
   'Everything named must exist: bot types, places, items, and the after quest. Renaming a bot type, place, item or quest rewrites the quests; removing one drops the steps and rewards that needed it, a quest whose giver goes, and a quest left with no steps.',
-  'Experience: with levels on (set_settings levels), players earn the xp of bot types they beat (archetype xp, shared by everyone who hurt it), levels.discover_xp for finding a named place, and quest xp. Bot types have a level (absent 1) and actions a level to learn them at.',
+  'Experience: with levels on (set_settings levels), players earn the xp of bot types they beat (archetype xp, shared by everyone who hurt it), levels.discover_xp for finding a named place, and quest xp, plus life experience for everything they do (levels.life: walk per 100 units 1.5, act per blow or spell 0.5, build per block 0.5, deed per item used, trade, talk or quest taken 1, at most per_min 30 a minute; 0 turns one off). Bot types have a level (absent 1) and actions a level to learn them at.',
 ].join(' ')
 
 /** How money, shops, gear and mounts work, and the chat commands players type, for game_schema. */
@@ -482,7 +482,7 @@ export const TOOLS: ToolDef[] = [
         .record(z.string(), z.any())
         .nullable()
         .optional()
-        .describe('Experience and levels, live: { cap (20), base (xp for level 2, 100), exponent (1.6), might (0.06 per level), toughness (0.05 per level), discover_xp (10) }; null turns levels off. Bot types give xp and have a level; actions have a level to learn them at.'),
+        .describe('Experience and levels, live: { cap (20), base (xp for level 2, 100), exponent (1.6), might (0.06 per level), toughness (0.05 per level), discover_xp (10), life ({ walk 1.5, act 0.5, build 0.5, deed 1, per_min 30 }: experience for everything done) }; null turns levels off. Bot types give xp and have a level; actions have a level to learn them at.'),
       daylight: z.record(z.string(), z.any()).optional(),
       currency: z.string().nullable().optional().describe('The item that is money (shops take it, merchants pay in it); null for none. See game_schema trade.'),
       allow_restart: allowRestart,

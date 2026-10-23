@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn a_quest_is_offered_taken_shared_done_and_handed_in() {
         let mut g = GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0 });
+        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
         let plaza = g.places.iter().find(|p| p.name == "plaza").unwrap().clone();
         g.quests.push(QuestFile {
             name: "cull".into(),

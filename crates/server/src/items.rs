@@ -152,6 +152,7 @@ impl Sim {
         };
         if ok {
             self.item_cd[slot] = self.tick + ITEM_CD_TICKS;
+            self.lived(slot, crate::life::Deed::Deed);
         }
         true
     }

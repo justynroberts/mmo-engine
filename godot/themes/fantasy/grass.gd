@@ -7,10 +7,10 @@ extends MultiMeshInstance3D
 ## The map (height, and whether grass grows there: not on roads, water, building footprints) is redrawn only when
 ## we have walked MAP_STEP from where it was last drawn; slopes and snow are left bare by the shader itself.
 
-const PATCH := 64.0        # the square of grass round us, in world units
-const BLADES := 16384      # in the patch: 4 per square unit
+const PATCH := 96.0        # the square of grass round us, in world units
+const BLADES := 24576      # in the patch: under 3 per square unit
 const MAP_N := 64          # map texels a side
-const MAP_SIZE := 96.0     # world units the map covers (the patch and a margin to walk into)
+const MAP_SIZE := 128.0    # world units the map covers (the patch and a margin of MAP_STEP to walk into)
 const MAP_STEP := 16.0     # redraw the map when we are this far from its centre
 
 var world: RefCounted
@@ -42,21 +42,25 @@ void vertex() {
 	vec2 rel = mod(o.xz - center + patch_size * 0.5, patch_size) - patch_size * 0.5;
 	vec2 p = center + rel;
 	vec2 g = at(p);
-	float e = 1.5;
+	float e = 2.0;
 	float slope = abs(at(p + vec2(e, 0)).r - at(p - vec2(e, 0)).r) + abs(at(p + vec2(0, e)).r - at(p - vec2(0, e)).r);
 	float grow = g.y;
 	grow *= 1.0 - smoothstep(1.2, 2.0, slope);              // steep ground is rock
 	grow *= 1.0 - smoothstep(26.0, 32.0, g.x);              // high ground is snow
 	grow *= step(sea_level + 0.4, g.x);                     // nothing on the beach or under the sea
-	grow *= 1.0 - smoothstep(0.72, 1.0, length(rel) / (patch_size * 0.5)); // thin out to the edge
+	grow *= 1.0 - smoothstep(0.55, 1.0, length(rel) / (patch_size * 0.5)); // thin out to the edge
 	grow *= smoothstep(0.15, 0.55, n(p * 0.21) + 0.25);     // clumps, with bare patches between
-	tip = clamp(off.y / 0.9, 0.0, 1.0);
+	tip = clamp(off.y / 0.45, 0.0, 1.0);
+	// Some ground is grazed short and some is left long: blade height wanders over tens of units, from a lawn's
+	// stubble to knee-high meadow, so no two fields look the same.
+	float lush = n(p * 0.018) * 0.65 + n(p * 0.06 + 13.0) * 0.35;
+	off.y *= mix(0.3, 1.0, smoothstep(0.3, 0.75, lush));
 	// Wind: a gust rolling across the field, more at the tips. Our feet push the blades aside.
 	float gust = sin(TIME * 1.7 + dot(p, vec2(0.21, 0.13))) * 0.5 + sin(TIME * 3.1 + p.x * 0.7) * 0.15;
-	vec3 bend = vec3(0.6, 0.0, 0.35) * gust * (0.15 + wind) * tip * tip;
+	vec3 bend = vec3(0.3, 0.0, 0.18) * gust * (0.15 + wind) * tip * tip;
 	vec2 away = p - center;
 	float d = length(away);
-	bend.xz += away / max(d, 0.001) * (1.0 - smoothstep(0.4, 1.4, d)) * 0.5 * tip;
+	bend.xz += away / max(d, 0.001) * (1.0 - smoothstep(0.4, 1.2, d)) * 0.25 * tip;
 	vec3 pos = vec3(p.x, g.x - 0.04, p.y) + (off + bend) * grow;
 	wp = pos;
 	VERTEX = pos;
@@ -64,8 +68,9 @@ void vertex() {
 void fragment() {
 	vec2 q = wp.xz;
 	float k = smoothstep(0.3, 0.7, n(q / 14.0) * 0.6 + n(q / 5.0) * 0.4);
-	vec3 base = mix(vec3(0.24, 0.40, 0.13), vec3(0.36, 0.50, 0.17), k);
-	vec3 top = mix(vec3(0.50, 0.66, 0.25), vec3(0.62, 0.70, 0.32), k);
+	// Close to the meadow under it, so it reads as texture rather than as a crop.
+	vec3 base = mix(vec3(0.31, 0.49, 0.18), vec3(0.42, 0.58, 0.22), k);
+	vec3 top = mix(vec3(0.45, 0.63, 0.24), vec3(0.55, 0.68, 0.28), k);
 	vec3 c = mix(base, top, tip) * (0.9 + 0.2 * h(floor(q * 3.0)));
 	ALBEDO = pow(c, vec3(2.2));
 	ROUGHNESS = 1.0;
@@ -95,17 +100,17 @@ func setup(p_world: RefCounted) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	for i in BLADES:
-		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(rng.randf_range(0.7, 1.3), rng.randf_range(0.5, 1.2), 1.0))
+		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(rng.randf_range(0.7, 1.3), rng.randf_range(0.6, 1.15), 1.0))
 		mm.set_instance_transform(i, Transform3D(b, Vector3(rng.randf() * PATCH, 0.0, rng.randf() * PATCH)))
 	multimesh = mm
 
-## One blade: a tapered strip in two pieces with a single tip, 0.9 tall, leaning a little.
+## One blade: a tapered strip in two pieces with a single tip, 0.45 tall, leaning a little.
 func _blade() -> ArrayMesh:
-	var w := 0.07
+	var w := 0.045
 	var v := PackedVector3Array([
 		Vector3(-w, 0, 0), Vector3(w, 0, 0),
-		Vector3(-w * 0.65, 0.45, 0.04), Vector3(w * 0.65, 0.45, 0.04),
-		Vector3(0, 0.9, 0.14)])
+		Vector3(-w * 0.65, 0.22, 0.02), Vector3(w * 0.65, 0.22, 0.02),
+		Vector3(0, 0.45, 0.07)])
 	var nm := PackedVector3Array()
 	for _i in v.size():
 		nm.append(Vector3(0, 0, -1))

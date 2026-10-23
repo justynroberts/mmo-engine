@@ -376,6 +376,11 @@ pub struct Sim {
     /// Factions (`factions.rs`), and each player's standing with them by faction name.
     pub factions: Vec<proto::game::FactionFile>,
     pub standing: Vec<Vec<(String, i32)>>,
+    /// Life experience (`life.rs`): what each player has earned and not yet been paid, where they were a second
+    /// ago, and (minute, paid in it) for the cap.
+    pub life_bank: Vec<f32>,
+    pub life_at: Vec<(f32, f32)>,
+    pub life_paid: Vec<(u32, u32)>,
     pub foe_at: Vec<u32>,
     pub pursuers: Vec<Vec<u32>>,
     /// The players each player is in a fight with (pvp): (their id, the tick of the last blow between them).
@@ -514,6 +519,9 @@ impl Sim {
             foe: vec![None; cap],
             factions,
             standing: vec![Vec::new(); cap],
+            life_bank: vec![0.0; cap],
+            life_at: vec![(f32::NAN, f32::NAN); cap],
+            life_paid: vec![(0, 0); cap],
             foe_at: vec![0; cap],
             pursuers: vec![Vec::new(); cap],
             rivals: vec![Vec::new(); cap],
@@ -603,6 +611,8 @@ impl Sim {
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         self.foe[slot] = None;
         self.standing[slot].clear();
+        self.life_bank[slot] = 0.0;
+        self.life_at[slot] = (f32::NAN, f32::NAN);
         self.pursuers[slot].clear();
         self.rivals[slot].clear();
         self.pursuer_ver[slot] = self.pursuer_ver[slot].wrapping_add(1);
@@ -1057,6 +1067,7 @@ impl Sim {
             self.system_discover();
             self.system_quests();
             self.system_encounters();
+            self.system_life();
             if self.tick % (60 * self.tick_hz.max(1)) == 0 {
                 self.system_forgive();
             }
@@ -1418,7 +1429,9 @@ impl Sim {
                 continue;
             }
             if p.action == proto::game::ACT_BUILD || p.action == proto::game::ACT_BREAK {
-                if !self.build_action(p.slot, p.action, p.target, p.arg) {
+                if self.build_action(p.slot, p.action, p.target, p.arg) {
+                    self.lived(p.slot, crate::life::Deed::Build);
+                } else {
                     self.stats.rejected_actions += 1;
                 }
                 continue;
@@ -1435,7 +1448,9 @@ impl Sim {
                     proto::game::ACT_SELL => self.sell(p.slot, p.target, p.arg),
                     _ => self.unequip(p.slot, p.arg),
                 };
-                if !ok {
+                if ok {
+                    self.lived(p.slot, crate::life::Deed::Deed);
+                } else {
                     self.stats.rejected_actions += 1;
                 }
                 continue;
@@ -1446,7 +1461,9 @@ impl Sim {
                 }
                 continue;
             }
-            if !self.use_action(p) {
+            if self.use_action(p) {
+                self.lived(p.slot, crate::life::Deed::Act);
+            } else {
                 self.stats.rejected_actions += 1;
             }
         }
@@ -1954,7 +1971,7 @@ mod tests {
     fn beating_bots_and_finding_places_earns_experience_levels_and_spells() {
         use proto::game::{ActionFile, LevelsFile};
         let mut g = proto::game::GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10 });
+        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10, life: Default::default() });
         g.archetypes[0].xp = 60;
         g.actions.push(ActionFile { id: 2, name: "late".into(), range: 8.0, level: 2, ..Default::default() });
         let ford = proto::game::Place { name: "ford".into(), x: 300.0, y: 300.0, r: 10.0, title: "The Ford".into(), exit: None, sound: String::new(), music: String::new(), safe: false };

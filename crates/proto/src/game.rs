@@ -528,6 +528,33 @@ pub struct LevelsFile {
     /// For walking into a named place (a title) for the first time.
     #[serde(default = "d_discover")]
     pub discover_xp: u32,
+    /// Life experience: a little for everything a player does.
+    #[serde(default)]
+    pub life: LifeXp,
+}
+
+/// Life experience: a trickle of experience for living in the world, not only for fighting. Each is experience
+/// per deed (fractions add up); 0 turns that one off. It is banked and paid every ten seconds, at most `per_min`
+/// a minute, so walking in circles or swinging at the air is worth something, but not much.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct LifeXp {
+    /// For each 100 units walked (or ridden, or swum).
+    pub walk: f32,
+    /// For each action that is used (a blow, a spell).
+    pub act: f32,
+    /// For each block built or broken.
+    pub build: f32,
+    /// For everything else done: an item used or picked up, something bought or sold, a word with someone, a quest
+    /// taken.
+    pub deed: f32,
+    pub per_min: u32,
+}
+
+impl Default for LifeXp {
+    fn default() -> Self {
+        LifeXp { walk: 1.5, act: 0.5, build: 0.5, deed: 1.0, per_min: 30 }
+    }
 }
 
 fn d_cap() -> u8 {
@@ -555,7 +582,7 @@ mod level_tests {
 
     #[test]
     fn the_curve_climbs_and_stops_at_the_cap() {
-        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10 };
+        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10, life: Default::default() };
         assert_eq!((l.xp_for(1), l.xp_for(2)), (0, 100));
         assert!((2..=20).all(|v| l.xp_for(v) > l.xp_for(v - 1)));
         assert_eq!((l.level_of(0), l.level_of(99), l.level_of(100), l.level_of(u32::MAX)), (1, 1, 2, 20));
@@ -1791,7 +1818,16 @@ impl GameFile {
             if l.cap < 1 || l.cap > MAX_LEVEL {
                 return Err(format!("levels.cap must be 1..{MAX_LEVEL}"));
             }
-            for (v, what, lo, hi) in [(l.base, "base", 1.0, 1e7), (l.exponent, "exponent", 0.5, 4.0), (l.might, "might", 0.0, 1.0), (l.toughness, "toughness", 0.0, 1.0)] {
+            for (v, what, lo, hi) in [
+                (l.base, "base", 1.0, 1e7),
+                (l.exponent, "exponent", 0.5, 4.0),
+                (l.might, "might", 0.0, 1.0),
+                (l.toughness, "toughness", 0.0, 1.0),
+                (l.life.walk, "life.walk", 0.0, 1000.0),
+                (l.life.act, "life.act", 0.0, 1000.0),
+                (l.life.build, "life.build", 0.0, 1000.0),
+                (l.life.deed, "life.deed", 0.0, 1000.0),
+            ] {
                 if !(v.is_finite() && (lo..=hi).contains(&v)) {
                     return Err(format!("levels.{what} must be {lo}..{hi}"));
                 }

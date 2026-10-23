@@ -10,6 +10,7 @@ mod director;
 mod encounter;
 mod factions;
 mod items;
+mod life;
 mod io;
 mod nav;
 mod quests;

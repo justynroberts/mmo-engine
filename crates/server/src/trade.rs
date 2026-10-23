@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn a_party_forms_shares_a_kill_and_ends_when_one_is_left() {
         let mut g = GameFile::default_game();
-        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0 });
+        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
         g.archetypes[0].xp = 30;
         let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
         let [a, b] = [0, 1].map(|o| s.spawn(o).unwrap());

@@ -74,6 +74,21 @@ export interface Levels {
   toughness?: number
   /** For finding a named place the first time. */
   discover_xp?: number
+  /** Life experience: a little for everything a player does, banked and paid every ten seconds. */
+  life?: LifeXp
+}
+/** Experience per deed (fractions add up; 0 turns one off), at most per_min a minute. Absent: the defaults. */
+export interface LifeXp {
+  /** For each 100 units walked (1.5). */
+  walk?: number
+  /** For each action used, a blow or a spell (0.5). */
+  act?: number
+  /** For each block built or broken (0.5). */
+  build?: number
+  /** For an item used or picked up, a trade, a word with someone, a quest taken (1). */
+  deed?: number
+  /** The most it pays in a minute (30). */
+  per_min?: number
 }
 /** An item and how many (a quest reward). count 1..255. */
 export interface QuestItem {

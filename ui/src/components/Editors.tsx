@@ -99,6 +99,10 @@ export function SettingsEditor({ game, setGame }: Edit) {
             <NumField label="Might / level" value={game.levels.might ?? 0.06} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, might: Math.min(1, Math.max(0, n)) } })} />
             <NumField label="Toughness / level" value={game.levels.toughness ?? 0.05} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, toughness: Math.min(1, Math.max(0, n)) } })} />
             <NumField label="XP for a new place" value={game.levels.discover_xp ?? 10} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, discover_xp: Math.max(0, Math.round(n)) } })} />
+            <NumField label="Life XP / 100 walked" value={game.levels.life?.walk ?? 1.5} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, walk: Math.min(1000, Math.max(0, n)) } } })} />
+            <NumField label="Life XP / action" value={game.levels.life?.act ?? 0.5} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, act: Math.min(1000, Math.max(0, n)) } } })} />
+            <NumField label="Life XP / deed" value={game.levels.life?.deed ?? 1} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, deed: Math.min(1000, Math.max(0, n)) } } })} />
+            <NumField label="Life XP cap / min" value={game.levels.life?.per_min ?? 30} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, per_min: Math.max(0, Math.round(n)) } } })} />
           </>
         )}
       </div>
