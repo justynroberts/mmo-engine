@@ -2,14 +2,14 @@
 // deleting any of those has to rewrite them, the same way the bot rules are kept honest in gameEdit.ts.
 
 import type { Archetype, EventDef, GameFile, ItemDef, Step, WeatherDef, WeatherZone } from './api'
-import { uniqueName } from './gameEdit'
+import { classProblems, questProblems, rewriteQuestRefs, uniqueName } from './gameEdit'
 
 export type RefKind = 'attr' | 'arch' | 'place' | 'weather' | 'item'
 
 /** Rewrite every weather and event step that mentions `from`. With `to` null the references are removed: a drain,
  * a step, and an event left with no steps. (A deleted place drops its steps rather than widening them to "everywhere".) */
 export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string | null): GameFile {
-  if (!g.weather && !g.events && !g.zones && kind !== 'item') return g
+  if (!g.weather && !g.events && !g.zones && !g.quests && kind !== 'item') return g
   const weather = (g.weather ?? []).map((w) =>
     kind === 'attr'
       ? { ...w, drain: w.drain.flatMap((d) => (d.attr !== from ? [d] : to === null ? [] : [{ ...d, attr: to }])) }
@@ -65,12 +65,29 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
       return out
     })
     .filter((e) => e.steps.length > 0)
-  // Loot tables name items too.
+  // Loot tables and shops name items too, and so does the currency.
   const archetypes: Archetype[] =
     kind === 'item'
-      ? g.archetypes.map((a) => (a.drops ? { ...a, drops: a.drops.flatMap((d) => (d.item !== from ? [d] : to === null ? [] : [{ ...d, item: to }])) } : a))
+      ? g.archetypes.map((a) => {
+          if (!a.drops && !a.shop) return a
+          const out = { ...a }
+          if (a.drops) out.drops = a.drops.flatMap((d) => (d.item !== from ? [d] : to === null ? [] : [{ ...d, item: to }]))
+          if (a.shop) {
+            const shop = a.shop.flatMap((s) => (s.item !== from ? [s] : to === null ? [] : [{ ...s, item: to }]))
+            if (shop.length > 0) out.shop = shop
+            else delete out.shop
+          }
+          return out
+        })
       : g.archetypes
-  return { ...g, archetypes, weather, events, ...(g.zones ? { zones } : {}) }
+  // Quests name bot types, places and items (and each other, handled by renameQuest/removeQuest).
+  const quests = g.quests ? { quests: rewriteQuestRefs(g.quests, kind, from, to) } : {}
+  const next: GameFile = { ...g, archetypes, weather, events, ...(g.zones ? { zones } : {}), ...quests }
+  if (kind === 'item' && g.currency === from) {
+    if (to === null) delete next.currency
+    else next.currency = to
+  }
+  return next
 }
 
 export const MAX_ZONES = 32
@@ -411,6 +428,8 @@ export function directorProblems(g: GameFile): string[] {
   const wea = new Set((g.weather ?? []).map((w) => w.name))
   const itm = new Set((g.items ?? []).map((i) => i.name))
   for (const a of g.archetypes) for (const d of a.drops ?? []) if (!itm.has(d.item)) out.push(`${a.name}: drops “${d.item}”, which is not an item`)
+  for (const a of g.archetypes) for (const s of a.shop ?? []) if (!itm.has(s.item)) out.push(`${a.name}: sells “${s.item}”, which is not an item`)
+  if (g.currency !== undefined && !itm.has(g.currency)) out.push(`the currency “${g.currency}” is not an item`)
   const evs = new Set((g.events ?? []).map((e) => e.name))
   for (const e of g.events ?? []) {
     if (e.place && !place.has(e.place)) out.push(`${e.name}: no place called “${e.place}”`)
@@ -434,5 +453,5 @@ export function directorProblems(g: GameFile): string[] {
     if (!place.has(z.place)) out.push(`zone ${z.name}: no place called “${z.place}”`)
     if (!wea.has(z.weather)) out.push(`zone ${z.name}: no weather called “${z.weather}”`)
   }
-  return out
+  return [...out, ...questProblems(g), ...classProblems(g)]
 }

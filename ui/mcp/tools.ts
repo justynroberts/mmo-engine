@@ -4,7 +4,7 @@
 
 import { z } from 'zod'
 import type { Archetype, EntityRow, GameFile, Info, PutResult, State } from '../src/api'
-import { KIND_BOT, KIND_DRIVEN, KIND_GHOST, KIND_PLAYER } from '../src/api'
+import { FX, KIND_BOT, KIND_DRIVEN, KIND_GHOST, KIND_PLAYER } from '../src/api'
 import { DEFAULT_DAYLIGHT, describe, moment, phase } from '../src/daylight'
 import type { Daylight } from '../src/daylight'
 import {
@@ -28,18 +28,27 @@ import {
 import {
   addFromTemplate,
   BOT_TEMPLATES,
+  cleanAction,
+  cleanClass,
+  cleanQuest,
   generatedWalls,
   needsReset,
   newAction,
   newArchetype,
   newAttr,
+  newClass,
+  newQuest,
   removeAction,
   removeAttr,
+  removeClass,
   removePlace,
+  removeQuest,
   removeRoute,
   renameAction,
   renameAttr,
+  renameClass,
   renamePlace,
+  renameQuest,
   renameRoute,
 } from '../src/gameEdit'
 import { defaultRecipe } from '../src/world'
@@ -79,7 +88,7 @@ async function ok<T = any>(ctx: Ctx, path: string, method = 'GET', body?: unknow
 
 // ---------------------------------------------------------------- the game file
 
-type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'attrs' | 'actions'
+type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'quests' | 'classes' | 'attrs' | 'actions'
 
 interface SectionOps {
   list(g: GameFile): { name: string }[]
@@ -104,13 +113,21 @@ const SECTIONS: Record<Section, SectionOps> = {
   },
   events: { list: (g) => g.events ?? [], put: (g, l) => ({ ...g, events: l }), fresh: () => ({ every_secs: 0, chance_pct: 100, steps: [] }), rename: renameEvent, remove: removeEvent },
   zones: { list: (g) => g.zones ?? [], put: (g, l) => ({ ...g, zones: l }), fresh: () => ({ active: true, height: 30 }), rename: renameZone, remove: removeZone },
+  quests: {
+    list: (g) => g.quests ?? [],
+    put: (g, l) => ({ ...g, quests: l }),
+    fresh: (g) => newQuest(g) ?? { title: 'A new quest', text: '', giver: '', steps: [] },
+    rename: renameQuest,
+    remove: removeQuest,
+  },
+  classes: { list: (g) => g.classes ?? [], put: (g, l) => ({ ...g, classes: l }), fresh: newClass, rename: renameClass, remove: removeClass },
   attrs: { list: (g) => g.attrs, put: (g, l) => ({ ...g, attrs: l }), fresh: newAttr, rename: renameAttr, remove: removeAttr },
   actions: { list: (g) => g.actions, put: (g, l) => ({ ...g, actions: l }), fresh: newAction, rename: renameAction, remove: removeAction },
 }
 const SECTION_NAMES = Object.keys(SECTIONS) as [Section, ...Section[]]
 
 const RESTART_NOTE =
-  'This changes attributes, actions or movement settings, which restarts the world and disconnects every player. Call again with allow_restart: true if that is what you want.'
+  'This changes attributes, actions or movement settings, which restarts the world and disconnects every player. Call again with allow_restart: true if that is what you want. (Spell fields of an action alone, aim, area, hits, hold, fx, bolt, school and effect secs, apply live and need no restart.)'
 
 /** Read the live game file, change it, and apply it: what the console's Apply does. */
 async function edit(ctx: Ctx, change: (g: GameFile) => GameFile, allowRestart = false): Promise<{ applied: PutResult; game: GameFile }> {
@@ -217,7 +234,65 @@ const area = {
   y: num.optional(),
   r: num.optional(),
 }
-const allowRestart = z.boolean().optional().describe('Needed for changes to attributes, actions or movement settings: they restart the world and disconnect every player.')
+const allowRestart = z
+  .boolean()
+  .optional()
+  .describe(
+    'Needed for changes to attributes, actions or movement settings: they restart the world and disconnect every player. Not needed for spell fields alone (aim, area, hits, hold, fx, bolt, school, effect secs), which apply live.',
+  )
+
+/** How spells work, for game_schema and upsert: the action fields that make one, all optional and all live. */
+export const SPELLS_NOTE = [
+  'An action becomes a spell through optional fields, all applied live without a restart (adding or removing an action, or changing its id, name, range, cooldown_ticks, requires or effect deltas, still restarts the world):',
+  'aim "target" (default) or "self" (a self heal, or a nova round the caster);',
+  'area 0..64, a radius round the target (or the caster, aimed at self) in which effects "to target" land on everyone; 0 = one target;',
+  'hits "any" (default), "foes" or "friends" (players are one side, bots the other);',
+  'hold { kind: "mez" | "stun" | "root", secs: above 0, at most 30 } (mez: no moving or acting, broken by damage; stun: the same, not broken; root: no moving, can still act);',
+  `fx, how it looks, one of ${FX.join(', ')} (absent for a plain blow);`,
+  'bolt true to draw it flying from the caster to the target;',
+  'school, free text of at most 24 characters to group spells by ("black", "white");',
+  'desc, what it does in plain words for players\' tooltips (at most 200 characters; write it in the players\' language even when the spell has a name in another);',
+  'lift 0..300 seconds levitates everyone it lands on (blows and areas miss them, as in a jump);',
+  'level, the level a player must be to use it (with levels on);',
+  'and on each effect, secs 0..60 spreads its delta over that many seconds (a burn, a slow heal; 0 or absent = at once), or lasts 0..300 takes it back after that many seconds (a buff, a curse that lifts), not both.',
+  'The reserved attribute "speed" (define it replicated, min 0.5 or so, max 2 or 3, default 1) multiplies movement, so { to: "self", attr: "speed", delta: 0.6, lasts: 10 } is a ten second haste.',
+  'Leave a field out for its default; null or "" clears it. The reserved attribute "held" (define it replicated, min 0, max 3) is set by the server to 1 mez, 2 stun or 3 root while an entity is held, else 0.',
+].join(' ')
+
+/** How quests work, for game_schema and upsert. */
+export const QUESTS_NOTE = [
+  'Quests (section "quests", at most 64) apply live: adding, changing or removing one never restarts the world or disconnects anyone.',
+  'A quest: { name (unique id, at most 48 bytes), title (at most 64 characters, shown to players), text (what the giver says offering it, at most 600), done_text (optional, said on hand-in, at most 600),',
+  'giver (a bot type name: players talk to a bot of that type to take it), turn_in (optional bot type to hand it in to; absent = the giver), level (optional minimum player level), after (optional name of another quest that must be done first),',
+  'steps (1 to 8, done in order), xp (optional experience on hand-in), reward (optional [{ item, count 1..255 }]), repeatable (optional, true = may be taken again once done) }.',
+  'Steps: { kind: "kill", archetype, count 1..65535 } beat bots of a type (counts for everyone who hurt the one that fell); { kind: "visit", place } walk into a place; { kind: "collect", item, count 1..255 } carry items (taken on hand-in); { kind: "talk", archetype } talk to a bot of a type.',
+  'Everything named must exist: bot types, places, items, and the after quest. Renaming a bot type, place, item or quest rewrites the quests; removing one drops the steps and rewards that needed it, a quest whose giver goes, and a quest left with no steps.',
+  'Experience: with levels on (set_settings levels), players earn the xp of bot types they beat (archetype xp, shared by everyone who hurt it), levels.discover_xp for finding a named place, and quest xp. Bot types have a level (absent 1) and actions a level to learn them at.',
+].join(' ')
+
+/** How character classes work, for game_schema and upsert. */
+export const CLASSES_NOTE = [
+  'Classes (section "classes", at most 15) apply live: adding, changing or removing one never restarts the world or disconnects anyone (they are not in the content hash).',
+  'A class: { name (unique id, at most 32 bytes), title (at most 32 characters, shown to players), desc (optional, at most 300 characters), look (optional model key a client draws it with; the Godot fantasy theme has knight, barbarian, mage, rogue),',
+  'might (optional 0..2: blows and heals land that share harder) and toughness (optional 0..2: harm divided by 1 + that share), both added to the level\'s and the gear\'s,',
+  'spells (optional action names the class may use besides the plain attack, which is the game\'s first action and every class has; absent or empty = every action) }.',
+  'A player picks a class once, in game, the first time they come into a game that has classes, and keeps it (saved by name). The reserved attribute "class" (define it replicated, min 0, max 15) is set by the server to the class index + 1, 0 for none and for every bot, so clients can draw players by class.',
+  'Spells must name actions. Renaming an action renames it in classes\' spells; removing one drops it from them (a class left with none may then use every action). Leave optional fields out, or null to clear one.',
+].join(' ')
+
+/** How money, shops, gear and mounts work, and the chat commands players type, for game_schema. */
+export const TRADE_NOTE = [
+  'Trade, gear and mounts all apply live (none is in the content hash, so no restart).',
+  'currency (set_settings currency, or the game file\'s currency): the name of the item that is money; null or absent, there is no money. Shops take it and merchants pay in it.',
+  'A bot type sells through shop: [{ item, price 0..65535 }] (section "archetypes"); players talk to one to buy, and sell it any item whose value (0..65535, absent = 0 = not bought) is above 0, for that much currency each.',
+  'An item with equip: { slot: "weapon" | "armour" | "trinket", might 0..2, toughness 0..2 } is worn, not used up: using it puts it on in its slot, adding might (blows and heals land that share harder) and toughness (harm divided by 1 + that share), like levels do.',
+  'An item with mount 0..4 is a mount: using it rides (or gets down), adding that to the "speed" attribute (define speed replicated so it shows); any harm, or using an action, gets the rider down.',
+  'Leave value, equip and mount out for none. Renaming an item renames it in shops and the currency; removing one drops it from shops and clears the currency if it was the money.',
+  'Chat commands players type (server-side, no setup): /w Name text whispers, /r replies to the last whisper, /who lists who is on, /invite Name asks someone into your party, /accept and /decline answer, /leave leaves it, /p text talks to the party, /party lists it. A party shares experience and quest kill credit.',
+].join(' ')
+
+/** null in an entry means "clear this optional field". */
+const nullsOut = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null))
 
 export const TOOLS: ToolDef[] = [
   {
@@ -234,7 +309,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'overview',
     description:
-      'Start here. The server and world at a glance: world size, players and bots by type, server load, weather, time of day, running events, this zone, blocks built, and the names of every place, bot type, item, weather and event.',
+      'Start here. The server and world at a glance: world size, players and bots by type, server load, weather, time of day, running events, this zone, blocks built, and the names of every place, bot type, item, weather, event, quest and class.',
     input: {},
     readOnly: true,
     async run(_, ctx) {
@@ -273,6 +348,8 @@ export const TOOLS: ToolDef[] = [
           weather: (g.weather ?? []).map((w) => w.name),
           weather_zones: (g.zones ?? []).map((z) => z.name),
           events: (g.events ?? []).map((e) => e.name),
+          quests: (g.quests ?? []).map((q) => `${q.name} "${q.title}" from ${q.giver}`),
+          classes: (g.classes ?? []).map((c) => `${c.name} "${c.title}"`),
           attributes: g.attrs.map((a) => a.name),
           actions: g.actions.map((a) => a.name),
         },
@@ -282,12 +359,12 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'game_schema',
     description:
-      'The TypeScript types of the game file (places, routes, bot types and their rules, items, weather, weather zones, events and their steps, attributes, actions, daylight), with comments. Read this before writing entries with upsert.',
+      'The TypeScript types of the game file (places, routes, bot types and their rules, items, weather, weather zones, events and their steps, quests and their steps, levels, attributes, actions and their spell fields, daylight), with comments, plus how spells work (aim, area, hits, hold, fx, bolt, school, effect secs, the reserved "held" attribute), how quests and experience work, how character classes work (and the reserved "class" attribute), how currency, shops, item value, gear (equip) and mounts work, the chat commands players can type, and the fx list. Read this before writing entries with upsert.',
     input: {},
     readOnly: true,
     async run() {
       const end = apiTypes.indexOf('export interface Perf')
-      return { types: apiTypes.slice(0, end < 0 ? undefined : end).trim(), block_materials: MATERIALS }
+      return { types: apiTypes.slice(0, end < 0 ? undefined : end).trim(), block_materials: MATERIALS, spells: SPELLS_NOTE, quests: QUESTS_NOTE, classes: CLASSES_NOTE, trade: TRADE_NOTE, fx: FX }
     },
   },
   {
@@ -298,7 +375,7 @@ export const TOOLS: ToolDef[] = [
     async run({ section }, ctx) {
       const g = await ok<GameFile>(ctx, '/api/game')
       if (!section) return g
-      if (section === 'settings') return { move_speed: g.move_speed, road_speed: g.road_speed ?? 1.5, entity_radius: g.entity_radius, interest_radius: g.interest_radius, max_visible: g.max_visible }
+      if (section === 'settings') return { move_speed: g.move_speed, road_speed: g.road_speed ?? 1.5, entity_radius: g.entity_radius, interest_radius: g.interest_radius, max_visible: g.max_visible, pvp: g.pvp !== false, currency: g.currency ?? null }
       if (section === 'walls') return g.walls ?? 'generated from the world seed'
       if (section === 'daylight') return g.daylight ?? DEFAULT_DAYLIGHT
       return SECTIONS[section as Section].list(g)
@@ -307,7 +384,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'upsert',
     description:
-      'Add or change one entry of the game file, applied live: a place (a location players see named, an exit, or a sound zone: sound one of sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle, and music one of explore, town, night, battle, eerie, holy, none), a route, a bot type (archetypes), an item, a weather, a weather zone, an event, an attribute or an action. Entries are matched by name. By default the fields given are merged over the existing entry (or over sensible defaults for a new one), so { "name": "camp", "r": 30 } only changes the radius. See game_schema for every field.',
+      'Add or change one entry of the game file, applied live: a place (a location players see named, an exit, a safe place where players cannot fight (safe: true), or a sound zone: sound one of sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle, and music one of explore, town, night, battle, eerie, holy, city, none), a route, a bot type (archetypes), an item, a weather, a weather zone, an event, a quest (given by a bot type, with kill/visit/collect/talk steps, xp and item rewards; applies live, see game_schema quests), a character class (title, look, might, toughness and the spells it may use; applies live, see game_schema classes), an attribute or an action (an action is a spell when it sets aim, area, hits, hold, fx, bolt, school or effect secs; those apply live without allow_restart, and null clears one). Entries are matched by name. By default the fields given are merged over the existing entry (or over sensible defaults for a new one), so { "name": "camp", "r": 30 } only changes the radius. See game_schema for every field.',
     input: {
       section: z.enum(SECTION_NAMES),
       entry: z.record(z.string(), z.any()).describe('The entry, with at least its name.'),
@@ -326,7 +403,9 @@ export const TOOLS: ToolDef[] = [
           const list = ops.list(g)
           const i = list.findIndex((e) => e.name === name)
           created = i < 0
-          const merged = { ...(replace ? {} : i >= 0 ? list[i] : ops.fresh(g)), ...entry, name }
+          const raw = { ...(replace ? {} : i >= 0 ? list[i] : ops.fresh(g)), ...entry, name }
+          // Spell fields at their defaults (or null) are left out, as the console and the server write them; quests too.
+          const merged = s === 'actions' ? cleanAction(raw as any) : s === 'quests' ? cleanQuest(nullsOut(raw) as any) : s === 'classes' ? cleanClass(nullsOut(raw) as any) : raw
           return ops.put(g, i >= 0 ? list.map((e, k) => (k === i ? merged : e)) : [...list, merged])
         },
         allow_restart,
@@ -336,7 +415,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'rename',
-    description: 'Rename an entry of the game file. Everything that refers to it (bot rules, homes, event steps, weather zones, drops) follows the new name.',
+    description: 'Rename an entry of the game file. Everything that refers to it (bot rules, homes, event steps, weather zones, drops, quest givers, steps, rewards and after, class spells) follows the new name.',
     input: { section: z.enum(SECTION_NAMES), from: z.string(), to: z.string(), allow_restart: allowRestart },
     async run({ section, from, to, allow_restart }, ctx) {
       const s = section as Section
@@ -356,7 +435,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'remove',
     description:
-      'Remove an entry of the game file. What referred to it goes with it, as in the console: bot rules that used a place or route, event steps that named it, a home. Removing a bot type takes its bots out of the world.',
+      'Remove an entry of the game file. What referred to it goes with it, as in the console: bot rules that used a place or route, event steps that named it, a home, quest steps and rewards that needed it (and a quest whose giver it was, or left with no steps). Removing a bot type takes its bots out of the world.',
     input: { section: z.enum(SECTION_NAMES), name: z.string(), allow_restart: allowRestart },
     destructive: true,
     async run({ section, name, allow_restart }, ctx) {
@@ -397,20 +476,39 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'set_settings',
     description:
-      'Movement and visibility settings (road_speed: how much faster on roads), and the daylight schedule. Daylight applies live; the movement settings restart the world. Daylight is one of { mode: "cycle", day_minutes, night_share (0 to 0.9), offset }, { mode: "clock", sunrise: "HH:MM", sunset: "HH:MM", utc_offset_minutes }, or { mode: "fixed", phase (0 sunrise ... 1) }.',
+      'Movement and visibility settings (road_speed: how much faster on roads), whether players may fight each other (pvp, live; places with safe: true stay peaceful), the currency (live: the item that is money for shops), and the daylight schedule. Daylight, pvp and currency apply live; the movement settings restart the world. Daylight is one of { mode: "cycle", day_minutes, night_share (0 to 0.9), offset }, { mode: "clock", sunrise: "HH:MM", sunset: "HH:MM", utc_offset_minutes }, or { mode: "fixed", phase (0 sunrise ... 1) }.',
     input: {
       move_speed: num.optional(),
       road_speed: num.min(1).max(4).optional().describe('How much faster everyone moves on a road (1 = no faster; default 1.5).'),
       entity_radius: num.optional(),
       interest_radius: num.optional(),
       max_visible: num.optional(),
+      pvp: z.boolean().optional().describe('Players may harm each other outside safe places (default true).'),
+      levels: z
+        .record(z.string(), z.any())
+        .nullable()
+        .optional()
+        .describe('Experience and levels, live: { cap (20), base (xp for level 2, 100), exponent (1.6), might (0.06 per level), toughness (0.05 per level), discover_xp (10) }; null turns levels off. Bot types give xp and have a level; actions have a level to learn them at.'),
       daylight: z.record(z.string(), z.any()).optional(),
+      currency: z.string().nullable().optional().describe('The item that is money (shops take it, merchants pay in it); null for none. See game_schema trade.'),
       allow_restart: allowRestart,
     },
-    async run({ allow_restart, daylight, ...rest }, ctx) {
+    async run({ allow_restart, daylight, levels, currency, ...rest }, ctx) {
       const set = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined))
-      const { applied, game } = await edit(ctx, (g) => ({ ...g, ...set, ...(daylight ? { daylight: daylight as Daylight } : {}) }), allow_restart)
-      return { ...outcome(applied), settings: { move_speed: game.move_speed, road_speed: game.road_speed ?? 1.5, entity_radius: game.entity_radius, interest_radius: game.interest_radius, max_visible: game.max_visible }, daylight: game.daylight ?? DEFAULT_DAYLIGHT }
+      const { applied, game } = await edit(
+        ctx,
+        (g) => {
+          const next: GameFile = { ...g, ...set, ...(set.pvp === true ? { pvp: undefined } : {}), ...(levels === null ? { levels: undefined } : levels ? { levels: levels as GameFile['levels'] } : {}), ...(daylight ? { daylight: daylight as Daylight } : {}) }
+          if (currency === null || currency === '') delete next.currency
+          else if (currency !== undefined) {
+            if (!(g.items ?? []).some((i) => i.name === currency)) refuse(`There is no item called “${currency}” to be the currency. Items: ${(g.items ?? []).map((i) => i.name).join(', ') || 'none'}.`)
+            next.currency = currency
+          }
+          return next
+        },
+        allow_restart,
+      )
+      return { ...outcome(applied), settings: { move_speed: game.move_speed, road_speed: game.road_speed ?? 1.5, entity_radius: game.entity_radius, interest_radius: game.interest_radius, max_visible: game.max_visible, pvp: game.pvp !== false, currency: game.currency ?? null }, daylight: game.daylight ?? DEFAULT_DAYLIGHT }
     },
   },
   {
@@ -554,12 +652,12 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'read_chat',
-    description: 'Recent chat, newest last: who said what, and banners.',
+    description: 'Recent chat, newest last: who said what, banners, whispers and party talk (players type /w, /r, /p and the other commands in game_schema trade).',
     input: { limit: z.number().int().min(1).max(500).optional() },
     readOnly: true,
     async run({ limit }, ctx) {
       const log = await ok<{ lines: [number, number, number, string, string?][] }>(ctx, '/api/chat')
-      const ch = ['say', 'shout', 'name', 'banner']
+      const ch = ['say', 'shout', 'name', 'banner', 'whisper', 'whisper', 'party']
       return log.lines.slice(-(limit ?? 50)).map(([tick, from, c, text, name]) => ({ tick, from: name ?? (from === 0 ? 'server' : from), channel: ch[c] ?? c, text }))
     },
   },

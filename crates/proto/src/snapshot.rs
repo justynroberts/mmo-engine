@@ -14,7 +14,7 @@
 use crate::defs::Defs;
 use crate::wire::{kind, put_u16, put_u32, put_u8, Reader};
 
-pub const MAX_REPL: usize = 4;
+pub const MAX_REPL: usize = 7;
 /// Snapshots remembered on each side. Server falls back to a full snapshot
 /// before the baseline can age out of the client's ring.
 pub const RING: usize = 16;
@@ -275,7 +275,7 @@ mod tests {
                 x: rng.below(65536) as u32 * 61,
                 y: rng.below(65536) as u32 * 61,
                 z: rng.below(256) as u8 as i8,
-                attrs: [rng.below(256) as u16, 0, 0, 0],
+                attrs: [rng.below(256) as u16, 0, 0, 0, 0, 0, 0],
             })
             .collect()
     }
@@ -302,7 +302,7 @@ mod tests {
             // some arrive
             let id = rng.below(id_space);
             if out.binary_search_by_key(&id, |e| e.id).is_err() {
-                out.push(Entry { id, x: 1, y: 2, z: crate::world::GROUND, attrs: [9, 0, 0, 0] });
+                out.push(Entry { id, x: 1, y: 2, z: crate::world::GROUND, attrs: [9, 0, 0, 0, 0, 0, 0] });
             }
         }
         out.sort_by_key(|e| e.id);

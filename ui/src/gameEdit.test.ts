@@ -1,6 +1,9 @@
+import type { GameFile } from './api'
+import { directorProblems, removeArch, removeItem, renameArch, renameItem } from './directorEdit'
 import { fixture } from './test/fixture'
 import {
   addWall,
+  cleanAction,
   generatedWalls,
   MAX_WALLS,
   needsReset,
@@ -17,6 +20,18 @@ import {
   renameAction,
   renameAttr,
   uniqueName,
+  cleanQuest,
+  classProblems,
+  cleanClass,
+  newClass,
+  removeClass,
+  renameClass,
+  newQuest,
+  questProblems,
+  removePlace,
+  removeQuest,
+  renamePlace,
+  renameQuest,
 } from './gameEdit'
 
 describe('renaming', () => {
@@ -91,6 +106,26 @@ describe('needsReset', () => {
       expect(needsReset(live, g)).toBe(true)
     }
   })
+  it('is false for spell fields, which apply live', () => {
+    const live = fixture()
+    const g = fixture()
+    Object.assign(g.actions[0]!, { aim: 'self', area: 8, hits: 'friends', hold: { kind: 'stun', secs: 2 }, fx: 'holy', bolt: true, school: 'white' })
+    g.actions[0]!.effects[0]!.secs = 5
+    expect(needsReset(live, g)).toBe(false)
+    g.actions[0]!.effects[0]!.delta += 1
+    expect(needsReset(live, g)).toBe(true)
+  })
+})
+
+describe('cleanAction', () => {
+  it('leaves spell defaults out so the game file round-trips clean', () => {
+    const a = fixture().actions[0]!
+    const set = cleanAction({ ...a, area: 4, fx: 'fire', effects: a.effects.map((e) => ({ ...e, secs: 3 })) })
+    expect(set).toMatchObject({ area: 4, fx: 'fire' })
+    const back = cleanAction({ ...set, aim: 'target', area: 0, hits: 'any', hold: undefined, fx: undefined, bolt: false, school: '',
+      effects: set.effects.map((e) => ({ ...e, secs: 0 })) })
+    expect(JSON.stringify(back)).toBe(JSON.stringify(a))
+  })
 })
 
 describe('parseNum', () => {
@@ -136,5 +171,209 @@ describe('walls', () => {
   it('stops adding at the limit', () => {
     const g = { ...fixture(), walls: Array.from({ length: MAX_WALLS }, () => [0, 0, 5, 5] as [number, number, number, number]) }
     expect(addWall(g, [1, 1, 9, 9]).walls).toHaveLength(MAX_WALLS)
+  })
+})
+
+describe('quests', () => {
+  const withQuests = (): GameFile => ({
+    ...fixture(),
+    archetypes: [
+      ...fixture().archetypes,
+      { name: 'elder', color: '#fff', count: 1, behaviour: 'idle', speed_mult: 1, sight: 20, attack: null, attrs: {}, home: null, rules: [] },
+    ],
+    places: [{ name: 'den', x: 10, y: 10, r: 5 }],
+    items: [{ name: 'pelt', color: '#a50', stack_max: 5, uses: [], consume: false }],
+    quests: [
+      {
+        name: 'cull',
+        title: 'The cull',
+        text: 'Thin them.',
+        giver: 'elder',
+        turn_in: 'drone',
+        steps: [
+          { kind: 'kill', archetype: 'drone', count: 6 },
+          { kind: 'visit', place: 'den' },
+          { kind: 'collect', item: 'pelt', count: 3 },
+        ],
+        xp: 120,
+        reward: [{ item: 'pelt', count: 1 }],
+      },
+      { name: 'after', title: 'Then', text: '', giver: 'drone', after: 'cull', steps: [{ kind: 'talk', archetype: 'elder' }] },
+    ],
+  })
+
+  it('are not in the content hash: editing them never restarts the world', () => {
+    const g = withQuests()
+    expect(needsReset(g, { ...g, quests: [] })).toBe(false)
+    expect(needsReset(g, { ...g, levels: { cap: 10 } })).toBe(false)
+  })
+  it('a new quest names a bot type that exists, and none without one', () => {
+    const q = newQuest(withQuests())!
+    expect(q.giver).toBe('drone')
+    expect(q.steps).toEqual([{ kind: 'visit', place: 'den' }])
+    expect(questProblems({ ...withQuests(), quests: [q] })).toEqual([])
+    expect(newQuest({ ...fixture(), archetypes: [] })).toBeNull()
+  })
+  it('leaves optional fields out when empty or default', () => {
+    const q = cleanQuest({ name: 'q', title: 't', text: '', giver: 'a', turn_in: 'a', level: 1, after: '', done_text: '', xp: 0, reward: [], repeatable: false, steps: [] })
+    expect(Object.keys(q).sort()).toEqual(['giver', 'name', 'steps', 'text', 'title'])
+  })
+  it('renaming a bot type, place or item rewrites the quests', () => {
+    let g = renameArch(withQuests(), 0, 'wolf')
+    expect(g.quests?.[0]?.turn_in).toBe('wolf')
+    expect(g.quests?.[0]?.steps[0]).toEqual({ kind: 'kill', archetype: 'wolf', count: 6 })
+    expect(g.quests?.[1]?.giver).toBe('wolf')
+    g = renameArch(g, 1, 'sage')
+    expect(g.quests?.[0]?.giver).toBe('sage')
+    expect(g.quests?.[1]?.steps[0]).toEqual({ kind: 'talk', archetype: 'sage' })
+    g = renamePlace(g, 0, 'lair')
+    expect(g.quests?.[0]?.steps[1]).toEqual({ kind: 'visit', place: 'lair' })
+    g = renameItem(g, 0, 'hide')
+    expect(g.quests?.[0]?.steps[2]).toEqual({ kind: 'collect', item: 'hide', count: 3 })
+    expect(g.quests?.[0]?.reward).toEqual([{ item: 'hide', count: 1 }])
+    expect(questProblems(g)).toEqual([])
+  })
+  it('removing things drops the steps and rewards that needed them', () => {
+    let g = removePlace(withQuests(), 0)
+    expect(g.quests?.[0]?.steps.map((s) => s.kind)).toEqual(['kill', 'collect'])
+    g = removeItem(g, 0)
+    expect(g.quests?.[0]?.steps.map((s) => s.kind)).toEqual(['kill'])
+    expect(g.quests?.[0] && 'reward' in g.quests[0]).toBe(false)
+    // The turn-in bot type goes: it falls back to the giver. Its kill step goes, leaving no steps: the quest goes,
+    // and the one after it stops waiting for it.
+    g = removeArch(g, 0)
+    expect(g.quests?.map((q) => q.name)).toEqual([])
+  })
+  it('removing a giver drops its quest, and the next one stops waiting for it', () => {
+    const g = removeArch(withQuests(), 1)
+    // "cull" goes with its giver; "after" loses its only step (talk to elder) and goes too.
+    expect(g.quests).toEqual([])
+    const h = removeArch({ ...withQuests(), quests: [withQuests().quests![0]!, { ...withQuests().quests![1]!, steps: [{ kind: 'visit', place: 'den' }] }] }, 1)
+    expect(h.quests?.map((q) => q.name)).toEqual(['after'])
+    expect(h.quests?.[0] && 'after' in h.quests[0]).toBe(false)
+  })
+  it('a removed turn-in bot type falls back to the giver', () => {
+    const g = withQuests()
+    g.quests![0]!.steps = [{ kind: 'visit', place: 'den' }]
+    const h = removeArch(g, 0)
+    expect(h.quests?.[0]?.giver).toBe('elder')
+    expect(h.quests?.[0] && 'turn_in' in h.quests[0]).toBe(false)
+  })
+  it('renaming and removing a quest keeps "after" right', () => {
+    let g = renameQuest(withQuests(), 0, 'the cull')
+    expect(g.quests?.[1]?.after).toBe('the cull')
+    g = removeQuest(g, 0)
+    expect(g.quests?.map((q) => q.name)).toEqual(['after'])
+    expect(g.quests?.[0] && 'after' in g.quests[0]).toBe(false)
+  })
+  it('reports what the server would refuse', () => {
+    const g = withQuests()
+    g.quests![1]!.after = 'nope'
+    g.quests![1]!.steps = []
+    expect(questProblems(g).join('\n')).toMatch(/not another quest[\s\S]*1 to 8 steps/)
+    expect(directorProblems(g).some((p) => p.includes('quest after'))).toBe(true)
+  })
+})
+
+describe('trade', () => {
+  const traded = (): GameFile => ({
+    ...fixture(),
+    items: [
+      { name: 'coin', color: '#fd0', stack_max: 99, uses: [], consume: false },
+      { name: 'sword', color: '#ccc', stack_max: 1, uses: [], consume: false, value: 20, equip: { slot: 'weapon', might: 0.2 } },
+      { name: 'horse', color: '#a60', stack_max: 1, uses: [], consume: false, mount: 0.8 },
+    ],
+    currency: 'coin',
+    archetypes: fixture().archetypes.map((a, i) => (i === 0 ? { ...a, shop: [{ item: 'sword', price: 50 }, { item: 'horse', price: 200 }] } : a)),
+  })
+  it('renaming an item renames it in shops and the currency', () => {
+    let g = renameItem(traded(), 1, 'blade')
+    expect(g.archetypes[0]?.shop).toEqual([{ item: 'blade', price: 50 }, { item: 'horse', price: 200 }])
+    g = renameItem(g, 0, 'crown')
+    expect(g.currency).toBe('crown')
+    expect(directorProblems(g)).toEqual([])
+  })
+  it('removing an item drops it from shops, and clears the currency if it was the money', () => {
+    let g = removeItem(traded(), 1)
+    expect(g.archetypes[0]?.shop).toEqual([{ item: 'horse', price: 200 }])
+    expect(g.currency).toBe('coin')
+    g = removeItem(g, 1)
+    expect('shop' in (g.archetypes[0] ?? {})).toBe(false)
+    g = removeItem(g, 0)
+    expect('currency' in g).toBe(false)
+    expect(directorProblems(g)).toEqual([])
+  })
+  it('names shop items and a currency that are not items', () => {
+    const g = { ...traded(), items: [] }
+    expect(directorProblems(g)).toEqual(expect.arrayContaining([expect.stringMatching(/sells “sword”/), expect.stringMatching(/currency “coin”/)]))
+  })
+  it('none of it restarts the world', () => {
+    const live = fixture()
+    expect(needsReset(live, traded())).toBe(false)
+  })
+})
+
+describe('classes', () => {
+  const withClasses = (): GameFile => ({
+    ...fixture(),
+    actions: [
+      ...fixture().actions,
+      { id: 2, name: 'fire', cooldown_ticks: 10, range: 8, requires: null, effects: [{ to: 'target', attr: 'health', delta: -20 }] },
+      { id: 3, name: 'frost', cooldown_ticks: 10, range: 8, requires: null, effects: [{ to: 'target', attr: 'health', delta: -15 }] },
+    ],
+    classes: [
+      { name: 'draoi', title: 'Draoi (Druid)', look: 'mage', might: 0.15, spells: ['fire', 'frost'] },
+      { name: 'laoch', title: 'Laoch', look: 'knight', toughness: 0.3, spells: ['frost'] },
+      { name: 'any', title: 'Anyone' },
+    ],
+  })
+
+  it('are not in the content hash: editing them never restarts the world', () => {
+    const g = withClasses()
+    expect(needsReset(g, { ...g, classes: [] })).toBe(false)
+  })
+  it('renaming an action renames it in every class that may use it', () => {
+    const g = renameAction(withClasses(), 2, 'sioc')
+    expect(g.classes?.map((c) => c.spells)).toEqual([['fire', 'sioc'], ['sioc'], undefined])
+    expect(classProblems(g)).toEqual([])
+  })
+  it('removing an action drops it from the classes, leaving optional fields out', () => {
+    const g = removeAction(withClasses(), 2)
+    expect(g.classes?.[0]?.spells).toEqual(['fire'])
+    expect(g.classes?.[1] && 'spells' in g.classes[1]).toBe(false)
+    expect(g.classes?.[2]).toEqual({ name: 'any', title: 'Anyone' })
+    expect(classProblems(g)).toEqual([])
+  })
+  it('a game without classes stays without them', () => {
+    expect('classes' in renameAction(fixture(), 0, 'shock')).toBe(false)
+    expect('classes' in removeAction(fixture(), 0)).toBe(false)
+  })
+  it('adds, renames and removes classes', () => {
+    const g = withClasses()
+    expect(newClass(g)).toEqual({ name: 'class', title: 'A new class' })
+    expect(renameClass(g, 0, 'druid').classes?.[0]?.name).toBe('druid')
+    expect(renameClass(g, 0, 'draoi')).toBe(g)
+    expect(removeClass(g, 1).classes?.map((c) => c.name)).toEqual(['draoi', 'any'])
+  })
+  it('leaves empty and zero fields out', () => {
+    expect(cleanClass({ name: 'x', title: 'X', desc: '', look: '', might: 0, toughness: 0, spells: [] })).toEqual({ name: 'x', title: 'X' })
+  })
+  it('says what the server would refuse', () => {
+    const g = withClasses()
+    expect(classProblems(g)).toEqual([])
+    const bad: GameFile = {
+      ...g,
+      classes: [
+        { name: 'a', title: '', might: 3 },
+        { name: 'a', title: 'A', spells: ['nope'] },
+      ],
+    }
+    const p = classProblems(bad).join('\n')
+    expect(p).toMatch(/a title of 1 to 32/)
+    expect(p).toMatch(/might and toughness from 0 to 2/)
+    expect(p).toMatch(/two classes are called “a”/)
+    expect(p).toMatch(/“nope” is not an action/)
+    expect(directorProblems(bad).length).toBeGreaterThan(0)
+    expect(classProblems({ ...g, classes: Array.from({ length: 16 }, (_, i) => ({ name: `c${i}`, title: 'C' })) })).toContain('at most 15 classes')
   })
 })

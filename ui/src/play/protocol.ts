@@ -29,6 +29,8 @@ export const kind = {
   REDIRECT: 0x87,
   INVENTORY: 0x88,
   GROUND: 0x89,
+  /** Spells and blows used nearby. Not decoded yet: the client ignores inner kinds it does not handle. */
+  CASTS: 0x8a,
 } as const
 
 export const reject = { BAD_VERSION: 1, CONTENT_MISMATCH: 2, SERVER_FULL: 3 } as const
@@ -355,7 +357,7 @@ export const GROUND = -128
 
 export const POS_SCALE = 16
 const RING = 16
-export const MAX_REPL = 4
+export const MAX_REPL = 7
 
 export interface SnapshotInfo {
   tick: number

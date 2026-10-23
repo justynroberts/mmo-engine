@@ -36,6 +36,25 @@ pub struct Record {
     /// signing in here sends them there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zone: Option<u8>,
+    /// Experience earned (the level follows from it and the game's curve).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub xp: u32,
+    /// The named places found so far, by place name (each gives experience once).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub found: Vec<String>,
+    /// Quests in hand or done, by quest name: (name, step, count, state).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quests: Vec<(String, u8, u16, u8)>,
+    /// What is worn, by item name per gear slot ("" for nothing).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gear: Vec<String>,
+    /// The class chosen, by name ("" for none yet).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub class: String,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 pub type PlayerId = [u8; 32];
@@ -293,7 +312,7 @@ mod tests {
     }
 
     fn rec(x: f32, hp: f32) -> Record {
-        Record { x, y: x * 2.0, attrs: BTreeMap::from([("health".to_string(), hp), ("energy".to_string(), 50.0)]), inv: Vec::new(), name: String::new(), zone: None }
+        Record { x, y: x * 2.0, attrs: BTreeMap::from([("health".to_string(), hp), ("energy".to_string(), 50.0)]), inv: Vec::new(), name: String::new(), zone: None, ..Default::default() }
     }
 
     #[test]

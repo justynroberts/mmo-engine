@@ -16,7 +16,25 @@ export interface EffectFile {
   to: Who
   attr: string
   delta: number
+  /** Spread delta over this many seconds (0..60) instead of all at once: a burn, a slow heal. Absent = at once. */
+  secs?: number
+  /** Take it back after this many seconds (0..300): a buff or a curse that wears off. Not with secs. */
+  lasts?: number
 }
+export type Aim = 'target' | 'self'
+export type Hits = 'any' | 'foes' | 'friends'
+export type HoldKind = 'mez' | 'stun' | 'root'
+/** Holding a target still: mez (no moving or acting, broken by damage), stun (the same, not broken), root (no moving). */
+export interface HoldFile {
+  kind: HoldKind
+  /** Above 0, at most 30. */
+  secs: number
+}
+/** How a spell looks to clients (proto::game::FX). */
+export const FX = ['fire', 'frost', 'shock', 'holy', 'shadow', 'nature', 'arcane', 'poison', 'mind', 'blood'] as const
+export type Fx = (typeof FX)[number]
+/** The hold kinds as the server reports them (/api/info, and the reserved `held` attribute). */
+export const HOLD_CODE: Record<HoldKind, 1 | 2 | 3> = { mez: 1, stun: 2, root: 3 }
 export interface ActionFile {
   id: number
   name: string
@@ -24,6 +42,101 @@ export interface ActionFile {
   range: number
   requires: { attr: string; min: number } | null
   effects: EffectFile[]
+  // Spells: every field below is optional, absent means the default, and none restarts the world.
+  /** Who it is aimed at; absent = 'target'. */
+  aim?: Aim
+  /** Radius (0..64) round the target, or the caster when aimed at self: effects on target land on everyone in it. */
+  area?: number
+  /** Which side it lands on (players are one side, bots the other); absent = 'any'. */
+  hits?: Hits
+  hold?: HoldFile
+  /** One of FX; absent for a plain blow. */
+  fx?: Fx
+  /** Drawn flying from the caster to the target. */
+  bolt?: boolean
+  /** Free text (at most 24 characters) to group spells by. */
+  school?: string
+  /** What it does in plain words, for players' tooltips (at most 200 characters). */
+  desc?: string
+  /** Lift everyone it lands on off the ground for this many seconds (0..300): blows and areas miss them. */
+  lift?: number
+  /** The level a player must be to use it. */
+  level?: number
+}
+/** Experience and levels (GameFile.levels). Level L needs base * (L - 1) ^ exponent experience in all. */
+export interface Levels {
+  cap?: number
+  base?: number
+  exponent?: number
+  /** Each level above the first: blows and heals land this share harder. */
+  might?: number
+  /** Each level above the first: harm taken is divided by 1 + this share. */
+  toughness?: number
+  /** For finding a named place the first time. */
+  discover_xp?: number
+}
+/** An item and how many (a quest reward). count 1..255. */
+export interface QuestItem {
+  item: string
+  count: number
+}
+/** One thing to do in a quest, done in order. Beating bots counts for everyone who hurt the one that fell. */
+export type QuestStep =
+  /** Beat `count` (1..65535) bots of a type. */
+  | { kind: 'kill'; archetype: string; count: number }
+  /** Walk into a place. */
+  | { kind: 'visit'; place: string }
+  /** Carry `count` (1..255) of an item; taken when the quest is handed in. */
+  | { kind: 'collect'; item: string; count: number }
+  /** Talk to a bot of a type. */
+  | { kind: 'talk'; archetype: string }
+/** A quest (GameFile.quests, at most 64). Not in the content hash: edits apply live, nobody is disconnected. */
+export interface QuestFile {
+  /** Unique id, at most 48 bytes. */
+  name: string
+  /** What players see, at most 64 characters. */
+  title: string
+  /** What the giver says offering it (at most 600 characters). */
+  text: string
+  /** What is said on handing it in (at most 600 characters). */
+  done_text?: string
+  /** The bot type (archetype) that offers it. */
+  giver: string
+  /** The bot type it is handed in to (absent: the giver). */
+  turn_in?: string
+  /** The level a player must be to take it (absent: any). */
+  level?: number
+  /** A quest that must be done first. */
+  after?: string
+  /** 1 to 8 steps, done in order. */
+  steps: QuestStep[]
+  /** Experience on handing it in. */
+  xp?: number
+  /** Items given on handing it in. */
+  reward?: QuestItem[]
+  /** May be taken again once done. */
+  repeatable?: boolean
+}
+/** The models the Godot fantasy theme draws classes with (ClassFile.look may be any other key a client knows). */
+export const CLASS_LOOKS = ['knight', 'barbarian', 'mage', 'rogue'] as const
+/** A character class (GameFile.classes, at most 15). A player picks one once, in game, and keeps it; the reserved
+ *  attribute "class" (replicated, 0..15) shows its index + 1 (0: none, and every bot). Not in the content hash:
+ *  edits apply live, nobody is disconnected. */
+export interface ClassFile {
+  /** Unique id, at most 32 bytes. */
+  name: string
+  /** What players see, at most 32 characters. */
+  title: string
+  /** What it is like, at most 300 characters. */
+  desc?: string
+  /** The model a client draws it with (the fantasy theme has knight, barbarian, mage, rogue). */
+  look?: string
+  /** 0..2: blows and heals land this share harder, added to the level's and the gear's. */
+  might?: number
+  /** 0..2: harm taken is divided by 1 + this share, added to the level's and the gear's. */
+  toughness?: number
+  /** The actions (by name) it may use besides the plain attack (the game's first action); absent or empty: all. */
+  spells?: string[]
 }
 export type Seek = 'player' | 'bot' | 'any'
 export type Cond =
@@ -55,10 +168,12 @@ export interface Place {
   sound?: string
   /** The music a client plays inside it (one of MUSIC). */
   music?: string
+  /** Players cannot harm each other inside it, even with pvp on. */
+  safe?: boolean
 }
 /** What a place's sound and music may be (proto::game::SOUNDS, MUSIC). */
 export const SOUNDS = ['sea', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town', 'market', 'crypt', 'holy', 'battle'] as const
-export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'none'] as const
+export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'city', 'none'] as const
 export interface Route {
   name: string
   points: [number, number][]
@@ -75,6 +190,25 @@ export interface ItemDef {
   stack_max: number
   uses: UseEffect[]
   consume: boolean
+  /** What a merchant pays for one, in the game's currency (0..65535); absent or 0, they will not buy it. */
+  value?: number
+  /** Worn gear: using it puts it on in its slot. */
+  equip?: EquipFile
+  /** A mount (0..4): riding it adds this to the `speed` attribute. Absent or 0, not a mount. */
+  mount?: number
+}
+export const GEAR_SLOTS = ['weapon', 'armour', 'trinket'] as const
+export type GearSlot = (typeof GEAR_SLOTS)[number]
+/** Where an item is worn and what it adds (shares, like a level's: 0..2, 0.1 is a tenth). */
+export interface EquipFile {
+  slot: GearSlot
+  might?: number
+  toughness?: number
+}
+/** Something a bot type sells, at a price (0..65535) in the game's currency. */
+export interface ShopItem {
+  item: string
+  price: number
 }
 export interface DropDef {
   item: string
@@ -95,6 +229,12 @@ export interface Archetype {
   home: string | null
   rules: Rule[]
   drops?: DropDef[]
+  /** Experience for beating one, shared by every player who hurt it lately. */
+  xp?: number
+  /** Its level (1 when absent): it hits and takes blows as a player of that level would. */
+  level?: number
+  /** What it sells (players talk to one to trade), priced in the game's currency. */
+  shop?: ShopItem[]
 }
 export interface Drain {
   attr: string
@@ -174,6 +314,8 @@ export interface GameFile {
   move_speed: number
   /** How much faster everyone moves on a road (1 to 4; absent: 1.5). */
   road_speed?: number
+  /** Players may harm each other outside safe places (absent: true). Applies live. */
+  pvp?: boolean
   entity_radius: number
   interest_radius: number
   max_visible: number
@@ -190,6 +332,14 @@ export interface GameFile {
   zones?: WeatherZone[]
   /** When it is light and dark (absent: the default cycle). */
   daylight?: Daylight
+  /** Experience and levels; absent, there are none. Applies live. */
+  levels?: Levels
+  /** Quests bots give players. Applies live. */
+  quests?: QuestFile[]
+  /** Character classes players pick from once. Applies live. */
+  classes?: ClassFile[]
+  /** The item that is money: what shops take and pay. Applies live. */
+  currency?: string
 }
 
 export interface Perf {
@@ -266,7 +416,23 @@ export interface Info {
   proto: number
   capacity: number
   snapshot_lanes: number
-  actions: { id: number; name: string; range: number }[]
+  actions: {
+    id: number
+    name: string
+    range: number
+    cooldown_ticks?: number
+    requires?: { attr: string; min: number }
+    aim?: 'self'
+    area?: number
+    hits?: Hits
+    /** kind: 1 mez, 2 stun, 3 root. */
+    hold?: { kind: 1 | 2 | 3; secs: number }
+    fx?: Fx
+    school?: string
+    bolt?: boolean
+    desc?: string
+    lift?: number
+  }[]
 }
 export interface WorldGeom {
   size: number

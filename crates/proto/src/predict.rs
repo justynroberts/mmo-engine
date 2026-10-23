@@ -31,6 +31,11 @@ impl Predictor {
         Predictor { x, y, z: GROUND, speed, dt: 1.0 / hz as f32, radius, pending: VecDeque::new() }
     }
 
+    /// A haste or a slow (`game::SPEED_ATTR`): the speed steps are predicted at from now on.
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed;
+    }
+
     /// Predict one tick of movement for an input that is also being sent to the server.
     pub fn apply_input(&mut self, world: &World, seq: u32, dir_x: i8, dir_y: i8) {
         (self.x, self.y, self.z) = integrate(world, self.x, self.y, self.z, dir_x, dir_y, self.speed, self.dt, self.radius);

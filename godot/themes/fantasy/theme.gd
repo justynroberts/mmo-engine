@@ -514,10 +514,11 @@ func _prop(o: Dictionary, batch: Dictionary) -> void:
 ## You are the class you asked for (knight, barbarian, mage or rogue); everyone else is one of the mobs,
 ## chosen from the entity id so every client shows the same one.
 func entity_node(id: int, mine: bool, opts: Dictionary) -> Node3D:
+	# A player (us, or anyone with a class): by their class's look, the knight when there is no model for it.
 	var scene := CHARS + "player.tscn"
-	if mine and opts.has("class") and ResourceLoader.exists(CHARS + "player_%s.tscn" % opts["class"]):
+	if opts.has("class") and ResourceLoader.exists(CHARS + "player_%s.tscn" % opts["class"]):
 		scene = CHARS + "player_%s.tscn" % opts["class"]
-	elif not mine:
+	elif not mine and not opts.has("class"):
 		var kinds := _mob_scenes()
 		scene = kinds[id % kinds.size()] if not kinds.is_empty() else CHARS + "mob.tscn"
 	if not ResourceLoader.exists(scene):

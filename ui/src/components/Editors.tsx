@@ -1,11 +1,28 @@
 import { Footprints, Pause, PersonSimpleRun, Target } from '@phosphor-icons/react'
 import { Copy, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import type { ActionFile, Archetype, AttrFile, Behaviour, GameFile, ItemDef } from '../api'
+import { CLASS_LOOKS, FX, GEAR_SLOTS, type ActionFile, type Archetype, type AttrFile, type Behaviour, type ClassFile, type GameFile, type GearSlot, type HoldKind, type ItemDef, type QuestFile, type QuestStep } from '../api'
 import { MAX_ITEMS, newItem, removeArch, removeItem, renameArch, renameItem } from '../directorEdit'
 import {
   addFromTemplate,
   BOT_TEMPLATES,
+  cleanAction,
+  classProblems,
+  cleanClass,
+  cleanQuest,
+  MAX_CLASSES,
+  newClass,
+  removeClass,
+  renameClass,
+  defaultQuestStep,
+  MAX_QUEST_REWARDS,
+  MAX_QUEST_STEPS,
+  MAX_QUESTS,
+  newQuest,
+  QUEST_STEP_KINDS,
+  questProblems,
+  removeQuest,
+  renameQuest,
   exportArchetype,
   importArchetypes,
   newAction,
@@ -53,12 +70,43 @@ export function SettingsEditor({ game, setGame }: Edit) {
   return (
     <section aria-label="World settings" className="cell py-2">
       <h2 className="lbl pb-1">World settings</h2>
-      <div className="grid grid-cols-5 gap-x-2">
+      <div className="grid grid-cols-6 gap-x-2">
         <NumField label="Speed u/s" value={game.move_speed} onCommit={set('move_speed')} />
         <NumField label="On roads ×" value={game.road_speed ?? 1.5} onCommit={(n) => set('road_speed')(Math.min(4, Math.max(1, n)))} />
         <NumField label="Radius" value={game.entity_radius} onCommit={set('entity_radius')} />
         <NumField label="Interest" value={game.interest_radius} onCommit={set('interest_radius')} />
         <NumField label="Max seen" value={game.max_visible} onCommit={set('max_visible')} />
+        <Toggle label="Players fight (PvP)" checked={game.pvp !== false} onChange={(on) => setGame({ ...game, pvp: on ? undefined : false })} />
+      </div>
+      <div className="grid grid-cols-6 gap-x-2 pt-2">
+        <SelectField
+          label="Currency"
+          value={game.currency ?? ''}
+          options={[{ value: '', label: 'none' }, ...(game.items ?? []).map((x) => ({ value: x.name, label: x.name }))]}
+          onChange={(v) => {
+            const next: GameFile = { ...game, currency: v }
+            if (v === '') delete next.currency
+            setGame(next)
+          }}
+          className="col-span-2"
+        />
+      </div>
+      <div className="grid grid-cols-6 gap-x-2 pt-2">
+        <Toggle
+          label="Levels"
+          checked={!!game.levels}
+          onChange={(on) => setGame({ ...game, levels: on ? { cap: 20, base: 100, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10 } : undefined })}
+        />
+        {game.levels && (
+          <>
+            <NumField label="Level cap" value={game.levels.cap ?? 20} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, cap: Math.min(100, Math.max(1, Math.round(n))) } })} />
+            <NumField label="XP for level 2" value={game.levels.base ?? 100} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, base: Math.max(1, n) } })} />
+            <NumField label="Curve" value={game.levels.exponent ?? 1.6} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, exponent: Math.min(4, Math.max(0.5, n)) } })} />
+            <NumField label="Might / level" value={game.levels.might ?? 0.06} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, might: Math.min(1, Math.max(0, n)) } })} />
+            <NumField label="Toughness / level" value={game.levels.toughness ?? 0.05} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, toughness: Math.min(1, Math.max(0, n)) } })} />
+            <NumField label="XP for a new place" value={game.levels.discover_xp ?? 10} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, discover_xp: Math.max(0, Math.round(n)) } })} />
+          </>
+        )}
       </div>
     </section>
   )
@@ -127,11 +175,16 @@ export function AttrsEditor({ game, setGame }: Edit) {
 
 export function ActionsEditor({ game, setGame }: Edit) {
   const attrNames = game.attrs.map((a) => ({ value: a.name, label: a.name }))
+  // Every edit goes through cleanAction, so a spell field set back to its default is dropped, not written.
   const patch = (i: number, p: Partial<ActionFile>) =>
-    setGame({ ...game, actions: game.actions.map((a, k) => (k === i ? { ...a, ...p } : a)) })
+    setGame({ ...game, actions: game.actions.map((a, k) => (k === i ? cleanAction({ ...a, ...p }) : a)) })
   const first = game.attrs[0]?.name ?? ''
   return (
     <div>
+      <p className="text-fg-3 pb-1">
+        Spell fields (aim, area, hits, hold, look, bolt, school, effect seconds) apply live. A replicated attribute called{' '}
+        <span className="text-fg">held</span> (0..3) shows who is held: 1 mez, 2 stun, 3 root.
+      </p>
       {game.actions.length === 0 && <Empty>No actions. Players and bots can only move.</Empty>}
       {game.actions.map((a, i) => (
         <Strip key={i}>
@@ -145,6 +198,79 @@ export function ActionsEditor({ game, setGame }: Edit) {
             <NumField label="Id" value={a.id} onCommit={(n) => patch(i, { id: Math.round(n) })} />
             <NumField label="Cooldown ticks" value={a.cooldown_ticks} onCommit={(n) => patch(i, { cooldown_ticks: Math.max(0, Math.round(n)) })} />
             <NumField label="Range" value={a.range} onCommit={(n) => patch(i, { range: n })} />
+            <TextField
+              label="School"
+              value={a.school ?? ''}
+              allowEmpty
+              maxLength={24}
+              onCommit={(t) => patch(i, { school: t.trim().slice(0, 24) || undefined })}
+            />
+          </div>
+          <div className="grid grid-cols-4 gap-x-2 pt-1">
+            <SelectField
+              label="Aim"
+              value={a.aim ?? 'target'}
+              options={[
+                { value: 'target', label: 'target' },
+                { value: 'self', label: 'self' },
+              ]}
+              onChange={(v) => patch(i, { aim: v })}
+            />
+            <SelectField
+              label="Hits"
+              value={a.hits ?? 'any'}
+              options={[
+                { value: 'any', label: 'anyone' },
+                { value: 'foes', label: 'foes' },
+                { value: 'friends', label: 'friends' },
+              ]}
+              onChange={(v) => patch(i, { hits: v })}
+            />
+            <NumField label="Area radius" value={a.area ?? 0} onCommit={(n) => patch(i, { area: Math.min(64, Math.max(0, n)) })} />
+            <SelectField
+              label="Look"
+              value={a.fx ?? ''}
+              options={[{ value: '', label: 'plain' }, ...FX.map((f) => ({ value: f, label: f }))]}
+              onChange={(v) => patch(i, { fx: v || undefined })}
+            />
+          </div>
+          <div className="grid grid-cols-4 gap-x-2 pt-1">
+            <SelectField
+              label="Hold"
+              value={a.hold?.kind ?? ''}
+              options={[
+                { value: '', label: 'none' },
+                { value: 'mez', label: 'mez' },
+                { value: 'stun', label: 'stun' },
+                { value: 'root', label: 'root' },
+              ]}
+              onChange={(v: HoldKind | '') => patch(i, { hold: v ? { kind: v, secs: a.hold?.secs ?? 3 } : undefined })}
+            />
+            {a.hold ? (
+              <NumField
+                label="Hold secs"
+                value={a.hold.secs}
+                onCommit={(n) => a.hold && patch(i, { hold: { kind: a.hold.kind, secs: Math.min(30, Math.max(0.1, n)) } })}
+              />
+            ) : (
+              <div />
+            )}
+            <Toggle label="Bolt" checked={!!a.bolt} onChange={(v) => patch(i, { bolt: v })} />
+          </div>
+          <div className="grid grid-cols-4 gap-x-2 pt-1">
+            <div className="col-span-3">
+              <TextField
+                label="Description (players' tooltip)"
+                value={a.desc ?? ''}
+                allowEmpty
+                maxLength={200}
+                onCommit={(t) => patch(i, { desc: t.replace(/\s+/g, ' ').trim().slice(0, 200) || undefined })}
+              />
+            </div>
+            <NumField label="Levitate secs" value={a.lift ?? 0} onCommit={(n) => patch(i, { lift: Math.min(300, Math.max(0, n)) || undefined })} />
+          </div>
+          <div className="grid grid-cols-4 gap-x-2 pt-1">
+            <NumField label="Learnt at level" value={a.level ?? 1} onCommit={(n) => patch(i, { level: Math.min(100, Math.max(1, Math.round(n))) })} />
           </div>
           <div className="pt-1">
             <p className="lbl">Needs</p>
@@ -200,6 +326,22 @@ export function ActionsEditor({ game, setGame }: Edit) {
                   value={e.delta}
                   onCommit={(n) => patch(i, { effects: a.effects.map((x, j) => (j === k ? { ...x, delta: n } : x)) })}
                   className="w-24"
+                />
+                <NumField
+                  label="Over secs"
+                  value={e.secs ?? 0}
+                  onCommit={(n) =>
+                    patch(i, { effects: a.effects.map((x, j) => (j === k ? { ...x, secs: Math.min(60, Math.max(0, n)) } : x)) })
+                  }
+                  className="w-20"
+                />
+                <NumField
+                  label="Lasts secs"
+                  value={e.lasts ?? 0}
+                  onCommit={(n) =>
+                    patch(i, { effects: a.effects.map((x, j) => (j === k ? { ...x, lasts: Math.min(300, Math.max(0, n)) } : x)) })
+                  }
+                  className="w-20"
                 />
                 <IconButton label="Remove effect" onClick={() => patch(i, { effects: a.effects.filter((_, j) => j !== k) })}>
                   <Trash2 size={16} strokeWidth={1.5} aria-hidden />
@@ -258,6 +400,32 @@ export function ItemsEditor({ game, setGame }: Edit) {
               <Toggle label="Used up when used" checked={it.consume} onChange={(v) => patch(i, { consume: v })} />
             </div>
           </div>
+          <div className="grid grid-cols-3 gap-x-2 pt-1 items-end">
+            <NumField label="Merchant pays" value={it.value ?? 0} onCommit={(n) => patch(i, { value: Math.max(0, Math.min(65535, Math.round(n))) || undefined })} />
+            <NumField label="Mount: speed +" value={it.mount ?? 0} onCommit={(n) => patch(i, { mount: Math.max(0, Math.min(4, n)) || undefined })} />
+          </div>
+          <div className="grid grid-cols-3 gap-x-2 pt-1 items-end">
+            <SelectField
+              label="Gear"
+              value={it.equip?.slot ?? ''}
+              options={[{ value: '', label: 'none' }, ...GEAR_SLOTS.map((x) => ({ value: x, label: x }))]}
+              onChange={(v) => patch(i, { equip: v === '' ? undefined : { ...it.equip, slot: v as GearSlot } })}
+            />
+            {it.equip && (
+              <>
+                <NumField
+                  label="Might +"
+                  value={it.equip.might ?? 0}
+                  onCommit={(n) => patch(i, { equip: { ...it.equip!, might: Math.max(0, Math.min(2, n)) || undefined } })}
+                />
+                <NumField
+                  label="Toughness +"
+                  value={it.equip.toughness ?? 0}
+                  onCommit={(n) => patch(i, { equip: { ...it.equip!, toughness: Math.max(0, Math.min(2, n)) || undefined } })}
+                />
+              </>
+            )}
+          </div>
           <div className="pt-1">
             <p className="lbl">When used</p>
             {it.uses.length === 0 && <p className="m-0 text-fg-3">Does nothing. Fine for trade goods and keepsakes.</p>}
@@ -287,6 +455,241 @@ export function ItemsEditor({ game, setGame }: Edit) {
       <p className="m-0 pt-3 text-label text-fg-3 max-w-[40rem]">
         Items are not part of the wire format, so adding or changing them never disconnects anyone. Give bots things to drop in the Bots tab; players pick
         them up with E and use them with Shift and a number.
+      </p>
+    </div>
+  )
+}
+
+// -------------------------------------------------------------------- quests
+
+export function QuestsEditor({ game, setGame }: Edit) {
+  const quests = game.quests ?? []
+  // Every edit goes through cleanQuest, so an optional field cleared or set back to its default is left out.
+  const patch = (i: number, p: Partial<QuestFile>) => setGame({ ...game, quests: quests.map((q, k) => (k === i ? cleanQuest({ ...q, ...p }) : q)) })
+  const dup = (name: string, i: number) => quests.some((q, k) => k !== i && q.name === name)
+  const opts = (names: string[]) => names.map((n) => ({ value: n, label: n }))
+  const bots = opts(game.archetypes.map((a) => a.name))
+  const places = opts(game.places.map((p) => p.name))
+  const items = opts((game.items ?? []).map((x) => x.name))
+  // A select must show its current value even when it names something that has gone (the problem list says so).
+  const withValue = (o: { value: string; label: string }[], v: string) => (v && !o.some((x) => x.value === v) ? [{ value: v, label: `${v} (missing)` }, ...o] : o)
+  const problems = questProblems(game)
+  const fresh = newQuest(game)
+  return (
+    <div>
+      <p className="text-fg-3 pb-1">
+        Quests apply live: nobody is disconnected. A bot type gives each one; players talk to it, do the steps in order, then hand it in for the experience and items.
+      </p>
+      {quests.length === 0 && <Empty>No quests. Add one, give it to a bot type, and players can take it by talking to those bots.</Empty>}
+      {quests.map((q, i) => {
+        const setStep = (k: number, st: QuestStep) => patch(i, { steps: q.steps.map((x, j) => (j === k ? st : x)) })
+        const rewards = q.reward ?? []
+        const setReward = (k: number, p: Partial<{ item: string; count: number }>) => patch(i, { reward: rewards.map((x, j) => (j === k ? { ...x, ...p } : x)) })
+        return (
+          <Strip key={i}>
+            <div className="flex items-end gap-2">
+              <TextField label="Quest" value={q.name} invalid={dup(q.name, i)} maxLength={48} onCommit={(n) => setGame(renameQuest(game, i, n.trim()))} className="w-48" />
+              <TextField label="Title (players see this)" value={q.title} maxLength={64} onCommit={(t) => patch(i, { title: t.slice(0, 64) })} className="flex-1" />
+              <IconButton label={`Delete quest ${q.name}`} onClick={() => setGame(removeQuest(game, i))}>
+                <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+              </IconButton>
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-2">
+              <SelectField label="Given by" value={q.giver} options={withValue(bots, q.giver)} onChange={(v) => patch(i, { giver: v })} />
+              <SelectField
+                label="Handed in to"
+                value={q.turn_in ?? ''}
+                options={[{ value: '', label: 'the giver' }, ...withValue(bots, q.turn_in ?? '')]}
+                onChange={(v) => patch(i, { turn_in: v || undefined })}
+              />
+              <SelectField
+                label="After quest"
+                value={q.after ?? ''}
+                options={[{ value: '', label: 'none' }, ...withValue(opts(quests.filter((o) => o.name !== q.name).map((o) => o.name)), q.after ?? '')]}
+                onChange={(v) => patch(i, { after: v || undefined })}
+              />
+              <NumField label="From level" value={q.level ?? 1} onCommit={(n) => patch(i, { level: Math.min(100, Math.max(1, Math.round(n))) })} />
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-1">
+              <div className="col-span-4">
+                <TextField label="Offer (what the giver says)" value={q.text} allowEmpty maxLength={600} onCommit={(t) => patch(i, { text: t.slice(0, 600) })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-1">
+              <div className="col-span-4">
+                <TextField label="On hand-in (optional)" value={q.done_text ?? ''} allowEmpty maxLength={600} onCommit={(t) => patch(i, { done_text: t.slice(0, 600) || undefined })} />
+              </div>
+            </div>
+            <div className="pt-1">
+              <p className="lbl">Steps, in order</p>
+              {q.steps.map((st, k) => (
+                <div key={k} className="flex items-end gap-2">
+                  <SelectField
+                    label={`Step ${k + 1}`}
+                    value={st.kind}
+                    options={QUEST_STEP_KINDS.map((x) => ({ value: x.kind, label: x.label }))}
+                    onChange={(v) => v !== st.kind && setStep(k, defaultQuestStep(v, game))}
+                    className="w-36"
+                  />
+                  {(st.kind === 'kill' || st.kind === 'talk') && (
+                    <SelectField label="Bot type" value={st.archetype} options={withValue(bots, st.archetype)} onChange={(v) => setStep(k, { ...st, archetype: v })} className="flex-1" />
+                  )}
+                  {st.kind === 'visit' && <SelectField label="Place" value={st.place} options={withValue(places, st.place)} onChange={(v) => setStep(k, { ...st, place: v })} className="flex-1" />}
+                  {st.kind === 'collect' && <SelectField label="Item" value={st.item} options={withValue(items, st.item)} onChange={(v) => setStep(k, { ...st, item: v })} className="flex-1" />}
+                  {st.kind === 'kill' && (
+                    <NumField label="How many" value={st.count} onCommit={(n) => setStep(k, { ...st, count: Math.min(65535, Math.max(1, Math.round(n))) })} className="w-20" />
+                  )}
+                  {st.kind === 'collect' && (
+                    <NumField label="How many" value={st.count} onCommit={(n) => setStep(k, { ...st, count: Math.min(255, Math.max(1, Math.round(n))) })} className="w-20" />
+                  )}
+                  {q.steps.length > 1 && (
+                    <IconButton label={`Remove step ${k + 1}`} onClick={() => patch(i, { steps: q.steps.filter((_, j) => j !== k) })}>
+                      <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                    </IconButton>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                className="btn mt-1"
+                disabled={q.steps.length >= MAX_QUEST_STEPS}
+                onClick={() => patch(i, { steps: [...q.steps, defaultQuestStep(game.places[0] ? 'visit' : 'kill', game)] })}
+              >
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                Add step
+              </button>
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-2 items-end">
+              <NumField label="Experience" value={q.xp ?? 0} onCommit={(n) => patch(i, { xp: Math.max(0, Math.round(n)) || undefined })} />
+              <div className="pb-1">
+                <Toggle label="Repeatable" checked={!!q.repeatable} onChange={(v) => patch(i, { repeatable: v || undefined })} />
+              </div>
+            </div>
+            <div className="pt-1">
+              <p className="lbl">Rewards</p>
+              {rewards.map((r, k) => (
+                <div key={k} className="flex items-end gap-2">
+                  <SelectField label="Item" value={r.item} options={withValue(items, r.item)} onChange={(v) => setReward(k, { item: v })} className="flex-1" />
+                  <NumField label="How many" value={r.count} onCommit={(n) => setReward(k, { count: Math.min(255, Math.max(1, Math.round(n))) })} className="w-20" />
+                  <IconButton label={`Remove reward ${r.item}`} onClick={() => patch(i, { reward: rewards.filter((_, j) => j !== k) })}>
+                    <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                  </IconButton>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="btn mt-1"
+                disabled={items.length === 0 || rewards.length >= MAX_QUEST_REWARDS}
+                onClick={() => patch(i, { reward: [...rewards, { item: items[0]?.value ?? '', count: 1 }] })}
+              >
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                Add reward
+              </button>
+            </div>
+          </Strip>
+        )
+      })}
+      {problems.length > 0 && (
+        <ul role="status" className="m-0 pt-2 pl-4 text-fg-3">
+          {problems.map((p, k) => (
+            <li key={k}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {fresh ? (
+        <AddButton label="Add quest" onClick={() => quests.length < MAX_QUESTS && setGame({ ...game, quests: [...quests, fresh] })} />
+      ) : (
+        <p className="m-0 pt-2 text-fg-3">Add a bot type first: every quest is given by one.</p>
+      )}
+      <p className="m-0 pt-3 text-label text-fg-3 max-w-[40rem]">
+        Steps name bot types, places and items by name; renaming one here or in their tabs keeps the quests right, and removing one drops the steps (or the
+        quest, for its giver) that needed it.
+      </p>
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------- classes
+
+const OTHER_LOOK = '*other'
+
+export function ClassesEditor({ game, setGame }: Edit) {
+  const classes = game.classes ?? []
+  // Every edit goes through cleanClass, so a field cleared or set back to zero is left out.
+  const patch = (i: number, p: Partial<ClassFile>) => setGame({ ...game, classes: classes.map((c, k) => (k === i ? cleanClass({ ...c, ...p }) : c)) })
+  const dup = (name: string, i: number) => classes.some((c, k) => k !== i && c.name === name)
+  const share = (n: number) => Math.min(2, Math.max(0, n))
+  // The first action is the plain attack every class has; the rest are what a class may be limited to.
+  const spells = game.actions.slice(1).map((a) => a.name)
+  const problems = classProblems(game)
+  return (
+    <div>
+      <p className="text-fg-3 pb-1">
+        Classes apply live: nobody is disconnected. A player picks one the first time they come into the game and keeps it; its might and toughness add to their
+        level&apos;s and gear&apos;s.
+      </p>
+      {classes.length === 0 && <Empty>No classes. Without any, players just play; add one and new players choose from them when they come in.</Empty>}
+      {classes.map((c, i) => {
+        const look = c.look ?? ''
+        const known = look === '' || (CLASS_LOOKS as readonly string[]).includes(look)
+        const chosen = c.spells ?? []
+        // A spell the class names that the game no longer has still shows, so it can be unticked (the problem list says so).
+        const listed = [...spells, ...chosen.filter((n) => !spells.includes(n))]
+        const toggle = (n: string, on: boolean) => patch(i, { spells: on ? listed.filter((x) => x === n || chosen.includes(x)) : chosen.filter((x) => x !== n) })
+        return (
+          <Strip key={i}>
+            <div className="flex items-end gap-2">
+              <TextField label="Class" value={c.name} invalid={dup(c.name, i)} maxLength={32} onCommit={(n) => setGame(renameClass(game, i, n.trim()))} className="w-48" />
+              <TextField label="Title (players see this)" value={c.title} maxLength={32} onCommit={(t) => patch(i, { title: t.slice(0, 32) })} className="flex-1" />
+              <IconButton label={`Delete class ${c.name}`} onClick={() => setGame(removeClass(game, i))}>
+                <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+              </IconButton>
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-2">
+              <SelectField
+                label="Look"
+                value={known ? look : OTHER_LOOK}
+                options={[{ value: '', label: 'default' }, ...CLASS_LOOKS.map((l) => ({ value: l, label: l })), { value: OTHER_LOOK, label: 'other…' }]}
+                onChange={(v) => patch(i, { look: v === OTHER_LOOK ? (known ? 'custom' : look) : v })}
+              />
+              {known ? <div /> : <TextField label="Model key" value={look} maxLength={32} onCommit={(t) => patch(i, { look: t.trim() })} />}
+              <NumField label="Might (0 to 2)" value={c.might ?? 0} step={0.05} onCommit={(n) => patch(i, { might: share(n) })} />
+              <NumField label="Toughness (0 to 2)" value={c.toughness ?? 0} step={0.05} onCommit={(n) => patch(i, { toughness: share(n) })} />
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-1">
+              <div className="col-span-4">
+                <TextField label="Description" value={c.desc ?? ''} allowEmpty maxLength={300} onCommit={(t) => patch(i, { desc: t.slice(0, 300) })} />
+              </div>
+            </div>
+            <div className="pt-1">
+              <p className="lbl">Spells {chosen.length === 0 ? '(none ticked: every action)' : ''}</p>
+              {listed.length === 0 ? (
+                <p className="m-0 text-fg-3">The game has no actions besides {game.actions[0]?.name ?? 'the plain attack'}, which every class has.</p>
+              ) : (
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {listed.map((n) => (
+                    <label key={n} className="flex items-center gap-1 cursor-pointer">
+                      <input type="checkbox" checked={chosen.includes(n)} onChange={(e) => toggle(n, e.target.checked)} className="accent-[var(--color-accent)]" />
+                      <span className={spells.includes(n) ? '' : 'text-fg-3'}>{spells.includes(n) ? n : `${n} (missing)`}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Strip>
+        )
+      })}
+      {problems.length > 0 && (
+        <ul role="status" className="m-0 pt-2 pl-4 text-fg-3">
+          {problems.map((p, k) => (
+            <li key={k}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {classes.length < MAX_CLASSES && <AddButton label="Add class" onClick={() => setGame({ ...game, classes: [...classes, newClass(game)] })} />}
+      <p className="m-0 pt-3 text-label text-fg-3 max-w-[40rem]">
+        Spells name actions; renaming one in Actions keeps the classes right, and removing one unticks it. Every class may always use the first action, the plain
+        attack. The reserved attribute “class” (make it replicated, 0 to 15) shows each player&apos;s class to the clients.
       </p>
     </div>
   )
@@ -351,6 +754,10 @@ export function BotsEditor({
               <NumField label="Speed ×" value={a.speed_mult} onCommit={(n) => patch(i, { speed_mult: n })} />
               <NumField label="Sight" value={a.sight} onCommit={(n) => patch(i, { sight: n })} />
               <NumField label="Spawn count" value={a.count} onCommit={(n) => patch(i, { count: Math.max(0, Math.round(n)) })} />
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 pt-1">
+              <NumField label="Experience" value={a.xp ?? 0} onCommit={(n) => patch(i, { xp: Math.max(0, Math.round(n)) || undefined })} />
+              <NumField label="Level" value={a.level ?? 1} onCommit={(n) => patch(i, { level: Math.min(100, Math.max(1, Math.round(n))) > 1 ? Math.min(100, Math.round(n)) : undefined })} />
             </div>
             <div className="grid grid-cols-4 gap-x-2 pt-1">
               <SelectField
@@ -435,6 +842,36 @@ export function BotsEditor({
               >
                 <Plus size={16} strokeWidth={1.5} aria-hidden />
                 Add drop
+              </button>
+            </div>
+            <div className="pt-1">
+              <p className="lbl">Sells{game.currency ? ` (for ${game.currency})` : ''}</p>
+              {(a.shop ?? []).map((s, k) => {
+                const setShop = (p: Partial<typeof s>) => patch(i, { shop: (a.shop ?? []).map((x, j) => (j === k ? { ...x, ...p } : x)) })
+                return (
+                  <div key={k} className="flex items-end gap-2">
+                    <SelectField label="Item" value={s.item} options={(game.items ?? []).map((x) => ({ value: x.name, label: x.name }))} onChange={(v) => setShop({ item: v })} className="flex-1" />
+                    <NumField label="Price" value={s.price} onCommit={(n) => setShop({ price: Math.max(0, Math.min(65535, Math.round(n))) })} className="w-20" />
+                    <IconButton
+                      label={`Stop selling ${s.item}`}
+                      onClick={() => {
+                        const shop = (a.shop ?? []).filter((_, j) => j !== k)
+                        patch(i, { shop: shop.length > 0 ? shop : undefined })
+                      }}
+                    >
+                      <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                    </IconButton>
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                className="btn mt-1"
+                disabled={(game.items ?? []).length === 0}
+                onClick={() => patch(i, { shop: [...(a.shop ?? []), { item: game.items?.[0]?.name ?? '', price: 10 }] })}
+              >
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                Add to shop
               </button>
             </div>
             <div className="flex gap-2 pt-2">

@@ -692,7 +692,7 @@ mod tests {
         let addr = l.local_addr().unwrap();
         let mut c = TcpStream::connect(addr).unwrap();
         let (mut s, _) = l.accept().unwrap();
-        let f = Frame { from: 1, seq: 9, id: hex(&[7; 32]), rec: Record { x: 3.0, y: 4.0, attrs: [("health".to_string(), 50.0)].into(), inv: vec![("medkit".to_string(), 2)], name: String::new(), zone: None } };
+        let f = Frame { from: 1, seq: 9, id: hex(&[7; 32]), rec: Record { x: 3.0, y: 4.0, attrs: [("health".to_string(), 50.0)].into(), inv: vec![("medkit".to_string(), 2)], name: String::new(), zone: None, ..Default::default() } };
         write_frame(&mut c, &key, &f).unwrap();
         let got = read_frame(&mut s, &key).unwrap().unwrap();
         assert_eq!((got.from, got.seq, unhex(&got.id), got.rec.x), (1, 9, Some([7; 32]), 3.0));

@@ -60,12 +60,17 @@ export function TextField({
   onCommit,
   className,
   invalid,
+  allowEmpty,
+  maxLength,
 }: {
   label: string
   value: string
   onCommit: (s: string) => void
   className?: string
   invalid?: boolean
+  /** Commit an empty value too (an optional field being cleared). */
+  allowEmpty?: boolean
+  maxLength?: number
 }) {
   const [text, setText] = useState(value)
   const [focus, setFocus] = useState(false)
@@ -79,6 +84,7 @@ export function TextField({
         value={text}
         spellCheck={false}
         aria-invalid={invalid}
+        maxLength={maxLength}
         onFocus={() => setFocus(true)}
         onBlur={() => {
           setFocus(false)
@@ -86,7 +92,7 @@ export function TextField({
         }}
         onChange={(e) => {
           setText(e.target.value)
-          if (e.target.value.trim() !== '') onCommit(e.target.value)
+          if (allowEmpty || e.target.value.trim() !== '') onCommit(e.target.value)
         }}
       />
     </LF>

@@ -63,7 +63,71 @@ pub struct EffectFile {
     pub to: Who,
     pub attr: String,
     pub delta: f32,
+    /// Spread `delta` over this many seconds instead of all at once (a burn, a curse, a slow heal). 0 = at once.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub secs: f32,
+    /// Take it back after this many seconds (a buff, a curse that lifts): what it changed is undone. 0 = for good.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lasts: f32,
 }
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+/// Who an action is aimed at: another entity (the default), or the one using it (a self heal, a nova round you).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Aim {
+    #[default]
+    Target,
+    #[serde(rename = "self")]
+    Caster,
+}
+
+/// Which side an action lands on. Players are one side and bots the other: a heal for friends never mends a
+/// wolf, and fire for foes never burns the player beside you.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Hits {
+    #[default]
+    Any,
+    Foes,
+    Friends,
+}
+
+/// Holding a target still: mez (no moving or acting, broken by any damage), stun (the same, not broken) or
+/// root (no moving; it can still act).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HoldKind {
+    Mez = 1,
+    Stun = 2,
+    Root = 3,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HoldFile {
+    pub kind: HoldKind,
+    pub secs: f32,
+}
+
+/// How a spell looks to clients (`ActionFile::fx`); each client draws them its own way.
+pub const FX: [&str; 10] = ["fire", "frost", "shock", "holy", "shadow", "nature", "arcane", "poison", "mind", "blood"];
+/// The widest an area may be, in world units.
+pub const MAX_AREA: f32 = 64.0;
+/// The longest a hold or an effect over time may last, in seconds.
+pub const MAX_HOLD_SECS: f32 = 30.0;
+pub const MAX_OVER_SECS: f32 = 60.0;
+/// The longest a temporary effect (`EffectFile::lasts`) or a levitation may last, in seconds.
+pub const MAX_LAST_SECS: f32 = 300.0;
+/// The reserved attribute that multiplies an entity's speed (1 = as usual). Replicated, it lets a client predict
+/// its own hasted or slowed steps.
+pub const SPEED_ATTR: &str = "speed";
+/// The reserved attribute a held entity shows: its hold kind (1 mez, 2 stun, 3 root) while held, else 0. A game
+/// that defines it (replicated) lets clients stop predicting moves the server will refuse, and draw the hold.
+pub const HELD_ATTR: &str = "held";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -72,7 +136,7 @@ pub struct Requires {
     pub min: f32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ActionFile {
     pub id: u8,
@@ -84,6 +148,46 @@ pub struct ActionFile {
     pub requires: Option<Requires>,
     #[serde(default)]
     pub effects: Vec<EffectFile>,
+    /// Spells. Every field below is optional and none is in the content hash, so they apply live.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub aim: Aim,
+    /// Radius around the target (or the caster, aimed at self): effects "to target" land on everyone in it. 0 = one.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub area: f32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub hits: Hits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<HoldFile>,
+    /// How it looks: one of `FX`, or empty for a plain blow.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fx: String,
+    /// Clients draw it flying from the caster to the target.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bolt: bool,
+    /// Free text to group spells by in a spellbook ("black", "white", ...).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub school: String,
+    /// What it does, in words players read (a tooltip), whatever the spell is called.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub desc: String,
+    /// Lift everyone it lands on off the ground for this many seconds: blows and areas miss them, as in a jump.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lift: f32,
+    /// The level a player must be to use it (a spell learnt later). Bots use what their type is given.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -122,10 +226,13 @@ pub struct Place {
     /// The music a client plays inside it (one of `MUSIC`); empty for whatever the moment calls for.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub music: String,
+    /// Players cannot harm each other inside it, even with `pvp` on (a town, a sanctuary).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub safe: bool,
 }
 /// The ambiences a place may have, and its music (the client's sounds: godot/sounds, made by scripts/make_audio.py).
 pub const SOUNDS: [&str; 12] = ["sea", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy", "battle"];
-pub const MUSIC: [&str; 7] = ["explore", "town", "night", "battle", "eerie", "holy", "none"];
+pub const MUSIC: [&str; 8] = ["explore", "town", "night", "battle", "eerie", "holy", "city", "none"];
 fn d_place_r() -> f32 {
     12.0
 }
@@ -255,6 +362,15 @@ pub struct Archetype {
     /// What it may leave behind when it dies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drops: Vec<DropDef>,
+    /// Experience for beating one (shared by every player who hurt it in the last half minute).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub xp: u32,
+    /// Its level (1 when absent): it hits and takes blows as a player of that level would.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
+    /// What it sells (talk to one to trade): items at a price in the game's `currency`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shop: Vec<ShopItem>,
 }
 fn d_color() -> String {
     "#888888".into()
@@ -274,6 +390,10 @@ pub struct GameFile {
     /// How much faster than `move_speed` everyone moves on a road (1 = no faster).
     #[serde(default = "d_road")]
     pub road_speed: f32,
+    /// Players may harm each other (outside places marked `safe`); the default. Off, only bots are fair game.
+    /// Not in the content hash: it applies live.
+    #[serde(default = "d_true", skip_serializing_if = "is_true")]
+    pub pvp: bool,
     #[serde(default = "d_radius")]
     pub entity_radius: f32,
     #[serde(default = "d_interest")]
@@ -298,6 +418,9 @@ pub struct GameFile {
     pub weather: Vec<WeatherDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<EventDef>,
+    /// Quests bots give players (`QuestFile`). Not in the content hash: edits apply live.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quests: Vec<QuestFile>,
     /// Weather that stays in one place: a place and a weather, drawn as mist over it and in effect only inside it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub zones: Vec<WeatherZone>,
@@ -305,10 +428,114 @@ pub struct GameFile {
     /// applies live.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<crate::daylight::Daylight>,
+    /// Experience and levels; absent, there are none. Not in the content hash: an edit applies live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub levels: Option<LevelsFile>,
+    /// The item that is money: what shops take and pay (`Archetype::shop`, `ItemDef::value`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Character classes a player chooses from once (`ClassFile`). Not in the content hash: edits apply live.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub classes: Vec<ClassFile>,
 }
+
+/// Experience and levels. A character earns experience for beating bots (their type's `xp`), for finding named
+/// places, and from quests; enough of it raises its level, up to `cap`. Each level above the first makes what it
+/// does stronger (`might`, a share more per level) and what it suffers weaker (`toughness`), so a bar of health
+/// stays a bar of health at every level.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LevelsFile {
+    #[serde(default = "d_cap")]
+    pub cap: u8,
+    /// Experience to reach level 2; level L needs `base * (L - 1) ^ exponent` in all.
+    #[serde(default = "d_base_xp")]
+    pub base: f32,
+    #[serde(default = "d_exponent")]
+    pub exponent: f32,
+    /// Each level above the first: blows and spells land this share harder (damage and heals alike)...
+    #[serde(default = "d_might")]
+    pub might: f32,
+    /// ...and harm taken is divided by 1 + this share.
+    #[serde(default = "d_toughness")]
+    pub toughness: f32,
+    /// For walking into a named place (a title) for the first time.
+    #[serde(default = "d_discover")]
+    pub discover_xp: u32,
+}
+
+fn d_cap() -> u8 {
+    20
+}
+fn d_base_xp() -> f32 {
+    100.0
+}
+fn d_exponent() -> f32 {
+    1.6
+}
+fn d_might() -> f32 {
+    0.06
+}
+fn d_toughness() -> f32 {
+    0.05
+}
+fn d_discover() -> u32 {
+    10
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::*;
+
+    #[test]
+    fn the_curve_climbs_and_stops_at_the_cap() {
+        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10 };
+        assert_eq!((l.xp_for(1), l.xp_for(2)), (0, 100));
+        assert!((2..=20).all(|v| l.xp_for(v) > l.xp_for(v - 1)));
+        assert_eq!((l.level_of(0), l.level_of(99), l.level_of(100), l.level_of(u32::MAX)), (1, 1, 2, 20));
+        assert!((l.might_at(11) - 1.6).abs() < 1e-6 && (l.toughness_at(1) - 1.0).abs() < 1e-6);
+    }
+}
+
+impl LevelsFile {
+    /// Experience needed, in all, to be at `level` (0 for level 1).
+    pub fn xp_for(&self, level: u8) -> u32 {
+        if level <= 1 {
+            return 0;
+        }
+        (self.base * ((level - 1) as f32).powf(self.exponent)).round() as u32
+    }
+
+    /// The level that much experience makes, up to the cap.
+    pub fn level_of(&self, xp: u32) -> u8 {
+        let mut l = 1;
+        while l < self.cap && xp >= self.xp_for(l + 1) {
+            l += 1;
+        }
+        l
+    }
+
+    /// How much harder something at `level` hits (and heals).
+    pub fn might_at(&self, level: u8) -> f32 {
+        1.0 + self.might * (level.max(1) - 1) as f32
+    }
+
+    /// What harm taken at `level` is divided by.
+    pub fn toughness_at(&self, level: u8) -> f32 {
+        1.0 + self.toughness * (level.max(1) - 1) as f32
+    }
+}
+
+/// The reserved attribute that shows an entity's level (replicated, so everyone sees it on nameplates).
+pub const LEVEL_ATTR: &str = "level";
+pub const MAX_LEVEL: u8 = 100;
 fn d_speed() -> f32 {
     20.0
 }
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
 fn d_road() -> f32 {
     crate::world::ROAD_SPEED
 }
@@ -330,6 +557,82 @@ pub const MAX_ITEMS: usize = 32;
 pub const INV_SLOTS: usize = 8;
 /// Action ids the client uses for items, so no wire change is needed for them: use slot N is ACT_USE + N, drop
 /// slot N is ACT_DROP + N, and ACT_PICKUP takes the nearest thing on the ground in reach. Game actions stay below.
+/// Talk to the bot targeted (a quest giver): it offers a quest, takes one handed in, or counts as a "talk" step.
+pub const ACT_TALK: u8 = 232;
+/// Take the quest offered (the input's `arg` is its index in the game's quests).
+pub const ACT_ACCEPT: u8 = 233;
+/// Give up a quest (`arg`, its index).
+pub const ACT_ABANDON: u8 = 234;
+/// How near a player must be to talk to a bot.
+pub const TALK_RANGE: f32 = 8.0;
+pub const MAX_QUESTS: usize = 64;
+pub const MAX_QUEST_STEPS: usize = 8;
+
+/// A quest: a bot type gives it (`giver`), a player does its steps in order, then hands it in (to `turn_in`, or the
+/// giver) for the rewards. `after` makes a chain; `level` holds it back until then.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct QuestFile {
+    pub name: String,
+    /// What players see: the quest's title, what the giver says offering it, and on handing it in.
+    pub title: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub done_text: String,
+    /// The bot type that offers it.
+    pub giver: String,
+    /// The bot type it is handed in to (absent: the giver).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_in: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
+    /// A quest that must be done first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    pub steps: Vec<QuestStep>,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub xp: u32,
+    /// Items given on handing it in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reward: Vec<QuestItem>,
+    /// May be taken again once done.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeatable: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct QuestItem {
+    pub item: String,
+    pub count: u8,
+}
+
+/// One thing to do. Beating bots counts for everyone who hurt the one that fell, and for players near them.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum QuestStep {
+    /// Beat `count` bots of a type.
+    Kill { archetype: String, count: u16 },
+    /// Walk into a place.
+    Visit { place: String },
+    /// Carry `count` of an item (taken when the quest is handed in).
+    Collect { item: String, count: u8 },
+    /// Talk to a bot of a type.
+    Talk { archetype: String },
+}
+
+impl QuestStep {
+    /// How many of it there are to do (kills, items), 1 for the rest.
+    pub fn need(&self) -> u16 {
+        match self {
+            QuestStep::Kill { count, .. } => (*count).max(1),
+            QuestStep::Collect { count, .. } => (*count).max(1) as u16,
+            _ => 1,
+        }
+    }
+}
+
 pub const ACT_USE: u8 = 200;
 pub const ACT_DROP: u8 = 216;
 pub const ACT_PICKUP: u8 = 250;
@@ -415,7 +718,96 @@ pub struct ItemDef {
     /// Whether using it uses one up.
     #[serde(default = "d_true")]
     pub consume: bool,
+    /// What a merchant pays for one (in the game's `currency`); 0, they will not buy it.
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub value: u16,
+    /// Worn, not used up: using it puts it on (in its slot), adding to the wearer's might and toughness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equip: Option<EquipFile>,
+    /// A mount: using it rides (or gets down), adding this to the `speed` attribute while riding. Any harm, or
+    /// using an action, gets you down.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub mount: f32,
 }
+
+fn is_zero_u16(v: &u16) -> bool {
+    *v == 0
+}
+
+/// Where something is worn, and what it adds (shares, like a level's: 0.1 is a tenth harder or tougher).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EquipFile {
+    pub slot: GearSlot,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub might: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub toughness: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GearSlot {
+    Weapon = 0,
+    Armour = 1,
+    Trinket = 2,
+}
+pub const GEAR_SLOTS: usize = 3;
+
+/// Something a bot type sells, at a price in the game's `currency`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ShopItem {
+    pub item: String,
+    pub price: u16,
+}
+
+/// A character class: what it is called and how it plays. A player picks one the first time they come into a
+/// game that has classes, and keeps it. `might` and `toughness` add to their level's and their gear's; `spells`
+/// are the actions (by name) it may use besides the plain attack (the game's first action), all of them when
+/// empty; `look` is the model a client draws it with (the fantasy theme has knight, barbarian, mage, rogue).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ClassFile {
+    pub name: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub desc: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub look: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub might: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub toughness: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spells: Vec<String>,
+}
+
+/// A class as the server uses it: its bonuses and the action ids it may use (empty: any).
+#[derive(Clone, Debug)]
+pub struct ClassRt {
+    pub name: String,
+    pub title: String,
+    pub desc: String,
+    pub look: String,
+    pub might: f32,
+    pub toughness: f32,
+    pub spells: Vec<u8>,
+}
+
+pub const MAX_CLASSES: usize = 15;
+/// The reserved attribute that shows a player's class: its index + 1, 0 for none (and for every bot), so a client
+/// can draw players by class and tell them from bots.
+pub const CLASS_ATTR: &str = "class";
+/// Choose class `arg` (once: a character keeps the class it chose).
+pub const ACT_CLASS: u8 = 238;
+
+/// Buy item `arg` of the shop of the bot targeted.
+pub const ACT_BUY: u8 = 235;
+/// Sell what is in bag slot `arg` to the merchant targeted.
+pub const ACT_SELL: u8 = 236;
+/// Take off what is worn in gear slot `arg` (back into the bag).
+pub const ACT_UNEQUIP: u8 = 237;
 fn d_item_color() -> String {
     "#cccc66".into()
 }
@@ -449,6 +841,9 @@ pub struct ItemRt {
     pub stack_max: u8,
     pub uses: Vec<(usize, f32)>,
     pub consume: bool,
+    pub value: u16,
+    pub equip: Option<EquipFile>,
+    pub mount: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -714,6 +1109,10 @@ pub struct ArchRt {
     /// Farthest any `sees` condition or chase reaches, for one neighbour scan.
     pub reach: f32,
     pub drops: Vec<DropRt>,
+    pub xp: u32,
+    pub level: u8,
+    /// (item index, price)
+    pub shop: Vec<(usize, u16)>,
 }
 
 #[derive(Clone, Debug)]
@@ -752,6 +1151,12 @@ pub struct Game {
     pub places: Vec<Place>,
     pub routes: Vec<Route>,
     pub daylight: crate::daylight::Daylight,
+    pub pvp: bool,
+    pub levels: Option<LevelsFile>,
+    pub quests: Vec<QuestFile>,
+    /// The money item's index.
+    pub currency: Option<usize>,
+    pub classes: Vec<ClassRt>,
 }
 
 /// Most walls a game file may place.
@@ -759,7 +1164,7 @@ pub const MAX_WALLS: usize = 2000;
 
 /// A usable item with the given effects (none makes it a keepsake or trade good).
 fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
-    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true }
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0 }
 }
 
 /// What the sample bots leave behind.
@@ -819,6 +1224,9 @@ impl GameFile {
             home: None,
             drops: sample_drops(name),
             rules: Vec::new(),
+            xp: 0,
+            level: 0,
+            shop: Vec::new(),
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -846,9 +1254,9 @@ impl GameFile {
         ];
         GameFile {
             places: vec![
-                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None, sound: String::new(), music: String::new() },
-                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None, sound: String::new(), music: String::new() },
-                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None, sound: String::new(), music: String::new() },
+                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None, sound: String::new(), music: String::new(), safe: false },
+                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None, sound: String::new(), music: String::new(), safe: false },
+                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None, sound: String::new(), music: String::new(), safe: false },
             ],
             routes: vec![
                 Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true },
@@ -868,9 +1276,14 @@ impl GameFile {
             weather: Vec::new(),
             zones: Vec::new(),
             daylight: None,
+            levels: None,
+            quests: Vec::new(),
+            currency: None,
+            classes: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
+            pvp: true,
             entity_radius: 0.5,
             interest_radius: 128.0,
             max_visible: 64,
@@ -887,9 +1300,10 @@ impl GameFile {
                 range: 8.0,
                 requires: Some(Requires { attr: "energy".into(), min: 5.0 }),
                 effects: vec![
-                    EffectFile { to: Who::Target, attr: "health".into(), delta: -10.0 },
-                    EffectFile { to: Who::Actor, attr: "energy".into(), delta: -5.0 },
+                    EffectFile { to: Who::Target, attr: "health".into(), delta: -10.0, secs: 0.0, lasts: 0.0 },
+                    EffectFile { to: Who::Actor, attr: "energy".into(), delta: -5.0, secs: 0.0, lasts: 0.0 },
                 ],
+                ..Default::default()
             }],
             archetypes: vec![
                 bot("drifter", "#4aa3a0", 12, Behaviour::Wander, 0.5, None),
@@ -1021,11 +1435,40 @@ impl GameFile {
             let mut effects = Vec::new();
             for e in &a.effects {
                 fin(e.delta, &format!("{ctx} effect delta"))?;
+                if !(e.secs.is_finite() && (0.0..=MAX_OVER_SECS).contains(&e.secs)) {
+                    return Err(format!("{ctx}: an effect's secs must be 0..{MAX_OVER_SECS}"));
+                }
+                if !(e.lasts.is_finite() && (0.0..=MAX_LAST_SECS).contains(&e.lasts)) {
+                    return Err(format!("{ctx}: an effect's lasts must be 0..{MAX_LAST_SECS}"));
+                }
+                if e.lasts > 0.0 && e.secs > 0.0 {
+                    return Err(format!("{ctx}: an effect is spread over time (secs) or taken back later (lasts), not both"));
+                }
                 let attr = idx(&e.attr, &ctx)?;
                 effects.push(match e.to {
-                    Who::Target => Effect::AddToTarget { attr, delta: e.delta },
-                    Who::Actor => Effect::AddToSelf { attr, delta: e.delta },
+                    Who::Target => Effect::AddToTarget { attr, delta: e.delta, secs: e.secs, lasts: e.lasts },
+                    Who::Actor => Effect::AddToSelf { attr, delta: e.delta, secs: e.secs, lasts: e.lasts },
                 });
+            }
+            if !(a.area.is_finite() && (0.0..=MAX_AREA).contains(&a.area)) {
+                return Err(format!("{ctx}: area must be 0..{MAX_AREA}"));
+            }
+            if let Some(h) = a.hold {
+                if !(h.secs.is_finite() && h.secs > 0.0 && h.secs <= MAX_HOLD_SECS) {
+                    return Err(format!("{ctx}: hold secs must be above 0 and at most {MAX_HOLD_SECS}"));
+                }
+            }
+            if !a.fx.is_empty() && !FX.contains(&a.fx.as_str()) {
+                return Err(format!("{ctx}: fx must be one of {}", FX.join(", ")));
+            }
+            if a.school.chars().count() > 24 || a.school.chars().any(char::is_control) {
+                return Err(format!("{ctx}: school is at most 24 characters"));
+            }
+            if a.desc.chars().count() > 200 || a.desc.chars().any(char::is_control) {
+                return Err(format!("{ctx}: desc is at most 200 characters, on one line"));
+            }
+            if !(a.lift.is_finite() && (0.0..=MAX_LAST_SECS).contains(&a.lift)) {
+                return Err(format!("{ctx}: lift must be 0..{MAX_LAST_SECS} seconds"));
             }
             actions.push(ActionDef {
                 id: a.id,
@@ -1034,6 +1477,16 @@ impl GameFile {
                 range: a.range,
                 requires,
                 effects,
+                aim: a.aim,
+                area: a.area,
+                hits: a.hits,
+                hold: a.hold.map(|h| (h.kind, h.secs)),
+                fx: a.fx.clone(),
+                bolt: a.bolt,
+                school: a.school.clone(),
+                desc: a.desc.clone(),
+                lift: a.lift,
+                level: a.level,
             });
         }
 
@@ -1128,7 +1581,24 @@ impl GameFile {
                 let a = self.attrs.iter().position(|x| x.name == u.attr).ok_or_else(|| format!("{ctx}: unknown attribute '{}'", u.attr))?;
                 uses.push((a, u.delta));
             }
-            items.push(ItemRt { name: it.name.clone(), color: it.color.clone(), stack_max: it.stack_max, uses, consume: it.consume });
+            if let Some(e) = &it.equip {
+                if !(e.might.is_finite() && e.toughness.is_finite() && (0.0..=2.0).contains(&e.might) && (0.0..=2.0).contains(&e.toughness)) {
+                    return Err(format!("item '{}': equip might and toughness are 0..2", it.name));
+                }
+            }
+            if !(it.mount.is_finite() && (0.0..=4.0).contains(&it.mount)) {
+                return Err(format!("item '{}': mount is 0..4", it.name));
+            }
+            items.push(ItemRt {
+                name: it.name.clone(),
+                color: it.color.clone(),
+                stack_max: it.stack_max,
+                uses,
+                consume: it.consume,
+                value: it.value,
+                equip: it.equip.clone(),
+                mount: it.mount,
+            });
         }
         let mut seen = HashSet::new();
         let mut archs = Vec::new();
@@ -1255,12 +1725,53 @@ impl GameFile {
                 sight: a.sight,
                 attack,
                 start,
+                xp: a.xp,
+                level: a.level.clamp(1, MAX_LEVEL),
+                shop: a
+                    .shop
+                    .iter()
+                    .map(|s| self.items.iter().position(|i| i.name == s.item).map(|k| (k, s.price)).ok_or_else(|| format!("bot type '{}': sells '{}', which is not an item", a.name, s.item)))
+                    .collect::<Result<Vec<_>, String>>()?,
             });
         }
         self.check_director()?;
+        self.check_quests()?;
+        if self.classes.len() > MAX_CLASSES {
+            return Err(format!("at most {MAX_CLASSES} classes"));
+        }
+        let mut cnames = HashSet::new();
+        let mut classes = Vec::new();
+        for c in &self.classes {
+            if c.name.trim().is_empty() || c.name.len() > 32 || !cnames.insert(c.name.as_str()) || c.title.trim().is_empty() || c.title.chars().count() > 32 {
+                return Err(format!("class '{}': a unique name and a title of at most 32", c.name));
+            }
+            if c.desc.chars().count() > 300 || !(c.might.is_finite() && c.toughness.is_finite() && (0.0..=2.0).contains(&c.might) && (0.0..=2.0).contains(&c.toughness)) {
+                return Err(format!("class '{}': desc at most 300 characters, might and toughness 0..2", c.name));
+            }
+            let spells = c
+                .spells
+                .iter()
+                .map(|n| self.actions.iter().find(|a| &a.name == n).map(|a| a.id).ok_or_else(|| format!("class '{}': '{n}' is not an action", c.name)))
+                .collect::<Result<Vec<u8>, String>>()?;
+            classes.push(ClassRt { name: c.name.clone(), title: c.title.clone(), desc: c.desc.clone(), look: c.look.clone(), might: c.might, toughness: c.toughness, spells });
+        }
+        let currency = match &self.currency {
+            Some(c) => Some(self.items.iter().position(|i| &i.name == c).ok_or_else(|| format!("currency '{c}' is not an item"))?),
+            None => None,
+        };
         let daylight = self.daylight.clone().unwrap_or_default();
         daylight.validate()?;
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight })
+        if let Some(l) = &self.levels {
+            if l.cap < 1 || l.cap > MAX_LEVEL {
+                return Err(format!("levels.cap must be 1..{MAX_LEVEL}"));
+            }
+            for (v, what, lo, hi) in [(l.base, "base", 1.0, 1e7), (l.exponent, "exponent", 0.5, 4.0), (l.might, "might", 0.0, 1.0), (l.toughness, "toughness", 0.0, 1.0)] {
+                if !(v.is_finite() && (lo..=hi).contains(&v)) {
+                    return Err(format!("levels.{what} must be {lo}..{hi}"));
+                }
+            }
+        }
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes })
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {
@@ -1374,6 +1885,48 @@ impl GameFile {
     }
 
     /// Weather and events refer to attributes, bot types and places by name; make sure every reference lands.
+    /// Quests: names unique, and everything they name (bot types, places, items, earlier quests) there.
+    fn check_quests(&self) -> Result<(), String> {
+        if self.quests.len() > MAX_QUESTS {
+            return Err(format!("at most {MAX_QUESTS} quests"));
+        }
+        let arch = |n: &str| self.archetypes.iter().any(|a| a.name == n);
+        let mut names = HashSet::new();
+        for q in &self.quests {
+            let ctx = format!("quest '{}'", q.name);
+            if q.name.trim().is_empty() || q.name.len() > 48 || !names.insert(q.name.as_str()) {
+                return Err(format!("{ctx}: quest names must be unique, non-empty and at most 48 bytes"));
+            }
+            if q.title.trim().is_empty() || q.title.chars().count() > 64 || q.text.chars().count() > 600 || q.done_text.chars().count() > 600 {
+                return Err(format!("{ctx}: a title (at most 64 characters) and texts of at most 600"));
+            }
+            if !arch(&q.giver) || q.turn_in.as_deref().is_some_and(|t| !arch(t)) {
+                return Err(format!("{ctx}: giver and turn_in must be bot types"));
+            }
+            if q.after.as_deref().is_some_and(|a| a == q.name || !self.quests.iter().any(|o| o.name == a)) {
+                return Err(format!("{ctx}: after must be another quest"));
+            }
+            if q.steps.is_empty() || q.steps.len() > MAX_QUEST_STEPS {
+                return Err(format!("{ctx}: 1 to {MAX_QUEST_STEPS} steps"));
+            }
+            for st in &q.steps {
+                let ok = match st {
+                    QuestStep::Kill { archetype, count } => arch(archetype) && *count >= 1,
+                    QuestStep::Visit { place } => self.places.iter().any(|p| &p.name == place),
+                    QuestStep::Collect { item, count } => self.items.iter().any(|i| &i.name == item) && *count >= 1,
+                    QuestStep::Talk { archetype } => arch(archetype),
+                };
+                if !ok {
+                    return Err(format!("{ctx}: a step names something that is not there (or counts nothing)"));
+                }
+            }
+            if q.reward.iter().any(|r| r.count == 0 || !self.items.iter().any(|i| i.name == r.item)) {
+                return Err(format!("{ctx}: rewards must be items the game has, at least one each"));
+            }
+        }
+        Ok(())
+    }
+
     fn check_director(&self) -> Result<(), String> {
         let attr = |n: &str| self.attrs.iter().any(|a| a.name == n);
         let place = |n: &str| self.places.iter().any(|p| p.name == n);
@@ -1670,7 +2223,7 @@ mod tests {
         .unwrap();
         assert!(old.build().is_ok());
         let mut more = ok.clone();
-        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true });
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0 });
         assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
         g.items.clear();
         assert!(g.build().is_err(), "drops of items that no longer exist are caught");

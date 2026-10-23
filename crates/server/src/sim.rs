@@ -24,7 +24,10 @@ pub struct Entities {
     pub y: Vec<f32>,
     pub dir_x: Vec<i8>,
     pub dir_y: Vec<i8>,
+    /// The short pause after any action (at most `GCD_SECS`), before the next may be used.
     pub cooldown_until: Vec<u32>,
+    /// Each action's own cooldown: the tick it may be used again, at `slot * MAX_ACTIONS + action index`.
+    pub ready_at: Vec<u32>,
     /// Owning client index, or `NONE`.
     pub owner: Vec<u32>,
     /// Archetype index, or `NO_ARCH`.
@@ -40,6 +43,21 @@ pub struct Entities {
     pub god: Vec<bool>,
     /// Ticks of the current jump still to come (0 = on the ground).
     pub air: Vec<u16>,
+    /// Held by a spell (`proto::game::HoldKind` as u8, 0 for free) until this tick.
+    pub held: Vec<u8>,
+    pub held_until: Vec<u32>,
+    /// Levitating (a spell's `lift`) until this tick: the jump stays at its height till then.
+    pub lift_until: Vec<u32>,
+    /// Experience and level (`GameFile::levels`); a bot's level is its type's.
+    pub xp: Vec<u32>,
+    pub level: Vec<u8>,
+    /// Players who hurt it lately: (player id, tick), newest last, for sharing the experience when it falls.
+    pub hurt_by: Vec<Vec<(u32, u32)>>,
+    /// The named places a player has found (by place name).
+    pub found: Vec<Vec<String>>,
+    /// A player's quests, and the one a giver has just put to them (an index, or `wire::NO_OFFER`).
+    pub quests: Vec<Vec<crate::quests::QuestRun>>,
+    pub offer: Vec<u8>,
     /// The block layer the feet are in (`proto::world::GROUND` on the bare ground).
     pub z: Vec<i8>,
     /// The account a player builds as (`Blocks::owner`), 0 for none.
@@ -74,10 +92,20 @@ impl Entities {
             dir_x: vec![0; cap],
             dir_y: vec![0; cap],
             cooldown_until: vec![0; cap],
+            ready_at: vec![0; cap * proto::game::MAX_ACTIONS],
             god: vec![false; cap],
             counted: vec![false; cap],
             bots: 0,
             air: vec![0; cap],
+            held: vec![0; cap],
+            held_until: vec![0; cap],
+            lift_until: vec![0; cap],
+            xp: vec![0; cap],
+            level: vec![1; cap],
+            hurt_by: vec![Vec::new(); cap],
+            found: vec![Vec::new(); cap],
+            quests: vec![Vec::new(); cap],
+            offer: vec![proto::wire::NO_OFFER; cap],
             z: vec![proto::world::GROUND; cap],
             account: vec![0; cap],
             owner: vec![NONE; cap],
@@ -238,6 +266,31 @@ impl Grid {
     }
 }
 
+/// Part of an effect still to come: `per_tick` added to `attr` of entity `id` for `left` more ticks.
+struct OverTime {
+    id: u32,
+    attr: usize,
+    per_tick: f32,
+    left: u32,
+    /// Who cast it (an entity id), for the credit when it finishes something off.
+    src: u32,
+}
+
+/// A temporary effect to take back (`EffectFile::lasts`): add `delta` to `attr` of entity `id` at tick `at`.
+struct Undo {
+    id: u32,
+    attr: usize,
+    delta: f32,
+    at: u32,
+}
+
+/// How many ticks a cast is repeated to nearby clients (a dropped packet should not lose a fireball).
+pub const CAST_TICKS: u32 = 3;
+
+/// The longest pause any action puts before the next one (a shared "global cooldown"); an action's own cooldown,
+/// often longer, holds back only that action.
+pub const GCD_SECS: f32 = 0.5;
+
 pub struct PendingAction {
     pub slot: usize,
     pub action: u8,
@@ -281,12 +334,48 @@ pub struct Sim {
     pub daylight: proto::daylight::Daylight,
     /// Whether it is night now (worked out from `daylight` each tick).
     pub night: bool,
+    /// Players may harm each other outside safe places (`GameFile::pvp`).
+    pub pvp: bool,
     /// The `lit` attribute, when the game has one (sneaking).
     lit_attr: Option<usize>,
     /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
     pub npc_say: Vec<(usize, bool, String)>,
     /// Actions requested by bots this tick.
     npc_actions: Vec<PendingAction>,
+    /// Effects spread over time (burns, curses, slow heals) still running.
+    over_time: Vec<OverTime>,
+    undo: Vec<Undo>,
+    /// The `speed` attribute, when the game has one: it multiplies movement.
+    speed_attr: Option<usize>,
+    /// Experience and levels, when the game has them.
+    pub levels: Option<proto::game::LevelsFile>,
+    /// Lines for one player only (a level reached, a place found): (slot, text). Drained by the network layer.
+    pub tells: Vec<(usize, String)>,
+    /// Bumped when a player's level or experience changes, so the network layer sends it (`wire::kind::PROGRESS`).
+    pub progress_ver: Vec<u32>,
+    /// The game's quests, and a version per player bumped when theirs change (`wire::kind::QUESTS`).
+    pub quests: Vec<proto::game::QuestFile>,
+    pub quest_ver: Vec<u32>,
+    /// Parties (`social.rs`): each player's party (0 for none), an invitation waiting (the inviter's id), who last
+    /// whispered to them, and a version bumped when their party changes (`wire::kind::PARTY`).
+    pub party: Vec<u32>,
+    pub invite: Vec<u32>,
+    pub last_whisper: Vec<u32>,
+    pub party_ver: Vec<u32>,
+    pub next_party: u32,
+    /// Money, gear and mounts (`trade.rs`): the money item, what each player wears (item index + 1 per slot), how
+    /// much a mount adds to their speed while they ride (0 on foot), and a version bumped when either changes.
+    pub currency: Option<usize>,
+    /// Classes, and each player's (class index + 1; 0 for none yet).
+    pub classes: Vec<proto::game::ClassRt>,
+    pub class: Vec<u8>,
+    pub gear: Vec<[u8; proto::game::GEAR_SLOTS]>,
+    pub mounted: Vec<f32>,
+    pub gear_ver: Vec<u32>,
+    /// Actions used in the last few ticks, newest last, for the network layer to tell clients near them
+    /// (`proto::wire::kind::CASTS`): (tick, caster slot, cast).
+    pub casts: Vec<(u32, usize, proto::wire::Cast)>,
+    cast_seq: u32,
     /// Actions injected by the admin UI for the next tick.
     pub admin_actions: Vec<PendingAction>,
     /// This process's strip of the world (x range) when running as one zone of several: bots stay inside it.
@@ -370,7 +459,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -392,9 +481,31 @@ impl Sim {
             routes,
             daylight,
             night: false,
+            pvp,
             lit_attr: None,
             npc_say: Vec::new(),
             npc_actions: Vec::new(),
+            over_time: Vec::new(),
+            undo: Vec::new(),
+            speed_attr: None,
+            levels,
+            tells: Vec::new(),
+            progress_ver: vec![0; cap],
+            quests,
+            quest_ver: vec![0; cap],
+            party: vec![0; cap],
+            invite: vec![0; cap],
+            last_whisper: vec![0; cap],
+            party_ver: vec![0; cap],
+            next_party: 0,
+            currency,
+            classes,
+            class: vec![0; cap],
+            gear: vec![[0; proto::game::GEAR_SLOTS]; cap],
+            mounted: vec![0.0; cap],
+            gear_ver: vec![0; cap],
+            casts: Vec::new(),
+            cast_seq: 0,
             admin_actions: Vec::new(),
             zone: None,
             sight_mult: 1.0,
@@ -458,8 +569,25 @@ impl Sim {
         e.dir_x[slot] = 0;
         e.dir_y[slot] = 0;
         e.cooldown_until[slot] = 0;
+        e.ready_at[slot * proto::game::MAX_ACTIONS..(slot + 1) * proto::game::MAX_ACTIONS].fill(0);
         e.god[slot] = false;
         e.air[slot] = 0;
+        e.held[slot] = 0;
+        e.lift_until[slot] = 0;
+        e.xp[slot] = 0;
+        e.level[slot] = self.archs.get(arch as usize).map_or(1, |a| a.level.max(1));
+        e.hurt_by[slot].clear();
+        e.found[slot].clear();
+        e.quests[slot].clear();
+        e.offer[slot] = proto::wire::NO_OFFER;
+        self.party[slot] = 0;
+        self.invite[slot] = 0;
+        self.last_whisper[slot] = 0;
+        self.party_ver[slot] = self.party_ver[slot].wrapping_add(1);
+        self.gear[slot] = [0; proto::game::GEAR_SLOTS];
+        self.class[slot] = 0;
+        self.mounted[slot] = 0.0;
+        self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         e.owner[slot] = owner;
         e.arch[slot] = arch;
         e.speed[slot] = speed;
@@ -486,6 +614,11 @@ impl Sim {
             inv: self.inv_names(slot),
             name: if self.ents.name_claimed[slot] { self.ents.name[slot].as_deref().unwrap_or("").to_string() } else { String::new() },
             zone: None,
+            xp: self.ents.xp[slot],
+            found: self.ents.found[slot].clone(),
+            quests: self.ents.quests[slot].iter().map(|r| (r.name.clone(), r.step, r.count, r.state)).collect(),
+            gear: self.gear_names(slot),
+            class: self.class_of(slot).map_or(String::new(), |c| c.name.clone()),
         }
     }
 
@@ -513,9 +646,26 @@ impl Sim {
     pub fn put(&mut self, slot: usize, x: f32, y: f32) -> bool {
         let r = self.defs.entity_radius;
         let size = self.world.size;
-        if !(x.is_finite() && y.is_finite() && x >= r && y >= r && x <= size - r && y <= size - r) || self.world.blocked_by_walls(x, y, r) {
+        if !(x.is_finite() && y.is_finite() && x >= r && y >= r && x <= size - r && y <= size - r) {
             return false;
         }
+        // Somewhere blocked now (built over, a tree grown there): the nearest free spot, rings outward to 32 units.
+        let (x, y) = if self.world.blocked_by_walls(x, y, r) {
+            let found = (1..=16).find_map(|ring| {
+                let d = ring as f32 * 2.0;
+                (0..ring * 8).find_map(|k| {
+                    let a = k as f32 / (ring * 8) as f32 * std::f32::consts::TAU;
+                    let (px, py) = (x + d * a.cos(), y + d * a.sin());
+                    (px >= r && py >= r && px <= size - r && py <= size - r && !self.world.blocked_by_walls(px, py, r)).then_some((px, py))
+                })
+            });
+            match found {
+                Some(p) => p,
+                None => return false,
+            }
+        } else {
+            (x, y)
+        };
         self.ents.x[slot] = x;
         self.ents.y[slot] = y;
         // On top of whatever is there now (it may have been built over while away).
@@ -541,6 +691,23 @@ impl Sim {
         if let Ok(n) = proto::names::clean(&rec.name) {
             self.set_name(slot, &n, true);
         }
+        self.ents.xp[slot] = rec.xp;
+        self.ents.level[slot] = self.levels.as_ref().map_or(1, |l| l.level_of(rec.xp));
+        self.ents.found[slot] = rec.found.clone();
+        self.progress_ver[slot] = self.progress_ver[slot].wrapping_add(1);
+        // Quests the game still has, by name (a step past a shortened quest's end makes it ready to hand in).
+        self.ents.quests[slot] = rec
+            .quests
+            .iter()
+            .filter_map(|(name, step, count, state)| {
+                let q = self.quests.iter().find(|q| &q.name == name)?;
+                let state = if *state == proto::wire::QUEST_ACTIVE && *step as usize >= q.steps.len() { proto::wire::QUEST_READY } else { *state };
+                Some(crate::quests::QuestRun { name: name.clone(), step: *step, count: *count, state })
+            })
+            .collect();
+        self.quest_ver[slot] = self.quest_ver[slot].wrapping_add(1);
+        self.restore_gear(slot, &rec.gear);
+        self.class[slot] = self.classes.iter().position(|c| c.name == rec.class).map_or(0, |k| k as u8 + 1);
     }
 
     /// An inert copy of a neighbour zone's entity. It is visible to interest management and nothing else:
@@ -833,7 +1000,7 @@ impl Sim {
                 return;
             };
             // A spot that is no longer legal falls back to a fresh one inside spawn_as; attributes still apply.
-            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone(), inv: Vec::new(), name: String::new(), zone: None });
+            self.restore(slot, &crate::store::Record { x: f32::NAN, y: f32::NAN, attrs: b.attrs.clone(), inv: Vec::new(), name: String::new(), zone: None, ..Default::default() });
             have[a] += 1;
         }
         for a in 0..self.archs.len() {
@@ -853,6 +1020,8 @@ impl Sim {
             self.night = self.daylight.phase(proto::daylight::now_ms()) >= 1.0 - self.daylight.night_share();
         }
         self.npc_actions.clear();
+        let old = self.tick.saturating_sub(CAST_TICKS);
+        self.casts.retain(|c| c.0 > old);
         self.system_npc_ai();
         self.system_regen();
         self.system_movement();
@@ -862,10 +1031,13 @@ impl Sim {
         self.npc_actions = npc;
         let adm = std::mem::take(&mut self.admin_actions);
         self.system_actions(&adm);
+        self.system_spells();
         self.system_air();
         self.system_rules();
         if self.tick % self.tick_hz.max(1) == 0 {
             self.expire_ground();
+            self.system_discover();
+            self.system_quests();
         }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -1154,10 +1326,11 @@ impl Sim {
         let e = &mut self.ents;
         for s in 0..e.high {
             // Standing still on the bare ground changes nothing; up on blocks it may (one broken underfoot).
-            if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0 && e.z[s] == proto::world::GROUND) {
+            if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0 && e.z[s] == proto::world::GROUND) || e.held[s] != 0 {
                 continue;
             }
-            let (mut nx, ny, mut nz) = integrate(&self.world, e.x[s], e.y[s], e.z[s], e.dir_x[s], e.dir_y[s], e.speed[s], dt, r);
+            let speed = e.speed[s] * self.speed_attr.map_or(1.0, |a| e.attrs[a][s]);
+            let (mut nx, ny, mut nz) = integrate(&self.world, e.x[s], e.y[s], e.z[s], e.dir_x[s], e.dir_y[s], speed, dt, r);
             if let (Some((lo, hi)), true) = (self.zone, e.owner[s] == NONE) {
                 nx = nx.clamp(lo + r, (hi - r).max(lo + r));
                 match self.world.enter(nx, ny, r, e.z[s]) {
@@ -1200,56 +1373,341 @@ impl Sim {
                 }
                 continue;
             }
+            if matches!(
+                p.action,
+                proto::game::ACT_TALK
+                    | proto::game::ACT_ACCEPT
+                    | proto::game::ACT_ABANDON
+                    | proto::game::ACT_BUY
+                    | proto::game::ACT_SELL
+                    | proto::game::ACT_UNEQUIP
+                    | proto::game::ACT_CLASS
+            ) {
+                let ok = match p.action {
+                    proto::game::ACT_TALK => self.talk(p.slot, p.target),
+                    proto::game::ACT_ACCEPT => self.accept(p.slot, p.arg),
+                    proto::game::ACT_ABANDON => self.abandon(p.slot, p.arg),
+                    proto::game::ACT_BUY => self.buy(p.slot, p.target, p.arg),
+                    proto::game::ACT_SELL => self.sell(p.slot, p.target, p.arg),
+                    proto::game::ACT_CLASS => self.choose_class(p.slot, p.arg),
+                    _ => self.unequip(p.slot, p.arg),
+                };
+                if !ok {
+                    self.stats.rejected_actions += 1;
+                }
+                continue;
+            }
             if p.action >= proto::game::ACT_USE {
                 if !self.item_action(p.slot, p.action) {
                     self.stats.rejected_actions += 1;
                 }
                 continue;
             }
-            let e = &mut self.ents;
-            let Some(def) = self.defs.action(p.action) else {
+            if !self.use_action(p) {
                 self.stats.rejected_actions += 1;
-                continue;
-            };
-            if self.tick < e.cooldown_until[p.slot] {
-                self.stats.rejected_actions += 1;
-                continue;
             }
-            if let Some((attr, min)) = def.requires {
-                if e.attrs[attr as usize][p.slot] < min {
-                    self.stats.rejected_actions += 1;
-                    continue;
+        }
+    }
+
+    /// A game action (a blow, a spell): checks, then its effects on the target, on everyone in its area, and
+    /// on the caster. False if it was refused. A target that jumped clear dodges it, and the cooldown is kept.
+    fn use_action(&mut self, p: &PendingAction) -> bool {
+        use proto::game::{Aim, Hits};
+        let Some(k) = self.defs.actions.iter().position(|a| a.id == p.action) else { return false };
+        if self.mounted[p.slot] > 0.0 {
+            self.dismount(p.slot); // into the fight, out of the saddle
+            self.gear_ver[p.slot] = self.gear_ver[p.slot].wrapping_add(1);
+        }
+        let def = &self.defs.actions[k];
+        let own = p.slot * proto::game::MAX_ACTIONS + k;
+        let (aim, area, hits, hold, cooldown, range, lift) = (def.aim, def.area, def.hits, def.hold, def.cooldown_ticks, def.range, def.lift);
+        let e = &self.ents;
+        if self.tick < e.cooldown_until[p.slot] || self.tick < e.ready_at[own] || matches!(e.held[p.slot], 1 | 2) {
+            return false; // mezzed or stunned: no acting
+        }
+        if e.owner[p.slot] < DRIVEN && self.levels.is_some() && def.level > e.level[p.slot] {
+            return false; // not learnt yet
+        }
+        // A class keeps to its own spells (the game's first action, the plain attack, is everyone's).
+        if k != 0 && e.owner[p.slot] < DRIVEN {
+            if let Some(c) = self.class_of(p.slot) {
+                if !c.spells.is_empty() && !c.spells.contains(&p.action) {
+                    return false;
                 }
             }
-            let Some(t) = e.resolve(p.target).filter(|&t| e.owner[t] != GHOST) else {
-                self.stats.rejected_actions += 1;
-                continue;
+        }
+        if let Some((attr, min)) = def.requires {
+            if e.attrs[attr as usize][p.slot] < min {
+                return false;
+            }
+        }
+        let player = |s: usize| e.owner[s] < DRIVEN;
+        let harmful = def.hold.is_some() || def.effects.iter().any(|f| matches!(*f, Effect::AddToTarget { delta, .. } if delta < 0.0));
+        // Player against player: only with pvp on, and neither of them in a safe place.
+        let pvp_here = self.pvp && !self.in_safe(p.slot);
+        let fair = |s: usize| s == p.slot || !player(s) || !player(p.slot) || (pvp_here && !self.in_safe(s));
+        let lands = |s: usize| match hits {
+            Hits::Any => !harmful || fair(s),
+            Hits::Foes => player(s) != player(p.slot) || (s != p.slot && fair(s)),
+            Hits::Friends => player(s) == player(p.slot),
+        };
+        // Where it lands: on the target (which must be in reach and of the side it is for), or on the caster.
+        let at = match aim {
+            Aim::Caster => p.slot,
+            // A spell for friends with no friend picked (no target, yourself, or a foe) lands on the caster.
+            Aim::Target if hits == Hits::Friends && e.resolve(p.target).filter(|&t| t != p.slot && lands(t)).is_none() => p.slot,
+            Aim::Target => {
+                let Some(t) = e.resolve(p.target).filter(|&t| e.owner[t] != GHOST) else { return false };
+                if t == p.slot || !lands(t) {
+                    return false;
+                }
+                if e.air[t] > 0 && area == 0.0 {
+                    self.stats.dodges += 1; // it jumped clear; the cooldown is not spent
+                    return true;
+                }
+                let (dx, dy) = (e.x[t] - e.x[p.slot], e.y[t] - e.y[p.slot]);
+                if dx * dx + dy * dy > range * range {
+                    return false;
+                }
+                t
+            }
+        };
+        let mut struck: Vec<usize> = Vec::new();
+        if area > 0.0 {
+            let (cx, cy) = (e.x[at], e.y[at]);
+            let r2 = area * area;
+            self.grid.for_neighbours(cx, cy, |s| {
+                let s = s as usize;
+                let (dx, dy) = (e.x[s] - cx, e.y[s] - cy);
+                if e.alive[s] && e.owner[s] != GHOST && dx * dx + dy * dy <= r2 && e.air[s] == 0 && lands(s) && (s != p.slot || aim == Aim::Caster) {
+                    struck.push(s);
+                }
+            });
+        } else if aim == Aim::Target || lands(at) {
+            struck.push(at);
+        }
+        let effects = self.defs.action(p.action).map(|d| d.effects.clone()).unwrap_or_default();
+        for eff in &effects {
+            let (attr, delta, secs, lasts, to_target) = match *eff {
+                Effect::AddToTarget { attr, delta, secs, lasts } => (attr as usize, delta, secs, lasts, true),
+                Effect::AddToSelf { attr, delta, secs, lasts } => (attr as usize, delta, secs, lasts, false),
             };
-            if t == p.slot {
-                self.stats.rejected_actions += 1;
+            let on: &[usize] = if to_target { &struck } else { std::slice::from_ref(&p.slot) };
+            let src = self.ents.id_of(p.slot);
+            for &s in on {
+                let delta = if to_target { self.scaled(p.slot, s, attr, delta) } else { delta };
+                if secs > 0.0 {
+                    let ticks = ((secs * self.tick_hz as f32).round() as u32).max(1);
+                    self.over_time.push(OverTime { id: self.ents.id_of(s), attr, per_tick: delta / ticks as f32, left: ticks, src });
+                } else if lasts > 0.0 {
+                    // What it really changed (the attribute's range may have cut it short) is what comes back off.
+                    let before = self.ents.attrs[attr][s];
+                    self.add_to(s, attr, delta, src);
+                    let at = self.tick + ((lasts * self.tick_hz as f32).round() as u32).max(1);
+                    self.undo.push(Undo { id: self.ents.id_of(s), attr, delta: before - self.ents.attrs[attr][s], at });
+                } else {
+                    self.add_to(s, attr, delta, src);
+                }
+            }
+        }
+        if lift > 0.0 {
+            let (half, until) = (self.jump_ticks() / 2 + 1, self.tick + ((lift * self.tick_hz as f32).round() as u32).max(1));
+            for &s in &struck {
+                self.ents.air[s] = self.ents.air[s].max(half);
+                self.ents.lift_until[s] = until;
+            }
+        }
+        if let Some((kind, secs)) = hold {
+            let until = self.tick + ((secs * self.tick_hz as f32).round() as u32).max(1);
+            for &s in &struck {
+                if s != p.slot && !self.ents.god[s] {
+                    self.ents.held[s] = kind as u8;
+                    self.ents.held_until[s] = until;
+                }
+            }
+        }
+        let gcd = (GCD_SECS * self.tick_hz as f32).round() as u32;
+        self.ents.cooldown_until[p.slot] = self.tick + (cooldown as u32).min(gcd);
+        self.ents.ready_at[own] = self.tick + cooldown as u32;
+        self.cast_seq = self.cast_seq.wrapping_add(1);
+        let target = if at != p.slot { self.ents.id_of(at) } else { 0 };
+        let cast = proto::wire::Cast { seq: self.cast_seq, caster: self.ents.id_of(p.slot), target, action: p.action };
+        self.casts.push((self.tick, p.slot, cast));
+        self.stats.zaps += 1;
+        true
+    }
+
+    /// A player's class, if they have chosen one.
+    pub fn class_of(&self, s: usize) -> Option<&proto::game::ClassRt> {
+        self.classes.get((self.class[s] as usize).checked_sub(1)?)
+    }
+
+    /// Choose a class: once, for a player who has none (a character keeps the class it chose).
+    pub fn choose_class(&mut self, s: usize, index: u16) -> bool {
+        if self.class[s] != 0 || index as usize >= self.classes.len() || self.ents.owner[s] >= DRIVEN {
+            return false;
+        }
+        self.class[s] = index as u8 + 1;
+        self.tells.push((s, format!("You walk the path of the {}.", self.classes[index as usize].name)));
+        self.progress_ver[s] = self.progress_ver[s].wrapping_add(1); // saved at once
+        true
+    }
+
+    /// Whether an entity stands in a place marked safe (no harm between players there).
+    fn in_safe(&self, s: usize) -> bool {
+        let (x, y) = (self.ents.x[s], self.ents.y[s]);
+        self.places.iter().any(|p| p.safe && (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r)
+    }
+
+    /// A blow's or a heal's health change between two levels: the user's might, and for harm the target's toughness.
+    pub(crate) fn scaled(&self, from: usize, to: usize, attr: usize, delta: f32) -> f32 {
+        if attr != proto::defs::ATTR_HEALTH as usize {
+            return delta;
+        }
+        // Level and gear together: what each adds, on top of 1.
+        let (gm, _) = self.gear_bonus(from);
+        let (_, gt) = self.gear_bonus(to);
+        let gm = gm + self.class_of(from).map_or(0.0, |c| c.might);
+        let gt = gt + self.class_of(to).map_or(0.0, |c| c.toughness);
+        let might = self.levels.as_ref().map_or(1.0, |l| l.might_at(self.ents.level[from])) + gm;
+        let tough = self.levels.as_ref().map_or(1.0, |l| l.toughness_at(self.ents.level[to])) + gt;
+        let d = delta * might;
+        if d < 0.0 { d / tough } else { d }
+    }
+
+    /// Add to an attribute, within its range. Damage (health going down) breaks a mez, and a player who did it
+    /// (`src`, an entity id; 0 for none) is remembered for the experience if it falls.
+    pub(crate) fn add_to(&mut self, s: usize, attr: usize, delta: f32, src: u32) {
+        let a = &self.defs.attrs[attr];
+        let v = &mut self.ents.attrs[attr][s];
+        *v = (*v + delta).clamp(a.min, a.max);
+        if attr == proto::defs::ATTR_HEALTH as usize && delta < 0.0 {
+            if self.ents.held[s] == proto::game::HoldKind::Mez as u8 {
+                self.ents.held[s] = 0;
+            }
+            if self.mounted[s] > 0.0 {
+                self.dismount(s); // knocked out of the saddle
+                self.gear_ver[s] = self.gear_ver[s].wrapping_add(1);
+            }
+            if let Some(by) = self.ents.resolve(src).filter(|&b| b != s && self.ents.owner[b] < DRIVEN) {
+                let id = self.ents.id_of(by);
+                let list = &mut self.ents.hurt_by[s];
+                list.retain(|h| h.0 != id);
+                if list.len() >= 8 {
+                    list.remove(0);
+                }
+                list.push((id, self.tick));
+            }
+        }
+    }
+
+    /// A bot has fallen: every player who hurt it in the last half minute gets its type's experience.
+    fn credit(&mut self, s: usize) {
+        let xp = self.archs.get(self.ents.arch[s] as usize).map_or(0, |a| a.xp);
+        let since = self.tick.saturating_sub(30 * self.tick_hz);
+        let mut who: Vec<usize> = self.ents.hurt_by[s].iter().filter(|h| h.1 >= since).filter_map(|h| self.ents.resolve(h.0)).collect();
+        self.ents.hurt_by[s].clear();
+        // Their party mates near it share in it too.
+        let r2 = crate::social::PARTY_RANGE * crate::social::PARTY_RANGE;
+        for p in who.clone() {
+            for m in self.party_of(p) {
+                if !who.contains(&m) && (self.ents.x[m] - self.ents.x[s]).powi(2) + (self.ents.y[m] - self.ents.y[s]).powi(2) <= r2 {
+                    who.push(m);
+                }
+            }
+        }
+        if let Some(arch) = self.archs.get(self.ents.arch[s] as usize).map(|a| a.name.clone()) {
+            self.quest_kill(&arch, self.ents.x[s], self.ents.y[s], &who);
+        }
+        if xp == 0 {
+            return;
+        }
+        for p in who {
+            self.award(p, xp, None);
+        }
+    }
+
+    /// Give a player experience (and a line saying why, if given); a new level is announced to them.
+    pub fn award(&mut self, s: usize, xp: u32, why: Option<String>) {
+        let Some(l) = self.levels.as_ref() else { return };
+        let before = self.ents.level[s];
+        self.ents.xp[s] = self.ents.xp[s].saturating_add(xp);
+        let now = l.level_of(self.ents.xp[s]);
+        if let Some(w) = why {
+            self.tells.push((s, w));
+        }
+        if now > before {
+            self.ents.level[s] = now;
+            self.tells.push((s, format!("You have reached level {now}!")));
+        }
+        self.progress_ver[s] = self.progress_ver[s].wrapping_add(1);
+    }
+
+    /// Once a second: players walking into a named place for the first time find it, for a little experience.
+    fn system_discover(&mut self) {
+        let Some(give) = self.levels.as_ref().map(|l| l.discover_xp) else { return };
+        let mut found = Vec::new();
+        for s in 0..self.ents.high {
+            if !self.ents.alive[s] || self.ents.owner[s] >= DRIVEN {
                 continue;
             }
-            if e.air[t] > 0 {
-                self.stats.dodges += 1; // it jumped clear; the cooldown is not spent
-                continue;
+            let (x, y) = (self.ents.x[s], self.ents.y[s]);
+            for p in &self.places {
+                if !p.title.is_empty() && (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r && !self.ents.found[s].contains(&p.name) {
+                    found.push((s, p.name.clone(), p.title.clone()));
+                }
             }
-            let dx = e.x[t] - e.x[p.slot];
-            let dy = e.y[t] - e.y[p.slot];
-            if dx * dx + dy * dy > def.range * def.range {
-                self.stats.rejected_actions += 1;
-                continue;
+        }
+        for (s, name, title) in found {
+            self.ents.found[s].push(name);
+            self.award(s, give, Some(format!("Discovered {title} (+{give} experience)")));
+        }
+    }
+
+    /// Effects over time tick on; holds run out; the `held` attribute (when the game has one) shows each hold.
+    fn system_spells(&mut self) {
+        let mut runs = std::mem::take(&mut self.over_time);
+        runs.retain_mut(|o| {
+            let Some(s) = self.ents.resolve(o.id) else { return false };
+            self.add_to(s, o.attr, o.per_tick, o.src);
+            o.left -= 1;
+            o.left > 0
+        });
+        runs.append(&mut self.over_time);
+        self.over_time = runs;
+        let now = self.tick;
+        let mut due = std::mem::take(&mut self.undo);
+        due.retain(|u| {
+            if u.at > now {
+                return true;
             }
-            for eff in &def.effects {
-                let (attr, delta, who) = match *eff {
-                    Effect::AddToTarget { attr, delta } => (attr as usize, delta, t),
-                    Effect::AddToSelf { attr, delta } => (attr as usize, delta, p.slot),
-                };
-                let a = &self.defs.attrs[attr];
-                let v = &mut e.attrs[attr][who];
-                *v = (*v + delta).clamp(a.min, a.max);
+            if let Some(s) = self.ents.resolve(u.id) {
+                self.add_to(s, u.attr, u.delta, 0);
             }
-            e.cooldown_until[p.slot] = self.tick + def.cooldown_ticks as u32;
-            self.stats.zaps += 1;
+            false
+        });
+        due.append(&mut self.undo);
+        self.undo = due;
+        self.speed_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::SPEED_ATTR);
+        let attr = self.defs.attrs.iter().position(|a| a.name == proto::game::HELD_ATTR);
+        let level_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::LEVEL_ATTR);
+        let class_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::CLASS_ATTR);
+        for s in 0..self.ents.high {
+            if let Some(a) = class_attr {
+                let d = &self.defs.attrs[a];
+                self.ents.attrs[a][s] = (self.class[s] as f32).clamp(d.min, d.max);
+            }
+            if let Some(a) = level_attr {
+                let d = &self.defs.attrs[a];
+                self.ents.attrs[a][s] = (self.ents.level[s] as f32).clamp(d.min, d.max);
+            }
+            if self.ents.held[s] != 0 && (self.tick >= self.ents.held_until[s] || !self.ents.alive[s]) {
+                self.ents.held[s] = 0;
+            }
+            if let Some(a) = attr {
+                let d = &self.defs.attrs[a];
+                self.ents.attrs[a][s] = (self.ents.held[s] as f32).clamp(d.min, d.max);
+            }
         }
     }
 
@@ -1267,7 +1725,8 @@ impl Sim {
             if !self.ents.alive[s] {
                 continue;
             }
-            if self.ents.air[s] > 0 {
+            // Levitating: held at the top of the jump until it runs out, then down as from a jump.
+            if self.ents.air[s] > 0 && self.tick >= self.ents.lift_until[s] {
                 self.ents.air[s] -= 1;
             }
             if let Some(a) = attr {
@@ -1282,7 +1741,9 @@ impl Sim {
         for s in 0..self.ents.high {
             if self.ents.alive[s] && self.ents.god[s] {
                 for (a, def) in self.defs.attrs.iter().enumerate() {
-                    if def.name != proto::game::AIRBORNE_ATTR {
+                    // Not the reserved ones the server keeps itself (a jump, a hold, speed, level, a light).
+                    let reserved = [proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::SPEED_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR];
+                    if !reserved.contains(&def.name.as_str()) {
                         self.ents.attrs[a][s] = def.max;
                     }
                 }
@@ -1296,6 +1757,7 @@ impl Sim {
             for s in 0..self.ents.high {
                 if self.ents.alive[s] && self.ents.owner[s] != GHOST && self.ents.attrs[a][s] <= min {
                     if self.is_bot(s) {
+                        self.credit(s);
                         self.loot_from(s);
                     }
                     if self.ents.fleeting[s] {
@@ -1307,6 +1769,8 @@ impl Sim {
                     self.ents.y[s] = y;
                     self.reset_attrs(s);
                     self.ents.air[s] = 0;
+                    self.ents.held[s] = 0;
+                    self.ents.lift_until[s] = 0;
                     self.stats.respawns += 1;
                 }
             }
@@ -1339,6 +1803,211 @@ mod tests {
     fn place(s: &mut Sim, slot: usize, x: f32, y: f32) {
         s.ents.x[slot] = x;
         s.ents.y[slot] = y;
+    }
+
+    #[test]
+    fn spells_land_on_their_side_in_their_area_hold_and_tick_over_time() {
+        use proto::game::{ActionFile, Aim, EffectFile, Hits, HoldFile, HoldKind, Who};
+        let mut g = proto::game::GameFile::default_game();
+        let hurt = |d: f32, secs: f32| EffectFile { to: Who::Target, attr: "health".into(), delta: d, secs, lasts: 0.0 };
+        g.actions.push(ActionFile { id: 2, name: "nova".into(), range: 0.0, aim: Aim::Caster, area: 10.0, hits: Hits::Foes, effects: vec![hurt(-20.0, 0.0)], ..Default::default() });
+        g.actions.push(ActionFile { id: 3, name: "mend".into(), range: 20.0, hits: Hits::Friends, effects: vec![hurt(20.0, 1.0)], ..Default::default() });
+        g.actions.push(ActionFile { id: 4, name: "sleep".into(), range: 20.0, hits: Hits::Foes, hold: Some(HoldFile { kind: HoldKind::Mez, secs: 5.0 }), ..Default::default() });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let h = ATTR_HEALTH as usize;
+        s.pvp = false; // sides only: players never foes to each other
+        let [a, b, c, d] = [0, NONE, 1, NONE].map(|owner| s.spawn(owner).unwrap()); // a and c players, b and d not
+        for (e, x) in [(a, 100.0), (b, 104.0), (c, 95.0), (d, 130.0)] {
+            place(&mut s, e, x, 100.0);
+        }
+        s.grid.rebuild(&s.ents);
+        let act = |s: &mut Sim, action: u8, t: usize| {
+            let before = s.stats.rejected_actions;
+            let target = s.ents.id_of(t);
+            s.step(&[PendingAction { slot: a, action, target, arg: 0 }]);
+            s.stats.rejected_actions == before
+        };
+        // A nova round the caster burns the bot beside it, not the player beside it, the far bot or itself.
+        assert!(act(&mut s, 2, a));
+        assert_eq!([s.ents.attrs[h][a], s.ents.attrs[h][b], s.ents.attrs[h][c], s.ents.attrs[h][d]], [100.0, 80.0, 100.0, 100.0]);
+        assert_eq!(s.casts.last().map(|k| (k.2.target, k.2.action)), Some((0, 2)), "aimed at self: no target");
+        // Mending is for friends: refused on the bot; on the player it comes back over a second.
+        s.ents.attrs[h][c] = 50.0;
+        s.ents.attrs[h][a] = 50.0;
+        assert!(act(&mut s, 3, b), "a foe picked: it lands on the caster instead");
+        assert!(act(&mut s, 3, c));
+        assert!(s.ents.attrs[h][c] > 50.0 && s.ents.attrs[h][c] < 55.0, "a little at once, not all");
+        for _ in 0..25 {
+            s.step(&[]);
+        }
+        assert!((s.ents.attrs[h][c] - 70.0).abs() < 0.01, "all 20 over the second: {}", s.ents.attrs[h][c]);
+        // Sleep holds the bot where it is, until something hurts it.
+        place(&mut s, b, 104.0, 100.0); // it wandered while the mend ran
+        assert!(act(&mut s, 4, b));
+        assert_eq!(s.ents.held[b], HoldKind::Mez as u8);
+        s.ents.dir_x[b] = 127;
+        let x = s.ents.x[b];
+        for _ in 0..5 {
+            s.step(&[]);
+        }
+        assert_eq!(s.ents.x[b], x, "held still");
+        s.ents.cooldown_until[a] = 0;
+        s.ents.ready_at.fill(0);
+        assert!(act(&mut s, ACTION_ZAP, b));
+        assert_eq!(s.ents.held[b], 0, "damage broke the mez");
+        s.step(&[]);
+        assert!(s.ents.x[b] > x, "free to move again");
+    }
+
+    #[test]
+    fn players_harm_each_other_only_with_pvp_on_and_never_in_a_safe_place() {
+        use proto::game::{ActionFile, Aim, EffectFile, Hits, Who};
+        let mut g = proto::game::GameFile::default_game();
+        let hurt = EffectFile { to: Who::Target, attr: "health".into(), delta: -20.0, secs: 0.0, lasts: 0.0 };
+        g.actions.push(ActionFile { id: 2, name: "nova".into(), aim: Aim::Caster, area: 10.0, hits: Hits::Foes, effects: vec![hurt], ..Default::default() });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let h = ATTR_HEALTH as usize;
+        let [a, b] = [0, 1].map(|owner| s.spawn(owner).unwrap());
+        place(&mut s, a, 100.0, 100.0);
+        place(&mut s, b, 104.0, 100.0);
+        s.grid.rebuild(&s.ents);
+        s.pvp = false;
+        let go = |s: &mut Sim, action: u8| {
+            s.ents.cooldown_until[a] = 0;
+            s.ents.ready_at.fill(0);
+            s.ents.attrs[h][b] = 100.0;
+            let target = s.ents.id_of(b);
+            s.step(&[PendingAction { slot: a, action, target, arg: 0 }]);
+            place(s, b, 104.0, 100.0);
+            100.0 - s.ents.attrs[h][b]
+        };
+        assert_eq!((go(&mut s, ACTION_ZAP), go(&mut s, 2)), (0.0, 0.0), "pvp off: neither the blow nor the nova");
+        s.pvp = true;
+        assert_eq!((go(&mut s, ACTION_ZAP), go(&mut s, 2)), (10.0, 20.0), "pvp on: both land");
+        s.places.push(proto::game::Place { name: "town".into(), x: 104.0, y: 100.0, r: 3.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true });
+        assert_eq!((go(&mut s, ACTION_ZAP), go(&mut s, 2)), (0.0, 0.0), "the target stands in a safe place");
+    }
+
+    #[test]
+    fn a_haste_speeds_you_up_for_a_while_and_a_levitation_holds_you_aloft() {
+        use proto::game::{ActionFile, Aim, AttrFile, EffectFile, OnZeroFile, Who};
+        let mut g = proto::game::GameFile::default_game();
+        g.attrs.push(AttrFile { name: "speed".into(), min: 0.5, max: 3.0, default: 1.0, bits: 8, replicated: false, regen_per_sec: 0.0, on_zero: OnZeroFile::None });
+        let quick = EffectFile { to: Who::Target, attr: "speed".into(), delta: 0.6, secs: 0.0, lasts: 1.0 };
+        g.actions.push(ActionFile { id: 2, name: "haste".into(), aim: Aim::Caster, effects: vec![quick], ..Default::default() });
+        g.actions.push(ActionFile { id: 3, name: "levitate".into(), aim: Aim::Caster, lift: 2.0, ..Default::default() });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let sp = s.defs.attrs.iter().position(|a| a.name == "speed").unwrap();
+        let a = s.spawn(0).unwrap();
+        place(&mut s, a, 100.0, 100.0);
+        let run = |s: &mut Sim, ticks: usize| {
+            let x = s.ents.x[a];
+            s.ents.dir_x[a] = 127;
+            for _ in 0..ticks {
+                s.step(&[]);
+            }
+            s.ents.dir_x[a] = 0;
+            s.ents.x[a] - x
+        };
+        let plain = run(&mut s, 5);
+        s.defs.actions[1].cooldown_ticks = 400;
+        s.step(&[PendingAction { slot: a, action: 2, target: 0, arg: 0 }]);
+        assert!((s.ents.attrs[sp][a] - 1.6).abs() < 1e-4);
+        let hasted = run(&mut s, 5);
+        assert!((hasted / plain - 1.6).abs() < 0.02, "plain {plain}, hasted {hasted}");
+        for _ in 0..20 {
+            s.step(&[]);
+        }
+        assert!((s.ents.attrs[sp][a] - 1.0).abs() < 1e-4, "it wore off: {}", s.ents.attrs[sp][a]);
+        // The haste's long cooldown holds back only the haste: levitating needs no wait.
+        assert!(s.tick < s.ents.ready_at[a * proto::game::MAX_ACTIONS + 1]);
+        s.step(&[PendingAction { slot: a, action: 3, target: 0, arg: 0 }]);
+        for _ in 0..30 {
+            s.step(&[]);
+        }
+        assert!(s.ents.air[a] > 0, "still aloft after 1.5 s");
+        for _ in 0..30 {
+            s.step(&[]);
+        }
+        assert_eq!(s.ents.air[a], 0, "landed");
+    }
+
+    #[test]
+    fn beating_bots_and_finding_places_earns_experience_levels_and_spells() {
+        use proto::game::{ActionFile, LevelsFile};
+        let mut g = proto::game::GameFile::default_game();
+        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10 });
+        g.archetypes[0].xp = 60;
+        g.actions.push(ActionFile { id: 2, name: "late".into(), range: 8.0, level: 2, ..Default::default() });
+        let ford = proto::game::Place { name: "ford".into(), x: 300.0, y: 300.0, r: 10.0, title: "The Ford".into(), exit: None, sound: String::new(), music: String::new(), safe: false };
+        g.places.push(ford);
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let h = ATTR_HEALTH as usize;
+        let p = s.spawn(0).unwrap();
+        let wolf = s.spawn_as(NONE, 0, None).unwrap();
+        place(&mut s, p, 100.0, 100.0);
+        place(&mut s, wolf, 104.0, 100.0);
+        s.grid.rebuild(&s.ents);
+        let id = s.ents.id_of(wolf);
+        // Not learnt yet at level 1.
+        let before = s.stats.rejected_actions;
+        s.step(&[PendingAction { slot: p, action: 2, target: id, arg: 0 }]);
+        assert_eq!(s.stats.rejected_actions, before + 1);
+        // Finish it off: the one who hurt it gets its experience.
+        s.ents.attrs[h][wolf] = 5.0;
+        s.ents.cooldown_until[p] = 0;
+        s.step(&[PendingAction { slot: p, action: ACTION_ZAP, target: id, arg: 0 }]);
+        s.step(&[]);
+        assert_eq!((s.ents.xp[p], s.ents.level[p]), (60, 1));
+        // A named place found once is worth a little, and only once.
+        place(&mut s, p, 302.0, 300.0);
+        for _ in 0..45 {
+            s.step(&[]);
+        }
+        assert_eq!(s.ents.xp[p], 70);
+        assert!(s.tells.iter().any(|t| t.1.contains("Discovered The Ford")));
+        // Over 100: level 2, which hits half as hard again (might 0.5 per level).
+        s.award(p, 40, None);
+        assert_eq!(s.ents.level[p], 2);
+        assert!((s.scaled(p, wolf, h, -10.0) + 15.0).abs() < 1e-4);
+        let rec = s.record_of(p);
+        assert_eq!((rec.xp, rec.found.clone()), (110, vec!["ford".to_string()]));
+    }
+
+    #[test]
+    fn a_class_is_chosen_once_keeps_to_its_spells_and_adds_its_bonuses() {
+        use proto::game::{ActionFile, ClassFile, ACT_CLASS};
+        let mut g = proto::game::GameFile::default_game();
+        g.actions.push(ActionFile { id: 2, name: "fire".into(), range: 8.0, ..Default::default() });
+        g.actions.push(ActionFile { id: 3, name: "heal".into(), range: 8.0, ..Default::default() });
+        g.classes = vec![
+            ClassFile { name: "druid".into(), title: "Druid".into(), might: 0.5, spells: vec!["fire".into()], ..Default::default() },
+            ClassFile { name: "knight".into(), title: "Knight".into(), toughness: 1.0, spells: vec!["heal".into()], ..Default::default() },
+        ];
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let [p, q] = [0, 1].map(|o| s.spawn(o).unwrap());
+        place(&mut s, p, 100.0, 100.0);
+        place(&mut s, q, 104.0, 100.0);
+        s.grid.rebuild(&s.ents);
+        s.step(&[PendingAction { slot: p, action: ACT_CLASS, target: 0, arg: 0 }]);
+        s.step(&[PendingAction { slot: p, action: ACT_CLASS, target: 0, arg: 1 }]);
+        assert_eq!(s.class[p], 1, "chosen once: the second choice is refused");
+        s.step(&[PendingAction { slot: q, action: ACT_CLASS, target: 0, arg: 1 }]);
+        // A druid hits half as hard again; against a knight that is halved by the knight's toughness.
+        assert!((s.scaled(p, q, 0, -10.0) + 7.5).abs() < 1e-4, "{}", s.scaled(p, q, 0, -10.0));
+        // A druid may cast fire, not heal; the plain attack is everyone's.
+        let qid = s.ents.id_of(q);
+        let refused = |s: &mut Sim, action: u8| {
+            let before = s.stats.rejected_actions;
+            s.ents.cooldown_until[p] = 0;
+            s.ents.ready_at.fill(0);
+            s.step(&[PendingAction { slot: p, action, target: qid, arg: 0 }]);
+            s.stats.rejected_actions > before
+        };
+        assert!(!refused(&mut s, 2));
+        assert!(refused(&mut s, 3));
+        assert!(!refused(&mut s, ACTION_ZAP));
+        assert_eq!(s.record_of(p).class, "druid");
     }
 
     #[test]
@@ -1638,6 +2307,9 @@ mod tests {
             home: None,
             rules,
             drops: Vec::new(),
+            xp: 0,
+            level: 0,
+            shop: Vec::new(),
         }
     }
 
@@ -1718,7 +2390,7 @@ mod tests {
     #[test]
     fn bots_spawn_in_their_home_place_and_wander_stays_near_it() {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None, sound: String::new(), music: String::new() }];
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false }];
             let mut a = arch("w", Behaviour::Wander, vec![]);
             a.home = Some("home".into());
             a.count = 20;
@@ -1780,7 +2452,7 @@ mod tests {
 
     fn cup_sim(per_tick: u32) -> (Sim, usize) {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new() }];
+            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false }];
             g.archetypes = vec![arch("b", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Goto { place: "far".into() } }])];
         });
         s.replace_world(cup(), Default::default());
@@ -1831,7 +2503,7 @@ mod tests {
             Rule { when: Cond::Always, then: Act::Goto { place: "gate".into() } },
         ];
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new() }];
+            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false }];
             g.archetypes = vec![arch("b", Behaviour::Idle, rules)];
         });
         let p = s.spawn(0).unwrap();
@@ -1880,7 +2552,7 @@ mod tests {
         use crate::store::Record;
         let mut s = sim();
         let p = s.spawn(0).unwrap();
-        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None };
+        let mut rec = Record { x: 123.0, y: 45.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None, ..Default::default() };
         rec.attrs.insert("health".into(), 37.0);
         rec.attrs.insert("energy".into(), 9999.0); // beyond the current max
         rec.attrs.insert("removed_attr".into(), 5.0); // no longer exists
@@ -1891,23 +2563,28 @@ mod tests {
         // Out of the world, or not a number: position is left alone, attributes still apply.
         let (x0, y0) = (s.ents.x[p], s.ents.y[p]);
         for (x, y) in [(-5.0, 10.0), (9999.0, 10.0), (f32::NAN, 1.0), (10.0, f32::INFINITY)] {
-            s.restore(p, &Record { x, y, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None });
+            s.restore(p, &Record { x, y, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None, ..Default::default() });
             assert_eq!((s.ents.x[p], s.ents.y[p]), (x0, y0), "({x}, {y})");
         }
         // A saved NaN attribute is ignored rather than poisoning the entity.
-        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None };
+        let mut bad = Record { x: 100.0, y: 100.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None, ..Default::default() };
         bad.attrs.insert("health".into(), f32::NAN);
         s.restore(p, &bad);
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], 37.0);
         // A new attribute missing from the record keeps its default (new entities start there).
         let q = s.spawn(1).unwrap();
-        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None });
+        s.restore(q, &Record { x: 50.0, y: 50.0, attrs: Default::default(), inv: Vec::new(), name: String::new(), zone: None, ..Default::default() });
         assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][q], 100.0);
+        // Saved standing where there is a wall now: put back at the nearest free spot, not anywhere at all.
+        s.world = World::from_boxes(512.0, 1, vec![proto::world::Aabb { x0: 200.0, y0: 200.0, x1: 206.0, y1: 206.0 }]);
+        s.restore(q, &Record { x: 203.0, y: 203.0, ..Default::default() });
+        let (x, y) = (s.ents.x[q], s.ents.y[q]);
+        assert!(!s.world.blocked_by_walls(x, y, s.defs.entity_radius) && (x - 203.0).hypot(y - 203.0) < 8.0, "at ({x}, {y})");
     }
 
     #[test]
     fn a_saved_world_returns_bots_where_they_were_drops_unknown_archetypes_and_tops_up() {
-        use crate::store::{BotRec, WorldSave};
+        use crate::store::BotRec;
         let mut s = sim();
         let counts = |s: &Sim| {
             let mut n = vec![0usize; s.archs.len()];
