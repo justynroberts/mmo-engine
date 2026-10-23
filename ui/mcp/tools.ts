@@ -84,7 +84,8 @@ async function ok<T = any>(ctx: Ctx, path: string, method = 'GET', body?: unknow
 
 // ---------------------------------------------------------------- the game file
 
-type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'quests' | 'attrs' | 'actions'
+type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'quests' | 'attrs' | 'actions' | RealmSection
+type RealmSection = 'factions' | 'classes' | 'loot' | 'recipes' | 'crops' | 'dungeons'
 
 interface SectionOps {
   list(g: GameFile): { name: string }[]
@@ -93,6 +94,32 @@ interface SectionOps {
   fresh(g: GameFile): any
   rename(g: GameFile, i: number, name: string): GameFile
   remove(g: GameFile, i: number): GameFile
+}
+
+/** A realm section: a named list nothing else refers to, except loot tables, which bot types name (`loot`). */
+function realmOps(key: RealmSection, fresh: (g: GameFile) => any): SectionOps {
+  const list = (g: GameFile) => ((g[key] as { name: string }[] | undefined) ?? [])
+  const put = (g: GameFile, l: any[]) => ({ ...g, [key]: l })
+  const pointers = (g: GameFile, from: string, to: string | null) =>
+    key !== 'loot'
+      ? g
+      : {
+          ...g,
+          archetypes: g.archetypes.map((a) => {
+            if (a.loot !== from) return a
+            const out = { ...a }
+            if (to === null) delete out.loot
+            else out.loot = to
+            return out
+          }),
+        }
+  return {
+    list,
+    put,
+    fresh,
+    rename: (g, i, name) => pointers(put(g, list(g).map((e, k) => (k === i ? { ...e, name } : e))), list(g)[i]!.name, name),
+    remove: (g, i) => pointers(put(g, list(g).filter((_, k) => k !== i)), list(g)[i]!.name, null),
+  }
 }
 
 const SECTIONS: Record<Section, SectionOps> = {
@@ -118,6 +145,12 @@ const SECTIONS: Record<Section, SectionOps> = {
   },
   attrs: { list: (g) => g.attrs, put: (g, l) => ({ ...g, attrs: l }), fresh: newAttr, rename: renameAttr, remove: removeAttr },
   actions: { list: (g) => g.actions, put: (g, l) => ({ ...g, actions: l }), fresh: newAction, rename: renameAction, remove: removeAction },
+  factions: realmOps('factions', () => ({ color: '#c0c0c0' })),
+  classes: realmOps('classes', () => ({ schools: [] })),
+  loot: realmOps('loot', () => ({ rolls: 1, entries: [] })),
+  recipes: realmOps('recipes', () => ({ needs: [], count: 1 })),
+  crops: realmOps('crops', () => ({ min: 1, max: 1, grow_secs: 300 })),
+  dungeons: realmOps('dungeons', () => ({ bots: [] })),
 }
 const SECTION_NAMES = Object.keys(SECTIONS) as [Section, ...Section[]]
 
@@ -179,7 +212,7 @@ async function placeArea(ctx: Ctx, name: string): Promise<{ x: number; y: number
 export const BLOCK = 2
 export const LAYERS = 16
 /** The materials, by number (godot/scripts/theme.gd BLOCK_NAMES; proto::game::BLOCK_KINDS). */
-export const MATERIALS = ['stone', 'timber', 'red brick', 'plaster', 'brick', 'rough brick', 'roof tiles', 'iron', 'glass', 'slate', 'mossy stone', 'sandstone', 'lamp', 'fire']
+export const MATERIALS = ['stone', 'timber', 'red brick', 'plaster', 'brick', 'rough brick', 'roof tiles', 'iron', 'glass', 'slate', 'mossy stone', 'sandstone', 'lamp', 'fire', 'soil']
 const MAX_CELLS = 20000
 
 export function materialChar(m: string | number): string {
@@ -276,6 +309,20 @@ export const TRADE_NOTE = [
   'Chat commands players type (server-side, no setup): /w Name text whispers, /r replies to the last whisper, /who lists who is on, /invite Name asks someone into your party, /accept and /decline answer, /leave leaves it, /p text talks to the party, /party lists it. A party shares experience and quest kill credit.',
 ].join(' ')
 
+/** How the realm sections work, for game_schema and upsert. */
+const REALM_NOTE = [
+  'The realm sections all apply live (none restarts the world): factions, classes, loot, recipes, crops, dungeons (upsert by name), and plots (put_game, or the game file\'s plots: { size, per_player }).',
+  'factions: players join one with /faction name; the same side never harms each other, whatever pvp says. A game with a replicated attribute named "faction" (0..16, 8 bits) lets clients tell friend from foe.',
+  'classes: { name, title?, schools: [...] }; players pick one with /class name, and may then use only actions of those schools (actions without a school are for everyone). A replicated attribute named "class" lets clients grey out the rest.',
+  'Item rarity: common (absent), uncommon, rare, epic, legendary. A bot type names a loot table (loot: name) rolled when it falls, rolls times, each a weighted pick among entries { item, weight, min, max } and nothing; a drop of rare or better is announced to players near it.',
+  'recipes: /craft name takes needs [{ item, count }] from the bag and gives count of makes, only within near (a place) if set. /recipes lists them.',
+  'crops: { name, seed, yields, min, max, grow_secs }: using a seed item beside tilled soil (block material soil) plants it on top; it ripens after grow_secs and breaking it ripe gives min..max of yields (a sprout gives the seed back). A merchant selling seeds makes farming open to all.',
+  'plots: /claim takes size x size blocks where you stand (not over a safe place); only the owner and their guild build or break there. /unclaim, /plot.',
+  'dungeons: { name, place, bots: [{ bot, count }], xp, reward: { item, count } }: walking into the place gives you and your party your own copy of those bots (nobody else sees them); clearing it rewards everyone inside; it closes 30 s after the last one leaves.',
+  'Guilds need no setup: /guild create Name, /guild invite Name, /guild accept, /guild leave, /guild kick Name, /g words.',
+  'Renaming or removing an item, bot type or place rewrites or drops the loot entries, recipes, crops and dungeons that named it.',
+].join(' ')
+
 /** null in an entry means "clear this optional field". */
 const nullsOut = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null))
 
@@ -343,12 +390,12 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'game_schema',
     description:
-      'The TypeScript types of the game file (places, routes, bot types and their rules, items, weather, weather zones, events and their steps, quests and their steps, levels, attributes, actions and their spell fields, daylight), with comments, plus how spells work (aim, area, hits, hold, fx, bolt, school, effect secs, the reserved "held" attribute), how quests and experience work, how currency, shops, item value, gear (equip) and mounts work, the chat commands players can type, and the fx list. Read this before writing entries with upsert.',
+      'The TypeScript types of the game file (places, routes, bot types and their rules, items, weather, weather zones, events and their steps, quests and their steps, levels, attributes, actions and their spell fields, daylight), with comments, plus how spells work (aim, area, hits, hold, fx, bolt, school, effect secs, the reserved "held" attribute), how quests and experience work, how currency, shops, item value, gear (equip) and mounts work, the chat commands players can type, the realm (factions, classes, item rarity and loot tables, recipes, crops, land, dungeons, guilds), and the fx list. Read this before writing entries with upsert.',
     input: {},
     readOnly: true,
     async run() {
       const end = apiTypes.indexOf('export interface Perf')
-      return { types: apiTypes.slice(0, end < 0 ? undefined : end).trim(), block_materials: MATERIALS, spells: SPELLS_NOTE, quests: QUESTS_NOTE, trade: TRADE_NOTE, fx: FX }
+      return { types: apiTypes.slice(0, end < 0 ? undefined : end).trim(), block_materials: MATERIALS, spells: SPELLS_NOTE, quests: QUESTS_NOTE, trade: TRADE_NOTE, realm: REALM_NOTE, fx: FX }
     },
   },
   {
