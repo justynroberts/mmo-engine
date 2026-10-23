@@ -349,6 +349,25 @@ impl MmoClient {
         out
     }
 
+    /// The crowd past our snapshot, four ints each: id, x, y (whole world units) and side (faction index + 1, plus
+    /// 256 for a player).
+    #[func]
+    fn crowd(&self) -> PackedInt32Array {
+        let mut out = PackedInt32Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        let mut buf = vec![m::MmoCrowd::default(); 512];
+        let n = unsafe { m::mmo_crowd(self.c, buf.as_mut_ptr(), buf.len()) }.min(buf.len());
+        for e in &buf[..n] {
+            out.push(e.id as i32);
+            out.push(e.x as i32);
+            out.push(e.y as i32);
+            out.push(e.side as i32 | (e.player as i32) << 8);
+        }
+        out
+    }
+
     /// What we wear: {weapon, armour, trinket (item names, "" for nothing), riding}.
     #[func]
     fn gear(&self) -> VarDictionary {

@@ -79,6 +79,8 @@ pub struct Client {
     offer: u8,
     /// Our party (entity ids, us among them; empty when in none), what we wear, and whether we ride.
     party: Vec<u32>,
+    /// The crowd past our snapshot (`wire::kind::CROWD`), by part: each part replaced when it comes again.
+    crowd: Vec<Vec<wire::CrowdEntry>>,
     gear: [u8; 3],
     riding: bool,
     item_names: Vec<std::ffi::CString>,
@@ -292,6 +294,7 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         quests: Vec::new(),
         offer: wire::NO_OFFER,
         party: Vec::new(),
+        crowd: Vec::new(),
         gear: [0; 3],
         riding: false,
         item_names,
@@ -420,6 +423,11 @@ impl Client {
                 } else if inner.first() == Some(&kind::PARTY) {
                     if let Some(p) = wire::decode_party(inner) {
                         self.party = p;
+                    }
+                } else if inner.first() == Some(&kind::CROWD) {
+                    if let Some((part, parts, list)) = wire::decode_crowd(inner) {
+                        self.crowd.resize_with(parts as usize, Vec::new);
+                        self.crowd[part as usize] = list;
                     }
                 } else if inner.first() == Some(&kind::GEAR) {
                     if let Some((g, r)) = wire::decode_gear(inner) {
@@ -954,6 +962,32 @@ pub unsafe extern "C" fn mmo_party(c: *const Client, out: *mut u32, cap: usize) 
         }
     }
     c.party.len()
+}
+
+/// One entity of the crowd past our snapshot: where it is (whole world units) and its side.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MmoCrowd {
+    pub id: u32,
+    pub x: f32,
+    pub y: f32,
+    /// Faction (index + 1, 0 for none); `player` is 1 for a player.
+    pub side: u8,
+    pub player: u8,
+}
+
+/// The crowd past our snapshot: up to `cap` of them into `out`. Returns how many there are in all. Entities our
+/// snapshot carries are never in it, but one may move between the two from one second to the next.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_crowd(c: *const Client, out: *mut MmoCrowd, cap: usize) -> usize {
+    let Some(c) = c.as_ref() else { return 0 };
+    let all = c.crowd.iter().flatten();
+    if !out.is_null() {
+        for (i, e) in all.clone().take(cap).enumerate() {
+            *out.add(i) = MmoCrowd { id: e.id, x: e.x as f32 + 0.5, y: e.y as f32 + 0.5, side: e.side & !wire::CROWD_PLAYER, player: (e.side & wire::CROWD_PLAYER != 0) as u8 };
+        }
+    }
+    all.count()
 }
 
 /// What we wear (item index + 1 per gear slot: weapon, armour, trinket; 0 for nothing) and whether we ride.
