@@ -1563,7 +1563,8 @@ func _listen(delta: float) -> void:
 	sound.want = w
 	# Music: a fight first, then the place's own, then a town, then the night or the day. It changes only once the
 	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
-	# In a fight: a bot is locked on us (it holds through a chase with no blows), or a blow passed lately.
+	# In a fight: a bot is locked on us (it holds through a chase with no blows) or a player is fighting us, or a
+	# blow passed lately.
 	var fighting: bool = t_total - _fight_at < 8.0 or (net != null and not net.encounter().is_empty())
 	var m := String(zone.get("music", ""))
 	# Now and then a smith, a dog, a cow or a rooster (sound.gd INCIDENTAL): a town has houses all round, a farm a few.

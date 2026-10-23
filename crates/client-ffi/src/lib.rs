@@ -81,7 +81,7 @@ pub struct Client {
     party: Vec<u32>,
     gear: [u8; 3],
     riding: bool,
-    /// The bots locked in a fight with us (entity ids; empty when none is), from `wire::kind::ENCOUNTER`.
+    /// Who is in a fight with us (entity ids, bots then players; empty when nobody is), from `wire::kind::ENCOUNTER`.
     pursuers: Vec<u32>,
     item_names: Vec<std::ffi::CString>,
     item_colors: Vec<std::ffi::CString>,
@@ -963,8 +963,9 @@ pub unsafe extern "C" fn mmo_party(c: *const Client, out: *mut u32, cap: usize) 
     c.party.len()
 }
 
-/// The bots locked in a fight with us: copies up to `cap` entity ids into `out` and returns how many (0: we are in
-/// no fight). A bot locks on when either side hurts the other and lets go when one falls or we get away.
+/// Who is in a fight with us: copies up to `cap` entity ids (bots locked on us, then players) into `out` and returns
+/// how many (0: we are in no fight). A bot locks on when either side hurts the other and lets go when one falls or
+/// we get away; a player is in it until one of us falls or neither lands a blow for 8 s.
 #[no_mangle]
 pub unsafe extern "C" fn mmo_encounter(c: *const Client, out: *mut u32, cap: usize) -> usize {
     let Some(c) = c.as_ref() else { return 0 };

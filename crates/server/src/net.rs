@@ -1126,21 +1126,21 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 }
             }
         }
-        // The bots locked in a fight with you, when that changes and now and then while there are any.
+        // Who is in a fight with you (bots and players), when that changes and now and then while anyone is.
         {
             let ver = sim.pursuer_ver[c.slot];
             if c.fight_sent != ver {
                 c.fight_sent = ver;
                 c.fight_burst = 3;
             }
-            let any = !sim.pursuers[c.slot].is_empty();
+            let any = !sim.pursuers[c.slot].is_empty() || !sim.rivals[c.slot].is_empty();
             if !any && !c.fight_had {
                 c.fight_burst = 0;
             }
             if c.fight_burst > 0 || (any && (tick.wrapping_add(c.slot as u32)) % 50 == 0) {
                 c.fight_burst = c.fight_burst.saturating_sub(1);
                 c.fight_had = any || c.fight_burst > 0;
-                wire::encode_encounter(&mut sc.buf, &sim.pursuers[c.slot]);
+                wire::encode_encounter(&mut sc.buf, &sim.fighting(c.slot));
                 if c.session.seal(&sc.buf, &mut sc.out) {
                     tx.queue(c.addr, &sc.out);
                 }

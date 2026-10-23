@@ -375,6 +375,8 @@ pub struct Sim {
     pub foe: Vec<Option<u32>>,
     pub foe_at: Vec<u32>,
     pub pursuers: Vec<Vec<u32>>,
+    /// The players each player is in a fight with (pvp): (their id, the tick of the last blow between them).
+    pub rivals: Vec<Vec<(u32, u32)>>,
     pub pursuer_ver: Vec<u32>,
     /// Actions used in the last few ticks, newest last, for the network layer to tell clients near them
     /// (`proto::wire::kind::CASTS`): (tick, caster slot, cast).
@@ -509,6 +511,7 @@ impl Sim {
             foe: vec![None; cap],
             foe_at: vec![0; cap],
             pursuers: vec![Vec::new(); cap],
+            rivals: vec![Vec::new(); cap],
             pursuer_ver: vec![0; cap],
             casts: Vec::new(),
             cast_seq: 0,
@@ -595,6 +598,7 @@ impl Sim {
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         self.foe[slot] = None;
         self.pursuers[slot].clear();
+        self.rivals[slot].clear();
         self.pursuer_ver[slot] = self.pursuer_ver[slot].wrapping_add(1);
         e.owner[slot] = owner;
         e.arch[slot] = arch;

@@ -350,7 +350,7 @@ impl MmoClient {
         out
     }
 
-    /// The bots locked in a fight with us (entity ids; empty when we are in none).
+    /// Who is in a fight with us (entity ids, bots then players; empty when we are in none).
     #[func]
     fn encounter(&self) -> PackedInt64Array {
         let mut out = PackedInt64Array::new();

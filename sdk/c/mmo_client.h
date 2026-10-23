@@ -143,8 +143,9 @@ size_t mmo_quests(const MmoClient *c, MmoQuest *out, size_t cap, uint16_t *offer
 /* Party ids (us among them; 0 = in none); gear item+1 per slot (weapon, armour, trinket) and riding.
    Act 235 buys shop item `arg` from merchant `target`, 236 sells bag slot `arg` to them, 237 takes off gear slot `arg`. */
 size_t mmo_party(const MmoClient *c, uint32_t *out, size_t cap);
-/* Bots locked in a fight with us (entity ids; 0 = in no fight): they lock on when either side hurts the other and
-   let go when one falls or we get away. Play the battle music while there are any. */
+/* Who is in a fight with us (entity ids, bots then players; 0 = in no fight). A bot locks on when either side hurts
+   the other and lets go when one falls or we get away; a player is in it until one of us falls or neither lands a
+   blow for 8 s. Play the battle music while there are any. */
 size_t mmo_encounter(const MmoClient *c, uint32_t *out, size_t cap);
 void mmo_gear(const MmoClient *c, uint8_t *out3, uint8_t *riding);
 

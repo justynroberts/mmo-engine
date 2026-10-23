@@ -37,8 +37,10 @@ pub mod kind {
     /// Inner: what you wear, `weapon u8 | armour u8 | trinket u8` (item index + 1, 0 for nothing), and whether you
     /// ride (`riding u8`). Sent on a change.
     pub const GEAR: u8 = 0x8E;
-    /// Inner: the bots locked in a fight with you, `n u8 | n x id u32` (n 0 when none is). A bot locks on when
-    /// either of you hurts the other and lets go when one of you falls or you get away. Sent on a change.
+    /// Inner: who is in a fight with you, `n u8 | n x id u32` (n 0 when nobody is): bots locked on you, then
+    /// players. A bot locks on when either of you hurts the other and lets go when one of you falls or you get
+    /// away; a player is in it from a blow either way until one of you falls or neither lands one for 8 s. Sent
+    /// on a change.
     pub const ENCOUNTER: u8 = 0x8F;
 }
 
@@ -399,7 +401,7 @@ pub fn decode_quests(buf: &[u8]) -> Option<(u16, Vec<QuestState>)> {
     Some((offer, list))
 }
 
-/// The most bots an ENCOUNTER packet names; a player with more after them still hears of these.
+/// The most bots (and, apart, players) one player may be in a fight with at once.
 pub const MAX_PURSUERS: usize = 16;
 
 pub fn encode_encounter(out: &mut Vec<u8>, ids: &[u32]) {
