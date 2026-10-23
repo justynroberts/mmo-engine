@@ -77,6 +77,10 @@ impl Sim {
             return false;
         }
         let Some(arch) = self.archs.get(self.ents.arch[t] as usize).map(|a| a.name.clone()) else { return false };
+        if let Some(why) = self.refuses(t, s) {
+            self.tells.push((s, why));
+            return true;
+        }
         // A step that is just talking to one of these.
         let mut moved = false;
         for i in 0..self.ents.quests[s].len() {

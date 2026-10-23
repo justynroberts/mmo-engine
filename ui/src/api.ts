@@ -219,6 +219,22 @@ export interface Archetype {
    * units), reaches a safe place, or no blow lands for 10 seconds. Absent or 0: three times its sight, at least
    * 60. Applies live. */
   leash?: number
+  /** The faction it belongs to (GameFile.factions, by name): beating one moves a player's standing with it. */
+  faction?: string
+}
+/** A faction (GameFile.factions, at most 32). Beating one of its members moves a player's standing by `kill`
+ * (default -10), and with every faction that `hates` it by that faction's `bounty` (default 2). Below `hostile`
+ * (default -30) its members who can fight attack that player on sight, its traders will not deal and its quest
+ * givers will not speak with them. Bad standing creeps back to 0 by one a minute; players see theirs with /rep.
+ * Standing runs -1000..1000 and is kept by faction name. Applies live. */
+export interface FactionFile {
+  name: string
+  /** What players see; empty, the name. */
+  title?: string
+  kill?: number
+  hostile?: number
+  hates?: string[]
+  bounty?: number
 }
 export interface Drain {
   attr: string
@@ -322,6 +338,7 @@ export interface GameFile {
   quests?: QuestFile[]
   /** The item that is money: what shops take and pay. Applies live. */
   currency?: string
+  factions?: FactionFile[]
 }
 
 export interface Perf {

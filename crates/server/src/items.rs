@@ -128,8 +128,10 @@ impl Sim {
         }
     }
 
-    /// Use, drop or pick up, as the action byte says. Returns false if the action was not an item action.
-    pub fn item_action(&mut self, slot: usize, action: u8) -> bool {
+    /// Use, drop or pick up, as the action byte says. A pickup takes the pile `target` names (a ground item id) when
+    /// it is in reach, or the nearest one in reach when `target` is 0. Returns false if the action was not an item
+    /// action.
+    pub fn item_action(&mut self, slot: usize, action: u8, target: u32) -> bool {
         let n = INV_SLOTS as u8;
         let kind = if (ACT_USE..ACT_USE + n).contains(&action) {
             0
@@ -146,7 +148,7 @@ impl Sim {
         let ok = match kind {
             0 => self.use_slot(slot, (action - ACT_USE) as usize),
             1 => self.drop_slot(slot, (action - ACT_DROP) as usize),
-            _ => self.pick_up(slot),
+            _ => self.pick_up(slot, target),
         };
         if ok {
             self.item_cd[slot] = self.tick + ITEM_CD_TICKS;
@@ -196,11 +198,14 @@ impl Sim {
         true
     }
 
-    fn pick_up(&mut self, slot: usize) -> bool {
+    fn pick_up(&mut self, slot: usize, target: u32) -> bool {
         let (px, py) = (self.ents.x[slot], self.ents.y[slot]);
         let mut best: Option<(f32, usize)> = None;
         for (k, g) in self.ground.iter().enumerate() {
             let d2 = (g.x - px).powi(2) + (g.y - py).powi(2);
+            if target != 0 && g.id != target {
+                continue;
+            }
             if d2 <= PICKUP_RANGE * PICKUP_RANGE && best.is_none_or(|(b, _)| d2 < b) {
                 best = Some((d2, k));
             }
@@ -358,6 +363,27 @@ mod tests {
         assert_eq!(s.ground.len(), 1);
         act(&mut s, p, ACT_PICKUP);
         assert_eq!(s.ground.len(), 1, "the far one stays");
+    }
+
+    #[test]
+    fn pickup_can_name_the_pile_it_wants() {
+        let mut s = sim_with_items();
+        let p = s.spawn(0).unwrap();
+        (s.ents.x[p], s.ents.y[p]) = (100.0, 100.0);
+        s.put_ground(100.5, 100.0, 0, 1); // the nearer one
+        s.put_ground(102.0, 100.0, 1, 2);
+        let want = s.ground[1].id;
+        s.step(&[PendingAction { slot: p, action: ACT_PICKUP, target: want, arg: 0 }]);
+        assert_eq!(s.inv[p][0], (2, 2), "the one asked for, not the nearest");
+        assert_eq!(s.ground.len(), 1);
+        // A pile out of reach is not taken, even when named.
+        for _ in 0..ITEM_CD_TICKS {
+            s.step(&[]);
+        }
+        s.put_ground(140.0, 100.0, 1, 1);
+        let far = s.ground.last().unwrap().id;
+        s.step(&[PendingAction { slot: p, action: ACT_PICKUP, target: far, arg: 0 }]);
+        assert_eq!(s.ground.len(), 2);
     }
 
     #[test]

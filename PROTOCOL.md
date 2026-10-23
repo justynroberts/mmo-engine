@@ -134,7 +134,7 @@ The web gateway relays one WebSocket binary message as one datagram, both ways, 
 Item kinds come from the game file (`items`), by index in file order, and are not part of the content hash; the play page
 fetches them from `/play/info`. There is no new client message: item actions ride the INPUT action byte. Game actions use ids
 below 200. `200 + n` uses bag slot n (0 to 7), `216 + n` drops slot n onto the ground, and `250` picks up the nearest item
-within 3 units. All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
+within 3 units (or, with `target` set to a pile's GROUND id, that pile if it is within 3 units). All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
 nothing else; a client that ignores them still plays.
 
 ## Jump

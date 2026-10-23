@@ -48,6 +48,9 @@ pub struct Record {
     /// What is worn, by item name per gear slot ("" for nothing).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gear: Vec<String>,
+    /// Standing with factions, by faction name (those at 0 left out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub standing: Vec<(String, i32)>,
 }
 
 fn is_zero(v: &u32) -> bool {

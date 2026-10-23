@@ -488,7 +488,7 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
       return { error: 'Each bot type needs a name.' }
     }
     const r = raw as Partial<Archetype> & { name: string }
-    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash'])
+    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction'])
     const stray = Object.keys(r).find((k) => !known.has(k))
     if (stray) return { error: `${r.name}: “${stray}” is not a bot field. Check the spelling.` }
     const a: Archetype = { ...newArchetype(g), ...r, name: r.name.trim() }
@@ -658,4 +658,32 @@ export function questProblems(g: GameFile): string[] {
     }
   }
   return out
+}
+
+// ---------------------------------------------------------------- factions
+
+/** Rename a faction: the bot types in it and the factions that hate it follow. */
+export function renameFaction(g: GameFile, index: number, name: string): GameFile {
+  const old = g.factions?.[index]?.name
+  if (old === undefined || old === name) return g
+  return {
+    ...g,
+    factions: (g.factions ?? []).map((f, i) => ({ ...(i === index ? { ...f, name } : f), hates: f.hates?.map((h) => (h === old ? name : h)) })),
+    archetypes: g.archetypes.map((a) => (a.faction === old ? { ...a, faction: name } : a)),
+  }
+}
+
+/** Remove a faction: its bot types belong to none, and nothing hates it any more. */
+export function removeFaction(g: GameFile, index: number): GameFile {
+  const old = g.factions?.[index]?.name
+  if (old === undefined) return g
+  return {
+    ...g,
+    factions: (g.factions ?? []).filter((_, i) => i !== index).map((f) => ({ ...f, hates: f.hates?.filter((h) => h !== old) })),
+    archetypes: g.archetypes.map((a) => {
+      if (a.faction !== old) return a
+      const { faction: _, ...rest } = a
+      return rest
+    }),
+  }
 }

@@ -373,6 +373,9 @@ pub struct Sim {
     /// passed between them, the bots locked on each player (ids), and a version bumped when those change
     /// (`wire::kind::ENCOUNTER`).
     pub foe: Vec<Option<u32>>,
+    /// Factions (`factions.rs`), and each player's standing with them by faction name.
+    pub factions: Vec<proto::game::FactionFile>,
+    pub standing: Vec<Vec<(String, i32)>>,
     pub foe_at: Vec<u32>,
     pub pursuers: Vec<Vec<u32>>,
     /// The players each player is in a fight with (pvp): (their id, the tick of the last blow between them).
@@ -465,7 +468,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, factions } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -509,6 +512,8 @@ impl Sim {
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
             foe: vec![None; cap],
+            factions,
+            standing: vec![Vec::new(); cap],
             foe_at: vec![0; cap],
             pursuers: vec![Vec::new(); cap],
             rivals: vec![Vec::new(); cap],
@@ -597,6 +602,7 @@ impl Sim {
         self.mounted[slot] = 0.0;
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         self.foe[slot] = None;
+        self.standing[slot].clear();
         self.pursuers[slot].clear();
         self.rivals[slot].clear();
         self.pursuer_ver[slot] = self.pursuer_ver[slot].wrapping_add(1);
@@ -630,6 +636,7 @@ impl Sim {
             found: self.ents.found[slot].clone(),
             quests: self.ents.quests[slot].iter().map(|r| (r.name.clone(), r.step, r.count, r.state)).collect(),
             gear: self.gear_names(slot),
+            standing: self.standing[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
         }
     }
 
@@ -718,6 +725,7 @@ impl Sim {
             .collect();
         self.quest_ver[slot] = self.quest_ver[slot].wrapping_add(1);
         self.restore_gear(slot, &rec.gear);
+        self.standing[slot] = rec.standing.iter().map(|(n, v)| (n.clone(), (*v).clamp(-proto::game::STANDING_MAX, proto::game::STANDING_MAX))).collect();
     }
 
     /// An inert copy of a neighbour zone's entity. It is visible to interest management and nothing else:
@@ -1049,6 +1057,9 @@ impl Sim {
             self.system_discover();
             self.system_quests();
             self.system_encounters();
+            if self.tick % (60 * self.tick_hz.max(1)) == 0 {
+                self.system_forgive();
+            }
         }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -1139,6 +1150,15 @@ impl Sim {
             });
         }
 
+        // A player its faction is hostile to, in sight: it goes for them (a fighter only).
+        if self.foe[s].is_none() && attack.is_some() && self.archs[a].faction.is_some() {
+            let sight = self.archs[a].sight * m;
+            if let Some((d2, p)) = near[0] {
+                if d2 <= sight * sight && self.hostile_to(s, p) {
+                    self.engage(s, p);
+                }
+            }
+        }
         // Locked in a fight (`encounter.rs`): the one it is fighting is who it sees, chases and flees, however far.
         let foe = self.locked(s);
         let n_rules = self.archs[a].rules.len();
@@ -1305,6 +1325,12 @@ impl Sim {
                 let q = |v: f32| (v * 127.0).round().clamp(-127.0, 127.0) as i8;
                 Some((q(sign * (e.x[t] - e.x[s]) / d), q(sign * (e.y[t] - e.y[s]) / d)))
             };
+            // A player its faction is hostile to, in sight: it goes for them (a fighter only).
+            if let (None, Some(_), Some((d2, p))) = (self.foe[s], attack, near) {
+                if d2 <= sight * sight && self.hostile_to(s, p) {
+                    self.engage(s, p);
+                }
+            }
             // Locked in a fight: after (or away from) that one however far, and one that can attack goes for them.
             let foe = self.locked(s);
             let near = foe.or(near);
@@ -1415,7 +1441,7 @@ impl Sim {
                 continue;
             }
             if p.action >= proto::game::ACT_USE {
-                if !self.item_action(p.slot, p.action) {
+                if !self.item_action(p.slot, p.action, p.target) {
                     self.stats.rejected_actions += 1;
                 }
                 continue;
@@ -1601,6 +1627,8 @@ impl Sim {
         let since = self.tick.saturating_sub(30 * self.tick_hz);
         let mut who: Vec<usize> = self.ents.hurt_by[s].iter().filter(|h| h.1 >= since).filter_map(|h| self.ents.resolve(h.0)).collect();
         self.ents.hurt_by[s].clear();
+        // Standing moves for those who did it (not for party mates who only stood by).
+        self.faction_kill(s, &who.clone());
         // Their party mates near it share in it too.
         let r2 = crate::social::PARTY_RANGE * crate::social::PARTY_RANGE;
         for p in who.clone() {
@@ -2265,6 +2293,7 @@ mod tests {
             level: 0,
             shop: Vec::new(),
             leash: 0.0,
+            faction: None,
         }
     }
 

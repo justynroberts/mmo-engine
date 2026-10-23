@@ -466,6 +466,12 @@ impl MmoClient {
         self.act(250, 0);
     }
 
+    /// Pick up one pile on the ground (its id from `ground()`), if it is in reach.
+    #[func]
+    fn pickup_id(&mut self, id: i64) {
+        self.act(250, id);
+    }
+
     /// A fresh random identity (64 hex characters). Store it: it is the player's account.
     #[func]
     fn new_identity() -> GString {

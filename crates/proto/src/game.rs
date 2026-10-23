@@ -375,6 +375,9 @@ pub struct Archetype {
     /// three times its sight, and at least `MIN_LEASH`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub leash: f32,
+    /// The faction it belongs to (`GameFile::factions`, by name): beating one changes a player's standing with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faction: Option<String>,
 }
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
@@ -440,6 +443,66 @@ pub struct GameFile {
     /// The item that is money: what shops take and pay (`Archetype::shop`, `ItemDef::value`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
+    /// Factions bot types belong to, and how players stand with them. Not in the content hash: edits apply live.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub factions: Vec<FactionFile>,
+}
+
+pub const MAX_FACTIONS: usize = 32;
+/// Standing runs from -STANDING_MAX (hated) to STANDING_MAX (revered); everyone starts at 0.
+pub const STANDING_MAX: i32 = 1000;
+
+/// A faction: who its members are is said by bot types (`Archetype::faction`). Beating one of its members moves a
+/// player's standing with it by `kill` (and with every faction that `hates` this one by that faction's `bounty`).
+/// Below `hostile`, its members who can fight attack that player on sight, its traders will not deal with them and
+/// its quest givers will not speak to them. Standing below 0 creeps back towards 0 by one a minute.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FactionFile {
+    pub name: String,
+    /// What players see ("The Folk of the Vale"); empty, the name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    #[serde(default = "d_kill")]
+    pub kill: i32,
+    #[serde(default = "d_hostile")]
+    pub hostile: i32,
+    /// Factions whose members falling raises standing with this one, by `bounty` each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hates: Vec<String>,
+    #[serde(default = "d_bounty")]
+    pub bounty: i32,
+}
+fn d_kill() -> i32 {
+    -10
+}
+fn d_hostile() -> i32 {
+    -30
+}
+fn d_bounty() -> i32 {
+    2
+}
+
+impl FactionFile {
+    /// What players call it.
+    pub fn shown(&self) -> String {
+        if self.title.is_empty() { crate::names::bot(&self.name) } else { self.title.clone() }
+    }
+
+    /// How a standing reads.
+    pub fn mood(&self, standing: i32) -> &'static str {
+        if standing < self.hostile {
+            "hostile"
+        } else if standing < 0 {
+            "wary"
+        } else if standing < 30 {
+            "neutral"
+        } else if standing < 150 {
+            "friendly"
+        } else {
+            "honoured"
+        }
+    }
 }
 
 /// Experience and levels. A character earns experience for beating bots (their type's `xp`), for finding named
@@ -1080,6 +1143,8 @@ pub struct ArchRt {
     pub shop: Vec<(usize, u16)>,
     /// How far a player it is fighting may get before it gives up (`Archetype::leash`, the default filled in).
     pub leash: f32,
+    /// Its faction's index in `Game::factions`.
+    pub faction: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1123,6 +1188,7 @@ pub struct Game {
     pub quests: Vec<QuestFile>,
     /// The money item's index.
     pub currency: Option<usize>,
+    pub factions: Vec<FactionFile>,
 }
 
 /// Most walls a game file may place.
@@ -1194,6 +1260,7 @@ impl GameFile {
             level: 0,
             shop: Vec::new(),
             leash: 0.0,
+            faction: None,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -1246,6 +1313,7 @@ impl GameFile {
             levels: None,
             quests: Vec::new(),
             currency: None,
+            factions: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -1682,8 +1750,13 @@ impl GameFile {
                 return Err(format!("{ctx}: leash must be 0..10000"));
             }
             let leash = if a.leash > 0.0 { a.leash } else { (a.sight * 3.0).max(MIN_LEASH) };
+            let faction = match &a.faction {
+                Some(f) => Some(self.factions.iter().position(|x| &x.name == f).ok_or_else(|| format!("{ctx}: there is no faction '{f}'"))?),
+                None => None,
+            };
             archs.push(ArchRt {
                 leash,
+                faction,
                 drops,
                 home,
                 rules,
@@ -1707,6 +1780,7 @@ impl GameFile {
         }
         self.check_director()?;
         self.check_quests()?;
+        self.check_factions()?;
         let currency = match &self.currency {
             Some(c) => Some(self.items.iter().position(|i| &i.name == c).ok_or_else(|| format!("currency '{c}' is not an item"))?),
             None => None,
@@ -1723,7 +1797,33 @@ impl GameFile {
                 }
             }
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency })
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, factions: self.factions.clone() })
+    }
+
+    /// Factions: names unique, numbers in range, and what they hate there.
+    fn check_factions(&self) -> Result<(), String> {
+        if self.factions.len() > MAX_FACTIONS {
+            return Err(format!("at most {MAX_FACTIONS} factions"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for f in &self.factions {
+            let ctx = format!("faction '{}'", f.name);
+            if f.name.trim().is_empty() || f.name.len() > 48 || !seen.insert(f.name.as_str()) {
+                return Err(format!("{ctx}: faction names must be unique, non-empty and at most 48 bytes"));
+            }
+            if f.title.chars().count() > MAX_TITLE {
+                return Err(format!("{ctx}: title at most {MAX_TITLE} characters"));
+            }
+            for (v, what) in [(f.kill, "kill"), (f.hostile, "hostile"), (f.bounty, "bounty")] {
+                if !(-STANDING_MAX..=STANDING_MAX).contains(&v) {
+                    return Err(format!("{ctx}: {what} must be -{STANDING_MAX}..{STANDING_MAX}"));
+                }
+            }
+            if let Some(h) = f.hates.iter().find(|h| *h == &f.name || !self.factions.iter().any(|o| &o.name == *h)) {
+                return Err(format!("{ctx}: hates '{h}', which is not another faction"));
+            }
+        }
+        Ok(())
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {

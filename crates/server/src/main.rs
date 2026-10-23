@@ -8,6 +8,7 @@ mod botdir;
 mod ctl;
 mod director;
 mod encounter;
+mod factions;
 mod items;
 mod io;
 mod nav;

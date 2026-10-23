@@ -38,11 +38,13 @@ import {
   newQuest,
   removeAction,
   removeAttr,
+  removeFaction,
   removePlace,
   removeQuest,
   removeRoute,
   renameAction,
   renameAttr,
+  renameFaction,
   renamePlace,
   renameQuest,
   renameRoute,
@@ -84,7 +86,7 @@ async function ok<T = any>(ctx: Ctx, path: string, method = 'GET', body?: unknow
 
 // ---------------------------------------------------------------- the game file
 
-type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'quests' | 'attrs' | 'actions'
+type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'quests' | 'factions' | 'attrs' | 'actions'
 
 interface SectionOps {
   list(g: GameFile): { name: string }[]
@@ -115,6 +117,13 @@ const SECTIONS: Record<Section, SectionOps> = {
     fresh: (g) => newQuest(g) ?? { title: 'A new quest', text: '', giver: '', steps: [] },
     rename: renameQuest,
     remove: removeQuest,
+  },
+  factions: {
+    list: (g) => g.factions ?? [],
+    put: (g, l) => ({ ...g, factions: l }),
+    fresh: () => ({ kill: -10, hostile: -30, bounty: 2 }),
+    rename: renameFaction,
+    remove: removeFaction,
   },
   attrs: { list: (g) => g.attrs, put: (g, l) => ({ ...g, attrs: l }), fresh: newAttr, rename: renameAttr, remove: removeAttr },
   actions: { list: (g) => g.actions, put: (g, l) => ({ ...g, actions: l }), fresh: newAction, rename: renameAction, remove: removeAction },
@@ -369,7 +378,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'upsert',
     description:
-      'Add or change one entry of the game file, applied live: a place (a location players see named, an exit, a safe place where players cannot fight (safe: true), or a sound zone: sound one of sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle, and music one of explore, town, night, battle, eerie, holy, city, none), a route, a bot type (archetypes; leash sets how far a player it is fighting may run before it gives up), an item, a weather, a weather zone, an event, a quest (given by a bot type, with kill/visit/collect/talk steps, xp and item rewards; applies live, see game_schema quests), an attribute or an action (an action is a spell when it sets aim, area, hits, hold, fx, bolt, school or effect secs; those apply live without allow_restart, and null clears one). Entries are matched by name. By default the fields given are merged over the existing entry (or over sensible defaults for a new one), so { "name": "camp", "r": 30 } only changes the radius. See game_schema for every field.',
+      'Add or change one entry of the game file, applied live: a place (a location players see named, an exit, a safe place where players cannot fight (safe: true), or a sound zone: sound one of sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle, and music one of explore, town, night, battle, eerie, holy, city, none), a route, a bot type (archetypes; leash sets how far a player it is fighting may run before it gives up; faction names its faction), a faction (killing its members lowers standing with it, killing members of factions it hates raises it, and below hostile its fighters attack on sight and its traders and quest givers refuse; see game_schema FactionFile), an item, a weather, a weather zone, an event, a quest (given by a bot type, with kill/visit/collect/talk steps, xp and item rewards; applies live, see game_schema quests), an attribute or an action (an action is a spell when it sets aim, area, hits, hold, fx, bolt, school or effect secs; those apply live without allow_restart, and null clears one). Entries are matched by name. By default the fields given are merged over the existing entry (or over sensible defaults for a new one), so { "name": "camp", "r": 30 } only changes the radius. See game_schema for every field.',
     input: {
       section: z.enum(SECTION_NAMES),
       entry: z.record(z.string(), z.any()).describe('The entry, with at least its name.'),

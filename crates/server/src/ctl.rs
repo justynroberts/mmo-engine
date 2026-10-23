@@ -1096,6 +1096,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         // Quests are kept by name: everyone's are sent again, as indices may have moved.
         c.sim.quests = game.quests;
         c.sim.currency = game.currency;
+        c.sim.factions = game.factions;
         for v in c.sim.quest_ver.iter_mut() {
             *v = v.wrapping_add(1);
         }
