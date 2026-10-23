@@ -27,8 +27,10 @@ pub struct AttrDef {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Effect {
-    AddToTarget { attr: u8, delta: f32 },
-    AddToSelf { attr: u8, delta: f32 },
+    /// `secs` > 0 spreads `delta` over that many seconds.
+    /// `lasts` > 0 takes it back after that many seconds.
+    AddToTarget { attr: u8, delta: f32, secs: f32, lasts: f32 },
+    AddToSelf { attr: u8, delta: f32, secs: f32, lasts: f32 },
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +42,18 @@ pub struct ActionDef {
     /// Self attribute must be at least this value to use the action.
     pub requires: Option<(u8, f32)>,
     pub effects: Vec<Effect>,
+    /// Spells (`game::ActionFile`): none of these is in the content hash, so editing them applies live.
+    pub aim: crate::game::Aim,
+    pub area: f32,
+    pub hits: crate::game::Hits,
+    pub hold: Option<(crate::game::HoldKind, f32)>,
+    pub fx: String,
+    pub bolt: bool,
+    pub school: String,
+    pub desc: String,
+    pub lift: f32,
+    /// The level a player must be to use it.
+    pub level: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -111,9 +125,19 @@ impl Defs {
             range: 8.0,
             requires: Some((ATTR_ENERGY, 5.0)),
             effects: vec![
-                Effect::AddToTarget { attr: ATTR_HEALTH, delta: -10.0 },
-                Effect::AddToSelf { attr: ATTR_ENERGY, delta: -5.0 },
+                Effect::AddToTarget { attr: ATTR_HEALTH, delta: -10.0, secs: 0.0, lasts: 0.0 },
+                Effect::AddToSelf { attr: ATTR_ENERGY, delta: -5.0, secs: 0.0, lasts: 0.0 },
             ],
+            aim: Default::default(),
+            area: 0.0,
+            hits: Default::default(),
+            hold: None,
+            fx: String::new(),
+            bolt: false,
+            school: String::new(),
+            desc: String::new(),
+            lift: 0.0,
+            level: 0,
         }];
         let replicated = attrs
             .iter()
@@ -186,11 +210,11 @@ impl Defs {
             }
             for e in &a.effects {
                 match *e {
-                    Effect::AddToTarget { attr, delta } => {
+                    Effect::AddToTarget { attr, delta, .. } => {
                         h.bytes(&[10, attr]);
                         h.f32(delta);
                     }
-                    Effect::AddToSelf { attr, delta } => {
+                    Effect::AddToSelf { attr, delta, .. } => {
                         h.bytes(&[11, attr]);
                         h.f32(delta);
                     }
@@ -238,7 +262,7 @@ mod tests {
         r.road_speed = 2.0;
         assert_ne!(a.content_hash(), r.content_hash(), "prediction needs the road speed, so it is in the hash");
         let mut d = Defs::default_game();
-        d.actions[0].effects[0] = Effect::AddToTarget { attr: ATTR_HEALTH, delta: -11.0 };
+        d.actions[0].effects[0] = Effect::AddToTarget { attr: ATTR_HEALTH, delta: -11.0, secs: 0.0, lasts: 0.0 };
         assert_ne!(a.content_hash(), d.content_hash());
     }
 

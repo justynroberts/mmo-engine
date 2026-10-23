@@ -68,6 +68,22 @@ pub struct Client {
     /// Bag version last sent and how many more times to repeat it (a lost packet must not lose a pickup).
     pub inv_sent: u32,
     pub inv_burst: u8,
+    /// Level and experience: the version last sent, and how many more times to send it (as with the bag).
+    pub prog_sent: u32,
+    pub prog_burst: u8,
+    /// Quests: as with progress.
+    pub quest_sent: u32,
+    pub quest_burst: u8,
+    /// Party: as with progress.
+    pub party_sent: u32,
+    pub party_burst: u8,
+    /// Whether the last party sent had anyone in it (so leaving one is told once, and nothing is sent otherwise).
+    pub party_had: bool,
+    /// Progress, quests and gear as last saved (their versions), so a level, a quest or new gear is saved at once.
+    pub saved_vers: (u32, u32, u32),
+    /// Gear and riding: as with progress.
+    pub gear_sent: u32,
+    pub gear_burst: u8,
     /// How many ground items the last list held, so an empty one is sent once to clear the client's.
     pub ground_n: u16,
     pub baseline_tick: u32,
@@ -405,6 +421,16 @@ fn on_connect(
         arg: 0,
         inv_sent: u32::MAX,
         inv_burst: 0,
+        prog_sent: u32::MAX,
+        prog_burst: 0,
+        quest_sent: u32::MAX,
+        quest_burst: 0,
+        party_sent: u32::MAX,
+        party_burst: 0,
+        party_had: false,
+        saved_vers: (0, 0, 0),
+        gear_sent: u32::MAX,
+        gear_burst: 0,
         ground_n: 0,
         baseline_tick: 0,
         baseline: Vec::new(),
@@ -617,13 +643,22 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
     }
     let slot = c.slot;
     sim.set_account(slot, Some(&proto::secure::account_tag(&id)));
+    // Signing in again while the old session is still here (logged out a moment ago, not yet timed out): take
+    // the character from it as it is now, rather than from a save the writer may not have finished.
+    let mut taken = None;
     if let Some(&old) = clients.by_id.get(&id) {
         if old != sid {
+            if let Some(Some(oc)) = clients.slab.get(old as usize) {
+                taken = Some(saved(sim, oc));
+            }
             drop_client(sim, clients, store, old);
             stats.takeovers += 1;
         }
     }
-    if let Some((rec, _)) = clients.incoming.remove(&id) {
+    if let Some(rec) = taken.filter(|r| r.zone.is_none()) {
+        sim.restore(slot, &rec);
+        stats.restored += 1;
+    } else if let Some((rec, _)) = clients.incoming.remove(&id) {
         // Handed over by the zone the player just left: newer than anything we saved.
         sim.restore(slot, &rec);
         stats.restored += 1;
@@ -780,6 +815,25 @@ fn saved(sim: &Sim, c: &Client) -> crate::store::Record {
 }
 
 /// Save every proven player (autosave, shutdown, world restart).
+/// Save, within a second, every character whose level, experience, quests or gear changed since it was last saved,
+/// rather than waiting for the next save of everyone.
+pub fn save_progress(sim: &Sim, clients: &mut Clients, store: Option<&Store>) {
+    let Some(store) = store else { return };
+    let mut recs = Vec::new();
+    for c in clients.slab.iter_mut().flatten() {
+        let now = (sim.progress_ver[c.slot], sim.quest_ver[c.slot], sim.gear_ver[c.slot]);
+        if now != c.saved_vers {
+            c.saved_vers = now;
+            if c.proven && c.id != GUEST {
+                recs.push((c.id, saved(sim, c)));
+            }
+        }
+    }
+    if !recs.is_empty() {
+        store.save(recs);
+    }
+}
+
 pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
     let Some(store) = store else { return };
     let recs: Vec<_> = clients.slab.iter().flatten().filter(|c| c.proven && c.id != GUEST).map(|c| (c.id, saved(sim, c))).collect();
@@ -828,7 +882,18 @@ pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
     }
     let events = std::mem::take(&mut clients.chat_in);
     for (slot, ch, text) in &events {
+        // A "/" line is a command (a whisper, a party), not something said aloud.
+        if text.starts_with('/') && *ch != proto::chat::channel::NAME {
+            crate::social::command(sim, clients, *slot, text);
+            continue;
+        }
         say_from(sim, clients, *slot, *ch, text);
+    }
+    // Lines for one player only (a level reached, a place found), from the server.
+    for (slot, text) in std::mem::take(&mut sim.tells) {
+        if let Some(c) = clients.slab.iter_mut().flatten().find(|c| c.slot == slot) {
+            c.chat.deliver(0, proto::chat::channel::SAY, &text);
+        }
     }
     let said = std::mem::take(&mut sim.npc_say);
     for (slot, shout, text) in &said {
@@ -1007,6 +1072,74 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 tx.queue(c.addr, &sc.out);
             }
         }
+        // Your level and experience: when they change, and every few seconds regardless (only with levels on).
+        if let Some(l) = &sim.levels {
+            let ver = sim.progress_ver[c.slot];
+            if c.prog_sent != ver {
+                c.prog_sent = ver;
+                c.prog_burst = 3;
+            }
+            if c.prog_burst > 0 || (tick.wrapping_add(c.slot as u32)) % 60 == 0 {
+                c.prog_burst = c.prog_burst.saturating_sub(1);
+                let level = sim.ents.level[c.slot];
+                let next = if level >= l.cap { 0 } else { l.xp_for(level + 1) };
+                wire::encode_progress(&mut sc.buf, &wire::Progress { level, xp: sim.ents.xp[c.slot], at: l.xp_for(level), next });
+                if c.session.seal(&sc.buf, &mut sc.out) {
+                    tx.queue(c.addr, &sc.out);
+                }
+            }
+        }
+        // Your quests and any quest put to you: when they change (a few times over, as UDP may drop one).
+        if !sim.quests.is_empty() {
+            let ver = sim.quest_ver[c.slot];
+            if c.quest_sent != ver {
+                c.quest_sent = ver;
+                c.quest_burst = 3;
+            }
+            if c.quest_burst > 0 || (tick.wrapping_add(c.slot as u32)) % 100 == 0 {
+                c.quest_burst = c.quest_burst.saturating_sub(1);
+                wire::encode_quests(&mut sc.buf, sim.ents.offer[c.slot], &sim.quest_states(c.slot));
+                if c.session.seal(&sc.buf, &mut sc.out) {
+                    tx.queue(c.addr, &sc.out);
+                }
+            }
+        }
+        // What you wear and whether you ride, when it changes and now and then (only in a game with gear or mounts).
+        if sim.items.iter().any(|i| i.equip.is_some() || i.mount > 0.0) {
+            let ver = sim.gear_ver[c.slot];
+            if c.gear_sent != ver {
+                c.gear_sent = ver;
+                c.gear_burst = 3;
+            }
+            if c.gear_burst > 0 || (tick.wrapping_add(c.slot as u32)) % 200 == 0 {
+                c.gear_burst = c.gear_burst.saturating_sub(1);
+                wire::encode_gear(&mut sc.buf, sim.gear_of(c.slot), sim.mounted[c.slot] > 0.0);
+                if c.session.seal(&sc.buf, &mut sc.out) {
+                    tx.queue(c.addr, &sc.out);
+                }
+            }
+        }
+        // Your party (who is in it), when it changes and now and then while you are in one.
+        {
+            let ver = sim.party_ver[c.slot];
+            if c.party_sent != ver {
+                c.party_sent = ver;
+                c.party_burst = 3;
+            }
+            // Nothing to say to someone who has never been in one.
+            if sim.party[c.slot] == 0 && !c.party_had {
+                c.party_burst = 0;
+            }
+            if c.party_burst > 0 || (sim.party[c.slot] != 0 && (tick.wrapping_add(c.slot as u32)) % 100 == 0) {
+                c.party_burst = c.party_burst.saturating_sub(1);
+                let ids: Vec<u32> = if sim.party[c.slot] == 0 { Vec::new() } else { sim.party_of(c.slot).iter().map(|&m| sim.ents.id_of(m)).collect() };
+                c.party_had = !ids.is_empty() || c.party_burst > 0;
+                wire::encode_party(&mut sc.buf, &ids);
+                if c.session.seal(&sc.buf, &mut sc.out) {
+                    tx.queue(c.addr, &sc.out);
+                }
+            }
+        }
         // What lies nearby, twice a second, staggered across players; an empty list once to clear, and now and then anyway.
         let beat = tick.wrapping_add(c.slot as u32);
         if beat % 10 == 0 && (!sim.ground.is_empty() || c.ground_n > 0 || beat % 100 == 0) {
@@ -1029,6 +1162,22 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
             wire::encode_ground(&mut sc.buf, &sc.ground);
             if c.session.seal(&sc.buf, &mut sc.out) {
                 tx.queue(c.addr, &sc.out);
+            }
+        }
+
+        // Spells and blows near you, each for a few ticks running (the client knows a repeat by its seq).
+        if !sim.casts.is_empty() {
+            let near: Vec<wire::Cast> = sim
+                .casts
+                .iter()
+                .filter(|(_, s, _)| (sim.ents.x[*s] - px).powi(2) + (sim.ents.y[*s] - py).powi(2) <= r2)
+                .map(|c| c.2)
+                .collect();
+            if !near.is_empty() {
+                wire::encode_casts(&mut sc.buf, &near[near.len().saturating_sub(wire::MAX_CASTS_SENT)..]);
+                if c.session.seal(&sc.buf, &mut sc.out) {
+                    tx.queue(c.addr, &sc.out);
+                }
             }
         }
 
@@ -1101,6 +1250,16 @@ mod tests {
                 arg: 0,
                 inv_sent: u32::MAX,
                 inv_burst: 0,
+                prog_sent: u32::MAX,
+                prog_burst: 0,
+                quest_sent: u32::MAX,
+                quest_burst: 0,
+                party_sent: u32::MAX,
+                party_burst: 0,
+                party_had: false,
+                saved_vers: (0, 0, 0),
+                gear_sent: u32::MAX,
+                gear_burst: 0,
                 ground_n: 0,
                 baseline_tick: 0,
                 baseline: Vec::new(),

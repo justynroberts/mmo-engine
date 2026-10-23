@@ -31,6 +31,12 @@ pub mod channel {
     /// Server to client only, from the server (0): a message to put across the screen as well as in chat (an
     /// event's banner). Older clients just show it as a chat line.
     pub const BANNER: u8 = 3;
+    /// Server to client: a whisper to you, from the speaker (`from`).
+    pub const WHISPER: u8 = 4;
+    /// Server to client: your own whisper, echoed back; `from` is who it went to.
+    pub const WHISPER_SENT: u8 = 5;
+    /// Server to client: said to your party (`/p`).
+    pub const PARTY: u8 = 6;
 }
 
 pub mod kind {

@@ -113,6 +113,7 @@ struct Client {
     redirect: Option<wire::Redirect>,
     bag: Vec<(u8, u8)>,
     ground: Vec<wire::GroundEntry>,
+    casts: Vec<wire::Cast>,
 }
 
 enum Outcome {
@@ -161,6 +162,7 @@ fn connect_full(srv: &Srv, pinned: Option<[u8; 32]>, hash: u64, identity: Option
                             redirect: None,
                             bag: Vec::new(),
                             ground: Vec::new(),
+                            casts: Vec::new(),
                         }));
                     }
                 }
@@ -217,6 +219,10 @@ impl Client {
                     }
                     if let Some(g) = wire::decode_ground(inner) {
                         self.ground = g;
+                        continue;
+                    }
+                    if let Some(k) = wire::decode_casts(inner) {
+                        self.casts.extend(k);
                         continue;
                     }
                     if inner.first() == Some(&proto::chat::kind::BATCH) {
@@ -1268,6 +1274,7 @@ fn start_zone_lines() -> Zones {
         exit: exit.map(|(zone, x, y)| proto::game::Exit { zone: zone.into(), x, y }),
         sound: String::new(),
         music: String::new(),
+        safe: false,
     };
     let mut town = GameFile::default_game();
     town.walls = Some(vec![]);
@@ -1283,7 +1290,8 @@ fn start_zone_lines() -> Zones {
 fn walk_to(c: &mut Client, x: f32, y: f32, mut done: impl FnMut(&Client) -> bool) {
     let t = Instant::now();
     while !done(c) {
-        assert!(t.elapsed() < Duration::from_secs(30), "never got there: at {:?}, heading for ({x}, {y})", c.pos());
+        // A random spawn can be across the world: 1,400 units at 20 a second is over a minute.
+        assert!(t.elapsed() < Duration::from_secs(90), "never got there: at {:?}, heading for ({x}, {y})", c.pos());
         let (px, py) = c.pos();
         let (dx, dy) = (x - px, y - py);
         let d = dx.hypot(dy).max(0.001);
@@ -2687,4 +2695,29 @@ fn players_claim_names_that_stay_theirs_and_everyone_can_look_them_up() {
     assert_eq!(server_says(&mut bob, &mut [&mut ana]), "You are now known as Ana Lee.");
     drop(srv);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_spell_edit_applies_live_and_its_casts_reach_the_client_a_few_times_over() {
+    let srv = start(&[]);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    let zap = &mut game["actions"][0];
+    zap["aim"] = serde_json::json!("self");
+    zap["area"] = serde_json::json!(10.0);
+    zap["fx"] = serde_json::json!("fire");
+    let (code, out) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(code, 200, "{out}");
+    assert_eq!(out["reset"], false, "spell fields are not in the content hash");
+    let (_, info) = json(&srv, "GET", "/api/info", "");
+    assert_eq!(info["actions"][0]["fx"], "fire");
+    assert_eq!(info["actions"][0]["area"], 10.0);
+    let mut c = connect(&srv);
+    c.send_input(0, 0);
+    c.pump(300);
+    act(&mut c, proto::defs::ACTION_ZAP, 0);
+    c.pump(400);
+    let mine: Vec<_> = c.casts.iter().filter(|k| k.caster == c.entity).collect();
+    assert!(!mine.is_empty(), "no cast came back");
+    assert!(mine.iter().all(|k| k.action == proto::defs::ACTION_ZAP && k.target == 0), "{mine:?}");
+    assert!(mine.len() >= 2 && mine.iter().all(|k| k.seq == mine[0].seq), "one cast, repeated: {mine:?}");
 }

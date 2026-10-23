@@ -6,7 +6,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api, type GameFile, type Info, type PutResult, type State, type WorldGeom } from './api'
 import { Builder, initialBuilder, type BuilderState } from './components/Builder'
 import { ChatPanel } from './components/Chat'
-import { ActionsEditor, AttrsEditor, BotsEditor, ItemsEditor } from './components/Editors'
+import { ActionsEditor, AttrsEditor, BotsEditor, ItemsEditor, QuestsEditor } from './components/Editors'
 import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
 import { Header, NetworkPanel } from './components/StatusBar'
 import type { Daylight } from './daylight'
@@ -26,7 +26,7 @@ const SECTIONS: readonly { id: Section; name: string; what: string; icon: Icon; 
   { id: 'bots', name: 'Bots', what: 'Types, spawning, loot', icon: Robot, map: true, title: 'Bots', help: 'What kinds of bot there are, how they behave and what they drop, and putting more of them into the world.' },
   { id: 'sky', name: 'Sky', what: 'Day, weather, zones', icon: CloudSun, map: false, title: 'Sky and weather', help: 'When it is light and dark, the weather everywhere, and weather that stays over one place: mist, storms, a healing spring.' },
   { id: 'events', name: 'Events', what: 'What happens, when', icon: Lightning, map: false, title: 'Events', help: 'World and local events, raids and bosses: scripts that run over time, with banners, waves, a fight to win in time and rewards. Started by hand, on a timer, when players gather, at a time of day, or after another event.' },
-  { id: 'rules', name: 'Rules', what: 'Attributes, actions, items', icon: SlidersHorizontal, map: false, title: 'Game rules', help: 'What every character has (health, energy), what they can do to each other, and the items in the world. Some changes restart the world: the header says when.' },
+  { id: 'rules', name: 'Rules', what: 'Attributes, actions, items, quests', icon: SlidersHorizontal, map: false, title: 'Game rules', help: 'What every character has (health, energy), what they can do to each other, the items in the world and the quests bots give. Some changes restart the world: the header says when.' },
   { id: 'server', name: 'Server', what: 'Connect, network, JSON', icon: HardDrives, map: false, title: 'Server', help: 'How players connect, how the server is coping, and the whole game file as JSON.' },
 ]
 /** Pages within a section, where it has more than one. */
@@ -34,7 +34,7 @@ const SUBS: Partial<Record<Section, readonly (readonly [string, string])[]>> = {
   live: [['inspect', 'Inspect'], ['chat', 'Chat']],
   world: [['terrain', 'Terrain'], ['build', 'Places, routes and walls']],
   bots: [['types', 'Bot types'], ['spawn', 'Spawn and scatter']],
-  rules: [['attrs', 'Attributes'], ['actions', 'Actions'], ['items', 'Items']],
+  rules: [['attrs', 'Attributes'], ['actions', 'Actions'], ['items', 'Items'], ['quests', 'Quests']],
   server: [['connect', 'Connect'], ['network', 'Network'], ['json', 'Game file (JSON)']],
 }
 
@@ -461,7 +461,15 @@ export default function App() {
         return draft ? <God part={id} game={draft} live={live} setGame={setGame} director={stats?.director} drop={drop} setDrop={setDrop} note={note} onDaylight={onDaylight} /> : loading
       case 'rules':
         if (!draft) return loading
-        return sub === 'actions' ? <ActionsEditor game={draft} setGame={setGame} /> : sub === 'items' ? <ItemsEditor game={draft} setGame={setGame} /> : <AttrsEditor game={draft} setGame={setGame} />
+        return sub === 'actions' ? (
+          <ActionsEditor game={draft} setGame={setGame} />
+        ) : sub === 'items' ? (
+          <ItemsEditor game={draft} setGame={setGame} />
+        ) : sub === 'quests' ? (
+          <QuestsEditor game={draft} setGame={setGame} />
+        ) : (
+          <AttrsEditor game={draft} setGame={setGame} />
+        )
       case 'server':
         return sub === 'network' ? (
           <NetworkPanel s={stats} />

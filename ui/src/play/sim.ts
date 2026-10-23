@@ -216,6 +216,11 @@ export class Predictor {
     this.dt = f(1 / hz)
     this.radius = f(radius)
   }
+  /** A haste or a slow (the replicated `speed` attribute): the speed steps are predicted at from now on. */
+  setSpeed(speed: number) {
+    this.speed = speed
+  }
+
 
   /** Predict one tick of an input that is also being sent to the server. */
   applyInput(world: World, seq: number, dirX: number, dirY: number) {

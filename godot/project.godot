@@ -5,12 +5,14 @@ config_version=5
 config/name="mmo-engine client"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
+boot_splash/bg_color=Color(0.02, 0.022, 0.026, 1)
+boot_splash/show_image=false
 
 [display]
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep_height"
+window/stretch/aspect="expand"
 
 [rendering]
 renderer/rendering_method="forward_plus"

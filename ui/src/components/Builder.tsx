@@ -550,6 +550,7 @@ function PlacesSection({ game, setGame, b, setB }: Edit & Pick<Props, 'b' | 'set
               <Range label="Radius" value={p.r} min={1} max={150} step={1} onChange={(r) => patch(i, { r })} />
             </div>
             <div className="flex items-end gap-2 pt-1">
+              <Toggle label="Safe (no PvP)" checked={!!p.safe} onChange={(on) => patch(i, { safe: on || undefined })} />
               <Toggle
                 label="Leads somewhere"
                 checked={!!p.exit}

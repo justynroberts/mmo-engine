@@ -6,13 +6,24 @@ extends Node3D
 ##
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
-## Class: --class knight (default), barbarian, mage or rogue.
+## Class: --class knight (default), barbarian, mage or rogue. --guest plays a throwaway character, not this machine's own.
 ## Screenshots: --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
 const SoundScript := preload("res://scripts/sound.gd")
 const JoinScript := preload("res://scripts/join.gd")
+const SpellFx := preload("res://scripts/spellfx.gd")
+const JournalScript := preload("res://scripts/journal.gd")
+const QuestsScript := preload("res://scripts/quests.gd")
+const ShopScript := preload("res://scripts/shop.gd")
+## Logged out (the menu): the scene reloads to the join screen, even when started with --host.
+static var _logged_out := false
+## The title theme: it plays over the join and loading screens and fades as the world appears.
+const TITLE_THEME := "res://sounds/theme/ar_aghaidh.ogg"
+## The keys for the spell bar, in order.
+const SPELL_KEYS := [KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P, KEY_Z, KEY_C, KEY_H, KEY_K, KEY_COMMA]
+const HOLD_WORDS := ["", "You are mesmerised.", "You are stunned.", "You are rooted to the spot."]
 var theme: Node3D        # the look: see scripts/theme.gd
 var world: RefCounted    # the world as data: see scripts/world_data.gd
 
@@ -24,6 +35,15 @@ static var _hop := {}
 var _hopping := false     # leaving: the dark is coming down
 var _arriving := false    # arrived: lift the dark once we are in the world
 var my_identity := ""
+## Loading: the screen stays dark (scripts/hud.gd loading) and the keys do nothing until we are in, the walls and land
+## round us have come and been drawn, and a few frames have gone by to compile what they need.
+var _loading := false
+var _walls_ready := false
+var _blocks_ready := false
+var _load_frames := 0
+var _load_since := 0.0
+var _final_for := 0.0     # seconds in the last stage of loading (it lifts after 8 regardless)
+var _smooth := 0           # frames in a row that came quickly (no stall from compiling), while loading
 var _was_in := false       # we have seen ourselves in the world on this connection's server
 var _retries := 0          # reconnects tried before ever getting in
 var join: CanvasLayer      # the join screen (scripts/join.gd) while it is up, for a client started without --host
@@ -79,6 +99,25 @@ var target_id := 0
 var health_max := 100.0
 var health_idx := ""
 var attack_id := -1
+## Spells: the game's actions after the first (which is the plain attack), on the spell bar. By id: when each is ready.
+var spells: Array = []
+var all_spells: Array = []  # every spell the game has (its actions after the first)
+var bar_order: Array = []   # the names on the spell bar, in key order: the player's choice, kept per server
+var journal: CanvasLayer    # the spell journal and the menu: scripts/journal.gd
+var questui: CanvasLayer    # quest offers, the quest log and the tracker: scripts/quests.gd
+var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
+var _shop_with := 0         # the merchant the shop is open on
+var _horses := {}           # entity id -> the horse drawn under a rider
+var spell_ready := {}
+var _gcd_until := 0.0      # the short pause after any spell (the server's GCD_SECS) before the next
+var actions_by_id := {}
+var spellfx: Node3D
+var my_level := 0          # our level (0 when the game has none)
+var _progress := {}        # the server's last word on our level and experience: {level, xp, at, next}
+var my_held := 0           # how we are held (proto::game::HoldKind), 0 when free
+var title_music: AudioStreamPlayer
+var _title_on := false     # the title theme is up: the game's own music waits
+var _aloft := {}           # entity id -> {air, since}: how long its "airborne" has stayed put (levitating)
 var t_total := 0.0
 var smoke := false
 var walk_from := Vector2.ZERO
@@ -142,7 +181,8 @@ func _ready() -> void:
 	if _hop.has("to"):
 		args.erase("walk") # where --walk pointed was on the map we left
 	smoke = args.has("smoke")
-	if args.has("fullscreen"):
+	# The packaged app opens full screen (F11 or --windowed for a window); run from the project it stays windowed.
+	if args.has("fullscreen") or (OS.has_feature("template") and not args.has("windowed")):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	if args.has("zoom"):
 		zoom = clampf(float(args["zoom"]), 8.0, 60.0)
@@ -154,6 +194,17 @@ func _ready() -> void:
 	# Screenshots, smoke tests and --mute play nothing.
 	if smoke or args.has("shot") or args.has("mute"):
 		sound.mode = 2
+	sound.music_for = "" # nothing from the game until we are in it
+	if sound.mode != 2 and _hop.is_empty() and ResourceLoader.exists(TITLE_THEME):
+		var theme_stream: AudioStream = load(TITLE_THEME)
+		if theme_stream is AudioStreamOggVorbis:
+			(theme_stream as AudioStreamOggVorbis).loop = true
+		title_music = AudioStreamPlayer.new()
+		title_music.stream = theme_stream
+		title_music.volume_db = -7.0
+		add_child(title_music)
+		title_music.play()
+		_title_on = true
 	world_map = MapScript.new()
 	world_map.visible = false
 	hud.add_child(world_map)
@@ -162,13 +213,35 @@ func _ready() -> void:
 	hud.mode_pressed.connect(func(): _set_building(not building))
 	hud.chat_submitted.connect(_on_chat)
 	hud.ability_pressed.connect(_on_ability)
+	hud.spell_pressed.connect(_cast)
+	spellfx = SpellFx.new()
+	add_child(spellfx)
+	journal = JournalScript.new()
+	add_child(journal)
+	journal.bar_changed.connect(func(order: Array):
+		bar_order = order
+		_save_bar()
+		_apply_bar())
+	journal.log_out.connect(_log_out)
+	questui = QuestsScript.new()
+	add_child(questui)
+	questui.accepted.connect(func(i: int): net.accept_quest(i))
+	questui.declined.connect(func(): net.abandon_quest(255))
+	questui.abandoned.connect(func(i: int): net.abandon_quest(i))
+	shopui = ShopScript.new()
+	add_child(shopui)
+	shopui.bought.connect(func(i: int): net.buy(_shop_with, i))
+	shopui.sold.connect(func(slot: int): net.sell(_shop_with, slot))
+	journal.unequip.connect(func(g: int): net.unequip(g))
+	journal.quit.connect(func(): get_tree().quit())
 	if smoke:
 		hud.status.text = "smoke test"
 	if _hop.has("to"):
 		hud.travel("Travelling to %s" % _hop["to"], 0.0)
 		_arriving = true
 	# Packaged and double-clicked, there are no arguments: ask which server and what to be called.
-	if not OS.get_cmdline_user_args().has("--host") and _hop.is_empty() and not smoke and not args.has("shot"):
+	if (_logged_out or not OS.get_cmdline_user_args().has("--host")) and _hop.is_empty() and not smoke and not args.has("shot"):
+		_logged_out = false
 		_ask_join("")
 		return
 	_start()
@@ -227,6 +300,9 @@ func _fetch_raw(url: String) -> Array:
 
 func _fail(msg: String) -> void:
 	push_error(msg)
+	if _loading:
+		_loading = false
+		hud.loaded()
 	if args.has("joined") and net == null:
 		# Not in yet: back to the join screen to try another address.
 		args.erase("joined")
@@ -240,7 +316,12 @@ func _fail(msg: String) -> void:
 		get_tree().quit(1) # a screenshot run would otherwise wait forever
 
 func _start() -> void:
+	if not smoke and not args.has("shot"):
+		_loading = true
+		hud.loading(0.02, _quip("server"))
 	info_text = await _fetch("http://%s/play/info" % args["web"])
+	if _loading:
+		hud.loading(0.1, _quip("world"))
 	if info_text == "":
 		return _fail("could not reach http://%s/play/info" % args["web"])
 	info = JSON.parse_string(info_text)
@@ -293,6 +374,13 @@ func _start() -> void:
 	if info.get("actions", []).size() > 0:
 		attack_id = int(info["actions"][0]["id"])
 		action_range = float(info["actions"][0].get("range", 8.0))
+	for a in info.get("actions", []):
+		actions_by_id[int(a["id"])] = a
+	questui.set_quests(info.get("quests", []) if info.get("quests") is Array else [])
+	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
+	all_spells = info.get("actions", []).slice(1)
+	bar_order = _load_bar()
+	_apply_bar()
 	build = info.get("build", {})
 	if not build.is_empty():
 		var gm := BoxMesh.new()
@@ -337,11 +425,20 @@ func _start() -> void:
 			if channel == 3: # a banner: an event's news, across the screen too, with a horn
 				hud.announce(text)
 				sound.play("horn", -3.0, 0.0)
+		elif channel == 4: # a whisper to us
+			hud.say("[color=#e8a0ff]%s whispers:[/color] [color=#f0d8ff]%s[/color]" % [_name(from), text])
+			sound.play("chime", -8.0, 0.0)
+		elif channel == 5: # our own whisper, echoed
+			hud.say("[color=#e8a0ff]To %s:[/color] [color=#f0d8ff]%s[/color]" % [_name(from), text])
+		elif channel == 6: # party chat
+			hud.say("[color=#8fd3ff][Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
 		else:
 			var who := "You" if from == net.get_self_id() else _name(from)
 			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))
 	var id := _identity()
 	my_identity = id
+	if _loading:
+		hud.loading(0.25, _quip("connect"))
 	var err: String = net.connect_to(String(args["host"]), int(args["udp"]), info_text, id)
 	if err != "":
 		return _fail(err)
@@ -371,7 +468,7 @@ func _identity() -> String:
 	var path := "user://identity.txt"
 	if _hop.has("identity"):
 		return String(_hop["identity"])
-	if smoke or args.has("shot"):
+	if smoke or args.has("shot") or args.has("guest"):
 		return net.new_identity() # a test or a screenshot never plays as (or renames) the player's own character
 	if FileAccess.file_exists(path):
 		return FileAccess.get_file_as_string(path).strip_edges()
@@ -435,7 +532,22 @@ func _set_health_bar(n: Node3D, hp: float, show: bool) -> void:
 	bar.region_rect = Rect2(0, 0, maxf(1.0, round(64.0 * hp)), 6)
 	bar.modulate = Color("d9412e").lerp(Color("5ac85a"), clampf(hp * 1.4 - 0.2, 0.0, 1.0))
 
+var _perf_t := 0.0
+
 func _process(delta: float) -> void:
+	if args.has("perf"): # --perf: frame rate, frame time, draw calls and the like every two seconds
+		_perf_t += delta
+		if _perf_t >= 2.0:
+			_perf_t = 0.0
+			print("PERF fps %d  frame %.1f ms  process %.1f ms  draws %d  prims %dk  objects %d  nodes %d  ents %d  vram %d MB" % [
+				Performance.get_monitor(Performance.TIME_FPS), 1000.0 / maxf(Performance.get_monitor(Performance.TIME_FPS), 1.0),
+				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+				Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME) / 1000, Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME),
+				Performance.get_monitor(Performance.OBJECT_NODE_COUNT), ents.size(), Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576])
+			var vp := get_viewport().get_viewport_rid()
+			RenderingServer.viewport_set_measure_render_time(vp, true)
+			print("PERF render cpu %.1f ms  lights %d  darkness %.2f  weather %s" % [RenderingServer.viewport_get_measured_render_time_cpu(vp),
+				theme.lights_burning(), theme.darkness, _shown_weather.get("name", "clear")])
 	if net == null:
 		return
 	t_total += delta
@@ -449,6 +561,8 @@ func _process(delta: float) -> void:
 			if args.has("name") and args["name"] is String:
 				net.set_display_name(String(args["name"]))
 			return
+	if _loading:
+		_load_step(delta, status)
 	if status == 4:
 		if not _hopping:
 			_hop_zone()
@@ -475,6 +589,10 @@ func _process(delta: float) -> void:
 		if not mine and node.has_node("tag"):
 			var label := node.get_node("tag") as Label3D
 			var nm := _name(id)
+			if e.has("level") and float(e["level"]) >= 1.0:
+				nm = "%s  %d" % [nm, int(round(float(e["level"])))] # their level beside their name
+			if info.get("shops") is Dictionary and (info["shops"] as Dictionary).has(_name(id)):
+				nm += "  · trader"
 			if label.text != nm:
 				label.text = nm
 		var unlit := has_lit and float(e.get("lit", 1.0)) < 0.5
@@ -542,6 +660,7 @@ func _process(delta: float) -> void:
 		stream_t = 0.0
 		last_stream = me_pos
 		theme.update(me_pos)
+	_spells_frame(list, self_id)
 	# Everyone near us carries a torch at night; the theme gives the nearest ones real light.
 	var me_node: Node3D = ents.get(self_id)
 	var carried := []
@@ -577,7 +696,10 @@ func _process(delta: float) -> void:
 		badges.append("SNEAKING")
 	if _in_zone != "":
 		badges.append(_in_zone.to_upper())
-	hud.set_player(_name(self_id) if self_id != 0 else cls.capitalize(), cls.capitalize(), cls.left(1).to_upper(), _bars(me_e, true), badges)
+	if info.get("pvp", false) == true:
+		badges.append("SAFE" if _in_safe() else "PVP") # other players can hurt you here, or cannot
+	var sub := cls.capitalize() if my_level <= 0 else "%s, level %d" % [cls.capitalize(), my_level]
+	hud.set_player(_name(self_id) if self_id != 0 else cls.capitalize(), sub, cls.left(1).to_upper(), _bars(me_e, true), badges)
 	var others := []
 	for e in list:
 		if e["id"] != self_id:
@@ -600,6 +722,82 @@ func _process(delta: float) -> void:
 	if _arriving and status == 1 and ents.has(self_id):
 		_arriving = false
 		hud.arrive()
+
+## What the loading screen says at each stage, a new line every few seconds so a slow stage has something to read.
+const QUIPS := {
+	"server": ["Sending a raven to the server", "Asking the druids for directions", "Knocking politely on the server's door"],
+	"world": ["Unrolling the map, carefully", "Counting the sheep (there are many)", "Persuading the rivers to run downhill"],
+	"connect": ["Paying the ferryman", "Shaking hands with the gatekeeper", "Swearing it was not us who started the fight"],
+	"you": ["Finding where you left yourself", "Polishing your helmet", "Waking your character, who was napping"],
+	"walls": ["Stacking stones on stones", "Reminding the walls to be solid", "Building the round towers, again"],
+	"land": ["Planting oaks, one at a time", "Placing every rock by hand", "Telling the wolves to wait their turn",
+		"Herding stray cattle back into the fields", "Mowing the grass to a reasonable height"],
+	"light": ["Lighting the torches", "Hanging the sun up", "Tuning the harps", "Warning the brigands you are coming"],
+}
+
+func _quip(stage: String) -> String:
+	var lines: Array = QUIPS[stage]
+	return lines[int(Time.get_ticks_msec() / 2500) % lines.size()]
+
+## While loading: how far along we are, and lift the screen once everything round us is in and drawn. A slow server
+## or a missing piece does not hold it forever: 30 s after getting in it lifts anyway.
+func _load_step(delta: float, status: int) -> void:
+	if status > 1:
+		# Refused, or closed for good: lift the screen so the reason shows. A lapsed first handshake is retried.
+		if status == 2 or _was_in or _retries >= 3:
+			_loading = false
+			hud.loaded()
+		return
+	if not _was_in:
+		hud.loading(0.35, _quip("you"))
+		return
+	_load_since += delta
+	var parts := 0.0
+	var have := 0.0
+	parts += 1.0
+	have += 1.0 if _walls_ready else 0.0
+	if world_parts:
+		var t := Vector2i(int(floor(me_pos.x / WorldData.TILE)), int(floor(me_pos.y / WorldData.TILE)))
+		var n := 0
+		for j in range(t.y - 2, t.y + 3):
+			for i in range(t.x - 2, t.x + 3):
+				n += 1 if world_tiles.has(Vector2i(i, j)) else 0
+		parts += 1.0
+		have += n / 25.0
+	if not build.is_empty():
+		parts += 1.0
+		have += 1.0 if _blocks_ready else 0.0
+	var frac := have / parts
+	var text := _quip("walls" if not _walls_ready else "land" if frac < 1.0 else "light")
+	if frac < 1.0 and _load_since < 30.0:
+		hud.loading(0.4 + 0.45 * frac, text)
+		return
+	if _load_frames == 0:
+		theme.update(me_pos) # draw what has come before we are shown
+		last_stream = me_pos
+		spellfx.prewarm(Vector3(me_pos.x, _height(me_pos.x, me_pos.y), me_pos.y))
+	_load_frames += 1
+	# The rest that makes the first look right: our own name, our level (when the game has levels), the names of
+	# whoever is near, and a few smooth frames in a row (nothing still compiling). 30 s in, it lifts regardless.
+	var me_id: int = net.get_self_id()
+	var has_levels := false
+	for a in info.get("attrs", []):
+		has_levels = has_levels or String(a.get("name", "")) == "level"
+	var named := names.has(me_id)
+	for id in ents:
+		if id != me_id and _dist_to(id) < 60.0 and not names.has(id):
+			_names_want[id] = true
+			named = false
+	var levelled := not has_levels or int(net.progress().get("level", 0)) > 0
+	_smooth = _smooth + 1 if delta < 0.1 else 0 # a compile stall takes longer than a slow frame
+	_final_for += delta
+	var ready := named and levelled and _smooth >= 12
+	hud.loading(0.85 + 0.15 * minf(1.0, _load_frames / 20.0), text)
+	if _load_frames >= 20 and (ready or _final_for >= 8.0 or _load_since >= 30.0):
+		_loading = false
+		hud.loaded()
+		_fade_title()
+		_welcome()
 
 ## A zone line handed us to another zone: darken the screen, then reload the scene against that zone, keeping our
 ## identity, so its world loads and its server restores the character it was just handed.
@@ -661,6 +859,7 @@ func _poll_tiles(delta: float) -> void:
 	tiles_poll = 0.25
 	var path: String = net.tiles_wanted(me_pos)
 	if path == "":
+		_walls_ready = _was_in
 		return
 	tiles_busy = true
 	var res := await _fetch_raw("http://%s%s" % [args["web"], path])
@@ -766,6 +965,7 @@ func _poll_blocks(delta: float) -> void:
 			blocks[k] = {"b": int(c[2]), "k": kinds, "o": c[4]}
 		net.set_column(cx, cy, int(c[2]), _mask(kinds)) # prediction climbs, falls and walks under as the server does
 	blocks_ver = int(d.get("ver", blocks_ver))
+	_blocks_ready = true
 	if not changed.is_empty():
 		theme.set_blocks(blocks, changed.keys())
 
@@ -1279,6 +1479,10 @@ func _weather(delta: float) -> void:
 			theme.set_daylight(fresh["daylight"])
 		theme.set_zones(fresh.get("weather_zones", []) if fresh.get("weather_zones") is Array else [])
 		locations = fresh.get("locations", []) if fresh.get("locations") is Array else []
+		info["pvp"] = fresh.get("pvp", false)
+		if fresh.get("quests") is Array and fresh["quests"] != info.get("quests"):
+			info["quests"] = fresh["quests"]
+			questui.set_quests(fresh["quests"])
 
 func _apply_weather(w: Dictionary) -> void:
 	if w == weather:
@@ -1305,6 +1509,7 @@ func _listen(delta: float) -> void:
 	var p := me_pos
 	var dark: float = theme.darkness
 	var sea := 0.0
+	var shore := 0.0
 	var trees := 0
 	var houses := 0
 	var fire_d := INF
@@ -1320,6 +1525,7 @@ func _listen(delta: float) -> void:
 					if theme.height(p.x + cos(a) * r, p.y + sin(a) * r) < world.sea_level:
 						wet += wgt
 			sea = clampf(wet / all * 2.4, 0.0, 1.0)
+			shore = 1.0 - smoothstep(3.0, 32.0, _shore_distance(p)) # surf breaking, close to the edge
 		var cx := floori(p.x / world.CELL)
 		var cy := floori(p.y / world.CELL)
 		for i in range(cx - 1, cx + 2):
@@ -1337,7 +1543,8 @@ func _listen(delta: float) -> void:
 	var forest := clampf(trees / 16.0, 0.0, 1.0)
 	var kind := String(theme.weather_drawn())
 	var w := {
-		"sea": sea,
+		"sea": sea * (1.0 - shore * 0.5),
+		"shore": shore,
 		"river": (1.0 - smoothstep(6.0, 50.0, _river_distance(p))) * 0.9,
 		"forest": forest * (1.0 - dark) * (1.0 - sea * 0.5),
 		"night": dark * clampf(0.35 + forest, 0.0, 1.0) * (1.0 - sea * 0.6),
@@ -1358,6 +1565,9 @@ func _listen(delta: float) -> void:
 	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
 	var fighting := t_total - _fight_at < 8.0
 	var m := String(zone.get("music", ""))
+	# Now and then a smith, a dog, a cow or a rooster (sound.gd INCIDENTAL): a town has houses all round, a farm a few.
+	sound.daylight = 1.0 - dark
+	sound.incidental = "" if fighting or own != "" else ("town" if houses >= 6 else ("farm" if houses >= 1 else ""))
 	if fighting:
 		m = "battle"
 	elif m == "":
@@ -1365,8 +1575,9 @@ func _listen(delta: float) -> void:
 	if m != _music_pick:
 		_music_pick = m
 		_music_since = t_total
-	if fighting or t_total - _music_since > 3.0:
-		sound.music_for = _music_pick
+	# A change of mood waits a few seconds (passing a house is not a town); the first pick does not.
+	if fighting or t_total - _music_since > 3.0 or (sound.music_for == "" and not _title_on):
+		sound.music_for = "" if _title_on else _music_pick
 
 ## The smallest place round a point that has a sound or music of its own (/play/info locations), or {}.
 func _sound_zone(p: Vector2) -> Dictionary:
@@ -1382,6 +1593,20 @@ func _sound_zone(p: Vector2) -> Dictionary:
 	return best
 
 ## Distance to the nearest river's middle (INF with none near).
+## How far the water's edge is (land to sea, or sea to land when we stand in it), looking out to SHORE_FAR; INF when
+## there is no edge that near, so far out at sea or well inland there is no surf.
+const SHORE_FAR := 36.0
+func _shore_distance(p: Vector2) -> float:
+	var wet: bool = theme.height(p.x, p.y) < world.sea_level
+	var r := 2.0
+	while r <= SHORE_FAR:
+		for k in 16:
+			var a := k * TAU / 16.0
+			if (theme.height(p.x + cos(a) * r, p.y + sin(a) * r) < world.sea_level) != wet:
+				return r
+		r += 3.0
+	return INF
+
 func _river_distance(p: Vector2) -> float:
 	var best := INF
 	if world == null:
@@ -1432,7 +1657,7 @@ func _footsteps() -> void:
 	if s == "water" and _surface != "water" and _surface != "":
 		sound.play("splash", -6.0)
 	_surface = s
-	sound.play("step_" + s, -11.0 if s == "grass" else -9.0, 0.1)
+	sound.play("step_" + s, -18.0 if s == "grass" else -16.0, 0.1)
 
 ## Something came into the bag or went out of it.
 func _hear_bag(bag: Array) -> void:
@@ -1589,6 +1814,9 @@ func _camera() -> void:
 func _drive() -> void:
 	if smoke:
 		return # the scripted session steers
+	if _loading or my_held in [1, 2, 3]:
+		net.set_move(Vector2.ZERO) # held: the server would refuse the steps anyway
+		return
 	if hud.typing():
 		net.set_move(Vector2.ZERO)
 		return
@@ -1642,7 +1870,7 @@ func _pointer() -> Vector2:
 	return get_viewport().get_visible_rect().size / 2.0 if fpv else get_viewport().get_mouse_position()
 
 func _unhandled_input(ev: InputEvent) -> void:
-	if net == null:
+	if net == null or _loading:
 		return
 	if ev is InputEventMouseMotion and fpv and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		yaw -= ev.relative.x * LOOK
@@ -1667,6 +1895,17 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_pick(_pointer())
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
 		var k: int = ev.keycode
+		# The journal and the menu come first: Esc closes them, and while one is up the game keys rest.
+		if k == KEY_F2:
+			journal.toggle_journal()
+			return
+		if k == KEY_F3:
+			questui.toggle_log()
+			return
+		if k == KEY_ESCAPE and (shopui.escape() or questui.escape() or journal.escape()):
+			return
+		if journal.is_open() or questui.is_open() or shopui.is_open():
+			return
 		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
 			hud.open_chat()
@@ -1674,6 +1913,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			hud.toggle_help()
 		elif k == KEY_G:
 			_toggle_god()
+		elif k in SPELL_KEYS and not building:
+			_cast(SPELL_KEYS.find(k))
 		elif k == KEY_J:
 			net.act(ACT_JUMP, 0)
 		elif k == KEY_M:
@@ -1703,12 +1944,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 			# Action mode: fight, target and items.
 			if k == KEY_ESCAPE and fpv:
 				_set_fpv(false)
+			elif k == KEY_ESCAPE:
+				journal.open_menu()
 			elif k == KEY_TAB:
 				_cycle_target()
 			elif k == KEY_SPACE:
 				_attack()
 			elif k == KEY_F:
-				net.pickup()
+				_talk_or_pickup()
 			elif k >= KEY_1 and k <= KEY_8:
 				if ev.shift_pressed:
 					net.drop_slot(k - KEY_1)
@@ -1758,6 +2001,409 @@ func _attack() -> void:
 		_face(me, (ents[target_id] as Node3D).position)
 		me.attack()
 
+## The first thing seen in the world: who you are, where your quest begins, and luck for the road, fading away.
+func _welcome() -> void:
+	var where := ("in " + _here) if _here != "" else ""
+	if where == "":
+		# The nearest named place, if one is close; else the wilds.
+		var best := 400.0
+		for l in locations:
+			if String(l.get("title", "")) == "":
+				continue
+			var d := Vector2(float(l["x"]), float(l["y"])).distance_to(me_pos)
+			if d < best:
+				best = d
+				where = ("near " if d > float(l["r"]) else "in ") + String(l["title"])
+	if where == "":
+		where = "in the wilds"
+	hud.welcome(_name(net.get_self_id()), where)
+
+## In the world: the title theme fades out over a few seconds while the game's own music comes up under it.
+func _fade_title() -> void:
+	if not _title_on:
+		return
+	_title_on = false
+	var t := create_tween()
+	t.tween_property(title_music, "volume_db", -60.0, 5.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	t.tween_callback(title_music.stop)
+
+## The spell bar from `bar_order`: the HUD's slots, and the journal's view of it.
+func _apply_bar() -> void:
+	spells = []
+	for n in bar_order:
+		for a in all_spells:
+			if a["name"] == n:
+				spells.append(a)
+	var hz := maxf(float(info.get("hz", 20)), 1.0)
+	var keys := []
+	for k in SPELL_KEYS:
+		keys.append(OS.get_keycode_string(k))
+	var bar := []
+	for i in spells.size():
+		var a: Dictionary = spells[i]
+		bar.append({"title": _spell_title(a).get_slice(" ", 0).left(9), "key": keys[i],
+			"color": SpellFx.color(String(a.get("fx", ""))) if a.has("fx") else Color(0, 0, 0, 0),
+			"tip_title": "%s  (%s)" % [_spell_title(a), keys[i]], "tip": _spell_text(a, hz)})
+	hud.set_spells(bar)
+	var book := []
+	for a in all_spells:
+		book.append({"name": a["name"], "title": _spell_title(a), "desc": String(a.get("desc", "")),
+			"school": String(a.get("school", "")), "cost": _spell_cost(a, hz), "level": int(a.get("level", 0)), "learnt": my_level <= 0 or int(a.get("level", 0)) <= my_level,
+			"color": SpellFx.color(String(a.get("fx", ""))) if a.has("fx") else HudScript.MUTED})
+	journal.set_spells(book, bar_order, keys)
+
+## What a spell does and costs, in words: its description, then its cost and cooldown.
+func _spell_text(a: Dictionary, hz: float) -> String:
+	var t := String(a.get("desc", ""))
+	var c := _spell_cost(a, hz)
+	return (t + "\n" + c).strip_edges() if c != "" else t
+
+func _spell_cost(a: Dictionary, hz: float) -> String:
+	var costs := []
+	if a.has("requires"):
+		costs.append("%d %s" % [int(a["requires"]["min"]), a["requires"]["attr"]])
+	if int(a.get("cooldown_ticks", 0)) > 0:
+		costs.append("ready again in %s s" % str(snappedf(float(a["cooldown_ticks"]) / hz, 0.1)))
+	if costs.is_empty():
+		return ""
+	var t := ", ".join(costs)
+	return t.left(1).to_upper() + t.substr(1)
+
+## The bar kept for this server, or the first spells in the game's order; spells the game no longer has drop out.
+func _load_bar() -> Array:
+	var cfg := ConfigFile.new()
+	cfg.load("user://spellbar.cfg")
+	var names := []
+	for a in all_spells:
+		names.append(a["name"])
+	var saved = cfg.get_value("bars", String(args["web"]), null)
+	if saved is Array:
+		return saved.filter(func(n): return names.has(n)).slice(0, SPELL_KEYS.size())
+	return names.slice(0, SPELL_KEYS.size())
+
+func _save_bar() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load("user://spellbar.cfg")
+	cfg.set_value("bars", String(args["web"]), bar_order)
+	cfg.save("user://spellbar.cfg")
+
+## Log out: leave the server and go back to the join screen.
+func _log_out() -> void:
+	if net != null:
+		net.disconnect_from_server()
+	_logged_out = true
+	_hop = {}
+	get_tree().reload_current_scene()
+
+## Quests each frame: where we stand (the tracker, an offer just made), and a gold ! or ? over anyone with a quest
+## to give us or to take back.
+func _quests_frame(list: Array, self_id: int) -> void:
+	_social_frame(list, self_id)
+	var q: Dictionary = net.quests()
+	questui.update(q.get("list", []), int(q.get("offer", -1)))
+	var marks: Dictionary = questui.marks(my_level)
+	for e in list:
+		var id := int(e["id"])
+		if id == self_id or not ents.has(id):
+			continue
+		var node: Node3D = ents[id]
+		var want: String = marks.get(_name(id), "")
+		var mark: Label3D = node.get_node_or_null("qmark")
+		if want == "":
+			if mark:
+				mark.queue_free()
+			continue
+		if mark == null:
+			mark = Label3D.new()
+			mark.name = "qmark"
+			mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			mark.no_depth_test = true
+			mark.font = HudScript.TITLE
+			mark.font_size = 96
+			mark.outline_size = 18
+			mark.modulate = Color("ffd27a")
+			mark.outline_modulate = Color(0, 0, 0, 0.9)
+			mark.position = Vector3(0, 3.4, 0)
+			mark.pixel_size = 0.006
+			node.add_child(mark)
+		mark.text = want
+
+## Each frame: the party frames, what we wear (the journal), the shop's view of our bag, and horses under riders.
+func _social_frame(list: Array, self_id: int) -> void:
+	var by_id := {}
+	for e in list:
+		by_id[int(e["id"])] = e
+	var mates := []
+	for id in net.party():
+		if int(id) == self_id:
+			continue
+		var e: Dictionary = by_id.get(int(id), {})
+		var hp := clampf(float(e.get(health_idx, 0.0)) / health_max, 0.0, 1.0) if not e.is_empty() and health_idx != "" else -1.0
+		mates.append([_name(int(id)), hp])
+	hud.set_party(mates)
+	var gear: Dictionary = net.gear()
+	journal.set_gear(gear)
+	if shopui.is_open():
+		if not ents.has(_shop_with) or _dist_to(_shop_with) > 10.0:
+			shopui.escape() # walked away
+		elif int(t_total * 4.0) != int((t_total - get_process_delta_time()) * 4.0):
+			shopui.refresh(net.bag())
+	# Riders: our own from the server's word, others by their speed (a mount's worth of it).
+	var riding := {}
+	if bool(gear.get("riding", false)):
+		riding[self_id] = true
+	for e in list:
+		if float(e.get("speed", 1.0)) >= 1.75:
+			riding[int(e["id"])] = true
+	for id in _horses.keys():
+		if not riding.has(id) or not ents.has(id):
+			(_horses[id] as Node3D).queue_free()
+			_horses.erase(id)
+	for id in riding:
+		if not ents.has(id):
+			continue
+		var node: Node3D = ents[id]
+		if not _horses.has(id):
+			var h := _make_horse()
+			add_child(h)
+			_horses[id] = h
+		var horse: Node3D = _horses[id]
+		horse.position = node.position
+		horse.rotation.y = node.rotation.y
+		node.position.y += 0.95 # in the saddle
+		horse.get_node("legs").rotation.x = sin(t_total * 14.0) * 0.35 * minf(1.0, (track.get(id, {}).get("vel", Vector3.ZERO) as Vector3).length() / 10.0)
+
+## A plain low-poly horse, chestnut with a dark mane, facing -Z like the characters.
+func _make_horse() -> Node3D:
+	var root := Node3D.new()
+	var coat := StandardMaterial3D.new()
+	coat.albedo_color = Color("7a4a2a")
+	coat.roughness = 0.85
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color("2a1a12")
+	var part := func(mesh: Mesh, at: Vector3, rot := Vector3.ZERO, mat: Material = coat, parent: Node3D = root) -> MeshInstance3D:
+		var m := MeshInstance3D.new()
+		m.mesh = mesh
+		m.material_override = mat
+		m.position = at
+		m.rotation = rot
+		parent.add_child(m)
+		return m
+	var body := CapsuleMesh.new()
+	body.radius = 0.38
+	body.height = 1.7
+	part.call(body, Vector3(0, 1.05, 0), Vector3(PI / 2, 0, 0))
+	var neck := CapsuleMesh.new()
+	neck.radius = 0.2
+	neck.height = 0.9
+	part.call(neck, Vector3(0, 1.45, -0.75), Vector3(-0.6, 0, 0))
+	var head := BoxMesh.new()
+	head.size = Vector3(0.24, 0.26, 0.6)
+	part.call(head, Vector3(0, 1.75, -1.05), Vector3(0.35, 0, 0))
+	var mane := BoxMesh.new()
+	mane.size = Vector3(0.08, 0.5, 0.12)
+	part.call(mane, Vector3(0, 1.6, -0.65), Vector3(-0.6, 0, 0), dark)
+	var tail := CylinderMesh.new()
+	tail.top_radius = 0.07
+	tail.bottom_radius = 0.02
+	tail.height = 0.7
+	part.call(tail, Vector3(0, 1.0, 0.95), Vector3(0.5, 0, 0), dark)
+	var legs := Node3D.new()
+	legs.name = "legs"
+	root.add_child(legs)
+	var leg := CylinderMesh.new()
+	leg.top_radius = 0.08
+	leg.bottom_radius = 0.06
+	leg.height = 0.85
+	for x in [-0.22, 0.22]:
+		for z in [-0.55, 0.55]:
+			var l: MeshInstance3D = part.call(leg, Vector3(x, 0.45, z), Vector3.ZERO, coat, legs)
+			l.rotation.x = 0.0
+	return root
+
+## F: talk to the one targeted (or the nearest with a quest mark) if they are in reach; otherwise pick up.
+func _talk_or_pickup() -> void:
+	var reach := 8.0
+	var who := 0
+	if target_id != 0 and ents.has(target_id) and _dist_to(target_id) <= reach and (ents[target_id] as Node3D).has_node("qmark"):
+		who = target_id
+	else:
+		var best := reach
+		for id in ents:
+			if id != net.get_self_id() and (ents[id] as Node3D).has_node("qmark") and _dist_to(id) <= best:
+				best = _dist_to(id)
+				who = id
+	if who != 0:
+		net.talk(who)
+		var me: Node3D = ents.get(net.get_self_id())
+		if me:
+			_face(me, (ents[who] as Node3D).position)
+		return
+	# A trader in reach (the one targeted first): open their shop.
+	var shops: Dictionary = info.get("shops", {}) if info.get("shops") is Dictionary else {}
+	var trader := 0
+	if target_id != 0 and ents.has(target_id) and _dist_to(target_id) <= reach and shops.has(_name(target_id)):
+		trader = target_id
+	else:
+		var best := reach
+		for id in ents:
+			if id != net.get_self_id() and shops.has(_name(id)) and _dist_to(id) <= best:
+				best = _dist_to(id)
+				trader = id
+	if trader != 0:
+		_shop_with = trader
+		shopui.open(_name(trader), shops[_name(trader)], net.bag())
+		return
+	net.pickup()
+
+## Our level and experience from the server: show what we earned over our head, and celebrate a new level.
+func _watch_progress() -> void:
+	var p: Dictionary = net.progress()
+	var level := int(p.get("level", 0))
+	if level <= 0:
+		return
+	var me: Node3D = ents.get(net.get_self_id())
+	if not _progress.is_empty() and me != null:
+		var gained := int(p["xp"]) - int(_progress.get("xp", 0))
+		if gained > 0:
+			_float_text(me.position + Vector3(0, 0.6, 0), "+%d xp" % gained, Color("c9a227"))
+		if level > my_level and my_level > 0:
+			hud.announce("Level %d" % level)
+			sound.play("chime", 2.0, 0.0)
+			sound.play("heal", 0.0, 0.0)
+			spellfx.cast(me, null, {"fx": "holy", "hits": "friends", "area": 3.0}, func(_p): pass)
+	var was := my_level
+	my_level = level
+	_progress = p
+	if was != level:
+		_apply_bar() # the journal shows what is learnt now
+
+## A spell's name as players read it: "liathroid_tine" -> "Liathroid tine".
+func _spell_title(a: Dictionary) -> String:
+	return String(a["name"]).replace("_", " ").capitalize()
+
+func _can_pay(a: Dictionary, me: Dictionary) -> bool:
+	if not a.has("requires"):
+		return true
+	var attr := String(a["requires"]["attr"])
+	return not me.has(attr) or float(me[attr]) >= float(a["requires"]["min"]) # not replicated: the server will say
+	
+## Cast spell `i` of the spell bar: at the target (or the nearest thing in reach), at a friend, or round yourself.
+func _cast(i: int) -> void:
+	if i < 0 or i >= spells.size() or net == null or _loading or my_held in [1, 2]:
+		return
+	var a: Dictionary = spells[i]
+	var id := int(a["id"])
+	var title := _spell_title(a)
+	if t_total < float(spell_ready.get(id, 0.0)):
+		return _notice("%s is not ready yet." % title)
+	if t_total < _gcd_until:
+		return
+	if my_level > 0 and int(a.get("level", 0)) > my_level:
+		return _notice("You learn %s at level %d." % [title, int(a["level"])])
+	var me := _my_entity()
+	if not _can_pay(a, me):
+		return _notice("Not enough %s for %s." % [a["requires"]["attr"], title])
+	var target := 0
+	if String(a.get("aim", "")) != "self":
+		var reach := float(a.get("range", 8.0))
+		if String(a.get("hits", "")) == "friends":
+			target = target_id # not a friend, or none: the server lands it on you
+		else:
+			if target_id == 0 or not ents.has(target_id) or _dist_to(target_id) > reach:
+				var near := _nearest_in(reach)
+				if near == 0:
+					return _notice("Nothing within reach of %s (%d units)." % [title, int(reach)])
+				target_id = near
+			target = target_id
+	net.act(id, target)
+	var cd := float(a.get("cooldown_ticks", 0)) / maxf(float(info.get("hz", 20)), 1.0)
+	spell_ready[id] = t_total + cd
+	_gcd_until = t_total + minf(cd, 0.5)
+	_fight_at = t_total
+	var my: Node3D = ents.get(net.get_self_id())
+	if my and target != 0 and ents.has(target):
+		_face(my, (ents[target] as Node3D).position)
+
+func _my_entity() -> Dictionary:
+	for e in net.entities():
+		if int(e["id"]) == net.get_self_id():
+			return e
+	return {}
+
+## Each frame: draw the spells used near us (the server tells everyone near, us included), show who is held, and
+## keep the spell bar's cooldowns and costs current.
+func _spells_frame(list: Array, self_id: int) -> void:
+	_watch_progress()
+	_quests_frame(list, self_id)
+	for k in net.take_casts():
+		var a: Dictionary = actions_by_id.get(int(k["action"]), {})
+		var caster: Node3D = ents.get(int(k["caster"]))
+		if caster == null or a.is_empty():
+			continue
+		var target: Node3D = ents.get(int(k["target"])) if int(k["target"]) != 0 else null
+		var fx := String(a.get("fx", ""))
+		var d := Vector2(caster.position.x, caster.position.z).distance_to(me_pos)
+		if int(k["caster"]) != self_id and caster.has_method("attack"):
+			if target != null:
+				_face(caster, target.position)
+			caster.attack() # others swing and cast where we can see them
+		if fx == "":
+			continue
+		sound.play("cast_" + fx, SoundScript.at_distance(d) - 2.0)
+		var friendly := String(a.get("hits", "")) == "friends"
+		spellfx.cast(caster, target, a, func(at: Vector3):
+			var dd := Vector2(at.x, at.z).distance_to(me_pos)
+			sound.play("heal" if friendly else "impact_" + fx, SoundScript.at_distance(dd)))
+	var held := {}
+	var floating := {}
+	var hasted := {}
+	var me := {}
+	for e in list:
+		var id := int(e["id"])
+		var h := int(round(float(e.get("held", 0.0))))
+		if h > 0:
+			held[id] = h
+		# Levitating: the server holds the jump at its height, so "airborne" stays put far longer than a jump.
+		var air := float(e.get("airborne", 0.0)) / air_max if air_max > 0.0 else 0.0
+		var was: Dictionary = _aloft.get(id, {"air": -1.0, "since": t_total})
+		if absf(air - float(was["air"])) > 0.02 or air <= 0.0:
+			was = {"air": air, "since": t_total}
+		_aloft[id] = was
+		if air > 0.0 and t_total - float(was["since"]) > 0.4:
+			floating[id] = true
+		if float(e.get("speed", 1.0)) > 1.05:
+			hasted[id] = true
+		if id == self_id:
+			me = e
+	for id in _aloft.keys():
+		if not ents.has(id):
+			_aloft.erase(id)
+	spellfx.show_states(held, floating, hasted, ents)
+	var now := int(held.get(self_id, 0))
+	if now != my_held:
+		if now > 0:
+			_notice(HOLD_WORDS[clampi(now, 0, 3)])
+			sound.play("held", 0.0, 0.0)
+		my_held = now
+	if spells.is_empty():
+		return
+	var cools := []
+	var can := []
+	var hz := maxf(float(info.get("hz", 20)), 1.0)
+	for a in spells:
+		var cd := float(a.get("cooldown_ticks", 0)) / hz
+		var left := float(spell_ready.get(int(a["id"]), 0.0)) - t_total
+		cools.append(clampf(left / cd, 0.0, 1.0) if cd > 0.0 else 0.0)
+		can.append(_can_pay(a, me))
+	hud.update_spells(cools, can)
+
+func _in_safe() -> bool:
+	for l in locations:
+		if l.get("safe", false) == true and Vector2(float(l["x"]), float(l["y"])).distance_to(me_pos) <= float(l["r"]):
+			return true
+	return false
+
 func _dist_to(id: int) -> float:
 	var n: Node3D = ents.get(id)
 	return Vector2(n.position.x, n.position.z).distance_to(me_pos) if n else INF
@@ -1796,18 +2442,30 @@ func _on_ability(name: String) -> void:
 			_toggle_map()
 		"build":
 			_set_building(not building)
+		"journal":
+			journal.toggle_journal()
+		"quests":
+			questui.toggle_log()
 
 ## The frame bars for an entity: every replicated attribute except the bookkeeping ones (airborne, lit).
 func _bars(e: Dictionary, mine: bool) -> Array:
 	var out := []
 	for a in info.get("attrs", []):
 		var n := String(a["name"])
-		if not a.get("replicated", false) or n == "airborne" or n == "lit" or not e.has(n):
+		if not a.get("replicated", false) or n in ["airborne", "lit", "held", "speed", "level"] or not e.has(n):
 			continue
 		var mx := maxf(float(a["max"]), 1.0)
 		var v := float(e[n])
 		var col := Color("c23b2e") if n == health_idx else Color("3f7fd0") if n.contains("energy") or n.contains("mana") else Color("d0a03f")
 		out.append([n, v / mx, "%d / %d" % [int(v), int(mx)] if mine else "%d%%" % int(round(v / mx * 100.0)), col])
+	# Experience, on our own frame: how far through this level.
+	if mine and my_level > 0:
+		var span := int(_progress.get("next", 0)) - int(_progress.get("at", 0))
+		var into := int(_progress.get("xp", 0)) - int(_progress.get("at", 0))
+		if span > 0:
+			out.append(["xp", clampf(float(into) / span, 0.0, 1.0), "%d / %d xp" % [into, span], Color("c9a227")])
+		else:
+			out.append(["xp", 1.0, "Highest level", Color("c9a227")])
 	return out
 
 ## God mode lives on the server (admin API, loopback only): your attributes are held at full every tick.
@@ -1901,7 +2559,11 @@ func _smoke() -> void:
 	for n in SoundScript.MUSIC:
 		if not ResourceLoader.exists("res://sounds/music/%s.ogg" % n):
 			missing.append(n)
-	for n in ["swing_1", "hit_1", "hurt", "pickup", "drop", "place", "break", "horn", "chime", "splash", "step_grass_1", "step_road_1", "step_stone_1", "step_water_1"]:
+	for fx in SpellFx.COLORS:
+		for kind in ["cast_", "impact_"]:
+			if not ResourceLoader.exists("res://sounds/sfx/%s%s.ogg" % [kind, fx]):
+				missing.append(kind + fx)
+	for n in ["swing_1", "hit_1", "hurt", "pickup", "drop", "place", "break", "horn", "chime", "splash", "step_grass_1", "step_road_1", "step_stone_1", "step_water_1", "heal", "held"]:
 		if not ResourceLoader.exists("res://sounds/sfx/%s.ogg" % n):
 			missing.append(n)
 	_check("every sound is there", missing.is_empty(), str(missing))
