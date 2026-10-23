@@ -26,6 +26,8 @@ var _next_flash := 0.0
 var meshes := {}             # path -> Mesh, pulled out of the glTF pieces once
 var _built_bodies := 0       # how many KayKit characters were made (for the smoke test)
 var grass: MultiMeshInstance3D  # themes/fantasy/grass.gd, round the player (null with --no-grass or no heights)
+var air: Node3D                 # themes/fantasy/air.gd: mist, haze and wisps between the weathers
+var _here := Vector2.ZERO        # where we are, for the air
 
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
@@ -116,6 +118,8 @@ void fragment() {
 	rain.emitting = false
 	rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(rain)
+	air = preload("res://themes/fantasy/air.gd").new()
+	add_child(air)
 	if world.has_heights and not OS.get_cmdline_user_args().has("--no-grass"):
 		grass = preload("res://themes/fantasy/grass.gd").new()
 		grass.setup(world)
@@ -279,6 +283,7 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
 	if grass:
 		grass.follow(center, float(_wx["wind"]))
+	_here = center
 	super.frame(center, camera_zoom)
 
 ## Sun, moon, light, fog and sky for the time of day (the server's schedule) and the weather.
@@ -330,6 +335,9 @@ func _daylight_frame(dt: float) -> void:
 	var sky_cover: float = _wx["sky"]
 	e.volumetric_fog_sky_affect = clampf(0.35 * k * thick, 0.0, 0.9) * sky_cover
 	e.fog_sky_affect = clampf(0.25 * k * thick, 0.0, 0.8) * sky_cover
+	# Between the weathers, the air's own: dawn mist in the hollows, a haze that comes and goes, drifting wisps.
+	var morning := fposmod(day_phase() - 0.25 + 0.5, 1.0) < 0.5 # before noon
+	air.frame(e, dt, _here, height(_here.x, _here.y), sun_dir.y, morning, day, dusk, k, float(_wx["wind"]))
 
 ## Move every part of the weather's look a step toward the new weather, so a change takes about WEATHER_SECS: most of
 ## the way in the first few seconds and settling gently, the way weather really rolls in.
