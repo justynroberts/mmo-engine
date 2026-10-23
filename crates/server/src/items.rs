@@ -160,6 +160,14 @@ impl Sim {
             return false;
         }
         let def: ItemRt = self.items[tag as usize - 1].clone();
+        if def.equip.is_some() {
+            return self.equip(slot, i);
+        }
+        if def.mount > 0.0 {
+            let ok = self.ride(slot, i);
+            self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
+            return ok;
+        }
         if def.uses.is_empty() {
             return false;
         }
@@ -285,8 +293,8 @@ mod tests {
     fn sim_with_items() -> Sim {
         let mut g = GameFile::default_game();
         g.items = vec![
-            proto::game::ItemDef { name: "medkit".into(), color: "#ff4466".into(), stack_max: 3, uses: vec![proto::game::UseEffect { attr: "health".into(), delta: 40.0 }], consume: true },
-            proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true },
+            proto::game::ItemDef { name: "medkit".into(), color: "#ff4466".into(), stack_max: 3, uses: vec![proto::game::UseEffect { attr: "health".into(), delta: 40.0 }], consume: true, value: 0, equip: None, mount: 0.0 },
+            proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0 },
         ];
         for a in &mut g.archetypes {
             a.drops.clear();
@@ -395,7 +403,7 @@ mod tests {
         for a in &mut g.archetypes {
             a.drops.clear();
         }
-        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 4, uses: vec![], consume: true }];
+        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 4, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0 }];
         s.put_ground(5.0, 5.0, 0, 1);
         s.put_ground(6.0, 6.0, 1, 3);
         s.set_items(g.build().unwrap().items);
@@ -407,7 +415,7 @@ mod tests {
     #[test]
     fn a_bot_that_falls_leaves_its_drops_at_its_feet() {
         let mut g = GameFile::default_game();
-        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true }];
+        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0 }];
         for a in &mut g.archetypes {
             a.drops.clear();
         }

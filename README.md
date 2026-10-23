@@ -207,12 +207,19 @@ license) into `godot/sounds`: twelve seamless ambience loops, the effects, and s
 modes (a slow air for the open land, a jig for towns, a night piece, a battle piece, the eerie and the holy), played on
 a plucked harp, a low whistle, a fiddle, drones and a bodhrán.
 
+Each mood also has more music beside its synthesised piece (`godot/sounds/music/<mood>_N.ogg`): pieces made for the
+game by the project owner (the "Mist over the Isles" airs, "Cavernous Dissonance", "Modal March" and the "Ar Aghaidh"
+title theme) and Celtic and medieval pieces by Kevin MacLeod (incompetech.com, CC BY 4.0). Every track, its source and
+licence are listed in `godot/sounds/music/CREDITS.md`; keep that file complete when adding music. The client plays a
+random piece of the mood through (not the one just heard), leaves a little silence between pieces in the quieter moods,
+and crosses over when the mood changes.
+
 The client listens to the land as you move (`scripts/sound.gd`, fed by `main.gd`): how much sea is round you, how near
 a river is, the trees, the houses, the nearest fire, how high you stand, the weather and the hour, and blends the sea,
 river, birdsong or crickets and owls, wind, rain, fire and town murmur to match, easing between them. Music follows the
 moment: a fight (struck or striking) turns it to battle, a town to the jig, nightfall to the night piece. A place can
 have its own `sound` (sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle) and `music`
-(explore, town, night, battle, eerie, holy, none): inside it, its sound comes up over the land's and its music plays.
+(explore, town, night, battle, eerie, holy, city, none): inside it, its sound comes up over the land's and its music plays.
 Set them in the console's place editor or through the MCP. Effects: footsteps by what is underfoot (grass, road,
 cobbles, water), a splash wading in, swings and hits, pickups and drops, placing and breaking blocks, a horn under
 event banners and a chime walking into a named place. N cycles sound and music, music off, and silence.
@@ -249,6 +256,66 @@ those tools refuse unless called with `allow_restart: true`; and `clear_blocks` 
 the whole world unless asked with `everything: true`. Tools that take things away are marked destructive, so an MCP
 client asks before running them. `node ui/mcp/smoke.mjs http://127.0.0.1:PORT` builds and removes a small scene
 through the MCP protocol against a throwaway server.
+
+## Spells
+
+Every action after the first (the plain attack) is a spell on the Godot client's spell bar (keys R T Y U I O P Z C H K and comma). A spell is an ordinary action in the game file with a few optional fields, none of them in the content hash, so they can be tuned live from the console's Actions editor, the MCP `upsert` tool or the game file:
+
+| Field | Meaning |
+|---|---|
+| `aim` | `"target"` (default) or `"self"`: a self heal, a nova round you |
+| `area` | radius (0..64) round the target, or round you when aimed at self: effects "to target" land on everyone in it |
+| `hits` | `"any"` (default), `"foes"` or `"friends"`: players are one side and bots the other. A spell for friends with no friend picked lands on you |
+| effect `secs` | spread an effect's `delta` over that many seconds (0..60): burns, curses, heals over time |
+| `hold` | `{"kind": "mez" \| "stun" \| "root", "secs": 0..30}`: mez stops moving and acting until it runs out or the target is hurt; stun does the same and is not broken; root stops only moving |
+| `fx` | how it looks and sounds: `fire`, `frost`, `shock`, `holy`, `shadow`, `nature`, `arcane`, `poison`, `mind`, `blood` (empty: a plain blow) |
+| `bolt` | drawn flying from the caster to the target |
+| `school` | free text to group spells by, e.g. `"dubh"` and `"geal"` for black and white magic |
+| `desc` | what it does in plain words, shown when a player hovers over the spell (write it in the players' language, whatever the spell is called) |
+| `lift` | levitate everyone it lands on for that many seconds (0..300): blows and areas on the ground miss them |
+| effect `lasts` | take the effect back after that many seconds (0..300): buffs and curses that wear off (not with `secs`) |
+
+A game that defines the reserved attribute `speed` (replicated, default 1) has it multiply movement, and clients predict their own steps at that speed, so `{"to": "self", "attr": "speed", "delta": 0.6, "lasts": 10}` is a ten second haste and a negative one a slow. Each action has its own cooldown (`cooldown_ticks`), and any action also pauses the others for at most half a second. Costs are the usual `requires` plus an effect on yourself (`{"to": "self", "attr": "mana", "delta": -15}`), with a `mana` attribute that regenerates. A game that defines the reserved attribute `held` (replicated, 0..3) lets clients see who is held, and stop moving while they are. Bots cast too: give a bot type a spell as its `attack`. Everyone within your interest radius sees each use (the CASTS packet, PROTOCOL.md): a glow at the caster's hand, a bolt, a burst or a sweeping ring for an area, rising sparks for a heal, a swirl over anyone held, with a cast and an impact sound for each look.
+
+**Player against player.** `pvp` in the game file (on by default; the console's World settings, or the MCP `set_settings` tool) lets players harm each other with blows and spells for foes. A place with `"safe": true` stays peaceful: no player can harm another who stands in it, or harm anyone while standing in it. Heals and other spells for friends always land on players. Both apply live, and clients show PVP or SAFE under the player's name.
+
+Example, a fireball that also burns for four seconds:
+
+```json
+{"id": 2, "name": "liathroid tine", "cooldown_ticks": 40, "range": 24, "requires": {"attr": "mana", "min": 15},
+ "effects": [{"to": "target", "attr": "health", "delta": -22}, {"to": "target", "attr": "health", "delta": -10, "secs": 4},
+             {"to": "self", "attr": "mana", "delta": -15}],
+ "hits": "foes", "fx": "fire", "bolt": true, "school": "dubh"}
+```
+
+## Experience, levels and quests
+
+`levels` in the game file turns on experience: `{"cap": 20, "base": 100, "exponent": 1.6, "might": 0.06, "toughness": 0.05, "discover_xp": 10}`. Level L needs `base * (L - 1) ^ exponent` experience in all. A bot type's `xp` goes to every player who hurt one in the last half minute when it falls; finding a named place (one with a title) gives `discover_xp` once; quests give their `xp`. Each level above the first makes a character's blows and heals land `might` harder and divides harm taken by `1 + toughness` per level, so health bars stay bars; a bot type's `level` puts it on the same footing. An action's `level` is the level a player learns it at. A replicated attribute named `level` lets everyone see levels on nameplates; your own experience comes privately (the PROGRESS packet). All of it applies live and is saved with the character.
+
+A quest (`quests` in the game file) is given by a bot type, done step by step and handed in for its rewards:
+
+```json
+{"name": "brigands on the road", "title": "Brigands on the Road", "giver": "laoch", "level": 3,
+ "text": "Brigands rob anyone on the road south...", "done_text": "The road is safer for it.",
+ "steps": [{"kind": "visit", "place": "dibheirgigh"}, {"kind": "kill", "archetype": "dibheirgeach", "count": 4}],
+ "xp": 260, "reward": [{"item": "pingin airgid", "count": 5}]}
+```
+
+Steps are `kill` (beat N of a type: it counts for everyone who hurt the one that fell and for players within 40 units), `visit` (walk into a place), `collect` (carry N of an item, taken on hand-in) and `talk` (speak to one of a type). `turn_in` hands it to another type, `after` chains quests, `level` holds one back, `repeatable` lets it be taken again. Players talk with F (to whoever has a gold ! or ? over them), see the offer and take it or not, follow it in the tracker under the minimap, and read the quest log with F3. Quests are edited in the console's Quests page or through the MCP (`upsert` with section `quests`), apply live, and are kept by name with each character.
+
+## Parties, whispers, shops, gear and mounts
+
+**Whispers and who.** A chat line starting with `/` is a command: `/w Name words` whispers (a name with spaces goes in quotes), `/r words` answers the last whisper, `/who` lists who is on with their levels, `/name New Name` renames you.
+
+**Parties.** `/invite Name`, then `/accept` or `/decline`; `/leave`; `/p words` talks to the party; `/party` lists it. Up to five. A bot that falls gives its experience, and "beat N" quest steps, to every member within 80 units as well as to whoever hurt it. Members see each other's names and health under their own frame (the PARTY packet).
+
+**Shops and money.** `currency` names the item that is money. A bot type's `shop` lists what it sells (`[{"item": "claiomh", "price": 25}]`); talk to one (F) to open the shop, buy what it sells and sell anything with a `value`. Traders are marked "trader" on their nameplate.
+
+**Gear.** An item with `"equip": {"slot": "weapon" | "armour" | "trinket", "might": 0.15, "toughness": 0.1}` is worn by using it (what was in that slot goes back to the bag), and adds its might and toughness to the wearer's level's. The journal (F2) shows what is worn, with Take off.
+
+**Mounts.** An item with `"mount": 0.8` is ridden by using it: it adds that to the `speed` attribute until you use it again, use an action, or are hurt. Clients draw a horse under anyone riding.
+
+All of it is game file data, edited live in the console (Items, Bot types, World settings) or through the MCP; what is worn and the party are private packets (GEAR, PARTY), and gear is saved with the character.
 
 ## Items and loot
 

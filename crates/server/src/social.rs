@@ -1,0 +1,216 @@
+//! Talking to people rather than to a place: whispers, who is on, and parties.
+//!
+//! A chat line that starts with "/" is a command, not something said aloud: `/w Name text` whispers, `/r text`
+//! answers the last whisper, `/who` lists who is on, and `/invite Name`, `/accept`, `/decline`, `/leave`,
+//! `/p text` and `/party` make and run a party. A party shares the experience of a bot that falls near its
+//! members and their "beat N" quest steps, and its members see each other in a PARTY packet.
+
+use crate::net::Clients;
+use crate::sim::{Sim, DRIVEN};
+use proto::chat::channel;
+
+/// Most players in one party.
+pub const PARTY_MAX: usize = 5;
+/// How near a party member must be to share a fallen bot's experience.
+pub const PARTY_RANGE: f32 = 80.0;
+
+impl Sim {
+    /// A player's party mates (slots, themselves included), or just them.
+    pub fn party_of(&self, s: usize) -> Vec<usize> {
+        let p = self.party[s];
+        if p == 0 {
+            return vec![s];
+        }
+        (0..self.ents.high).filter(|&o| self.ents.alive[o] && self.ents.owner[o] < DRIVEN && self.party[o] == p).collect()
+    }
+
+    fn bump_party(&mut self, members: &[usize]) {
+        for &m in members {
+            self.party_ver[m] = self.party_ver[m].wrapping_add(1);
+        }
+    }
+
+    /// Leave a party (it ends when one is left).
+    pub fn leave_party(&mut self, s: usize) -> Vec<usize> {
+        let mates = self.party_of(s);
+        self.party[s] = 0;
+        let rest: Vec<usize> = mates.into_iter().filter(|&m| m != s).collect();
+        if rest.len() == 1 {
+            self.party[rest[0]] = 0;
+        }
+        self.bump_party(&rest);
+        self.party_ver[s] = self.party_ver[s].wrapping_add(1);
+        rest
+    }
+}
+
+/// A player by display name, ignoring case.
+fn find(sim: &Sim, name: &str) -> Option<usize> {
+    let want = name.trim().to_lowercase();
+    (0..sim.ents.high).find(|&s| {
+        sim.ents.alive[s] && sim.ents.owner[s] < DRIVEN && sim.ents.name[s].as_deref().is_some_and(|n| n.to_lowercase() == want)
+    })
+}
+
+fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
+    if let Some(c) = clients.slab.iter_mut().flatten().find(|c| c.slot == slot) {
+        c.chat.deliver(from, ch, text);
+    }
+}
+
+fn say(clients: &mut Clients, slot: usize, text: &str) {
+    tell(clients, slot, 0, channel::SAY, text);
+}
+
+/// Split "/invite Some Name" into ("invite", "Some Name"). Names may have spaces, so the rest is one argument,
+/// except for whispers (the first word after the name is the start of the message: names in a whisper are
+/// written as one word, or quoted).
+fn split(text: &str) -> (String, String) {
+    let t = text.trim_start_matches('/');
+    let (cmd, rest) = t.split_once(' ').unwrap_or((t, ""));
+    (cmd.to_lowercase(), rest.trim().to_string())
+}
+
+/// A whisper's target and message: `"Two Words" hello` or `Name hello`.
+fn target_and_text(rest: &str) -> (String, String) {
+    if let Some(r) = rest.strip_prefix('"') {
+        if let Some((n, m)) = r.split_once('"') {
+            return (n.to_string(), m.trim().to_string());
+        }
+    }
+    let (n, m) = rest.split_once(' ').unwrap_or((rest, ""));
+    (n.to_string(), m.trim().to_string())
+}
+
+/// Handle a "/" line from the player in `slot`. Returns false if it is not a command we know (it is then
+/// answered with the list).
+pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
+    let me = sim.ents.id_of(slot);
+    let my_name = sim.name_of(slot).to_string();
+    let (cmd, rest) = split(text);
+    match cmd.as_str() {
+        "w" | "whisper" | "tell" | "r" | "reply" => {
+            let (to, msg) = if cmd.starts_with('r') {
+                let back = sim.ents.resolve(sim.last_whisper[slot]).filter(|&s| sim.ents.owner[s] < DRIVEN);
+                match back {
+                    Some(s) => (Some(s), rest),
+                    None => {
+                        say(clients, slot, "Nobody to answer.");
+                        return true;
+                    }
+                }
+            } else {
+                let (n, m) = target_and_text(&rest);
+                (find(sim, &n), m)
+            };
+            let Some(to) = to else {
+                say(clients, slot, "Nobody of that name is here.");
+                return true;
+            };
+            if msg.is_empty() || to == slot {
+                say(clients, slot, "Whisper what? /w Name your words");
+                return true;
+            }
+            let msg: String = msg.chars().filter(|c| !c.is_control()).take(200).collect();
+            tell(clients, to, me, channel::WHISPER, &msg);
+            let to_name = sim.name_of(to).to_string();
+            tell(clients, slot, sim.ents.id_of(to), channel::WHISPER_SENT, &msg);
+            sim.last_whisper[to] = me;
+            clients.log_chat(sim.tick, me, channel::WHISPER, &format!("to {to_name}: {msg}"));
+        }
+        "who" => {
+            let mut names: Vec<String> = (0..sim.ents.high)
+                .filter(|&s| sim.ents.alive[s] && sim.ents.owner[s] < DRIVEN)
+                .map(|s| {
+                    let lv = if sim.levels.is_some() { format!(" ({})", sim.ents.level[s]) } else { String::new() };
+                    format!("{}{lv}", sim.name_of(s))
+                })
+                .collect();
+            names.sort();
+            let n = names.len();
+            names.truncate(40);
+            say(clients, slot, &format!("{n} here: {}", names.join(", ")));
+        }
+        "invite" | "inv" => {
+            let Some(to) = find(sim, &rest) else {
+                say(clients, slot, "Nobody of that name is here.");
+                return true;
+            };
+            if to == slot {
+                return true;
+            }
+            if sim.party[to] != 0 {
+                say(clients, slot, &format!("{} is already in a party.", sim.name_of(to)));
+                return true;
+            }
+            if sim.party_of(slot).len() >= PARTY_MAX {
+                say(clients, slot, "Your party is full.");
+                return true;
+            }
+            sim.invite[to] = me;
+            say(clients, to, &format!("{my_name} asks you to join their party. /accept or /decline"));
+            say(clients, slot, &format!("You ask {} to join you.", sim.name_of(to)));
+        }
+        "accept" | "join" => {
+            let Some(from) = sim.ents.resolve(sim.invite[slot]).filter(|&s| sim.ents.owner[s] < DRIVEN) else {
+                say(clients, slot, "Nobody has asked you.");
+                return true;
+            };
+            sim.invite[slot] = 0;
+            if sim.party_of(from).len() >= PARTY_MAX {
+                say(clients, slot, "That party is full now.");
+                return true;
+            }
+            if sim.party[slot] != 0 {
+                sim.leave_party(slot);
+            }
+            if sim.party[from] == 0 {
+                sim.next_party = sim.next_party.wrapping_add(1).max(1);
+                sim.party[from] = sim.next_party;
+            }
+            sim.party[slot] = sim.party[from];
+            let mates = sim.party_of(slot);
+            for &m in &mates {
+                say(clients, m, &format!("{my_name} joins the party."));
+            }
+            sim.bump_party(&mates);
+        }
+        "decline" => {
+            if let Some(from) = sim.ents.resolve(sim.invite[slot]) {
+                say(clients, from, &format!("{my_name} would rather not."));
+            }
+            sim.invite[slot] = 0;
+        }
+        "leave" => {
+            if sim.party[slot] == 0 {
+                say(clients, slot, "You are not in a party.");
+                return true;
+            }
+            for m in sim.leave_party(slot) {
+                say(clients, m, &format!("{my_name} leaves the party."));
+            }
+            say(clients, slot, "You leave the party.");
+        }
+        "p" | "party" if !rest.is_empty() || cmd == "p" => {
+            if sim.party[slot] == 0 {
+                say(clients, slot, "You are not in a party. /invite Name");
+                return true;
+            }
+            let msg: String = rest.chars().filter(|c| !c.is_control()).take(200).collect();
+            for m in sim.party_of(slot) {
+                tell(clients, m, me, channel::PARTY, &msg);
+            }
+            clients.log_chat(sim.tick, me, channel::PARTY, &msg);
+        }
+        "party" => {
+            let mates: Vec<String> = sim.party_of(slot).iter().map(|&m| sim.name_of(m).to_string()).collect();
+            let line = if sim.party[slot] == 0 { "You are not in a party. /invite Name".to_string() } else { format!("Your party: {}", mates.join(", ")) };
+            say(clients, slot, &line);
+        }
+        _ => {
+            say(clients, slot, "Commands: /w Name words, /r words, /who, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name");
+            return false;
+        }
+    }
+    true
+}

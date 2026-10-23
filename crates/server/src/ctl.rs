@@ -250,6 +250,75 @@ pub struct Params {
 /// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
 /// Everything here is public by nature (a UDP client learns the same from the handshake).
 /// Never touches every wall: it runs on the sim thread whenever the weather changes.
+/// What clients are told about a quest: its words, who gives and takes it (as their bots are named), and each
+/// step in words with how many it needs.
+fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place]) -> serde_json::Value {
+    use proto::game::QuestStep;
+    let bot = |a: &str| proto::names::bot(a).to_string();
+    let steps: Vec<serde_json::Value> = q
+        .steps
+        .iter()
+        .map(|st| {
+            let text = match st {
+                QuestStep::Kill { archetype, count } => format!("Beat {count} {}", bot(archetype)),
+                QuestStep::Visit { place } => {
+                    let p = places.iter().find(|p| &p.name == place);
+                    format!("Go to {}", p.filter(|p| !p.title.is_empty()).map_or(place.as_str(), |p| p.title.as_str()))
+                }
+                QuestStep::Collect { item, count } => format!("Bring {count} {item}"),
+                QuestStep::Talk { archetype } => format!("Speak to the {}", bot(archetype)),
+            };
+            let mut v = json!({"text": text, "need": st.need()});
+            if let QuestStep::Talk { archetype } = st {
+                v["who"] = json!(bot(archetype)); // a client marks them
+            }
+            v
+        })
+        .collect();
+    json!({"name": q.name, "title": q.title, "text": q.text, "done_text": q.done_text, "giver": bot(&q.giver),
+        "turn_in": bot(q.turn_in.as_ref().unwrap_or(&q.giver)), "level": q.level, "after": q.after, "steps": steps,
+        "xp": q.xp, "reward": q.reward.iter().map(|r| json!({"item": r.item, "count": r.count})).collect::<Vec<_>>(),
+        "repeatable": q.repeatable})
+}
+
+/// What clients are told about an action: enough to draw it (fx, bolt, area), aim it, and show its cost and cooldown.
+fn action_info(defs: &proto::defs::Defs, a: &proto::defs::ActionDef) -> serde_json::Value {
+    let mut v = json!({"id": a.id, "name": a.name, "range": a.range, "cooldown_ticks": a.cooldown_ticks});
+    if let Some((attr, min)) = a.requires {
+        v["requires"] = json!({"attr": defs.attrs[attr as usize].name, "min": min});
+    }
+    if a.aim == proto::game::Aim::Caster {
+        v["aim"] = json!("self");
+    }
+    if a.area > 0.0 {
+        v["area"] = json!(a.area);
+    }
+    if a.hits != proto::game::Hits::Any {
+        v["hits"] = json!(if a.hits == proto::game::Hits::Foes { "foes" } else { "friends" });
+    }
+    if let Some((kind, secs)) = a.hold {
+        v["hold"] = json!({"kind": kind as u8, "secs": secs});
+    }
+    for (k, s) in [("fx", &a.fx), ("school", &a.school)] {
+        if !s.is_empty() {
+            v[k] = json!(s);
+        }
+    }
+    if a.bolt {
+        v["bolt"] = json!(true);
+    }
+    if !a.desc.is_empty() {
+        v["desc"] = json!(a.desc);
+    }
+    if a.lift > 0.0 {
+        v["lift"] = json!(a.lift);
+    }
+    if a.level > 1 {
+        v["level"] = json!(a.level);
+    }
+    v
+}
+
 pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
     let tiles = hs.statics.tiles();
     // Small worlds ship their walls inline; big ones are fetched by tile from /play/tiles.
@@ -271,6 +340,10 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "seed": sim.world.seed,
         "move_speed": sim.defs.move_speed,
         "road_speed": sim.defs.road_speed,
+        // Players may harm each other outside places marked safe.
+        "pvp": sim.pvp,
+        // Quests, for a client to show: who gives them (by the name its bots go by), what to do, what they give.
+        "quests": sim.quests.iter().map(|q| quest_info(q, &sim.places)).collect::<Vec<_>>(),
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,
@@ -282,7 +355,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         },
         "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
         "replicated": sim.defs.replicated,
-        "actions": sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
+        "actions": sim.defs.actions.iter().map(|a| action_info(&sim.defs, a)).collect::<Vec<_>>(),
         "boxes": boxes,
         "box_class": classes,
         "walls": { "ver": format!("{:016x}", tiles.ver), "tile": proto::tiles::TILE, "count": tiles.boxes.len(), "inline": inline },
@@ -290,7 +363,17 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // Fetch it whole from /play/world, or (`parts`) the head from /play/world/head and the point objects by tile
         // from /play/world/tiles as the player moves.
         "world": hs.world.as_ref().map(|w| json!({ "ver": format!("{:016x}", w.ver), "bytes": w.bytes.len(), "parts": true, "head_bytes": w.head.len(), "points": w.point_count, "tile": proto::tiles::TILE })),
-        "items": sim.items.iter().map(|i| json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty()})).collect::<Vec<_>>(),
+        "items": sim.items.iter().map(|i| {
+            let mut v = json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty() || i.equip.is_some() || i.mount > 0.0});
+            if i.value > 0 { v["value"] = json!(i.value); }
+            if let Some(e) = &i.equip { v["equip"] = json!({"slot": e.slot as u8, "might": e.might, "toughness": e.toughness}); }
+            if i.mount > 0.0 { v["mount"] = json!(i.mount); }
+            v
+        }).collect::<Vec<_>>(),
+        // Money, and what each merchant sells (by the name its bots go by).
+        "currency": sim.currency.map(|c| sim.items[c].name.clone()),
+        "shops": sim.archs.iter().filter(|a| !a.shop.is_empty()).map(|a| (proto::names::bot(&a.name).to_string(),
+            json!(a.shop.iter().map(|&(k, p)| json!({"item": sim.items[k].name, "price": p})).collect::<Vec<_>>()))).collect::<serde_json::Map<String, serde_json::Value>>(),
         "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
         // The schedule, not the time: clients work the phase out from their own clocks (proto::daylight), and
         // `sample` is one moment worked out here, to check a port against.
@@ -299,10 +382,11 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "weather_zones": sim.zones,
         // Places with a title (named locations a client tells the player about as they walk in and out), or a sound or
         // music of their own (what a client plays inside them).
-        "locations": sim.places.iter().filter(|p| !p.title.is_empty() || !p.sound.is_empty() || !p.music.is_empty()).map(|p| {
+        "locations": sim.places.iter().filter(|p| !p.title.is_empty() || !p.sound.is_empty() || !p.music.is_empty() || p.safe).map(|p| {
             let mut o = json!({"title": p.title, "x": p.x, "y": p.y, "r": p.r});
             if !p.sound.is_empty() { o["sound"] = json!(p.sound); }
             if !p.music.is_empty() { o["music"] = json!(p.music); }
+            if p.safe { o["safe"] = json!(true); }
             o
         }).collect::<Vec<_>>(),
         "zone": hs.zone.as_ref().map(|z| z.index),
@@ -654,7 +738,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
                 "proto": proto::wire::PROTO_VERSION,
                 "capacity": c.params.cap,
                 "snapshot_lanes": c.live.snap_lanes,
-                "actions": c.sim.defs.actions.iter().map(|a| json!({"id": a.id, "name": a.name, "range": a.range})).collect::<Vec<_>>(),
+                "actions": c.sim.defs.actions.iter().map(|a| action_info(&c.sim.defs, a)).collect::<Vec<_>>(),
             })
             .to_string(),
         ),
@@ -1002,10 +1086,28 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
             c.sim.spawn(NONE);
         }
     } else {
+        c.sim.defs = game.defs; // same wire schema; spells (not in the hash) may have changed
         c.sim.archs = game.archs;
         c.sim.names_all = true; // bot types may have been renamed: every bot's name may have changed
         c.sim.set_items(game.items);
         c.sim.places = game.places;
+        c.sim.pvp = game.pvp;
+        c.sim.levels = game.levels;
+        // Quests are kept by name: everyone's are sent again, as indices may have moved.
+        c.sim.quests = game.quests;
+        c.sim.currency = game.currency;
+        for v in c.sim.quest_ver.iter_mut() {
+            *v = v.wrapping_add(1);
+        }
+        // A changed curve or cap: every player's level follows from their experience again.
+        if let Some(l) = c.sim.levels.clone() {
+            for s in 0..c.sim.ents.high {
+                if c.sim.ents.alive[s] && c.sim.ents.owner[s] < crate::sim::DRIVEN {
+                    c.sim.ents.level[s] = l.level_of(c.sim.ents.xp[s]);
+                    c.sim.progress_ver[s] = c.sim.progress_ver[s].wrapping_add(1);
+                }
+            }
+        }
         c.sim.routes = game.routes;
         c.sim.daylight = game.daylight;
         if let Some(world) = world.filter(|w| w.boxes != c.sim.world.boxes) {

@@ -1,12 +1,14 @@
-import type { Act, ActionFile, Archetype, AttrFile, Cond, GameFile, Place, Route, Rule } from './api'
-import { rewriteRefs } from './directorEdit'
+import type { Act, ActionFile, Archetype, AttrFile, Cond, EffectFile, GameFile, Place, QuestFile, QuestStep, Route, Rule } from './api'
+import { rewriteRefs, type RefKind } from './directorEdit'
 
-/** Everything that changes the wire schema (and so the handshake hash). */
+/** Everything that changes the wire schema (and so the handshake hash). Quests, levels, items and the rest are not
+ *  in it: they apply live. */
 export function wireOf(g: GameFile): string {
   return JSON.stringify({
     s: [g.move_speed, g.road_speed ?? 1.5, g.entity_radius, g.interest_radius, g.max_visible],
     a: g.attrs,
-    c: g.actions,
+    // Only what the content hash covers: spell fields (aim, area, hits, hold, fx, bolt, school, effect secs) apply live.
+    c: g.actions.map((a) => [a.id, a.name, a.cooldown_ticks, a.range, a.requires, a.effects.map((e) => [e.to, e.attr, e.delta])]),
   })
 }
 /** True when applying `draft` over `live` would restart the world and drop clients. */
@@ -104,6 +106,30 @@ export function removeAttr(g: GameFile, index: number): GameFile {
       rules: a.rules.filter((r) => !((r.when.kind === 'attr_below' || r.when.kind === 'attr_above') && r.when.attr === gone)),
     })),
   }, 'attr', gone, null)
+}
+
+/** An action with its spell fields at their defaults left out, the way the server writes it, so the game file stays
+ *  clean: aim 'target', area 0, hits 'any', no hold, no fx, bolt false, empty school and effect secs 0 are absent. */
+export function cleanAction(a: ActionFile): ActionFile {
+  const out: ActionFile = { ...a, effects: a.effects.map(cleanEffect) }
+  if (!out.aim || out.aim === 'target') delete out.aim
+  if (!out.area) delete out.area
+  if (!out.hits || out.hits === 'any') delete out.hits
+  if (!out.hold) delete out.hold
+  if (!out.fx) delete out.fx
+  if (!out.bolt) delete out.bolt
+  if (!out.school) delete out.school
+  if (!out.desc) delete out.desc
+  if (!out.lift) delete out.lift
+  if (!out.level || out.level <= 1) delete out.level
+  return out
+}
+
+function cleanEffect(e: EffectFile): EffectFile {
+  const out = { ...e }
+  if (!out.secs) delete out.secs
+  if (!out.lasts) delete out.lasts
+  return out
 }
 
 /** Rename an action and any bot that attacks with it. */
@@ -462,7 +488,7 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
       return { error: 'Each bot type needs a name.' }
     }
     const r = raw as Partial<Archetype> & { name: string }
-    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules'])
+    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop'])
     const stray = Object.keys(r).find((k) => !known.has(k))
     if (stray) return { error: `${r.name}: “${stray}” is not a bot field. Check the spelling.` }
     const a: Archetype = { ...newArchetype(g), ...r, name: r.name.trim() }
@@ -471,6 +497,8 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
     if (a.home && !g.places.some((p) => p.name === a.home)) return { error: `${a.name}: there is no place called “${a.home}”.` }
     const badAttr = Object.keys(a.attrs).find((k) => !g.attrs.some((x) => x.name === k))
     if (badAttr) return { error: `${a.name}: there is no attribute called “${badAttr}”.` }
+    const badItem = [...(a.drops ?? []), ...(a.shop ?? [])].find((d) => !(g.items ?? []).some((x) => x.name === d.item))
+    if (badItem) return { error: `${a.name}: there is no item called “${badItem.item}”.` }
     out.push(a)
   }
   let archetypes = g.archetypes
@@ -479,4 +507,155 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
     archetypes = at >= 0 ? archetypes.map((x, k) => (k === at ? a : x)) : [...archetypes, a]
   }
   return { game: { ...g, archetypes }, names: out.map((a) => a.name) }
+}
+
+// ---------------------------------------------------------------- quests
+
+export const MAX_QUESTS = 64
+export const MAX_QUEST_STEPS = 8
+export const MAX_QUEST_REWARDS = 8
+
+export const QUEST_STEP_KINDS: readonly { kind: QuestStep['kind']; label: string }[] = [
+  { kind: 'kill', label: 'Beat bots' },
+  { kind: 'visit', label: 'Go to a place' },
+  { kind: 'collect', label: 'Bring items' },
+  { kind: 'talk', label: 'Talk to a bot' },
+]
+
+/** A new step of a kind, naming the first thing of its sort the game has ('' where it has none). */
+export function defaultQuestStep(kind: QuestStep['kind'], g: GameFile): QuestStep {
+  switch (kind) {
+    case 'kill':
+      return { kind, archetype: g.archetypes[0]?.name ?? '', count: 5 }
+    case 'visit':
+      return { kind, place: g.places[0]?.name ?? '' }
+    case 'collect':
+      return { kind, item: g.items?.[0]?.name ?? '', count: 3 }
+    case 'talk':
+      return { kind, archetype: g.archetypes[0]?.name ?? '' }
+  }
+}
+
+/** A new quest given by the first bot type, with one step; null when there is no bot type to give it. */
+export function newQuest(g: GameFile): QuestFile | null {
+  const giver = g.archetypes[0]?.name
+  if (!giver) return null
+  const name = uniqueName('quest', (g.quests ?? []).map((q) => q.name))
+  const first: QuestStep = g.places[0] ? defaultQuestStep('visit', g) : defaultQuestStep('kill', g)
+  return { name, title: 'A new quest', text: 'There is something you could do for me.', giver, steps: [first] }
+}
+
+/** A quest with its optional fields left out when empty or at their defaults, the way the server writes it. */
+export function cleanQuest(q: QuestFile): QuestFile {
+  const out: QuestFile = { ...q }
+  if (!out.done_text) delete out.done_text
+  if (!out.turn_in || out.turn_in === out.giver) delete out.turn_in
+  if (!out.level || out.level <= 1) delete out.level
+  if (!out.after) delete out.after
+  if (!out.xp || out.xp <= 0) delete out.xp
+  if (!out.reward?.length) delete out.reward
+  if (!out.repeatable) delete out.repeatable
+  return out
+}
+
+export function renameQuest(g: GameFile, index: number, name: string): GameFile {
+  const old = g.quests?.[index]?.name
+  if (old === undefined || old === name) return g
+  return {
+    ...g,
+    quests: (g.quests ?? []).map((q, i) => {
+      const n = i === index ? { ...q, name } : q
+      return n.after === old ? { ...n, after: name } : n
+    }),
+  }
+}
+
+/** Remove a quest; the quests that came after it no longer wait for it. */
+export function removeQuest(g: GameFile, index: number): GameFile {
+  const gone = g.quests?.[index]?.name
+  if (gone === undefined) return g
+  return { ...g, quests: dropAfter((g.quests ?? []).filter((_, i) => i !== index), new Set([gone])) }
+}
+
+function dropAfter(quests: QuestFile[], gone: Set<string>): QuestFile[] {
+  return quests.map((q) => {
+    if (!q.after || !gone.has(q.after)) return q
+    const { after: _a, ...rest } = q
+    void _a
+    return rest
+  })
+}
+
+/** Rewrite quest references to a bot type, place or item that was renamed (`to`) or removed (`to` null). A quest
+ *  whose giver goes is dropped; a step or reward whose target goes is dropped, and a quest left with no steps too;
+ *  a turn-in bot type that goes falls back to the giver; quests that came after a dropped one stop waiting for it. */
+export function rewriteQuestRefs(quests: QuestFile[], kind: RefKind, from: string, to: string | null): QuestFile[] {
+  if (kind !== 'arch' && kind !== 'place' && kind !== 'item') return quests
+  const swap = (n: string) => (n === from ? to : n)
+  const fixStep = (s: QuestStep): QuestStep | null => {
+    if ((s.kind === 'kill' || s.kind === 'talk') && kind === 'arch' && s.archetype === from) return to === null ? null : { ...s, archetype: to }
+    if (s.kind === 'visit' && kind === 'place' && s.place === from) return to === null ? null : { ...s, place: to }
+    if (s.kind === 'collect' && kind === 'item' && s.item === from) return to === null ? null : { ...s, item: to }
+    return s
+  }
+  const kept: QuestFile[] = []
+  const dropped = new Set<string>()
+  for (const q of quests) {
+    if (kind === 'arch' && q.giver === from && to === null) {
+      dropped.add(q.name)
+      continue
+    }
+    const out: QuestFile = { ...q, steps: q.steps.flatMap((s) => fixStep(s) ?? []) }
+    if (out.steps.length === 0) {
+      dropped.add(q.name)
+      continue
+    }
+    if (kind === 'arch') {
+      out.giver = swap(q.giver) ?? q.giver
+      if (q.turn_in !== undefined) {
+        const t = swap(q.turn_in)
+        if (t === null) delete out.turn_in
+        else out.turn_in = t
+      }
+    }
+    if (kind === 'item' && q.reward) out.reward = q.reward.flatMap((r) => (r.item !== from ? [r] : to === null ? [] : [{ ...r, item: to }]))
+    kept.push(cleanQuest(out))
+  }
+  return dropped.size ? dropAfter(kept, dropped) : kept
+}
+
+/** What stops the quests being valid for the server, in words (the server checks the same things). */
+export function questProblems(g: GameFile): string[] {
+  const out: string[] = []
+  const quests = g.quests ?? []
+  if (quests.length > MAX_QUESTS) out.push(`at most ${MAX_QUESTS} quests`)
+  const arch = new Set(g.archetypes.map((a) => a.name))
+  const place = new Set(g.places.map((p) => p.name))
+  const itm = new Set((g.items ?? []).map((i) => i.name))
+  const names = new Set<string>()
+  const bytes = (s: string) => new TextEncoder().encode(s).length
+  for (const q of quests) {
+    const at = `quest ${q.name}`
+    if (!q.name.trim() || bytes(q.name) > 48) out.push(`${at}: a name of 1 to 48 bytes`)
+    if (names.has(q.name)) out.push(`two quests are called “${q.name}”`)
+    names.add(q.name)
+    if (!q.title.trim() || [...q.title].length > 64) out.push(`${at}: a title of 1 to 64 characters`)
+    if ([...(q.text ?? '')].length > 600 || [...(q.done_text ?? '')].length > 600) out.push(`${at}: texts of at most 600 characters`)
+    if (!arch.has(q.giver)) out.push(`${at}: no bot type called “${q.giver}” to give it`)
+    if (q.turn_in && !arch.has(q.turn_in)) out.push(`${at}: no bot type called “${q.turn_in}” to hand it in to`)
+    if (q.after && (q.after === q.name || !quests.some((o) => o.name === q.after))) out.push(`${at}: comes after “${q.after}”, which is not another quest`)
+    if (q.steps.length === 0 || q.steps.length > MAX_QUEST_STEPS) out.push(`${at}: needs 1 to ${MAX_QUEST_STEPS} steps`)
+    q.steps.forEach((s, i) => {
+      const st = `${at} step ${i + 1}`
+      if ((s.kind === 'kill' || s.kind === 'talk') && !arch.has(s.archetype)) out.push(`${st}: no bot type called “${s.archetype}”`)
+      if (s.kind === 'visit' && !place.has(s.place)) out.push(`${st}: no place called “${s.place}”`)
+      if (s.kind === 'collect' && !itm.has(s.item)) out.push(`${st}: no item called “${s.item}”`)
+      if ((s.kind === 'kill' || s.kind === 'collect') && !(s.count >= 1)) out.push(`${st}: a count of at least 1`)
+    })
+    for (const r of q.reward ?? []) {
+      if (!itm.has(r.item)) out.push(`${at}: rewards “${r.item}”, which is not an item`)
+      if (!(r.count >= 1)) out.push(`${at}: reward counts of at least 1`)
+    }
+  }
+  return out
 }

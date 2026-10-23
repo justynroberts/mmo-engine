@@ -122,6 +122,29 @@ const char *mmo_attr_name(const MmoClient *c, size_t i); /* valid while the clie
 
 float mmo_rtt_ms(const MmoClient *c);
 
+/* Actions used near you (spells, blows), each reported once. target is 0 when aimed at the caster. */
+typedef struct {
+    uint32_t caster;
+    uint32_t target;
+    uint8_t action;
+} MmoCast;
+size_t mmo_take_casts(MmoClient *c, MmoCast *out, size_t cap); /* oldest first; returns how many */
+/* Level and experience: at = this level's start, next = the next level's (0 at the cap); level 0 = not known. */
+void mmo_progress(const MmoClient *c, uint8_t *level, uint32_t *xp, uint32_t *at, uint32_t *next);
+/* Quests: state 0 in hand, 1 ready to hand in, 2 done. Returns how many; offer = quest just put to us (255 none).
+   Act 232 talks to a target, 233 takes quest `arg`, 234 gives quest `arg` up (mmo_act_arg). */
+typedef struct {
+    uint8_t quest;
+    uint8_t step;
+    uint16_t count;
+    uint8_t state;
+} MmoQuest;
+size_t mmo_quests(const MmoClient *c, MmoQuest *out, size_t cap, uint8_t *offer);
+/* Party ids (us among them; 0 = in none); gear item+1 per slot (weapon, armour, trinket) and riding.
+   Act 235 buys shop item `arg` from merchant `target`, 236 sells bag slot `arg` to them, 237 takes off gear slot `arg`. */
+size_t mmo_party(const MmoClient *c, uint32_t *out, size_t cap);
+void mmo_gear(const MmoClient *c, uint8_t *out3, uint8_t *riding);
+
 #ifdef __cplusplus
 }
 #endif

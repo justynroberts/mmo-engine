@@ -310,6 +310,126 @@ impl MmoClient {
         out
     }
 
+    /// Our quests: {offer (a quest index a giver has just put to us, -1 for none), list: [{quest, step, count,
+    /// state (0 in hand, 1 ready to hand in, 2 done)}]}.
+    #[func]
+    fn quests(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let mut list = Array::<VarDictionary>::new();
+        let mut offer = 255u8;
+        if !self.c.is_null() {
+            let mut buf = [m::MmoQuest::default(); 64];
+            let n = unsafe { m::mmo_quests(self.c, buf.as_mut_ptr(), buf.len(), &mut offer) };
+            for q in &buf[..n.min(buf.len())] {
+                let mut e = VarDictionary::new();
+                e.set("quest", q.quest as i64);
+                e.set("step", q.step as i64);
+                e.set("count", q.count as i64);
+                e.set("state", q.state as i64);
+                list.push(&e);
+            }
+        }
+        d.set("offer", if offer == 255 { -1 } else { offer as i64 });
+        d.set("list", &list);
+        d
+    }
+
+    /// Our party: the entity ids in it, us among them (empty when in none).
+    #[func]
+    fn party(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        let mut buf = [0u32; 16];
+        let n = unsafe { m::mmo_party(self.c, buf.as_mut_ptr(), buf.len()) };
+        for &id in &buf[..n.min(16)] {
+            out.push(id as i64);
+        }
+        out
+    }
+
+    /// What we wear: {weapon, armour, trinket (item names, "" for nothing), riding}.
+    #[func]
+    fn gear(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let (mut g, mut r) = ([0u8; 3], 0u8);
+        if !self.c.is_null() {
+            unsafe { m::mmo_gear(self.c, g.as_mut_ptr(), &mut r) };
+        }
+        for (k, name) in ["weapon", "armour", "trinket"].iter().enumerate() {
+            d.set(*name, &self.item_name(g[k]));
+        }
+        d.set("riding", r != 0);
+        d
+    }
+
+    /// Buy item `index` of the shop of merchant `target`; sell bag slot `slot` to them; take off a gear slot.
+    #[func]
+    fn buy(&mut self, target: i64, index: i64) {
+        unsafe { m::mmo_act_arg(self.c, 235, target.max(0) as u32, index.clamp(0, 255) as i32) };
+    }
+
+    #[func]
+    fn sell(&mut self, target: i64, slot: i64) {
+        unsafe { m::mmo_act_arg(self.c, 236, target.max(0) as u32, slot.clamp(0, 255) as i32) };
+    }
+
+    #[func]
+    fn unequip(&mut self, gear_slot: i64) {
+        unsafe { m::mmo_act_arg(self.c, 237, 0, gear_slot.clamp(0, 2) as i32) };
+    }
+
+    /// Talk to an entity (a quest giver), take the quest offered (`index`), or give one up.
+    #[func]
+    fn talk(&mut self, target: i64) {
+        self.act(232, target);
+    }
+
+    #[func]
+    fn accept_quest(&mut self, index: i64) {
+        unsafe { m::mmo_act_arg(self.c, 233, 0, index.clamp(0, 255) as i32) };
+    }
+
+    #[func]
+    fn abandon_quest(&mut self, index: i64) {
+        unsafe { m::mmo_act_arg(self.c, 234, 0, index.clamp(0, 255) as i32) };
+    }
+
+    /// Our level and experience: {level (0 = none yet), xp, at (this level's start), next (0 at the cap)}.
+    #[func]
+    fn progress(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let (mut level, mut xp, mut at, mut next) = (0u8, 0u32, 0u32, 0u32);
+        if !self.c.is_null() {
+            unsafe { m::mmo_progress(self.c, &mut level, &mut xp, &mut at, &mut next) };
+        }
+        d.set("level", level as i64);
+        d.set("xp", xp as i64);
+        d.set("at", at as i64);
+        d.set("next", next as i64);
+        d
+    }
+
+    /// Actions used near us since the last call, each once: [{caster, target (0 = aimed at themselves), action}].
+    #[func]
+    fn take_casts(&mut self) -> Array<VarDictionary> {
+        let mut out = Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        let mut buf = [m::MmoCast::default(); 64];
+        let n = unsafe { m::mmo_take_casts(self.c, buf.as_mut_ptr(), buf.len()) };
+        for k in &buf[..n] {
+            let mut d = VarDictionary::new();
+            d.set("caster", k.caster as i64);
+            d.set("target", k.target as i64);
+            d.set("action", k.action as i64);
+            out.push(&d);
+        }
+        out
+    }
+
     /// Use the item in a bag slot (0 to 7).
     #[func]
     fn use_slot(&mut self, slot: i64) {

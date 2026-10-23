@@ -68,6 +68,19 @@ pub struct MmoGround {
 pub struct Client {
     bag: Vec<(u8, u8)>,
     ground: Vec<wire::GroundEntry>,
+    /// Actions used nearby that the game has not taken yet (`mmo_take_casts`), and the seqs seen lately so a
+    /// cast repeated for a few ticks is told once.
+    casts: Vec<wire::Cast>,
+    casts_seen: std::collections::VecDeque<u32>,
+    /// Our level and experience, as the server last said (`wire::kind::PROGRESS`).
+    progress: wire::Progress,
+    /// Our quests and any quest a giver has just put to us (`wire::kind::QUESTS`).
+    quests: Vec<wire::QuestState>,
+    offer: u8,
+    /// Our party (entity ids, us among them; empty when in none), what we wear, and whether we ride.
+    party: Vec<u32>,
+    gear: [u8; 3],
+    riding: bool,
     item_names: Vec<std::ffi::CString>,
     item_colors: Vec<std::ffi::CString>,
     sock: UdpSocket,
@@ -273,6 +286,14 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
     let mut c = Client {
         bag: Vec::new(),
         ground: Vec::new(),
+        casts: Vec::new(),
+        casts_seen: std::collections::VecDeque::new(),
+        progress: wire::Progress::default(),
+        quests: Vec::new(),
+        offer: wire::NO_OFFER,
+        party: Vec::new(),
+        gear: [0; 3],
+        riding: false,
         item_names,
         item_colors,
         sock,
@@ -396,6 +417,36 @@ impl Client {
                     if let Some(b) = wire::decode_inventory(inner) {
                         self.bag = b;
                     }
+                } else if inner.first() == Some(&kind::PARTY) {
+                    if let Some(p) = wire::decode_party(inner) {
+                        self.party = p;
+                    }
+                } else if inner.first() == Some(&kind::GEAR) {
+                    if let Some((g, r)) = wire::decode_gear(inner) {
+                        self.gear = g;
+                        self.riding = r;
+                    }
+                } else if inner.first() == Some(&kind::QUESTS) {
+                    if let Some((offer, list)) = wire::decode_quests(inner) {
+                        self.offer = offer;
+                        self.quests = list;
+                    }
+                } else if inner.first() == Some(&kind::PROGRESS) {
+                    if let Some(p) = wire::decode_progress(inner) {
+                        self.progress = p;
+                    }
+                } else if inner.first() == Some(&kind::CASTS) {
+                    for cast in wire::decode_casts(inner).unwrap_or_default() {
+                        if !self.casts_seen.contains(&cast.seq) {
+                            if self.casts_seen.len() >= 256 {
+                                self.casts_seen.pop_front();
+                            }
+                            self.casts_seen.push_back(cast.seq);
+                            if self.casts.len() < 256 {
+                                self.casts.push(cast);
+                            }
+                        }
+                    }
                 } else if inner.first() == Some(&kind::GROUND) {
                     if let Some(g) = wire::decode_ground(inner) {
                         self.ground = g;
@@ -412,6 +463,12 @@ impl Client {
                         self.hist.push(interp::Snap { tick: info.tick, at, ents });
                         if let Some(me) = self.view.get(self.entity).copied() {
                             let (mx, my) = (proto::world::dpos(me.x), proto::world::dpos(me.y));
+                            // A haste or a slow: predict at the speed the server moves us at.
+                            let k = self.defs.replicated.iter().position(|&a| self.defs.attrs[a].name == proto::game::SPEED_ATTR);
+                            let mult = k.map_or(1.0, |k| self.defs.dequantize(self.defs.replicated[k], me.attrs[k]));
+                            if let Some(p) = self.pred.as_mut() {
+                                p.set_speed(self.defs.move_speed * mult);
+                            }
                             match self.pred.as_mut() {
                                 Some(p) => {
                                     p.reconcile(&self.world, mx, my, me.z, info.last_input_seq);
@@ -846,6 +903,98 @@ pub unsafe extern "C" fn mmo_ground(c: *const Client, i: usize, out: *mut MmoGro
     // GROUND carries the plain item index; this API (like bag slots) is 1-based so 0 can mean "nothing".
     *out = MmoGround { id: g.id, x: proto::world::dpos(g.x), y: proto::world::dpos(g.y), item: g.item.saturating_add(1), count: g.count };
     1
+}
+
+/// One use of an action near you: who used it, on whom (0 when aimed at themselves), and which action.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MmoCast {
+    pub caster: u32,
+    pub target: u32,
+    pub action: u8,
+}
+
+/// Take up to `cap` actions used nearby since the last call (each once), oldest first. Returns how many.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_take_casts(c: *mut Client, out: *mut MmoCast, cap: usize) -> usize {
+    let Some(c) = c.as_mut() else { return 0 };
+    if out.is_null() {
+        return 0;
+    }
+    let n = c.casts.len().min(cap);
+    for (i, k) in c.casts.drain(..n).enumerate() {
+        *out.add(i) = MmoCast { caster: k.caster, target: k.target, action: k.action };
+    }
+    n
+}
+
+/// Our level and experience: `xp` in all, `at` what this level needed and `next` what the next one needs (0 at
+/// the cap). Level 0 means the server has not said (no levels in this game, or not yet).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_progress(c: *const Client, level: *mut u8, xp: *mut u32, at: *mut u32, next: *mut u32) {
+    let Some(c) = c.as_ref() else { return };
+    let p = c.progress;
+    for (ptr, v) in [(xp, p.xp), (at, p.at), (next, p.next)] {
+        if !ptr.is_null() {
+            *ptr = v;
+        }
+    }
+    if !level.is_null() {
+        *level = p.level;
+    }
+}
+
+/// Our party: copies up to `cap` entity ids (us among them) into `out` and returns how many (0: in none).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_party(c: *const Client, out: *mut u32, cap: usize) -> usize {
+    let Some(c) = c.as_ref() else { return 0 };
+    if !out.is_null() {
+        for (i, &id) in c.party.iter().take(cap).enumerate() {
+            *out.add(i) = id;
+        }
+    }
+    c.party.len()
+}
+
+/// What we wear (item index + 1 per gear slot: weapon, armour, trinket; 0 for nothing) and whether we ride.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_gear(c: *const Client, out: *mut u8, riding: *mut u8) {
+    let Some(c) = c.as_ref() else { return };
+    if !out.is_null() {
+        for (i, &g) in c.gear.iter().enumerate() {
+            *out.add(i) = g;
+        }
+    }
+    if !riding.is_null() {
+        *riding = c.riding as u8;
+    }
+}
+
+/// One of our quests: which (its index in /play/info "quests"), its step, how far into it, and its state
+/// (0 in hand, 1 ready to hand in, 2 done).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MmoQuest {
+    pub quest: u8,
+    pub step: u8,
+    pub count: u16,
+    pub state: u8,
+}
+
+/// Our quests: copies up to `cap` into `out` and returns how many we have; `offer` gets the quest a giver has just
+/// put to us (255 for none).
+#[no_mangle]
+pub unsafe extern "C" fn mmo_quests(c: *const Client, out: *mut MmoQuest, cap: usize, offer: *mut u8) -> usize {
+    let Some(c) = c.as_ref() else { return 0 };
+    if !offer.is_null() {
+        *offer = c.offer;
+    }
+    if !out.is_null() {
+        for (i, q) in c.quests.iter().take(cap).enumerate() {
+            *out.add(i) = MmoQuest { quest: q.quest, step: q.step, count: q.count, state: q.state };
+        }
+    }
+    c.quests.len()
 }
 
 /// Number of item kinds in the game, from `info_json`.

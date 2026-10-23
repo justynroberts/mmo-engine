@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 # MIT License - Copyright (c) fintonlabs.com
 """Make every sound the Godot client plays: ambience loops, effects and music, synthesised from nothing (no samples,
-nothing to license). Deterministic: the same script makes the same files.
+nothing to license). Deterministic: the same script makes the same audio.
 
-    scripts/make_audio.py [OUT_DIR]          (default godot/sounds; needs numpy, scipy and ffmpeg)
+    scripts/make_audio.py [OUT_DIR] [--force] [NAME ...]     (default godot/sounds; needs numpy, scipy and ffmpeg)
+
+Files that already exist are skipped unless --force is given: the Ogg encoder stamps every file with a random stream
+serial, so rewriting an unchanged sound still changes its bytes. NAMEs keep only the files whose path contains one
+of them, e.g. `scripts/make_audio.py cast_ impact_ sfx/heal sfx/held` or `--force sfx/cast_fire`. OUT_DIR must exist.
+Spell sounds each have their own seed, so they come out the same whatever else is made alongside them.
 
 ambience/  seamless loops the client blends by what is round the player, or a place's `sound`
+           (shore.ogg is a CC0 recording, not made here: see godot/sounds/ambience/CREDITS.md)
 sfx/       short one-shots (several takes of the common ones: name_1, name_2, ...)
 music/     seamless pieces in the old Irish modes, one per mood, chosen by place `music` or the moment
 """
@@ -17,7 +23,10 @@ import tempfile
 import numpy as np
 from scipy import signal
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'godot', 'sounds')
+ARGS = [a for a in sys.argv[1:] if a != '--force']
+FORCE = len(ARGS) < len(sys.argv) - 1
+OUT = ARGS.pop(0) if ARGS and os.path.isdir(ARGS[0]) else os.path.join(os.path.dirname(__file__), '..', 'godot', 'sounds')
+ONLY = ARGS  # path fragments: make only the files whose path contains one
 SR = 32000  # ambience and effects
 MR = 44100  # music
 
@@ -507,6 +516,282 @@ def sfx_splash():
     return level(s, 0.18)
 
 
+# ------------------------------------------------------------------------------------------------ spells
+
+def sweep(x, centre, width=0.3, hop=256):
+    """Band-pass x round a centre frequency that moves (one value per sample), like the swing's blade."""
+    out = np.zeros(len(x))
+    for i in range(0, len(x), hop):
+        c = float(centre[min(i, len(x) - 1)])
+        seg = band(x[max(0, i - 1024): i + hop], c * (1 - width), c * (1 + width))
+        out[i:i + hop] = seg[-min(hop, len(x) - i):]
+    return out
+
+
+def ping(f, d, decay, sr=SR):
+    """A short glassy ping: a sine and a slightly sharp partial."""
+    tt = np.arange(int(d * sr)) / sr
+    return (np.sin(2 * np.pi * f * tt) + 0.35 * np.sin(2 * np.pi * f * 2.76 * tt)) * np.exp(-tt / decay) * np.minimum(tt / 0.002, 1)
+
+
+def crackles(k, count, lo=0.0, hi=1.0, gain=(0.1, 0.5), band_=(1500, 7000)):
+    s = np.zeros(k)
+    for _ in range(count):
+        kk = int(0.006 * SR)
+        place(s, band(white(kk), *band_) * np.exp(-np.arange(kk) / (0.0012 * SR)) * rng.uniform(*gain), int(rng.uniform(lo, hi) * k))
+    return s
+
+
+def bubbles(k, count, lo=0.0, hi=1.0, f=(250, 900), gain=0.3):
+    s = np.zeros(k)
+    for _ in range(count):
+        kk = int(rng.uniform(0.02, 0.06) * SR)
+        t = np.arange(kk) / SR
+        f0 = rng.uniform(*f)
+        place(s, np.sin(2 * np.pi * np.cumsum(f0 * (1 + 1.5 * t / t[-1])) / SR) * np.exp(-t / 0.012) * gain * rng.uniform(0.4, 1), int(rng.uniform(lo, hi) * k), 1.0)
+    return s
+
+
+def thump(k, f0, f1, rate, decay):
+    tt = np.arange(k) / SR
+    return np.sin(2 * np.pi * np.cumsum(f0 * np.exp(-tt * rate) + f1) / SR) * np.exp(-tt / decay)
+
+
+def swell(tt, peak):
+    """Rises to 1 at `peak` seconds, then falls away to nothing at the end."""
+    return np.where(tt < peak, (tt / peak) ** 2, np.cos(np.pi / 2 * np.clip((tt - peak) / (tt[-1] - peak + 1e-9), 0, 1)) ** 1.5)
+
+
+def squash(x, drive=2.0):
+    """Soft-clip the first crack of an impact so its body can be as loud as the other effects."""
+    return np.tanh(drive * x / (np.max(np.abs(x)) + 1e-9))
+
+
+def cast_fire():
+    k = int(0.75 * SR)
+    tt = np.arange(k) / SR
+    roar = band(pink(k), 120, 1400) * swell(tt, 0.3) * 0.9
+    whoosh = sweep(white(k), 500 + 2200 * np.sin(np.pi * tt / tt[-1]) ** 2, 0.4) * swell(tt, 0.35) * 0.7
+    return level(roar + whoosh + crackles(k, 45, 0.05, 0.9) * swell(tt, 0.4), 0.16)
+
+
+def cast_frost():
+    k = int(0.8 * SR)
+    tt = np.arange(k) / SR
+    air = sweep(white(k), 2500 + 4500 * tt / tt[-1], 0.25) * swell(tt, 0.4) * 0.5
+    s = air
+    for i in range(22):  # ice crystals forming, higher as it goes
+        at = rng.uniform(0, 0.65)
+        place(s, ping(rng.uniform(2200, 3400) * (1 + at), 0.15, 0.04) * 0.25, int(at * SR))
+    return level(reverb(s, SR, 0.9, 0.25, 7000), 0.12)
+
+
+def cast_shock():
+    k = int(0.5 * SR)
+    tt = np.arange(k) / SR
+    f = 90 + 60 * wander(k, 40) + 400 * np.exp(-tt * 12)
+    buzz = np.tanh(4 * signal.sawtooth(2 * np.pi * np.cumsum(f) / SR)) * (0.5 + 0.5 * (wander(k, 60) > 0.4))
+    buzz = band(buzz, 200, 6000) * swell(tt, 0.08) * 0.5
+    zap = sweep(white(k), 6000 * np.exp(-tt * 6) + 600, 0.3) * np.exp(-tt * 8) * 0.8
+    return level(buzz + zap + crackles(k, 60, 0, 0.85, (0.2, 0.8), (2500, 10000)), 0.16)
+
+
+def cast_holy():
+    k = int(0.95 * SR)
+    tt = np.arange(k) / SR
+    s = np.zeros(k)
+    for i, f in enumerate((523.3, 659.3, 784.0, 1046.5)):  # C major, opening upward
+        vib = 1 + 0.003 * np.sin(2 * np.pi * 5.5 * tt + i)
+        s += sum(np.sin(2 * np.pi * np.cumsum(f * h * vib) / SR) / h ** 1.6 for h in (1, 2, 3)) * np.clip((tt - i * 0.06) / 0.4, 0, 1) ** 2
+    s *= np.minimum((tt[-1] - tt) / 0.35, 1)
+    place(s, bell(1568.0, 0.5, SR) * 0.25, int(0.4 * SR))
+    return level(reverb(s, SR, 1.4, 0.35), 0.11)
+
+
+def cast_shadow():
+    k = int(0.9 * SR)
+    tt = np.arange(k) / SR
+    rise = np.clip(tt / 0.75, 0, 1) ** 3 * np.minimum((tt[-1] - tt) / 0.06, 1)  # a reversed swell, cut off sharp
+    low = band(brown(k), 40, 400) * 1.5 + np.sin(2 * np.pi * np.cumsum(70 - 25 * tt) / SR) * 0.5
+    whisper = band(white(k), 1500, 4500) * (0.5 + 0.5 * wander(k, 18)) * 0.35
+    s = (low + whisper) * rise
+    s = reverb(s[::-1], SR, 1.0, 0.5, 1200)[::-1] * rise  # the tail comes before the sound
+    return level(s, 0.15)
+
+
+def cast_nature():
+    k = int(0.75 * SR)
+    tt = np.arange(k) / SR
+    leaves = band(white(k), 1800, 7000) * wander(k, 35) ** 2 * swell(tt, 0.3) * 0.7
+    s = leaves
+    for at in (0.0, 0.07, 0.15):  # woody knocks
+        place(s, thump(int(0.08 * SR), 120, rng.uniform(320, 520), 40, 0.02) * 0.5, int(at * SR))
+    for i, f in enumerate((784.0, 880.0, 1174.7)):  # a soft pentatonic chime
+        place(s, ping(f, 0.4, 0.12) * 0.25, int((0.25 + i * 0.09) * SR))
+    return level(reverb(s, SR, 0.8, 0.2), 0.13)
+
+
+def cast_arcane():
+    k = int(0.85 * SR)
+    tt = np.arange(k) / SR
+    f = 400 * 2 ** (2.2 * tt / tt[-1])
+    gliss = sum(np.sin(2 * np.pi * np.cumsum(f * d) / SR) for d in (0.995, 1.0, 1.007)) / 3 * swell(tt, 0.5) * 0.5
+    s = gliss + sweep(white(k), 1500 + 4000 * tt / tt[-1], 0.2) * swell(tt, 0.5) * 0.3
+    for _ in range(26):
+        at = rng.uniform(0, 0.75)
+        place(s, ping(rng.uniform(1800, 3000) * (1 + 0.8 * at), 0.12, 0.03) * 0.18, int(at * SR))
+    return level(reverb(s, SR, 1.0, 0.3, 6000), 0.12)
+
+
+def cast_poison():
+    k = int(0.7 * SR)
+    tt = np.arange(k) / SR
+    hiss = band(white(k), 3000, 9000) * swell(tt, 0.4) * 0.35
+    goo = band(brown(k), 80, 500) * swell(tt, 0.25) * 0.8
+    return level(hiss + goo + bubbles(k, 40, 0, 0.85), 0.15)
+
+
+def cast_mind():
+    k = int(0.85 * SR)
+    tt = np.arange(k) / SR
+    vib = 1 + 0.08 * np.sin(2 * np.pi * (5 + 4 * tt) * tt)
+    f = 330 * 2 ** (0.5 * np.sin(np.pi * tt / tt[-1])) * vib
+    tone = signal.sawtooth(2 * np.pi * np.cumsum(f) / SR, 0.5) * np.sin(2 * np.pi * np.cumsum(f * 1.41) / SR)  # ring-modded
+    s = (band(tone, 200, 3000) + 0.4 * np.sin(2 * np.pi * np.cumsum(f * 0.5) / SR)) * swell(tt, 0.35)
+    return level(reverb(s, SR, 1.0, 0.35, 3500), 0.14)
+
+
+def cast_blood():
+    k = int(0.75 * SR)
+    tt = np.arange(k) / SR
+    s = np.zeros(k)
+    for at, g in ((0.0, 0.8), (0.18, 1.0)):  # a heartbeat, then the push
+        place(s, thump(int(0.3 * SR), 60, 45, 15, 0.08) * g, int(at * SR))
+    wet = sweep(brown(k) * 4, 900 - 600 * tt / tt[-1], 0.5) * swell(tt, 0.3) * 0.6
+    s += wet + bubbles(k, 10, 0.15, 0.6, (150, 400), 0.25)
+    return level(band(s, 30, 3000), 0.13)
+
+
+def impact_fire():
+    k = int(0.8 * SR)
+    tt = np.arange(k) / SR
+    burst = band(white(k), 200, 5000) * np.exp(-tt * 14) * 0.8
+    rumble = band(brown(k), 40, 400) * np.exp(-tt * 5) * 1.2
+    return level(squash(burst + rumble + thump(k, 120, 50, 20, 0.1) * 0.6 + crackles(k, 40, 0.05, 0.85) * np.exp(-tt * 3)), 0.13)
+
+
+def impact_frost():
+    k = int(0.7 * SR)
+    tt = np.arange(k) / SR
+    s = band(white(k), 2000, 10000) * np.exp(-tt * 50) * 0.9 + thump(k, 200, 150, 30, 0.03) * 0.3
+    for _ in range(30):  # shards falling
+        at = rng.uniform(0, 0.5) ** 1.4
+        place(s, ping(rng.uniform(2500, 6000), 0.1, rng.uniform(0.01, 0.03)) * rng.uniform(0.1, 0.35), int(at * SR))
+    return level(squash(reverb(s, SR, 0.6, 0.2, 8000), 2.5), 0.15)
+
+
+def impact_shock():
+    k = int(0.5 * SR)
+    tt = np.arange(k) / SR
+    crack = white(k) * np.exp(-tt * 120)
+    buzz = band(np.tanh(5 * signal.sawtooth(2 * np.pi * (110 + 30 * wander(k, 50)) * tt)), 200, 5000) * np.exp(-tt * 9) * 0.35
+    return level(squash(crack * 0.6 + buzz + thump(k, 150, 50, 25, 0.06) * 0.6 + crackles(k, 25, 0, 0.5, (0.1, 0.5), (3000, 10000)), 3.0), 0.12)
+
+
+def impact_holy():
+    s = np.zeros(int(0.9 * SR))
+    for i, f in enumerate((1046.5, 1318.5, 1568.0)):
+        place(s, bell(f, 0.8, SR)[: int(0.8 * SR)] * 0.4, int(i * 0.03 * SR))
+    return level(reverb(s, SR, 1.0, 0.3), 0.11)
+
+
+def impact_shadow():
+    k = int(0.9 * SR)
+    tt = np.arange(k) / SR
+    s = thump(k, 90, 40, 12, 0.12) + band(brown(k), 30, 250) * np.exp(-tt * 3.5) * 1.2 + band(white(k), 300, 1500) * np.exp(-tt * 40) * 0.3
+    return level(reverb(s, SR, 1.2, 0.45, 700), 0.13)
+
+
+def impact_nature():
+    k = int(0.5 * SR)
+    tt = np.arange(k) / SR
+    s = np.zeros(k)
+    for at in (0.0, 0.025, 0.06, 0.1):  # a stick snapping, splinters after
+        kk = int(0.04 * SR)
+        place(s, band(white(kk), 900, 5000) * np.exp(-np.arange(kk) / (0.005 * SR)) * rng.uniform(0.5, 1), int(at * SR))
+    creak = band(signal.sawtooth(2 * np.pi * np.cumsum(180 + 60 * tt) / SR), 300, 1500) * (0.5 + 0.5 * wander(k, 30)) * np.exp(-tt * 9) * 0.3
+    return level(squash(s + creak + thump(k, 80, 260, 50, 0.03) * 0.4, 2.5), 0.17)
+
+
+def impact_arcane():
+    k = int(0.7 * SR)
+    tt = np.arange(k) / SR
+    s = thump(k, 900, 200, 45, 0.03) * 0.7  # the pop
+    for _ in range(20):
+        at = rng.uniform(0.01, 0.4)
+        place(s, ping(rng.uniform(2000, 4500), 0.15, 0.04) * rng.uniform(0.1, 0.3), int(at * SR))
+    return level(reverb(s, SR, 0.9, 0.3, 6000), 0.13)
+
+
+def impact_poison():
+    k = int(0.7 * SR)
+    tt = np.arange(k) / SR
+    splat = band(brown(k) * 3, 100, 1500) * np.exp(-tt * 18) + band(white(k), 500, 3000) * np.exp(-tt * 35) * 0.5
+    hiss = band(white(k), 3500, 9000) * np.clip(tt / 0.05, 0, 1) * np.exp(-tt * 4) * 0.3
+    return level(splat + hiss + bubbles(k, 18, 0.05, 0.7, (300, 1000), 0.25), 0.16)
+
+
+def impact_mind():
+    k = int(0.9 * SR)
+    tt = np.arange(k) / SR
+    ring = sum(np.sin(2 * np.pi * f * tt) * g for f, g in ((440, 1), (446, 0.8), (1210, 0.3))) * np.exp(-tt * 3.5)  # beating
+    ring = band(ring, 0, 1500)
+    return level(ring * 0.5 + thump(k, 80, 60, 20, 0.06) * 0.5, 0.12)
+
+
+def impact_blood():
+    k = int(0.6 * SR)
+    tt = np.arange(k) / SR
+    squelch = sweep(brown(k) * 4, 1200 * np.exp(-tt * 6) + 200, 0.5) * np.exp(-tt * 7)
+    return level(thump(k, 70, 45, 14, 0.1) + squelch * 0.8 + bubbles(k, 8, 0.03, 0.4, (120, 350), 0.3), 0.14)
+
+
+def heal():
+    s = np.zeros(int(1.1 * SR))
+    for i, f in enumerate((784.0, 880.0, 1046.5, 1174.7, 1318.5, 1568.0, 1760.0)):  # rising pentatonic sparkle
+        place(s, ping(f, 0.5, 0.15) * 0.35, int(i * 0.07 * SR))
+    tt = np.arange(len(s)) / SR
+    s += band(white(len(s)), 4000, 10000) * swell(tt, 0.45) * 0.08
+    return level(reverb(s, SR, 1.2, 0.35, 7000), 0.1)
+
+
+def held():
+    k = int(0.8 * SR)
+    tt = np.arange(k) / SR
+    f = 700 + 250 * np.sin(2 * np.pi * 6 * tt)  # round and round
+    tone = np.sin(2 * np.pi * np.cumsum(f * (1 - 0.3 * tt)) / SR)
+    tone *= 0.6 + 0.4 * np.sin(2 * np.pi * 3 * tt)
+    s = tone * np.minimum(tt / 0.03, 1) * np.minimum((tt[-1] - tt) / 0.25, 1) * 0.5
+    for i in range(5):  # little stars circling
+        place(s, ping(2100 + 300 * np.sin(i * 1.3), 0.12, 0.03) * 0.25, int((0.05 + i * 0.13) * SR))
+    return level(reverb(s, SR, 0.8, 0.3), 0.13)
+
+
+SPELLS = ('fire', 'frost', 'shock', 'holy', 'shadow', 'nature', 'arcane', 'poison', 'mind', 'blood')
+
+
+def seeded(seed, fn):
+    """Run fn with its own random stream, so a spell sound never depends on what was made before it."""
+    def run():
+        global rng
+        keep, rng = rng, np.random.default_rng(seed)
+        try:
+            return fn()
+        finally:
+            rng = keep
+    return run
+
+
 # ------------------------------------------------------------------------------------------------ music
 
 def midi(m):
@@ -773,18 +1058,34 @@ def mus_holy():
 # ------------------------------------------------------------------------------------------------ write it all
 
 if __name__ == '__main__':
+    # (path, make, sample rate, quality, own seed). Sounds without their own seed share one random stream in this
+    # order, so everything before one being made is made too (and thrown away) to keep it the same sound.
+    jobs = []
     for name, fn in [('sea', amb_sea), ('river', amb_river), ('forest', amb_forest), ('night', amb_night), ('wind', amb_wind),
                      ('rain', amb_rain), ('fire', amb_fire), ('town', amb_town), ('market', amb_market), ('crypt', amb_crypt),
                      ('holy', amb_holy), ('battle', amb_battle)]:
-        write(f'ambience/{name}.ogg', fn(), SR)
+        jobs.append((f'ambience/{name}.ogg', fn, SR, 4, False))
     for surface in ('grass', 'road', 'stone', 'water'):
         for i in range(1, 4):
-            write(f'sfx/step_{surface}_{i}.ogg', sfx_step(surface), SR, 3)
+            jobs.append((f'sfx/step_{surface}_{i}.ogg', lambda s=surface: sfx_step(s), SR, 3, False))
     for i in range(1, 3):
-        write(f'sfx/swing_{i}.ogg', sfx_swing(), SR, 3)
-        write(f'sfx/hit_{i}.ogg', sfx_hit(), SR, 3)
+        jobs.append((f'sfx/swing_{i}.ogg', sfx_swing, SR, 3, False))
+        jobs.append((f'sfx/hit_{i}.ogg', sfx_hit, SR, 3, False))
     for name, fn in [('hurt', sfx_hurt), ('pickup', sfx_pickup), ('drop', sfx_drop), ('place', sfx_place), ('break', sfx_break),
                      ('horn', sfx_horn), ('chime', sfx_chime), ('click', sfx_click), ('splash', sfx_splash)]:
-        write(f'sfx/{name}.ogg', fn(), SR, 3)
+        jobs.append((f'sfx/{name}.ogg', fn, SR, 3, False))
     for name, fn in [('explore', mus_explore), ('town', mus_town), ('night', mus_night), ('battle', mus_battle), ('eerie', mus_eerie), ('holy', mus_holy)]:
-        write(f'music/{name}.ogg', fn(), MR, 4)
+        jobs.append((f'music/{name}.ogg', fn, MR, 4, False))
+    for i, fx in enumerate(SPELLS):
+        jobs.append((f'sfx/cast_{fx}.ogg', seeded(2000 + i, globals()[f'cast_{fx}']), SR, 3, True))
+        jobs.append((f'sfx/impact_{fx}.ogg', seeded(3000 + i, globals()[f'impact_{fx}']), SR, 3, True))
+    jobs.append(('sfx/heal.ogg', seeded(4000, heal), SR, 3, True))
+    jobs.append(('sfx/held.ogg', seeded(4001, held), SR, 3, True))
+
+    want = [(not ONLY or any(o in p for o in ONLY)) and (FORCE or not os.path.exists(os.path.join(OUT, p))) for p, *_ in jobs]
+    last_shared = max((i for i, (w, j) in enumerate(zip(want, jobs)) if w and not j[4]), default=-1)
+    for i, (path, fn, sr, q, own) in enumerate(jobs):
+        if want[i]:
+            write(path, fn(), sr, q)
+        elif not own and i < last_shared:
+            fn()

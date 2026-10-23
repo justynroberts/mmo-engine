@@ -8,6 +8,7 @@ signal chat_submitted(text: String)
 signal material_pressed(kind: int)
 signal mode_pressed                     # the mode chip was clicked (toggle Action / Build)
 signal ability_pressed(name: String)    # attack, jump, torch, map, build
+signal spell_pressed(i: int)            # a slot on the spell bar
 
 const ACCENT := Color("ffd27a")
 const INK := Color(0.05, 0.055, 0.065, 0.84)
@@ -17,7 +18,7 @@ const MUTED := Color(0.95, 0.92, 0.82, 0.55)
 const KEYS := ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", "]"]   # the keys that pick each material
 const HELP_ACTION := [["WASD", "move"], ["Q / E", "turn"], ["Mouse wheel", "zoom, in past the closest for first person"],
 	["V", "first person"], ["Click", "target"], ["Tab", "next target"], ["Space", "attack (hold to keep swinging)"],
-	["J", "jump"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "pick up"],
+	["J", "jump"], ["R T Y U I O P Z C H K ,", "spells, on the bar over the action bar"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "talk to someone near, or pick up"], ["F3", "quests"],
 	["Enter", "chat, start with ! to shout"], ["M", "world map"], ["N", "sound: all, no music, off"], ["G", "god mode"], ["F11", "full screen"]]
 const HELP_BUILD := [["B", "build mode on and off (Esc leaves)"], ["1-0 - = [ ]", "pick a material"],
 	["Click", "place a block"], ["Hold right click, X or Shift+click", "break one of yours (sweep to keep going)"]]
@@ -48,6 +49,12 @@ var chat_in := LineEdit.new()
 var chat_hint := Label.new()
 var bar := HBoxContainer.new()          # the action bar: abilities, the bag, map and build
 var slots: Array[Slot] = []
+var spellbar := HBoxContainer.new()     # the game's spells (its actions after the first), over the action bar
+var spell_slots: Array[Slot] = []
+var party_box := VBoxContainer.new()    # party mates under your frame: name and health
+var spell_tip := PanelContainer.new()   # what the spell under the mouse does, over the bars
+var _tip_title := Label.new()
+var _tip_body := Label.new()
 var abilities := {}                     # name -> Slot
 var materials := HBoxContainer.new()   # the build bar, shown in build mode
 var _material_buttons: Array[Button] = []
@@ -63,6 +70,15 @@ var travel_text := Label.new()
 var banner := Label.new()               # big centred text: a zone, the weather
 var toast := Label.new()                # small centred text: why a swing did nothing
 var help := PanelContainer.new()
+var loader := CanvasLayer.new()         # over everything until the world round you is in and drawn
+var load_bar := ColorRect.new()         # the filled part of the bar
+var load_track := ColorRect.new()
+var load_text := Label.new()
+var _load_frac := 0.0                   # how far loading has got
+var _load_shown := 0.0                  # how far the bar is drawn: it eases towards _load_frac
+var _load_since := 0.0                  # seconds the screen has been up
+var _load_done := false                 # loaded() was called; it fades once the bar is full and it has been up a while
+const LOAD_MIN := 2.2                   # long enough to read a line, however fast the world arrives
 var help_hint := Label.new()
 var _banner_tw: Tween
 var _loc_tw: Tween
@@ -99,7 +115,7 @@ func _ready() -> void:
 	side.add_theme_constant_override("separation", 6)
 	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_right.add_child(side)
-	for a in [["map", "Map", "M"], ["build", "Build", "B"]]:
+	for a in [["map", "Map", "M"], ["build", "Build", "B"], ["journal", "Spells", "F2"], ["quests", "Quests", "F3"]]:
 		var s := _ability(a[0], a[1], a[2], side)
 		s.custom_minimum_size = Vector2(42, 42)
 	var mm := VBoxContainer.new()
@@ -179,6 +195,31 @@ func _ready() -> void:
 		bar.add_child(s)
 		slots.append(s)
 	_place_bar.call_deferred()
+	spellbar.add_theme_constant_override("separation", 4)
+	spellbar.alignment = BoxContainer.ALIGNMENT_CENTER
+	spellbar.visible = false
+	root.add_child(spellbar)
+	party_box.position = Vector2(16, 120)
+	party_box.add_theme_constant_override("separation", 4)
+	party_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(party_box)
+	spell_tip.visible = false
+	spell_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spell_tip.add_theme_stylebox_override("panel", _box(Color(0.04, 0.045, 0.05, 0.94), EDGE, 12))
+	spell_tip.custom_minimum_size = Vector2(320, 0)
+	var tv := VBoxContainer.new()
+	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spell_tip.add_child(tv)
+	_tip_title.add_theme_font_override("font", TITLE)
+	_tip_title.add_theme_font_size_override("font_size", 18)
+	_tip_title.add_theme_color_override("font_color", ACCENT)
+	tv.add_child(_tip_title)
+	_tip_body.add_theme_font_size_override("font_size", 14)
+	_tip_body.add_theme_color_override("font_color", TEXT)
+	_tip_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tip_body.custom_minimum_size = Vector2(296, 0)
+	tv.add_child(_tip_body)
+	root.add_child(spell_tip)
 
 	materials.add_theme_constant_override("separation", 4)
 	materials.visible = false
@@ -245,6 +286,43 @@ func _ready() -> void:
 	travel_cover.add_child(travel_text)
 	root.add_child(travel_cover)
 	status.add_theme_color_override("font_color", Color("ff8a70"))
+
+	# Loading: a dark screen, the stage, and a thin bar, over the HUD and the travel cover alike.
+	loader.layer = 20
+	loader.visible = false
+	var lc := ColorRect.new()
+	lc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lc.color = Color(0.02, 0.022, 0.026)
+	loader.add_child(lc)
+	# The title art behind it, dimmed (res://ui/title.jpg); the bar sits low, under the art's lettering.
+	var art: TextureRect = preload("res://scripts/join.gd").make_art()
+	if art:
+		art.modulate = Color(0.55, 0.55, 0.6)
+		lc.add_child(art)
+		lc.add_child(preload("res://scripts/join.gd").fade_rect(0.5))
+	var lcol := VBoxContainer.new()
+	lcol.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	lcol.offset_left = -180
+	lcol.offset_right = 180
+	lcol.offset_top = -130
+	lcol.offset_bottom = -40
+	lcol.add_theme_constant_override("separation", 10)
+	lc.add_child(lcol)
+	var lt := Label.new()
+	lt.text = "Entering the world"
+	lt.add_theme_font_override("font", TITLE)
+	lt.add_theme_font_size_override("font_size", 30)
+	lt.add_theme_color_override("font_color", ACCENT)
+	lcol.add_child(lt)
+	load_track.color = Color(1, 1, 1, 0.08)
+	load_track.custom_minimum_size = Vector2(360, 4)
+	lcol.add_child(load_track)
+	load_bar.color = ACCENT
+	load_bar.size = Vector2(0, 4)
+	load_track.add_child(load_bar)
+	load_text.add_theme_color_override("font_color", MUTED)
+	lcol.add_child(load_text)
+	add_child(loader)
 
 	# Two short bars with a gap in the middle, so the crosshair never hides what it is on.
 	crosshair.set_anchors_preset(Control.PRESET_CENTER)
@@ -317,7 +395,86 @@ func _gap() -> Control:
 
 ## The bar's width is only known once its slots are in.
 func _place_bar() -> void:
+	# Centred whatever their width turns out to be: they grow both ways from the middle, and up from the bottom.
+	for b in [bar, spellbar]:
+		b.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		b.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 16)
+	spellbar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 16 + Slot.SIDE + 6)
+	for b in [bar, spellbar]:
+		b.reset_size()
+
+## The spell bar: [{title, key, color, tip}, ...]; empty hides it.
+func set_spells(list: Array) -> void:
+	for s in spell_slots:
+		s.queue_free()
+	spell_slots.clear()
+	for i in list.size():
+		var d: Dictionary = list[i]
+		var s := Slot.new()
+		s.key = String(d["key"])
+		s.title = String(d["title"])
+		s.glyph = true
+		s.color = d["color"]
+		s.pressed.connect(func(): spell_pressed.emit(i))
+		s.hovered.connect(_show_tip.bind(s, String(d["tip_title"]), String(d["tip"])))
+		spellbar.add_child(s)
+		spell_slots.append(s)
+	spellbar.visible = not list.is_empty()
+	_place_bar.call_deferred()
+
+## The spell under the mouse: its name and what it does, in a panel over the bars (clear of the buttons).
+func _show_tip(on: bool, s: Slot, title: String, body: String) -> void:
+	spell_tip.visible = on
+	if not on:
+		return
+	_tip_title.text = title
+	_tip_body.text = body
+	spell_tip.reset_size()
+	var r := s.get_global_rect()
+	var top := spellbar.get_global_rect().position.y - 10.0
+	spell_tip.position = Vector2(clampf(r.get_center().x - spell_tip.size.x * 0.5, 8.0, get_viewport().get_visible_rect().size.x - spell_tip.size.x - 8.0), top - spell_tip.size.y)
+
+## Party mates: [[name, health 0..1, or -1 when out of sight], ...].
+func set_party(mates: Array) -> void:
+	if party_box.get_child_count() != mates.size():
+		for c in party_box.get_children():
+			c.queue_free()
+		for m in mates:
+			var row := VBoxContainer.new()
+			row.add_theme_constant_override("separation", 1)
+			var n := Label.new()
+			n.add_theme_font_size_override("font_size", 13)
+			n.add_theme_color_override("font_color", Color("8fd3ff"))
+			_outline(n, 3)
+			row.add_child(n)
+			var bar := ProgressBar.new()
+			bar.custom_minimum_size = Vector2(160, 6)
+			bar.show_percentage = false
+			bar.max_value = 1.0
+			var fill := StyleBoxFlat.new()
+			fill.bg_color = Color("c23b2e")
+			var bg := StyleBoxFlat.new()
+			bg.bg_color = Color(0, 0, 0, 0.6)
+			bar.add_theme_stylebox_override("fill", fill)
+			bar.add_theme_stylebox_override("background", bg)
+			row.add_child(bar)
+			party_box.add_child(row)
+	for i in mates.size():
+		var row := party_box.get_child(i)
+		(row.get_child(0) as Label).text = String(mates[i][0]) + ("" if float(mates[i][1]) >= 0.0 else "  (far)")
+		(row.get_child(1) as ProgressBar).value = maxf(float(mates[i][1]), 0.0)
+
+## Each spell's cooldown still to run (0..1) and whether it can be paid for now.
+func update_spells(cools: Array, can: Array) -> void:
+	for i in mini(spell_slots.size(), cools.size()):
+		var s := spell_slots[i]
+		var c := float(cools[i])
+		var dim := not bool(can[i])
+		if absf(s.cool - c) > 0.01 or s.dim != dim:
+			s.cool = c
+			s.dim = dim
+			s.queue_redraw()
 
 static func _box(bg: Color, edge: Color, pad: float) -> StyleBoxFlat:
 	var b := StyleBoxFlat.new()
@@ -368,6 +525,48 @@ func announce(text: String, color := ACCENT) -> void:
 	banner.add_theme_color_override("font_color", color)
 	_banner_tw = _fade(banner, _banner_tw, 3.0)
 
+## On arriving: "<name> begins their quest in <place>" and, in Irish, "Good luck, adventurer", held a while and
+## faded away.
+func welcome(who: String, where: String) -> void:
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	box.offset_top = 150
+	box.offset_left = -500
+	box.offset_right = 500
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_constant_override("separation", 6)
+	var a := Label.new()
+	a.text = "%s begins their quest %s" % [who, where]
+	a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	a.add_theme_font_override("font", TITLE)
+	a.add_theme_font_size_override("font_size", 30)
+	a.add_theme_color_override("font_color", TEXT)
+	_outline(a, 6)
+	box.add_child(a)
+	var b := Label.new()
+	b.text = "Ádh mór ort, a eachtránaí!"
+	b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.add_theme_font_override("font", TITLE)
+	b.add_theme_font_size_override("font_size", 40)
+	b.add_theme_color_override("font_color", ACCENT)
+	_outline(b, 7)
+	box.add_child(b)
+	var c := Label.new()
+	c.text = "Good luck, adventurer"
+	c.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	c.add_theme_font_size_override("font_size", 15)
+	c.add_theme_color_override("font_color", MUTED)
+	_outline(c, 4)
+	box.add_child(c)
+	box.modulate.a = 0.0
+	add_child(box)
+	var t := create_tween()
+	t.tween_interval(0.6) # after the loading screen has begun to fade
+	t.tween_property(box, "modulate:a", 1.0, 1.4).set_trans(Tween.TRANS_SINE)
+	t.tween_interval(4.0)
+	t.tween_property(box, "modulate:a", 0.0, 2.5).set_trans(Tween.TRANS_SINE)
+	t.tween_callback(box.queue_free)
+
 ## A place's title, eased in over a second, held, then eased away; one already showing fades out first.
 ## `leaving` shows it smaller and dimmer under "Leaving".
 func show_location(title: String, leaving := false) -> void:
@@ -395,6 +594,36 @@ func travel(text: String, secs := 0.6) -> void:
 		travel_cover.modulate.a = 1.0
 		return
 	create_tween().tween_property(travel_cover, "modulate:a", 1.0, secs)
+
+## Loading: show the screen at `frac` (0..1) with what is happening. The bar never goes backwards.
+func loading(frac: float, text: String) -> void:
+	if not loader.visible:
+		loader.visible = true
+		(loader.get_child(0) as Control).modulate.a = 1.0
+		_load_frac = 0.0
+		_load_shown = 0.0
+		_load_since = 0.0
+		_load_done = false
+	_load_frac = maxf(_load_frac, clampf(frac, 0.0, 1.0))
+	load_text.text = text
+
+## Loaded: the bar runs to the end and the screen fades, once it has been up at least LOAD_MIN.
+func loaded() -> void:
+	if loader.visible:
+		_load_frac = 1.0
+		_load_done = true
+
+func _process(delta: float) -> void:
+	if not loader.visible or _load_done and _load_shown < 0.0:
+		return
+	_load_since += delta
+	_load_shown = move_toward(_load_shown, minf(_load_frac, _load_since / LOAD_MIN), delta * 1.5)
+	load_bar.size = Vector2(load_track.size.x * _load_shown, 4)
+	if _load_done and _load_shown >= 1.0:
+		_load_shown = -1.0 # fading
+		var t := create_tween()
+		t.tween_property(loader.get_child(0), "modulate:a", 0.0, 0.5).set_trans(Tween.TRANS_SINE)
+		t.tween_callback(func() -> void: loader.visible = false)
 
 ## Arrived: lift the dark.
 func arrive() -> void:
@@ -505,6 +734,7 @@ func show_materials(on: bool, chosen: int) -> void:
 func set_mode(building: bool, can_build: bool, material: String) -> void:
 	var on := building and can_build
 	bar.visible = not on
+	spellbar.visible = not on and not spell_slots.is_empty()
 	mode_chip.visible = on
 	var key := "%s|%s" % [on, material]
 	if key == _mode_shown:
@@ -611,6 +841,7 @@ class Frame extends Control:
 ## One square on the action bar: an item from the bag, or an ability.
 class Slot extends Control:
 	signal pressed
+	signal hovered(on: bool)
 	const SIDE := 46.0
 	var key := ""
 	var title := ""
@@ -618,6 +849,8 @@ class Slot extends Control:
 	var count := 0
 	var color := Color(0, 0, 0, 0)
 	var glyph := false     # an ability: a word, not an item
+	var cool := 0.0        # a spell's cooldown still to run, 0..1 (drawn as a shade falling away)
+	var dim := false       # a spell that cannot be paid for now
 	var active := false
 	var _hover := false
 
@@ -629,6 +862,7 @@ class Slot extends Control:
 
 	func _set_hover(on: bool) -> void:
 		_hover = on
+		hovered.emit(on)
 		queue_redraw()
 
 	func _gui_input(ev: InputEvent) -> void:
@@ -659,6 +893,12 @@ class Slot extends Control:
 			if count > 1:
 				draw_string_outline(font, Vector2(0, size.y - 4), str(count), HORIZONTAL_ALIGNMENT_RIGHT, size.x - 4, 12, 3, Color(0, 0, 0, 0.95))
 				draw_string(font, Vector2(0, size.y - 4), str(count), HORIZONTAL_ALIGNMENT_RIGHT, size.x - 4, 12, Color.WHITE)
+		if glyph and color.a > 0.0:
+			draw_rect(Rect2(3, size.y - 6, size.x - 6, 3), color.darkened(0.55) if dim else color)
+		if dim:
+			draw_rect(r, Color(0, 0, 0, 0.45))
+		if cool > 0.0:
+			draw_rect(Rect2(0, 0, size.x, size.y * cool), Color(0, 0, 0, 0.55))
 		draw_string_outline(font, Vector2(4, 12), key, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, 3, Color(0, 0, 0, 0.9))
 		draw_string(font, Vector2(4, 12), key, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.75))
 		var edge := ACCENT if active else (Color(1, 1, 1, 0.45) if _hover else Color(1, 1, 1, 0.16))

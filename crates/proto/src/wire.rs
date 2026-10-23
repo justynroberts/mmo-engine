@@ -21,6 +21,20 @@ pub mod kind {
     pub const INVENTORY: u8 = 0x88;
     /// Inner: items lying near you, `n u8 | n x (id u32, x u32, y u32, item u8, count u8)`.
     pub const GROUND: u8 = 0x89;
+    /// Inner: spells and blows used near you, `n u8 | n x (seq u32, caster u32, target u32, action u8)`. Each is
+    /// sent for a few ticks running, since UDP may drop one; `seq` tells a repeat from a new one.
+    pub const CASTS: u8 = 0x8A;
+    /// Inner: your own progress, `level u8 | xp u32 | this level's xp u32 | next level's xp u32` (next 0 at the
+    /// cap). Sent when it changes (a few times over) and now and then regardless.
+    pub const PROGRESS: u8 = 0x8B;
+    /// Inner: your quests, `offer u8 | n u8 | n x (quest u8, step u8, count u16, state u8)`: `offer` is a quest a
+    /// giver has just put to you (255 for none); state 0 in hand, 1 ready to hand in, 2 done. Sent on a change.
+    pub const QUESTS: u8 = 0x8C;
+    /// Inner: your party, `n u8 | n x id u32` (you among them; n 0 when you are in none). Sent on a change.
+    pub const PARTY: u8 = 0x8D;
+    /// Inner: what you wear, `weapon u8 | armour u8 | trinket u8` (item index + 1, 0 for nothing), and whether you
+    /// ride (`riding u8`). Sent on a change.
+    pub const GEAR: u8 = 0x8E;
 }
 
 pub mod reject {
@@ -258,6 +272,125 @@ pub fn decode_ground(buf: &[u8]) -> Option<Vec<GroundEntry>> {
     )
 }
 
+/// One use of an action (`kind::CASTS`): `target` is 0 when it was aimed at the caster.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cast {
+    pub seq: u32,
+    pub caster: u32,
+    pub target: u32,
+    pub action: u8,
+}
+
+pub const MAX_CASTS_SENT: usize = 32;
+
+pub fn encode_casts(out: &mut Vec<u8>, casts: &[Cast]) {
+    out.clear();
+    put_u8(out, kind::CASTS);
+    put_u8(out, casts.len().min(MAX_CASTS_SENT) as u8);
+    for c in casts.iter().take(MAX_CASTS_SENT) {
+        put_u32(out, c.seq);
+        put_u32(out, c.caster);
+        put_u32(out, c.target);
+        put_u8(out, c.action);
+    }
+}
+
+pub fn decode_casts(buf: &[u8]) -> Option<Vec<Cast>> {
+    if buf.len() < 2 || buf[0] != kind::CASTS || buf.len() != 2 + buf[1] as usize * 13 {
+        return None;
+    }
+    let u = |c: &[u8], i: usize| u32::from_le_bytes([c[i], c[i + 1], c[i + 2], c[i + 3]]);
+    Some(buf[2..].chunks_exact(13).map(|c| Cast { seq: u(c, 0), caster: u(c, 4), target: u(c, 8), action: c[12] }).collect())
+}
+
+/// Your level and experience (`kind::PROGRESS`): `at` is what this level needed, `next` what the next needs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Progress {
+    pub level: u8,
+    pub xp: u32,
+    pub at: u32,
+    pub next: u32,
+}
+
+pub fn encode_progress(out: &mut Vec<u8>, p: &Progress) {
+    out.clear();
+    put_u8(out, kind::PROGRESS);
+    put_u8(out, p.level);
+    put_u32(out, p.xp);
+    put_u32(out, p.at);
+    put_u32(out, p.next);
+}
+
+pub fn decode_progress(buf: &[u8]) -> Option<Progress> {
+    if buf.len() != 14 || buf[0] != kind::PROGRESS {
+        return None;
+    }
+    let u = |i: usize| u32::from_le_bytes([buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]);
+    Some(Progress { level: buf[1], xp: u(2), at: u(6), next: u(10) })
+}
+
+/// One quest of yours (`kind::QUESTS`): which (its index), which step it is on and how far, and its state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QuestState {
+    pub quest: u8,
+    pub step: u8,
+    pub count: u16,
+    pub state: u8,
+}
+
+pub const QUEST_ACTIVE: u8 = 0;
+pub const QUEST_READY: u8 = 1;
+pub const QUEST_DONE: u8 = 2;
+pub const NO_OFFER: u8 = 255;
+
+pub fn encode_quests(out: &mut Vec<u8>, offer: u8, list: &[QuestState]) {
+    out.clear();
+    put_u8(out, kind::QUESTS);
+    put_u8(out, offer);
+    put_u8(out, list.len().min(255) as u8);
+    for q in list.iter().take(255) {
+        put_u8(out, q.quest);
+        put_u8(out, q.step);
+        put_u16(out, q.count);
+        put_u8(out, q.state);
+    }
+}
+
+pub fn decode_quests(buf: &[u8]) -> Option<(u8, Vec<QuestState>)> {
+    if buf.len() < 3 || buf[0] != kind::QUESTS || buf.len() != 3 + buf[2] as usize * 5 {
+        return None;
+    }
+    let list = buf[3..].chunks_exact(5).map(|c| QuestState { quest: c[0], step: c[1], count: u16::from_le_bytes([c[2], c[3]]), state: c[4] }).collect();
+    Some((buf[1], list))
+}
+
+pub fn encode_party(out: &mut Vec<u8>, ids: &[u32]) {
+    out.clear();
+    put_u8(out, kind::PARTY);
+    put_u8(out, ids.len().min(16) as u8);
+    for &id in ids.iter().take(16) {
+        put_u32(out, id);
+    }
+}
+
+pub fn decode_party(buf: &[u8]) -> Option<Vec<u32>> {
+    if buf.len() < 2 || buf[0] != kind::PARTY || buf.len() != 2 + buf[1] as usize * 4 {
+        return None;
+    }
+    Some(buf[2..].chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+}
+
+pub fn encode_gear(out: &mut Vec<u8>, gear: [u8; 3], riding: bool) {
+    out.clear();
+    put_u8(out, kind::GEAR);
+    out.extend_from_slice(&gear);
+    put_u8(out, riding as u8);
+}
+
+pub fn decode_gear(buf: &[u8]) -> Option<([u8; 3], bool)> {
+    (buf.len() == 5 && buf[0] == kind::GEAR).then(|| ([buf[1], buf[2], buf[3]], buf[4] != 0))
+}
+
 pub fn encode_reject(out: &mut Vec<u8>, reason: u8) {
     out.clear();
     put_u8(out, kind::REJECT);
@@ -284,6 +417,34 @@ pub fn decode_server(buf: &[u8]) -> Option<ServerMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quests_round_trip() {
+        let mut b = Vec::new();
+        let l = [QuestState { quest: 3, step: 1, count: 4, state: QUEST_ACTIVE }, QuestState { quest: 0, step: 2, count: 0, state: QUEST_DONE }];
+        encode_quests(&mut b, 5, &l);
+        assert_eq!(decode_quests(&b), Some((5, l.to_vec())));
+        assert_eq!(decode_quests(&b[..b.len() - 1]), None);
+    }
+
+    #[test]
+    fn progress_round_trips() {
+        let mut b = Vec::new();
+        let p = Progress { level: 7, xp: 2_500, at: 1_900, next: 2_900 };
+        encode_progress(&mut b, &p);
+        assert_eq!(decode_progress(&b), Some(p));
+        assert_eq!(decode_progress(&b[..13]), None);
+    }
+
+    #[test]
+    fn casts_round_trip_and_reject_bad_lengths() {
+        let mut b = Vec::new();
+        let c = [Cast { seq: 9, caster: 0x0100_0005, target: 0, action: 3 }, Cast { seq: 10, caster: 7, target: 8, action: 12 }];
+        encode_casts(&mut b, &c);
+        assert_eq!(b.len(), 2 + 2 * 13);
+        assert_eq!(decode_casts(&b), Some(c.to_vec()));
+        assert_eq!(decode_casts(&b[..b.len() - 1]), None);
+    }
 
     #[test]
     fn inventory_and_ground_round_trip_and_reject_bad_lengths() {

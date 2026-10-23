@@ -10,10 +10,13 @@ mod director;
 mod items;
 mod io;
 mod nav;
+mod quests;
 mod net;
 mod sim;
+mod social;
 mod statics;
 mod store;
+mod trade;
 mod web;
 mod worldfile;
 mod zone;
@@ -545,6 +548,7 @@ fn main() {
         net::drain_actions(&mut clients, &mut pending);
         if sim.tick % 20 == 0 {
             net::reap(&mut sim, &mut clients, hs.store.as_deref(), timeout_ticks, &mut nstats);
+            net::save_progress(&sim, &mut clients, hs.store.as_deref());
             if sim.tick % (20 * 30) == 0 {
                 net::save_all(&sim, &clients, hs.store.as_deref());
             }

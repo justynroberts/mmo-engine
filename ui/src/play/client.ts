@@ -412,6 +412,7 @@ export class GameClient {
       return
     }
     this.walls.update(me.x, me.y)
+    this.pred.setSpeed(this.info.move_speed * (me.attrs.speed ?? 1)) // a haste or a slow
     this.syncWorld()
     const err = this.pred.reconcile(this.world, me.x, me.y, me.z, lastInputSeq)
     // A big correction is the server doing something we could not know about (respawn, zone handoff): jump.
