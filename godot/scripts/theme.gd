@@ -637,13 +637,14 @@ func set_blocks(all: Dictionary, changed: Array) -> void:
 						glow.append([Vector3((c[0] + 0.5) * bs, (c[2] + i + 1.0) * bs + 0.3, (c[1] + 0.5) * bs), "lamp" if kind == LAMP else "fire"])
 		add_lights("blocks %d" % ck, glow)
 
-## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer): a MultiMesh per material
-## and shape, each block in its layer. A block is drawn with only the faces that show (block_faces), its edges
-## rounded where two of them meet (block_shape), so walls soften at their ends and tops but still join flat.
+## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer): one mesh per material, each
+## block in its layer. A block is drawn with only the faces that show (block_faces), its edges rounded where two of
+## them meet (block_shape), so walls soften at their ends and tops but still join flat. The shapes are merged into
+## one mesh per material rather than instanced per shape, which would cost a draw call for every material and shape.
 func build_blocks(cols: Array) -> Node3D:
 	var node := Node3D.new()
 	var bs := block_size()
-	var per_shape := {}   # kind * 64 + faces -> [Vector3, ...]
+	var per_kind := {}    # kind -> SurfaceTool
 	var fires: Array = []
 	for c in cols:
 		var cx: int = c[0]
@@ -660,23 +661,14 @@ func build_blocks(cols: Array) -> Node3D:
 			var faces := block_faces(cx, cy, base + i, kind, i == 0)
 			if faces == 0:
 				continue
-			var key := kind * 64 + faces
-			if not per_shape.has(key):
-				per_shape[key] = []
-			per_shape[key].append(p)
-	for key in per_shape:
-		var kind: int = key / 64
+			if not per_kind.has(kind):
+				per_kind[kind] = SurfaceTool.new()
+			per_kind[kind].append_from(block_shape(faces), 0, Transform3D(Basis(), p))
+	for kind in per_kind:
 		if not _block_mats.has(kind):
 			_block_mats[kind] = block_material(kind)
-		var at: Array = per_shape[key]
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = block_shape(key % 64)
-		mm.instance_count = at.size()
-		for i in at.size():
-			mm.set_instance_transform(i, Transform3D(Basis(), at[i]))
-		var mi := MultiMeshInstance3D.new()
-		mi.multimesh = mm
+		var mi := MeshInstance3D.new()
+		mi.mesh = per_kind[kind].commit()
 		mi.material_override = _block_mats[kind]
 		node.add_child(mi)
 	# A flame on every fire block (only the top one of a stack would show, but blocks rarely stack fires).
