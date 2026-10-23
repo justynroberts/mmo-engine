@@ -371,7 +371,13 @@ pub struct Archetype {
     /// What it sells (talk to one to trade): items at a price in the game's `currency`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shop: Vec<ShopItem>,
+    /// How far a player it is fighting may get before it gives up the chase, in world units. 0 (absent) means
+    /// three times its sight, and at least `MIN_LEASH`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub leash: f32,
 }
+/// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
+pub const MIN_LEASH: f32 = 60.0;
 fn d_color() -> String {
     "#888888".into()
 }
@@ -562,7 +568,9 @@ pub const ACT_ACCEPT: u8 = 233;
 pub const ACT_ABANDON: u8 = 234;
 /// How near a player must be to talk to a bot.
 pub const TALK_RANGE: f32 = 8.0;
-pub const MAX_QUESTS: usize = 64;
+pub const MAX_QUESTS: usize = 512;
+/// How many quests a player may have in hand (taken, not yet handed in) at once.
+pub const MAX_HELD_QUESTS: usize = 25;
 pub const MAX_QUEST_STEPS: usize = 8;
 
 /// A quest: a bot type gives it (`giver`), a player does its steps in order, then hands it in (to `turn_in`, or the
@@ -1070,6 +1078,8 @@ pub struct ArchRt {
     pub level: u8,
     /// (item index, price)
     pub shop: Vec<(usize, u16)>,
+    /// How far a player it is fighting may get before it gives up (`Archetype::leash`, the default filled in).
+    pub leash: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -1183,6 +1193,7 @@ impl GameFile {
             xp: 0,
             level: 0,
             shop: Vec::new(),
+            leash: 0.0,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -1667,7 +1678,12 @@ impl GameFile {
                 }
                 drops.push(DropRt { item, chance_pct: d.chance_pct, min: d.min, max: d.max });
             }
+            if !(a.leash.is_finite() && (0.0..=10_000.0).contains(&a.leash)) {
+                return Err(format!("{ctx}: leash must be 0..10000"));
+            }
+            let leash = if a.leash > 0.0 { a.leash } else { (a.sight * 3.0).max(MIN_LEASH) };
             archs.push(ArchRt {
+                leash,
                 drops,
                 home,
                 rules,

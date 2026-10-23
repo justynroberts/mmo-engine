@@ -256,10 +256,11 @@ export const SPELLS_NOTE = [
 
 /** How quests work, for game_schema and upsert. */
 export const QUESTS_NOTE = [
-  'Quests (section "quests", at most 64) apply live: adding, changing or removing one never restarts the world or disconnects anyone.',
+  'Quests (section "quests", at most 512) apply live: adding, changing or removing one never restarts the world or disconnects anyone.',
   'A quest: { name (unique id, at most 48 bytes), title (at most 64 characters, shown to players), text (what the giver says offering it, at most 600), done_text (optional, said on hand-in, at most 600),',
   'giver (a bot type name: players talk to a bot of that type to take it), turn_in (optional bot type to hand it in to; absent = the giver), level (optional minimum player level), after (optional name of another quest that must be done first),',
   'steps (1 to 8, done in order), xp (optional experience on hand-in), reward (optional [{ item, count 1..255 }]), repeatable (optional, true = may be taken again once done) }.',
+  'A player holds at most 25 quests at once (taken, not handed in); done quests do not count.',
   'Steps: { kind: "kill", archetype, count 1..65535 } beat bots of a type (counts for everyone who hurt the one that fell); { kind: "visit", place } walk into a place; { kind: "collect", item, count 1..255 } carry items (taken on hand-in); { kind: "talk", archetype } talk to a bot of a type.',
   'Everything named must exist: bot types, places, items, and the after quest. Renaming a bot type, place, item or quest rewrites the quests; removing one drops the steps and rewards that needed it, a quest whose giver goes, and a quest left with no steps.',
   'Experience: with levels on (set_settings levels), players earn the xp of bot types they beat (archetype xp, shared by everyone who hurt it), levels.discover_xp for finding a named place, and quest xp. Bot types have a level (absent 1) and actions a level to learn them at.',
@@ -368,7 +369,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'upsert',
     description:
-      'Add or change one entry of the game file, applied live: a place (a location players see named, an exit, a safe place where players cannot fight (safe: true), or a sound zone: sound one of sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle, and music one of explore, town, night, battle, eerie, holy, city, none), a route, a bot type (archetypes), an item, a weather, a weather zone, an event, a quest (given by a bot type, with kill/visit/collect/talk steps, xp and item rewards; applies live, see game_schema quests), an attribute or an action (an action is a spell when it sets aim, area, hits, hold, fx, bolt, school or effect secs; those apply live without allow_restart, and null clears one). Entries are matched by name. By default the fields given are merged over the existing entry (or over sensible defaults for a new one), so { "name": "camp", "r": 30 } only changes the radius. See game_schema for every field.',
+      'Add or change one entry of the game file, applied live: a place (a location players see named, an exit, a safe place where players cannot fight (safe: true), or a sound zone: sound one of sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle, and music one of explore, town, night, battle, eerie, holy, city, none), a route, a bot type (archetypes; leash sets how far a player it is fighting may run before it gives up), an item, a weather, a weather zone, an event, a quest (given by a bot type, with kill/visit/collect/talk steps, xp and item rewards; applies live, see game_schema quests), an attribute or an action (an action is a spell when it sets aim, area, hits, hold, fx, bolt, school or effect secs; those apply live without allow_restart, and null clears one). Entries are matched by name. By default the fields given are merged over the existing entry (or over sensible defaults for a new one), so { "name": "camp", "r": 30 } only changes the radius. See game_schema for every field.',
     input: {
       section: z.enum(SECTION_NAMES),
       entry: z.record(z.string(), z.any()).describe('The entry, with at least its name.'),

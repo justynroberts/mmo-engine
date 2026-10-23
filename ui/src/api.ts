@@ -90,7 +90,7 @@ export type QuestStep =
   | { kind: 'collect'; item: string; count: number }
   /** Talk to a bot of a type. */
   | { kind: 'talk'; archetype: string }
-/** A quest (GameFile.quests, at most 64). Not in the content hash: edits apply live, nobody is disconnected. */
+/** A quest (GameFile.quests, at most 512; a player holds at most 25 at once). Not in the content hash: edits apply live, nobody is disconnected. */
 export interface QuestFile {
   /** Unique id, at most 48 bytes. */
   name: string
@@ -214,6 +214,11 @@ export interface Archetype {
   level?: number
   /** What it sells (players talk to one to trade), priced in the game's currency. */
   shop?: ShopItem[]
+  /** Encounters: the first blow between it and a player locks it on that player, whom it then chases past its
+   * sight and fights back (unless a rule says flee) until one falls, or the player gets this far away (world
+   * units), reaches a safe place, or no blow lands for 10 seconds. Absent or 0: three times its sight, at least
+   * 60. Applies live. */
+  leash?: number
 }
 export interface Drain {
   attr: string

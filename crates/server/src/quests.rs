@@ -134,7 +134,7 @@ impl Sim {
         if !moved {
             let offer = self.quests.iter().position(|q| q.giver == arch && self.can_take(s, q));
             if let Some(k) = offer {
-                self.ents.offer[s] = k as u8;
+                self.ents.offer[s] = k as u16;
             } else {
                 self.tells.push((s, format!("{} has nothing for you now.", proto::names::bot(&arch))));
             }
@@ -150,6 +150,11 @@ impl Sim {
         if self.ents.offer[s] as usize != i || !self.can_take(s, q) {
             return false;
         }
+        let held = self.ents.quests[s].iter().filter(|r| r.state != QUEST_DONE).count();
+        if held >= proto::game::MAX_HELD_QUESTS {
+            self.tells.push((s, format!("Your quest log is full ({held} quests). Hand one in or give one up first.")));
+            return false;
+        }
         let name = q.name.clone();
         let title = q.title.clone();
         self.ents.quests[s].retain(|r| r.name != name);
@@ -162,7 +167,7 @@ impl Sim {
         true
     }
 
-    /// Give up a quest in hand. An offer can be turned down the same way (index 255 just clears it).
+    /// Give up a quest in hand. An offer can be turned down the same way (`wire::NO_OFFER` just clears it).
     pub fn abandon(&mut self, s: usize, index: u16) -> bool {
         self.ents.offer[s] = proto::wire::NO_OFFER;
         if let Some(q) = self.quests.get(index as usize) {
@@ -268,7 +273,7 @@ impl Sim {
         self.ents.quests[s]
             .iter()
             .filter_map(|r| {
-                self.quest(&r.name).map(|(k, _)| proto::wire::QuestState { quest: k as u8, step: r.step, count: r.count, state: r.state })
+                self.quest(&r.name).map(|(k, _)| proto::wire::QuestState { quest: k as u16, step: r.step, count: r.count, state: r.state })
             })
             .collect()
     }
@@ -345,5 +350,36 @@ mod tests {
         act(&mut s, me, ACT_TALK, mid, 0);
         assert_eq!(s.ents.offer[me], NO_OFFER);
         assert_eq!(s.record_of(me).quests, vec![("cull".to_string(), 2, 0, QUEST_DONE)]);
+    }
+
+    #[test]
+    fn hundreds_of_quests_and_a_full_hand_is_refused() {
+        let mut g = GameFile::default_game();
+        for k in 0..proto::game::MAX_QUESTS {
+            g.quests.push(QuestFile {
+                name: format!("q{k}"),
+                title: format!("Errand {k}"),
+                giver: "merchant".into(),
+                steps: vec![QuestStep::Talk { archetype: "drifter".into() }],
+                ..Default::default()
+            });
+        }
+        let merchant = g.archetypes.iter().position(|a| a.name == "merchant").unwrap() as u8;
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        let m = s.spawn_as(NONE, merchant, Some((100.0, 104.0))).unwrap();
+        let mid = s.ents.id_of(m);
+        let act = |s: &mut Sim, action: u8, target: u32, arg: u16| s.step(&[PendingAction { slot: me, action, target, arg }]);
+        for _ in 0..=proto::game::MAX_HELD_QUESTS {
+            (s.ents.x[me], s.ents.y[me], s.ents.x[m], s.ents.y[m]) = (100.0, 100.0, 100.0, 104.0);
+            act(&mut s, ACT_TALK, mid, 0);
+            let offer = s.ents.offer[me];
+            assert_ne!(offer, NO_OFFER);
+            act(&mut s, ACT_ACCEPT, 0, offer);
+        }
+        assert_eq!(s.ents.quests[me].len(), proto::game::MAX_HELD_QUESTS, "the one past a full hand is refused");
+        // Indices past 255 reach the wire.
+        s.ents.quests[me][0].name = "q400".into();
+        assert!(s.quest_states(me).iter().any(|q| q.quest == 400));
     }
 }

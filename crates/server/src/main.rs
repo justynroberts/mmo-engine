@@ -7,6 +7,7 @@ mod blocks;
 mod botdir;
 mod ctl;
 mod director;
+mod encounter;
 mod items;
 mod io;
 mod nav;

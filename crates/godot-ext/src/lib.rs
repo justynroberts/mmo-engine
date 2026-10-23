@@ -316,9 +316,10 @@ impl MmoClient {
     fn quests(&self) -> VarDictionary {
         let mut d = VarDictionary::new();
         let mut list = Array::<VarDictionary>::new();
-        let mut offer = 255u8;
+        let mut offer: u16 = 0xFFFF; // none
         if !self.c.is_null() {
-            let mut buf = [m::MmoQuest::default(); 64];
+            // Room for every quest a game may have done (512) and a full hand (25).
+            let mut buf = [m::MmoQuest::default(); 600];
             let n = unsafe { m::mmo_quests(self.c, buf.as_mut_ptr(), buf.len(), &mut offer) };
             for q in &buf[..n.min(buf.len())] {
                 let mut e = VarDictionary::new();
@@ -329,7 +330,7 @@ impl MmoClient {
                 list.push(&e);
             }
         }
-        d.set("offer", if offer == 255 { -1 } else { offer as i64 });
+        d.set("offer", if offer == 0xFFFF { -1 } else { offer as i64 });
         d.set("list", &list);
         d
     }
@@ -343,6 +344,21 @@ impl MmoClient {
         }
         let mut buf = [0u32; 16];
         let n = unsafe { m::mmo_party(self.c, buf.as_mut_ptr(), buf.len()) };
+        for &id in &buf[..n.min(16)] {
+            out.push(id as i64);
+        }
+        out
+    }
+
+    /// The bots locked in a fight with us (entity ids; empty when we are in none).
+    #[func]
+    fn encounter(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        if self.c.is_null() {
+            return out;
+        }
+        let mut buf = [0u32; 16];
+        let n = unsafe { m::mmo_encounter(self.c, buf.as_mut_ptr(), buf.len()) };
         for &id in &buf[..n.min(16)] {
             out.push(id as i64);
         }
@@ -380,7 +396,8 @@ impl MmoClient {
         unsafe { m::mmo_act_arg(self.c, 237, 0, gear_slot.clamp(0, 2) as i32) };
     }
 
-    /// Talk to an entity (a quest giver), take the quest offered (`index`), or give one up.
+    /// Talk to an entity (a quest giver), take the quest offered (`index`), or give one up (-1 turns down the
+    /// one offered).
     #[func]
     fn talk(&mut self, target: i64) {
         self.act(232, target);
@@ -388,12 +405,13 @@ impl MmoClient {
 
     #[func]
     fn accept_quest(&mut self, index: i64) {
-        unsafe { m::mmo_act_arg(self.c, 233, 0, index.clamp(0, 255) as i32) };
+        unsafe { m::mmo_act_arg(self.c, 233, 0, index.clamp(0, 65_534) as i32) };
     }
 
     #[func]
     fn abandon_quest(&mut self, index: i64) {
-        unsafe { m::mmo_act_arg(self.c, 234, 0, index.clamp(0, 255) as i32) };
+        let arg = if index < 0 { 0xFFFF } else { index.min(65_534) as u16 };
+        unsafe { m::mmo_act_arg(self.c, 234, 0, arg as i32) };
     }
 
     /// Our level and experience: {level (0 = none yet), xp, at (this level's start), next (0 at the cap)}.

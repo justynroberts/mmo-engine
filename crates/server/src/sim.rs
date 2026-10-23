@@ -57,7 +57,7 @@ pub struct Entities {
     pub found: Vec<Vec<String>>,
     /// A player's quests, and the one a giver has just put to them (an index, or `wire::NO_OFFER`).
     pub quests: Vec<Vec<crate::quests::QuestRun>>,
-    pub offer: Vec<u8>,
+    pub offer: Vec<u16>,
     /// The block layer the feet are in (`proto::world::GROUND` on the bare ground).
     pub z: Vec<i8>,
     /// The account a player builds as (`Blocks::owner`), 0 for none.
@@ -369,6 +369,13 @@ pub struct Sim {
     pub gear: Vec<[u8; proto::game::GEAR_SLOTS]>,
     pub mounted: Vec<f32>,
     pub gear_ver: Vec<u32>,
+    /// Encounters (`encounter.rs`): the player a bot is locked in a fight with (an id), the tick a blow last
+    /// passed between them, the bots locked on each player (ids), and a version bumped when those change
+    /// (`wire::kind::ENCOUNTER`).
+    pub foe: Vec<Option<u32>>,
+    pub foe_at: Vec<u32>,
+    pub pursuers: Vec<Vec<u32>>,
+    pub pursuer_ver: Vec<u32>,
     /// Actions used in the last few ticks, newest last, for the network layer to tell clients near them
     /// (`proto::wire::kind::CASTS`): (tick, caster slot, cast).
     pub casts: Vec<(u32, usize, proto::wire::Cast)>,
@@ -499,6 +506,10 @@ impl Sim {
             gear: vec![[0; proto::game::GEAR_SLOTS]; cap],
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
+            foe: vec![None; cap],
+            foe_at: vec![0; cap],
+            pursuers: vec![Vec::new(); cap],
+            pursuer_ver: vec![0; cap],
             casts: Vec::new(),
             cast_seq: 0,
             admin_actions: Vec::new(),
@@ -582,6 +593,9 @@ impl Sim {
         self.gear[slot] = [0; proto::game::GEAR_SLOTS];
         self.mounted[slot] = 0.0;
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
+        self.foe[slot] = None;
+        self.pursuers[slot].clear();
+        self.pursuer_ver[slot] = self.pursuer_ver[slot].wrapping_add(1);
         e.owner[slot] = owner;
         e.arch[slot] = arch;
         e.speed[slot] = speed;
@@ -1030,6 +1044,7 @@ impl Sim {
             self.expire_ground();
             self.system_discover();
             self.system_quests();
+            self.system_encounters();
         }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -1120,6 +1135,8 @@ impl Sim {
             });
         }
 
+        // Locked in a fight (`encounter.rs`): the one it is fighting is who it sees, chases and flees, however far.
+        let foe = self.locked(s);
         let n_rules = self.archs[a].rules.len();
         for ri in 0..n_rules {
             let (when, then) = {
@@ -1129,6 +1146,10 @@ impl Sim {
             let mut target: Option<(f32, usize)> = None;
             let hit = match when {
                 CondRt::Always => true,
+                CondRt::Sees { who: Seek::Player | Seek::Any, .. } if foe.is_some() => {
+                    target = foe;
+                    true
+                }
                 CondRt::Sees { who, within } => {
                     let n = near[match who {
                         Seek::Player => 0,
@@ -1149,10 +1170,12 @@ impl Sim {
             if !hit {
                 continue;
             }
-            // Chasing, fleeing and attacking need someone: without a `sees` target
-            // use the nearest anyone within the archetype's own sight.
+            // A bot in a fight that can fight back does, whatever the rule says, unless it says to run.
+            let then = if foe.is_some() && attack.is_some() && !matches!(then, ActRt::Flee | ActRt::Say { .. }) { ActRt::Attack } else { then };
+            // Chasing, fleeing and attacking need someone: the one it is fighting, else a `sees` target, else the
+            // nearest anyone within the archetype's own sight.
             let sight = self.archs[a].sight * m;
-            let foe = || target.or(near[2].filter(|(d2, _)| *d2 <= sight * sight));
+            let foe = || foe.or(target).or(near[2].filter(|(d2, _)| *d2 <= sight * sight));
             let steer: (i8, i8) = match then {
                 ActRt::Say { text, shout } => {
                     if self.tick >= self.ents.say_at[s] {
@@ -1278,10 +1301,15 @@ impl Sim {
                 let q = |v: f32| (v * 127.0).round().clamp(-127.0, 127.0) as i8;
                 Some((q(sign * (e.x[t] - e.x[s]) / d), q(sign * (e.y[t] - e.y[s]) / d)))
             };
+            // Locked in a fight: after (or away from) that one however far, and one that can attack goes for them.
+            let foe = self.locked(s);
+            let near = foe.or(near);
+            let seen = |n: &(f32, usize)| foe.is_some() || n.0 <= sight * sight;
             let steer = match behaviour {
+                Behaviour::Idle | Behaviour::Wander if foe.is_some() && attack.is_some() => toward(foe, &self.ents, 1.0),
                 Behaviour::Idle => Some((0, 0)),
-                Behaviour::Chase => toward(near.filter(|n| n.0 <= sight * sight), &self.ents, 1.0),
-                Behaviour::Flee => toward(near.filter(|n| n.0 <= sight * sight), &self.ents, -1.0),
+                Behaviour::Chase => toward(near.filter(seen), &self.ents, 1.0),
+                Behaviour::Flee => toward(near.filter(seen), &self.ents, -1.0),
                 Behaviour::Wander => None,
             };
             let (dx, dy) = match steer {
@@ -1515,7 +1543,7 @@ impl Sim {
     }
 
     /// Whether an entity stands in a place marked safe (no harm between players there).
-    fn in_safe(&self, s: usize) -> bool {
+    pub(crate) fn in_safe(&self, s: usize) -> bool {
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
         self.places.iter().any(|p| p.safe && (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r)
     }
@@ -1547,6 +1575,9 @@ impl Sim {
             if self.mounted[s] > 0.0 {
                 self.dismount(s); // knocked out of the saddle
                 self.gear_ver[s] = self.gear_ver[s].wrapping_add(1);
+            }
+            if let Some(by) = self.ents.resolve(src).filter(|&b| b != s) {
+                self.engage(s, by);
             }
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s && self.ents.owner[b] < DRIVEN) {
                 let id = self.ents.id_of(by);
@@ -1714,6 +1745,7 @@ impl Sim {
                         self.credit(s);
                         self.loot_from(s);
                     }
+                    self.end_encounters(s); // whoever falls, the fight is over
                     if self.ents.fleeting[s] {
                         self.ents.despawn(s); // an event's bot: beaten is beaten
                         continue;
@@ -2228,6 +2260,7 @@ mod tests {
             xp: 0,
             level: 0,
             shop: Vec::new(),
+            leash: 0.0,
         }
     }
 
