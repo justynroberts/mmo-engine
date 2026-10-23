@@ -69,6 +69,7 @@ Inner messages:
 | `0x8C` QUESTS | S->C | `offer u8 | n u8 | n x (quest u8, step u8, count u16, state u8)`: your quests by index in `/play/info` quests (state 0 in hand, 1 ready to hand in, 2 done) and a quest a giver has just put to you (255 for none), sent when they change |
 | `0x8D` PARTY | S->C | `n u8 | n x id u32`: your party, you among them (n 0: in none), sent when it changes |
 | `0x8E` GEAR | S->C | `weapon u8 | armour u8 | trinket u8 | riding u8`: what you wear (item index + 1, 0 for nothing) and whether you ride, sent when it changes (only in games with gear or mounts) |
+| `0x8F` CROWD | S->C | `part u8 | parts u8 | n u8 | n x (id u32, x u16, y u16, side u8)`: everyone past your snapshot out to twice the interest radius, nearest first, up to 480 in up to 4 parts of 120, four times a second. Whole world units; `side` is the faction (index + 1, 0 for none) with the top bit set for a player. Replace a part's entries when that part comes again and drop parts at or past `parts`; an emptied crowd comes once as one empty part. Anyone your snapshot carries is never in it. Draw them simply; clients that do not know this kind ignore it |
 | `0x8A` CASTS | S->C | `n u8 | n x (seq u32, caster u32, target u32, action u8)`: actions (blows and spells) used by anyone within your interest radius in the last 3 ticks, so each is sent about three times; `seq` counts up per use, so a repeat is known by it. `target` is 0 when it landed on the caster (aimed at self, or a friendly spell with no friend picked). Clients that do not know this kind ignore it; it carries nothing the simulation needs |
 
 Send INPUT at the server's tick rate (20 Hz). `dir_x`/`dir_y` are -127..127 intent, never speed. `seq` increases;
@@ -235,4 +236,16 @@ u8 format (2) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n x (u
 
 Each tile ends with its road cells: the tile is 64 x 64 cells of 4 units, and each road cell is `row * 64 + column`. Movement is `road_speed` times faster (from `/play/info`, 1.5 unless the game file says otherwise) for a tick that starts on a road cell: `proto::world::integrate` checks `World::on_road(x, y)`, the cell `(floor(x / 4), floor(y / 4))`, so prediction must hold the same cells. A box touching several tiles appears in each with the same id, and its corners are the server's f32s bit for bit (collide with exactly those). Class 0 is a wall or building; class 1 is solid scenery the world file draws (a trunk, a rock), which a client should not draw as a block. A reply names its version, so it is cached for good (`Cache-Control: immutable`); asked for another version the server answers 409, which means the walls changed: read `/play/info` again and start over. More than 64 tiles is a 400. Keep the 5x5 tiles around the player and let go of tiles more than three away. No tile holds more than 4,096 boxes. `proto::tiles` implements both ends (`TileSet`, `TileStream`) and the C SDK exposes it as `mmo_tiles_wanted` / `mmo_put_tiles` / `mmo_set_walls`.
 
-Chat channels 4 (a whisper to you, `from` the speaker), 5 (your own whisper echoed, `from` whom it went to) and 6 (party) are server to client only. Input actions 232 talk, 233 accept a quest (`arg`), 234 give one up, 235 buy (`target` the merchant, `arg` the shop line), 236 sell (`arg` the bag slot), 237 take off gear (`arg` the slot).
+Chat channels 4 (a whisper to you, `from` the speaker), 5 (your own whisper echoed, `from` whom it went to), 6 (party) and 7 (guild) are server to client only. Input actions 232 talk, 233 accept a quest (`arg`), 234 give one up, 235 buy (`target` the merchant, `arg` the shop line), 236 sell (`arg` the bag slot), 237 take off gear (`arg` the slot).
+
+## The realm (no version change)
+
+Factions, classes, loot tables, crafting, farming, land, guilds and dungeons (`proto::realm`) need nothing new on the
+wire but the CROWD message and chat channel 7: players reach them with "/" chat commands (`/faction`, `/class`,
+`/claim`, `/unclaim`, `/plot`, `/guild ...`, `/g`, `/craft`, `/recipes`) and the server answers on channel 0 from 0.
+`/play/info` lists them under `realm` (factions with colours, classes with schools, recipes, crops, plots, dungeons)
+and items carry `rarity` when it is not common. Block materials 14 (soil), 15 (a crop growing) and 16 (a ripe one) go
+in block text as `e`, `f` and `g`; `build.kinds` is 15, the materials a player can build (crops come from seeds), and
+`build.soil`, `build.sprout`, `build.ripe` name the farming ones. A game with replicated attributes named `faction`
+and `class` gets each player's (index + 1, 0 for none) in every snapshot, kept by the server. Private progress and
+quests are not sent until a session is proven (its save is in).

@@ -317,6 +317,41 @@ Steps are `kill` (beat N of a type: it counts for everyone who hurt the one that
 
 All of it is game file data, edited live in the console (Items, Bot types, World settings) or through the MCP; what is worn and the party are private packets (GEAR, PARTY), and gear is saved with the character.
 
+## The realm: sides, classes, loot, land, farming, guilds and dungeons
+
+Everything here is data in the game file, applies live (none of it is in the content hash), and is reached by players
+through chat commands, so every client already has a way in.
+
+| Game file | What it does |
+|---|---|
+| `factions` | Sides (`{name, title, color}`). `/faction name` joins one; the same side never harms each other, whatever `pvp` says. Changing side once chosen only in a safe place |
+| `classes` | Callings (`{name, title, schools}`). `/class name` picks one; a player may then use only actions of those spell schools (actions with no school are for everyone) |
+| `loot` + `Archetype::loot` | Loot tables: `rolls` weighted picks among `entries` `{item, weight, min, max}` and `nothing`, rolled when a bot of that type falls, on top of its `drops`. `ItemDef::rarity` (common, uncommon, rare, epic, legendary); a drop of rare or better is announced to players near it |
+| `recipes` | `/craft name`: takes `needs` from the bag, gives `count` of `makes`, only `near` a place when set (a forge). `/recipes` lists them |
+| `crops` | Farming: build tilled soil (block material 14), use a `seed` item beside it and a sprout grows on top; after `grow_secs` it ripens, and breaking it gives `min..max` of `yields` (a sprout gives the seed back). Crops in the ground persist across restarts, growing on from where they were |
+| `plots` | Land: `/claim` takes `size` x `size` blocks where you stand (never over a safe place), at most `per_player` each; only the owner and their guild build or break there. `/unclaim`, `/plot` |
+| `dungeons` | `{name, place, bots, xp, reward}`: walking into the place gives you and your party your own copy of its bots (a phase: nobody else sees or meets them, and they meet nothing else). Clearing it rewards everyone inside; it closes 30 s after the last player leaves |
+
+Guilds need no setup: `/guild create Name`, `/guild invite Name`, `/guild accept`, `/guild leave`, `/guild kick Name`
+(the leader), `/g words` to talk to them (chat channel 7). Guilds, plots and crops are kept in the database's world
+table under "realm", keyed by account tag and by name.
+
+**Big battles.** A snapshot holds `max_visible` entities (about 70), so in a 300 vs 300 fight most of the battle used
+to be invisible. Past the snapshot the server now sends a CROWD packet four times a second: up to 480 more, out to twice
+the interest radius, nearest first, 9 bytes each (id, whole-unit position, side). Godot draws them as figures in their
+faction's colour and the browser as markers. `bots --teams red,blue --rally 512,512,40` makes the bots join sides and
+fight at one spot; measured in Docker on one 8-core VM with everyone inside 40 units (bots and server sharing the
+cores):
+
+| Bots | Tick p50 / p99 | Over the 50 ms budget | Server CPU | Crowd heard per bot | Out |
+|---|---|---|---|---|---|
+| 600 (300 v 300) | 4.2 / 46.8 ms | 10 of 1,200 ticks | 29% of a core | 841 entities/s | 125 Mbit/s |
+| 1,000 (500 v 500) | 7.8 / 75.6 ms | 21 of 1,200 ticks | 52% of a core | 1,185 entities/s | 258 Mbit/s |
+
+At 1,000 the load generator itself fell behind (289 late ticks of its own), so that row understates the server; a
+fair test puts the bots on another machine. The crowd costs each player about 17 KB/s at its fullest, on top of about
+12 KB/s of snapshots.
+
 ## Items and loot
 
 Items are data, like bots. The game file has an `items` list and each bot type can have `drops`:
