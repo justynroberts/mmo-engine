@@ -25,6 +25,7 @@ var _rain_want := 0.0     # how hard the weather wants them to fall
 var _next_flash := 0.0
 var meshes := {}             # path -> Mesh, pulled out of the glTF pieces once
 var _built_bodies := 0       # how many KayKit characters were made (for the smoke test)
+var grass: MultiMeshInstance3D  # themes/fantasy/grass.gd, round the player (null with --no-grass or no heights)
 
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
@@ -115,6 +116,10 @@ void fragment() {
 	rain.emitting = false
 	rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(rain)
+	if world.has_heights and not OS.get_cmdline_user_args().has("--no-grass"):
+		grass = preload("res://themes/fantasy/grass.gd").new()
+		grass.setup(world)
+		add_child(grass)
 	# Meadow: two greens, dry patches and worn dirt, all from world position so every client sees the same field.
 	var sh := Shader.new()
 	sh.code = """shader_type spatial;
@@ -272,6 +277,8 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	var above := minf(14.0, camera_zoom * 0.5) if _rain_kind in ["rain", "storm"] else 6.0
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
 	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
+	if grass:
+		grass.follow(center, float(_wx["wind"]))
 	super.frame(center, camera_zoom)
 
 ## Sun, moon, light, fog and sky for the time of day (the server's schedule) and the weather.

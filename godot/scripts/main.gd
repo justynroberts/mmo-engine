@@ -774,6 +774,7 @@ func _load_step(delta: float, status: int) -> void:
 		return
 	if _load_frames == 0:
 		theme.update(me_pos) # draw what has come before we are shown
+		theme.flush()
 		last_stream = me_pos
 		spellfx.prewarm(Vector3(me_pos.x, _height(me_pos.x, me_pos.y), me_pos.y))
 	_load_frames += 1

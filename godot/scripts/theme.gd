@@ -21,6 +21,13 @@ var _terrain := {}        # cell key -> MeshInstance3D
 const DRAW := 260.0       # how far out things are built
 const GROUND_RINGS := 3   # ground cells drawn this many cells out
 const GROUND_STEP := 4.0  # ground mesh spacing
+## Cells to build, nearest first, a few each frame (BUILD_MS at most), so crossing into new ground never stalls
+## a frame: [ground?, cx, cy, key] each. A cell being rebuilt keeps showing its old self until the new one is in.
+const BUILD_MS := 4.0
+var _queue: Array = []
+var _queued := {}         # [ground?, key] -> true, for what is in _queue
+var _centre := Vector2.ZERO
+var _cell_of := {}        # chunk key -> its cell (Vector2i), to rebuild it
 
 ## Called once, when the world is known: sky, light, ground, anything static.
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
@@ -59,8 +66,10 @@ func ground_material_at(_cx: int, _cy: int) -> Material:
 func ground_material() -> Material:
 	return _ground_mat
 
-## Called as the player moves: build what has come near and drop what is far away, ground included.
+## Called as the player moves: queue what has come near (built over the next frames, `build_some`) and drop what
+## is far away, ground included.
 func update(center: Vector2) -> void:
+	_centre = center
 	_update_ground(center)
 	var keep := {}
 	var r := int(ceil(DRAW / world.CELL))
@@ -71,21 +80,71 @@ func update(center: Vector2) -> void:
 			var k: int = world.key(i, j)
 			keep[k] = true
 			if not _chunks.has(k):
-				_chunks[k] = build_cell(i, j)
-				add_child(_chunks[k])
+				_enqueue(false, i, j, k)
 	for k in _chunks.keys():
 		if not keep.has(k):
 			_chunks[k].queue_free()
 			_chunks.erase(k)
+			_cell_of.erase(k)
 			remove_lights(k)
+	_queue = _queue.filter(func(q): return keep.has(q[3]) if not q[0] else true)
+	_queued.clear()
+	for q in _queue:
+		_queued[[q[0], q[3]]] = true
+	_sort_queue()
 
-## These cells (world keys) have changed: they are drawn again on the next update.
+## These cells (world keys) have changed: they are drawn again soon, the old drawing staying up till then.
 func invalidate(keys: Array) -> void:
 	for k in keys:
 		if _chunks.has(k):
-			_chunks[k].queue_free()
-			_chunks.erase(k)
+			var c: Vector2i = _cell_of[k]
+			_enqueue(false, c.x, c.y, k)
+	_sort_queue()
+
+func _enqueue(ground: bool, cx: int, cy: int, k: int) -> void:
+	if not _queued.has([ground, k]):
+		_queued[[ground, k]] = true
+		_queue.append([ground, cx, cy, k])
+
+## Nearest first; at the same distance the ground before what stands on it.
+func _sort_queue() -> void:
+	var c: Vector2 = _centre / float(world.CELL) - Vector2(0.5, 0.5)
+	_queue.sort_custom(func(a, b):
+		var da: float = c.distance_squared_to(Vector2(a[1], a[2])) - (0.5 if a[0] else 0.0)
+		var db: float = c.distance_squared_to(Vector2(b[1], b[2])) - (0.5 if b[0] else 0.0)
+		return da < db)
+
+## Build queued cells for up to `budget_ms` (at least one); called every frame from `frame`. Returns how many are
+## still waiting.
+func build_some(budget_ms := BUILD_MS) -> int:
+	var t0 := Time.get_ticks_usec()
+	while not _queue.is_empty():
+		var q: Array = _queue.pop_front()
+		_queued.erase([q[0], q[3]])
+		var k: int = q[3]
+		if q[0]:
+			var g := _ground_cell(q[1], q[2])
+			if _terrain.has(k):
+				_terrain[k].queue_free()
+			_terrain[k] = g
+			add_child(g)
+		else:
+			# Lights belong to the cell: the old drawing's go now, and building the new one adds its own.
 			remove_lights(k)
+			var n := build_cell(q[1], q[2])
+			if _chunks.has(k):
+				_chunks[k].queue_free()
+			_chunks[k] = n
+			_cell_of[k] = Vector2i(q[1], q[2])
+			add_child(n)
+		if (Time.get_ticks_usec() - t0) / 1000.0 >= budget_ms:
+			break
+	return _queue.size()
+
+## Build everything queued now (before the world is first shown, where a stall does not matter).
+func flush() -> void:
+	while build_some(1000.0) > 0:
+		pass
 
 func _update_ground(center: Vector2) -> void:
 	var ext: Rect2 = world.extent()
@@ -99,12 +158,12 @@ func _update_ground(center: Vector2) -> void:
 			var k: int = world.key(i, j)
 			keep[k] = true
 			if not _terrain.has(k):
-				_terrain[k] = _ground_cell(i, j)
-				add_child(_terrain[k])
+				_enqueue(true, i, j, k)
 	for k in _terrain.keys():
 		if not keep.has(k):
 			_terrain[k].queue_free()
 			_terrain.erase(k)
+	_queue = _queue.filter(func(q): return keep.has(q[3]) if q[0] else true)
 
 ## One cell of ground from the heights. Heights are sampled one step past each edge so normals come from the
 ## same samples on both sides of a seam and neighbouring cells shade without a visible join.
@@ -282,6 +341,7 @@ func frame(center: Vector2, _camera_zoom: float) -> void:
 	var dt := clampf((now - _last_ms) / 1000.0, 0.0, 0.25) if _last_ms > 0 else 0.0
 	_last_ms = now
 	_daylight_frame(dt)
+	build_some()
 	_lights(Vector3(center.x, height(center.x, center.y), center.y), dt)
 	var mist_light := lerpf(1.0, 0.45, darkness)
 	for n in _zone_nodes.values():
