@@ -56,6 +56,10 @@ struct Config {
     slow_link: Link,
     /// How often an emulated link delivers packets, per second.
     link_hz: u32,
+    /// A battle: bot i joins faction `teams[i % n]` (with /faction), and everyone heads for `rally` (x, y, radius)
+    /// and fights there.
+    teams: Vec<String>,
+    rally: Option<(f32, f32, f32)>,
 }
 
 fn usage(msg: &str) -> ! {
@@ -63,7 +67,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -87,6 +91,8 @@ fn parse_args() -> Config {
         slow: 0,
         slow_link: Link { delay: Duration::from_millis(400), jitter: Duration::from_millis(150), loss: 0.10 },
         link_hz: 100,
+        teams: Vec::new(),
+        rally: None,
     };
     let ms = |v: String, n: &str| Duration::from_secs_f64(v.parse::<f64>().unwrap_or_else(|_| usage(&format!("bad {n}"))).max(0.0) / 1000.0);
     let pct = |v: String, n: &str| (v.parse::<f32>().unwrap_or_else(|_| usage(&format!("bad {n}"))) / 100.0).clamp(0.0, 1.0);
@@ -126,6 +132,15 @@ fn parse_args() -> Config {
             "--slow-jitter" => c.slow_link.jitter = ms(val(a), a),
             "--slow-loss" => c.slow_link.loss = pct(val(a), a),
             "--link-hz" => c.link_hz = val(a).parse().unwrap_or_else(|_| usage("bad --link-hz")),
+            "--teams" => c.teams = val(a).split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
+            "--rally" => {
+                let v: Vec<f32> = val(a).split(',').map(|n| n.trim().parse().unwrap_or_else(|_| usage("bad --rally"))).collect();
+                c.rally = match v[..] {
+                    [x, y] => Some((x, y, 40.0)),
+                    [x, y, r] => Some((x, y, r.max(1.0))),
+                    _ => usage("--rally X,Y[,R]"),
+                };
+            }
             "--quiet" => c.quiet = true,
             "-h" | "--help" => usage(""),
             other => usage(&format!("unknown argument {other}")),
@@ -168,6 +183,9 @@ struct Bot {
     rtt_seq: u32,
     chat: proto::chat::ChatClient,
     chat_n: u32,
+    /// Its side in a battle (index into --teams + 1, 0 for none), and whether it has said /faction yet.
+    team: u8,
+    joined: bool,
     chat_buf: Vec<u8>,
     /// The emulated network: packets on their way in and out, each with when it arrives.
     link: Link,
@@ -247,6 +265,9 @@ struct Totals {
     stale: u64,
     missing_baseline: u64,
     decode_err: u64,
+    /// CROWD packets decoded, and the entities in them.
+    crowds: u64,
+    crowd_entries: u64,
     self_missing: u64,
     welcomes: u64,
     rejects: u64,
@@ -310,6 +331,8 @@ fn main() {
     let hash = defs.content_hash();
     let attack_action = defs.actions.first().map_or(0, |a| a.id);
     let attack_range = defs.actions.first().map_or(0.0, |a| a.range);
+    // A game that replicates each player's faction lets battle bots spare their own side.
+    let faction_k = defs.replicated.iter().position(|&a| defs.attrs[a].name == proto::realm::FACTION_ATTR);
     let server: std::net::SocketAddr = std::net::ToSocketAddrs::to_socket_addrs(&cfg.server)
         .ok()
         .and_then(|mut a| a.next())
@@ -342,6 +365,8 @@ fn main() {
             rtt_seq: 0,
             chat: Default::default(),
             chat_n: 0,
+            team: if cfg.teams.is_empty() { 0 } else { (i % cfg.teams.len()) as u8 + 1 },
+            joined: false,
             chat_buf: Vec::new(),
             link: if i >= cfg.bots.saturating_sub(cfg.slow) { cfg.slow_link } else { cfg.link },
             slow: i >= cfg.bots.saturating_sub(cfg.slow),
@@ -489,6 +514,24 @@ fn main() {
                                         }
                                         continue;
                                     }
+                                    Some(&kind::CROWD) => {
+                                        match wire::decode_crowd(inner) {
+                                            Some((_, _, list)) => {
+                                                tot.crowds += 1;
+                                                tot.crowd_entries += list.len() as u64;
+                                            }
+                                            None => tot.decode_err += 1,
+                                        }
+                                        continue;
+                                    }
+                                    Some(&kind::CASTS) => {
+                                        if wire::decode_casts(inner).is_none() {
+                                            tot.decode_err += 1;
+                                        }
+                                        continue;
+                                    }
+                                    // Private news a bot has no use for: level, quests, party, gear.
+                                    Some(&kind::PROGRESS | &kind::QUESTS | &kind::PARTY | &kind::GEAR) => continue,
                                     Some(&kind::SNAPSHOT) => {}
                                     _ => {
                                         tot.decode_err += 1;
@@ -584,6 +627,23 @@ fn main() {
                         tot.reconnects += 1;
                         continue;
                     }
+                    // A battle: say which side we are on once, then make for the rally point.
+                    if b.team > 0 && !b.joined {
+                        b.joined = true;
+                        b.chat.say(proto::chat::channel::SAY, &format!("/faction {}", cfg.teams[b.team as usize - 1]));
+                    }
+                    let far = match (cfg.rally, b.view.get(b.entity)) {
+                        (Some((rx, ry, rr)), Some(me)) => {
+                            let (dx, dy) = (rx - dpos(me.x), ry - dpos(me.y));
+                            let d = (dx * dx + dy * dy).sqrt();
+                            (d > rr).then(|| ((dx / d * 127.0) as i8, (dy / d * 127.0) as i8))
+                        }
+                        _ => None,
+                    };
+                    if let Some(d) = far {
+                        b.dir = d;
+                        b.dir_left = 1;
+                    }
                     // Random walk: new direction every 1 to 3 seconds, sometimes stand still.
                     if b.dir_left == 0 {
                         b.dir_left = cfg.hz + b.rng.below(cfg.hz * 2);
@@ -601,8 +661,9 @@ fn main() {
                     if let Some(me) = b.view.get(b.entity) {
                         let (mx, my) = (dpos(me.x), dpos(me.y));
                         let mut best = attack_range * attack_range;
+                        let mine = faction_k.map(|k| me.attrs[k]);
                         for e in b.view.entries() {
-                            if e.id == b.entity {
+                            if e.id == b.entity || (b.team > 0 && mine.is_some_and(|m| m != 0 && faction_k.is_some_and(|k| e.attrs[k] == m))) {
                                 continue;
                             }
                             let (dx, dy) = (dpos(e.x) - mx, dpos(e.y) - my);
@@ -729,6 +790,9 @@ fn main() {
         *rtts.last().unwrap_or(&0) as f64 / 1000.0
     );
     println!("items: {} inventory and {} ground updates decoded", tot.inventories, tot.grounds);
+    if tot.crowds > 0 {
+        println!("crowd: {} packets, avg {:.0} entities each ({:.0} per bot per second)", tot.crowds, tot.crowd_entries as f64 / tot.crowds as f64, tot.crowd_entries as f64 / wall / cfg.bots.max(1) as f64);
+    }
     println!(
         "integrity: decode errors {}, missing baseline {}, stale {}, own entity missing from snapshot {}, failed decryption {}",
         tot.decode_err, tot.missing_baseline, tot.stale, tot.self_missing, tot.auth_fail
