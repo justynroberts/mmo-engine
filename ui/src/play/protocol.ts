@@ -31,6 +31,8 @@ export const kind = {
   GROUND: 0x89,
   /** Spells and blows used nearby. Not decoded yet: the client ignores inner kinds it does not handle. */
   CASTS: 0x8a,
+  /** The crowd past the snapshot (proto::wire::kind::CROWD). */
+  CROWD: 0x8f,
 } as const
 
 export const reject = { BAD_VERSION: 1, CONTENT_MISMATCH: 2, SERVER_FULL: 3 } as const
@@ -307,6 +309,29 @@ export function decodeGround(b: Uint8Array): GroundItem[] | null {
     out.push({ id: dv.getUint32(o, true), x: dpos(dv.getUint32(o + 4, true)), y: dpos(dv.getUint32(o + 8, true)), item: b[o + 12]!, count: b[o + 13]! })
   }
   return out
+}
+
+/** One distant entity in a CROWD packet: whole world units, its faction (index + 1, 0 for none), and whether it is
+ * a player. */
+export interface CrowdEntry {
+  id: number
+  x: number
+  y: number
+  side: number
+  player: boolean
+}
+
+/** A CROWD packet: which part of how many, and its entities (proto::wire::decode_crowd). */
+export function decodeCrowd(b: Uint8Array): { part: number; parts: number; list: CrowdEntry[] } | null {
+  if (b.length < 4 || b[0] !== kind.CROWD || b.length !== 4 + b[3]! * 9 || b[1]! >= b[2]!) return null
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  const list: CrowdEntry[] = []
+  for (let i = 0; i < b[3]!; i++) {
+    const o = 4 + i * 9
+    const side = b[o + 8]!
+    list.push({ id: dv.getUint32(o, true), x: dv.getUint16(o + 4, true) + 0.5, y: dv.getUint16(o + 6, true) + 0.5, side: side & 0x7f, player: (side & 0x80) !== 0 })
+  }
+  return { part: b[1]!, parts: b[2]!, list }
 }
 
 export interface Input {

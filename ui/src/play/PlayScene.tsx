@@ -250,6 +250,16 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     pools.count = 0
     scene.add(cores, pools)
 
+    // The crowd past the snapshot (a battle bigger than a snapshot holds): small solid markers in their faction's
+    // colour, or the dim ink for monsters and the unaligned. Anyone the snapshot carries is drawn above instead.
+    const CROWD_CAP = 512
+    const crowd = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.45), new THREE.MeshBasicMaterial({ color: 0xffffff }), CROWD_CAP)
+    crowd.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CROWD_CAP * 3), 3)
+    crowd.frustumCulled = false
+    crowd.count = 0
+    scene.add(crowd)
+    const sideColours = (ref.current.info.realm?.factions ?? []).map((f) => new THREE.Color(f.color ?? '#c0c0c0'))
+
     // Things lying on the ground: spinning lit gems with a pool of light, in the item's colour.
     const GCAP = 128
     const gems = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.55).scale(1, 1.5, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }), GCAP)
@@ -470,6 +480,7 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     const tmp = new THREE.Object3D()
     const tint = new THREE.Color()
     const cLine = new THREE.Color(pal.line)
+    const cDim = new THREE.Color(pal.dim)
     const cWarn = new THREE.Color(pal.accent)
     const cam = new THREE.Vector3()
     const camLook = new THREE.Vector3()
@@ -639,6 +650,23 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
       others.count = n
       cores.count = n
       pools.count = n
+      const near = new Set(fr.others.map((e) => e.id))
+      let nc = 0
+      for (const part of client.crowdParts) {
+        for (const c of part ?? []) {
+          if (nc >= CROWD_CAP || near.has(c.id) || c.id === self?.id) continue
+          tmp.position.set(c.x - half, 1, c.y - half)
+          tmp.rotation.set(0, 0, 0)
+          tmp.updateMatrix()
+          crowd.setMatrixAt(nc, tmp.matrix)
+          tint.copy(c.side > 0 ? (sideColours[c.side - 1] ?? cDim) : cDim)
+          crowd.setColorAt(nc, tint)
+          nc++
+        }
+      }
+      crowd.count = nc
+      crowd.instanceMatrix.needsUpdate = true
+      if (crowd.instanceColor) crowd.instanceColor.needsUpdate = true
       for (const m of [others, cores, pools]) {
         m.instanceMatrix.needsUpdate = true
         if (m.instanceColor) m.instanceColor.needsUpdate = true
