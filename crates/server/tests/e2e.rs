@@ -2721,3 +2721,49 @@ fn a_spell_edit_applies_live_and_its_casts_reach_the_client_a_few_times_over() {
     assert!(mine.iter().all(|k| k.action == proto::defs::ACTION_ZAP && k.target == 0), "{mine:?}");
     assert!(mine.len() >= 2 && mine.iter().all(|k| k.seq == mine[0].seq), "one cast, repeated: {mine:?}");
 }
+
+#[test]
+fn sides_guilds_and_land_survive_a_server_restart() {
+    // Chosen over chat by a real client, kept with the character (its faction) and in the world (guild, land).
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-realm-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut g = GameFile::default_game();
+    g.factions = vec![proto::realm::FactionDef { name: "red".into(), title: "The Red".into(), color: "#ff0000".into() }];
+    g.plots = Some(proto::realm::PlotRules { size: 8, per_player: 1 });
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let id = proto::secure::new_identity();
+    let ask = |c: &mut Client, line: &str, want: &str| {
+        c.say(proto::chat::channel::SAY, line);
+        let t = Instant::now();
+        while !c.heard.iter().any(|m| m.text.contains(want)) {
+            assert!(t.elapsed() < Duration::from_secs(5), "no '{want}' after '{line}': {:?}", c.heard.iter().map(|m| &m.text).collect::<Vec<_>>());
+            c.tick();
+        }
+    };
+    {
+        let srv = start_in(dir.clone(), &[]);
+        let mut a = connect_as(&srv, id);
+        a.pump(200);
+        ask(&mut a, "/faction red", "You fight for The Red");
+        ask(&mut a, "/guild create Hearth", "You found Hearth");
+        ask(&mut a, "/claim", "This land is yours");
+        // The realm is saved every few seconds, and everything on the way out.
+        let status = Command::new("kill").arg("-TERM").arg(srv.child.id().to_string()).status().unwrap();
+        assert!(status.success());
+        let mut srv = srv;
+        let t = Instant::now();
+        while srv.child.try_wait().unwrap().is_none() {
+            assert!(t.elapsed() < Duration::from_secs(5), "server did not exit on SIGTERM");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::mem::forget(std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep")));
+    }
+    let srv = start_in(dir.clone(), &[]);
+    let mut b = connect_as(&srv, id);
+    b.pump(200);
+    ask(&mut b, "/faction", "Your faction: red");
+    ask(&mut b, "/guild", "Hearth: 1 members");
+    ask(&mut b, "/plot", "This land is yours");
+    drop(srv);
+    let _ = std::fs::remove_dir_all(dir);
+}
