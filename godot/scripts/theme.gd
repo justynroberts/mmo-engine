@@ -610,6 +610,9 @@ func set_blocks(all: Dictionary, changed: Array) -> void:
 		var cy: int = k >> 15
 		var ck: int = world.key(int(floor(cx * bs / world.CELL)), int(floor(cy * bs / world.CELL)))
 		dirty[ck] = true
+		# A block's shape depends on its neighbours, so a column on a chunk's edge redraws the chunk beside it.
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			dirty[world.key(int(floor((cx + d.x) * bs / world.CELL)), int(floor((cy + d.y) * bs / world.CELL)))] = true
 		if all.has(k):
 			if not _block_index.has(ck):
 				_block_index[ck] = {}
@@ -634,12 +637,14 @@ func set_blocks(all: Dictionary, changed: Array) -> void:
 						glow.append([Vector3((c[0] + 0.5) * bs, (c[2] + i + 1.0) * bs + 0.3, (c[1] + 0.5) * bs), "lamp" if kind == LAMP else "fire"])
 		add_lights("blocks %d" % ck, glow)
 
-## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer): a MultiMesh of cubes per
-## material, each in its layer.
+## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer): a MultiMesh per material
+## and shape, each block in its layer. A block is drawn with only the faces that show (block_faces), its edges
+## rounded where two of them meet (block_shape), so walls soften at their ends and tops but still join flat.
 func build_blocks(cols: Array) -> Node3D:
 	var node := Node3D.new()
 	var bs := block_size()
-	var per_kind := {}
+	var per_shape := {}   # kind * 64 + faces -> [Vector3, ...]
+	var fires: Array = []
 	for c in cols:
 		var cx: int = c[0]
 		var cy: int = c[1]
@@ -649,18 +654,24 @@ func build_blocks(cols: Array) -> Node3D:
 			var kind := block_kind(kinds[i])
 			if kind < 0:
 				continue
-			if not per_kind.has(kind):
-				per_kind[kind] = []
-			per_kind[kind].append(Vector3((cx + 0.5) * bs, (base + i + 0.5) * bs, (cy + 0.5) * bs))
-	for kind in per_kind:
+			var p := Vector3((cx + 0.5) * bs, (base + i + 0.5) * bs, (cy + 0.5) * bs)
+			if kind == FIRE:
+				fires.append(p)
+			var faces := block_faces(cx, cy, base + i, kind, i == 0)
+			if faces == 0:
+				continue
+			var key := kind * 64 + faces
+			if not per_shape.has(key):
+				per_shape[key] = []
+			per_shape[key].append(p)
+	for key in per_shape:
+		var kind: int = key / 64
 		if not _block_mats.has(kind):
 			_block_mats[kind] = block_material(kind)
-		var at: Array = per_kind[kind]
-		var cube := BoxMesh.new()
-		cube.size = Vector3(bs, bs, bs)
+		var at: Array = per_shape[key]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = cube
+		mm.mesh = block_shape(key % 64)
 		mm.instance_count = at.size()
 		for i in at.size():
 			mm.set_instance_transform(i, Transform3D(Basis(), at[i]))
@@ -668,13 +679,125 @@ func build_blocks(cols: Array) -> Node3D:
 		mi.multimesh = mm
 		mi.material_override = _block_mats[kind]
 		node.add_child(mi)
-		if kind == FIRE:
-			# A flame on every fire block (only the top one of a stack would show, but blocks rarely stack fires).
-			for p in at.slice(0, 64):
-				var f := flame(bs)
-				f.position = p + Vector3(0, bs * 0.5, 0)
-				node.add_child(f)
+	# A flame on every fire block (only the top one of a stack would show, but blocks rarely stack fires).
+	for p in fires.slice(0, 64):
+		var f := flame(bs)
+		f.position = p + Vector3(0, bs * 0.5, 0)
+		node.add_child(f)
 	return node
+
+## How far in an exposed edge is rounded, as a share of the block, and the steps round each curve.
+const BLOCK_ROUND := 0.18
+const ROUND_STEPS := 2
+## A block's faces as bits, in this order: east, west, top, bottom, south, north (+x, -x, +y, -y, +z, -z). The
+## vectors are (cell x, layer, cell y).
+const BLOCK_FACES := [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
+var _block_shapes := {}   # faces -> Mesh, for _block_shape_size
+var _block_shape_size := 0.0
+
+## The material of the block in column (cx, cy) at layer z, or -1 for none.
+func block_at(cx: int, cy: int, z: int) -> int:
+	var col = _blocks.get(cy << 15 | cx)
+	if col == null:
+		return -1
+	var kinds := String(col["k"])
+	var i := z - int(col["b"])
+	if i < 0 or i >= kinds.length():
+		return -1
+	return block_kind(kinds[i])
+
+## Which faces of a block show, as bits in BLOCK_FACES order. A face against another block is hidden (glass hides
+## only glass, so a wall shows through a window), and so is the underside of a column's first block, on the ground.
+func block_faces(cx: int, cy: int, z: int, kind: int, first: bool) -> int:
+	var faces := 0
+	for f in BLOCK_FACES.size():
+		if f == 3 and first:
+			continue
+		var d: Vector3i = BLOCK_FACES[f]
+		var other := block_at(cx + d.x, cy + d.z, z + d.y)
+		if other < 0 or (other == GLASS and kind != GLASS):
+			faces |= 1 << f
+	return faces
+
+## A block with only the given faces, each edge between two of them rounded (corners where three meet are round
+## too). An edge against a hidden face stays square, so neighbours meet flat and a wall reads as one wall.
+func block_shape(faces: int) -> Mesh:
+	var bs := block_size()
+	if bs != _block_shape_size:
+		_block_shapes.clear()
+		_block_shape_size = bs
+	if _block_shapes.has(faces):
+		return _block_shapes[faces]
+	var h := bs * 0.5
+	var r := bs * BLOCK_ROUND
+	var shows := func(axis: int, sgn: float) -> bool: return faces & (1 << (axis * 2 + (0 if sgn > 0.0 else 1))) != 0
+	# BLOCK_FACES orders faces by axis x, y, z with + first, so face axis * 2 (+ 1 for -) is a bit in `faces`.
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var idx := PackedInt32Array()
+	for f in 6:
+		if faces & (1 << f) == 0:
+			continue
+		var n := f / 2
+		var s := 1.0 if f % 2 == 0 else -1.0
+		var u := (n + 1) % 3
+		var v := (n + 2) % 3
+		# Along each of the face's own axes: one flat span, and a curve's worth of steps towards each side that
+		# rounds (the side face shows too).
+		var spans := []
+		for a in [u, v]:
+			var at := PackedFloat32Array()
+			if shows.call(a, -1.0):
+				for j in range(ROUND_STEPS, -1, -1):
+					at.append(-(h - r) - r * sin(j * PI / 2.0 / ROUND_STEPS))
+			else:
+				at.append(-h)
+			if shows.call(a, 1.0):
+				for j in ROUND_STEPS + 1:
+					at.append(h - r + r * sin(j * PI / 2.0 / ROUND_STEPS))
+			else:
+				at.append(h)
+			spans.append(at)
+		var nu: int = spans[0].size()
+		var nv: int = spans[1].size()
+		var first := verts.size()
+		for j in nv:
+			for i in nu:
+				var p := Vector3.ZERO
+				p[n] = s * h
+				p[u] = spans[0][i]
+				p[v] = spans[1][j]
+				# Pull the point onto the rounded edge when it is in the curve of two or three showing faces.
+				var q := p
+				var near := 0
+				for a in 3:
+					if absf(p[a]) > h - r + 0.0001 and shows.call(a, p[a]):
+						q[a] = clampf(p[a], -(h - r), h - r)
+						near += 1
+				var normal := Vector3.ZERO
+				normal[n] = s
+				if near >= 2:
+					normal = (p - q).normalized()
+					p = q + normal * r
+				verts.append(p)
+				norms.append(normal)
+		for j in nv - 1:
+			for i in nu - 1:
+				var a := first + j * nu + i
+				# Godot's front faces wind clockwise seen from outside; u then v turns anticlockwise about +n.
+				if s > 0.0:
+					idx.append_array([a, a + nu, a + 1, a + 1, a + nu, a + nu + 1])
+				else:
+					idx.append_array([a, a + 1, a + nu, a + 1, a + nu + 1, a + nu])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = norms
+	arr[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	_block_shapes[faces] = mesh
+	return mesh
 
 ## A picture of the whole playable world, px by px, for the map (M).
 func map_image(px: int) -> Image:
