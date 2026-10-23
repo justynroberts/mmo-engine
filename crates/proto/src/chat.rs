@@ -37,6 +37,8 @@ pub mod channel {
     pub const WHISPER_SENT: u8 = 5;
     /// Server to client: said to your party (`/p`).
     pub const PARTY: u8 = 6;
+    /// Server to client: said to your guild (`/g`).
+    pub const GUILD: u8 = 7;
 }
 
 pub mod kind {

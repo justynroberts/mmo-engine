@@ -10,6 +10,7 @@ pub mod defs;
 pub mod game;
 pub mod names;
 pub mod predict;
+pub mod realm;
 pub mod rng;
 pub mod secure;
 pub mod snapshot;

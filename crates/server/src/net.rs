@@ -1014,8 +1014,10 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
         let cand = &mut sc.cand;
         let ents = &sim.ents;
         let me = c.slot as u32;
+        // Another phase (a dungeon's copy for another party) is not sent; players are, whatever their phase.
+        let (phase, my_phase) = (&sim.rs.phase, sim.rs.phase[c.slot]);
         sim.grid.for_neighbours(px, py, |s| {
-            if s != me {
+            if s != me && (phase[s as usize] == my_phase || ents.owner[s as usize] < crate::sim::DRIVEN) {
                 let dx = ents.x[s as usize] - px;
                 let dy = ents.y[s as usize] - py;
                 let d2 = dx * dx + dy * dy;
@@ -1072,8 +1074,10 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 tx.queue(c.addr, &sc.out);
             }
         }
-        // Your level and experience: when they change, and every few seconds regardless (only with levels on).
-        if let Some(l) = &sim.levels {
+        // Your level and experience: when they change, and every few seconds regardless (only with levels on). Not
+        // before the session is proven: until then the character is the fresh one the save has yet to replace, and
+        // a client told "level 1" and then the saved level celebrates a level up at every sign-in.
+        if let Some(l) = sim.levels.as_ref().filter(|_| c.proven) {
             let ver = sim.progress_ver[c.slot];
             if c.prog_sent != ver {
                 c.prog_sent = ver;
@@ -1089,8 +1093,9 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 }
             }
         }
-        // Your quests and any quest put to you: when they change (a few times over, as UDP may drop one).
-        if !sim.quests.is_empty() {
+        // Your quests and any quest put to you: when they change (a few times over, as UDP may drop one). Proven
+        // sessions only, like progress.
+        if !sim.quests.is_empty() && c.proven {
             let ver = sim.quest_ver[c.slot];
             if c.quest_sent != ver {
                 c.quest_sent = ver;
@@ -1298,6 +1303,35 @@ mod tests {
             }
             assert!(ok >= 150, "only {ok} of 200 packets arrived ({lanes_n} lanes)");
         }
+    }
+
+    #[test]
+    fn progress_waits_for_the_session_to_be_proven() {
+        // Before a session proves itself its character is the fresh one the save has not yet replaced; telling the
+        // client "level 1" then would make it celebrate the saved level as a level up at every sign-in.
+        let (mut sim, mut clients, mut peers, sink, out) = fixture(4, 256);
+        sink.set_nonblocking(true).unwrap();
+        sim.levels = Some(proto::game::LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0 });
+        let mut lanes = vec![Worker::new(out.as_raw_fd())];
+        let mut progress = |sim: &Sim, clients: &mut Clients| {
+            build_snapshots(sim, clients, &mut lanes, None);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let (mut buf, mut scratch, mut n_progress) = ([0u8; 2048], Vec::new(), 0);
+            while let Ok(n) = sink.recv(&mut buf) {
+                let sid = data_sid(&buf[..n]).unwrap() as usize;
+                let inner = peers[sid].open(&buf[..n], &mut scratch).expect("authentic");
+                n_progress += (inner[0] == kind::PROGRESS) as usize;
+            }
+            n_progress
+        };
+        for c in clients.slab.iter_mut().flatten() {
+            c.proven = false;
+        }
+        assert_eq!(progress(&sim, &mut clients), 0, "nothing before the save is in");
+        for c in clients.slab.iter_mut().flatten() {
+            c.proven = true;
+        }
+        assert_eq!(progress(&sim, &mut clients), 4, "each proven client hears its progress");
     }
 
     #[test]

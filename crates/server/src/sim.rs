@@ -402,6 +402,10 @@ pub struct Sim {
     /// Per slot: the static point a bot last decided to walk to and how near counts as there (negative for
     /// none), so between decisions it can keep following the flow field round corners.
     nav_goal: Vec<(f32, f32, f32)>,
+    /// Factions, classes, loot tables, recipes, crops, land and dungeons (`proto::realm`), and their live state:
+    /// who is on which side, guilds, plots, crops in the ground, dungeon runs (`realm.rs`).
+    pub realm: proto::realm::Realm,
+    pub rs: crate::realm::State,
 }
 
 /// The part of the weather that clients draw.
@@ -456,7 +460,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, realm } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -517,6 +521,8 @@ impl Sim {
             terrain: Default::default(),
             nav: Default::default(),
             nav_goal: vec![(0.0, 0.0, -1.0); cap],
+            realm,
+            rs: crate::realm::State::new(cap),
         }
     }
 
@@ -580,6 +586,7 @@ impl Sim {
         self.last_whisper[slot] = 0;
         self.party_ver[slot] = self.party_ver[slot].wrapping_add(1);
         self.gear[slot] = [0; proto::game::GEAR_SLOTS];
+        self.rs.reset(slot);
         self.mounted[slot] = 0.0;
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         e.owner[slot] = owner;
@@ -612,6 +619,8 @@ impl Sim {
             found: self.ents.found[slot].clone(),
             quests: self.ents.quests[slot].iter().map(|r| (r.name.clone(), r.step, r.count, r.state)).collect(),
             gear: self.gear_names(slot),
+            faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.realm.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
+            class: self.rs.class[slot].checked_sub(1).and_then(|c| self.realm.classes.get(c as usize)).map(|c| c.name.clone()).unwrap_or_default(),
         }
     }
 
@@ -684,6 +693,8 @@ impl Sim {
         if let Ok(n) = proto::names::clean(&rec.name) {
             self.set_name(slot, &n, true);
         }
+        self.rs.faction[slot] = self.realm.faction(&rec.faction).map_or(0, |f| f as u8 + 1);
+        self.rs.class[slot] = self.realm.class(&rec.class).map_or(0, |c| c as u8 + 1);
         self.ents.xp[slot] = rec.xp;
         self.ents.level[slot] = self.levels.as_ref().map_or(1, |l| l.level_of(rec.xp));
         self.ents.found[slot] = rec.found.clone();
@@ -869,8 +880,8 @@ impl Sim {
         let (cx, cy) = parse_build_target(target);
         let (z, kind) = parse_build_arg(arg);
         let z = z as i16;
-        if kind >= BLOCK_KINDS {
-            return false;
+        if kind >= BLOCK_KINDS || (action != ACT_BREAK && (kind == proto::game::SPROUT || kind == proto::game::RIPE)) {
+            return false; // crops come from seeds, not hands
         }
         let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
         if bx + BLOCK > self.world.size || by + BLOCK > self.world.size {
@@ -886,16 +897,22 @@ impl Sim {
         if dx * dx + dy * dy > BUILD_REACH * BUILD_REACH || dz.abs() > BUILD_REACH {
             return false;
         }
+        if self.ents.owner[s] < DRIVEN && !self.may_build(s, cx, cy) {
+            return false; // someone else's land
+        }
         if action == ACT_BREAK {
             let Some(col) = self.blocks.get(key) else { return false };
             let Some(k) = col.index(z).filter(|&k| col.kinds[k] != 0) else { return false };
             if col.owners[k] != 0 && col.owners[k] != self.ents.account[s] {
                 return false; // someone else's
             }
-            self.blocks.take(key, z);
+            let taken = self.blocks.take(key, z);
             let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
             self.world.set_column(cx, cy, mask);
             self.stats.breaks += 1;
+            if let Some((k, _)) = taken.filter(|t| t.0 == proto::game::SPROUT || t.0 == proto::game::RIPE) {
+                self.harvest(s, key, z, k);
+            }
             return true;
         }
         let col = self.blocks.get(key).copied().unwrap_or_else(|| crate::blocks::Col::new(base));
@@ -1030,6 +1047,7 @@ impl Sim {
             self.expire_ground();
             self.system_discover();
             self.system_quests();
+            self.system_realm();
         }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -1256,10 +1274,11 @@ impl Sim {
                 let (x, y) = (self.ents.x[s], self.ents.y[s]);
                 let e = &self.ents;
                 let sneak = self.sneak();
+                let phase = &self.rs.phase;
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
-                    if t == s || e.arch[t] == a && a != NO_ARCH {
-                        return;
+                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] {
+                        return; // its own kind, or in another phase (a dungeon's copy) it cannot meet
                     }
                     let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                     let d2 = dx * dx + dy * dy;
@@ -1413,6 +1432,9 @@ impl Sim {
         if e.owner[p.slot] < DRIVEN && self.levels.is_some() && def.level > e.level[p.slot] {
             return false; // not learnt yet
         }
+        if e.owner[p.slot] < DRIVEN && !self.realm.may_use(self.rs.class[p.slot], &def.school) {
+            return false; // not of their calling
+        }
         if let Some((attr, min)) = def.requires {
             if e.attrs[attr as usize][p.slot] < min {
                 return false;
@@ -1422,11 +1444,15 @@ impl Sim {
         let harmful = def.hold.is_some() || def.effects.iter().any(|f| matches!(*f, Effect::AddToTarget { delta, .. } if delta < 0.0));
         // Player against player: only with pvp on, and neither of them in a safe place.
         let pvp_here = self.pvp && !self.in_safe(p.slot);
-        let fair = |s: usize| s == p.slot || !player(s) || !player(p.slot) || (pvp_here && !self.in_safe(s));
-        let lands = |s: usize| match hits {
-            Hits::Any => !harmful || fair(s),
-            Hits::Foes => player(s) != player(p.slot) || (s != p.slot && fair(s)),
-            Hits::Friends => player(s) == player(p.slot),
+        // Allies (the same faction) are never fair game, and nothing reaches into another phase (a dungeon's copy).
+        let fair = |s: usize| s == p.slot || !player(s) || !player(p.slot) || (pvp_here && !self.in_safe(s) && !self.allies(s, p.slot));
+        let lands = |s: usize| {
+            self.same_phase(s, p.slot)
+                && match hits {
+                    Hits::Any => !harmful || fair(s),
+                    Hits::Foes => player(s) != player(p.slot) || (s != p.slot && fair(s)),
+                    Hits::Friends => player(s) == player(p.slot) && (s == p.slot || !player(s) || self.rs.faction[p.slot] == 0 || self.rs.faction[s] == 0 || self.allies(s, p.slot)),
+                }
         };
         // Where it lands: on the target (which must be in reach and of the side it is for), or on the caster.
         let at = match aim {
@@ -2228,6 +2254,7 @@ mod tests {
             xp: 0,
             level: 0,
             shop: Vec::new(),
+            loot: None,
         }
     }
 

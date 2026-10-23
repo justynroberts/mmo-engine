@@ -371,6 +371,9 @@ pub struct Archetype {
     /// What it sells (talk to one to trade): items at a price in the game's `currency`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shop: Vec<ShopItem>,
+    /// A loot table (`GameFile::loot`) rolled when it falls, on top of its `drops`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot: Option<String>,
 }
 fn d_color() -> String {
     "#888888".into()
@@ -434,6 +437,21 @@ pub struct GameFile {
     /// The item that is money: what shops take and pay (`Archetype::shop`, `ItemDef::value`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
+    /// Sides, classes, loot tables, crafting, farming, land and dungeons (`realm.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub factions: Vec<crate::realm::FactionDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub classes: Vec<crate::realm::ClassDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loot: Vec<crate::realm::LootTable>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipes: Vec<crate::realm::Recipe>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub crops: Vec<crate::realm::CropDef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plots: Option<crate::realm::PlotRules>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dungeons: Vec<crate::realm::DungeonDef>,
 }
 
 /// Experience and levels. A character earns experience for beating bots (their type's `xp`), for finding named
@@ -650,8 +668,15 @@ pub const BUILD_REACH: f32 = 8.0;
 /// Most blocks in one column: the layers it spans above its base.
 pub const MAX_STACK: usize = crate::world::COLUMN_LAYERS as usize;
 /// Block materials (the client's theme decides what each looks like; 12 is a lamp and 13 a fire, which give light at
-/// night). Text gives each a character: `0`-`9`, then `a`-`z` (see `block_char`).
-pub const BLOCK_KINDS: u8 = 14;
+/// night; 14 is tilled soil, and 15 and 16 a crop growing and ripe). Text gives each a character: `0`-`9`, then
+/// `a`-`z` (see `block_char`).
+pub const BLOCK_KINDS: u8 = 17;
+/// Tilled soil: built like any block; a seed planted beside it grows on top of it.
+pub const SOIL: u8 = 14;
+/// A crop growing, and ripe (`realm::CropDef`). Nobody builds these: planting a seed makes the first, and time the
+/// second.
+pub const SPROUT: u8 = 15;
+pub const RIPE: u8 = 16;
 
 /// The target of a build or break: the column's cell.
 pub fn build_target(cx: u32, cy: u32) -> u32 {
@@ -725,6 +750,9 @@ pub struct ItemDef {
     /// using an action, gets you down.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub mount: f32,
+    /// How rare it is: clients colour it by this, and a drop of a rare one or better is announced.
+    #[serde(default, skip_serializing_if = "crate::realm::Rarity::is_common")]
+    pub rarity: crate::realm::Rarity,
 }
 
 fn is_zero_u16(v: &u16) -> bool {
@@ -801,6 +829,7 @@ pub struct ItemRt {
     pub value: u16,
     pub equip: Option<EquipFile>,
     pub mount: f32,
+    pub rarity: crate::realm::Rarity,
 }
 
 #[derive(Clone, Debug)]
@@ -1070,6 +1099,8 @@ pub struct ArchRt {
     pub level: u8,
     /// (item index, price)
     pub shop: Vec<(usize, u16)>,
+    /// Its loot table (`Realm::loot`).
+    pub loot: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1113,6 +1144,7 @@ pub struct Game {
     pub quests: Vec<QuestFile>,
     /// The money item's index.
     pub currency: Option<usize>,
+    pub realm: crate::realm::Realm,
 }
 
 /// Most walls a game file may place.
@@ -1120,7 +1152,7 @@ pub const MAX_WALLS: usize = 2000;
 
 /// A usable item with the given effects (none makes it a keepsake or trade good).
 fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
-    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0 }
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() }
 }
 
 /// What the sample bots leave behind.
@@ -1183,6 +1215,7 @@ impl GameFile {
             xp: 0,
             level: 0,
             shop: Vec::new(),
+            loot: None,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -1235,6 +1268,13 @@ impl GameFile {
             levels: None,
             quests: Vec::new(),
             currency: None,
+            factions: Vec::new(),
+            classes: Vec::new(),
+            loot: Vec::new(),
+            recipes: Vec::new(),
+            crops: Vec::new(),
+            plots: None,
+            dungeons: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -1553,6 +1593,7 @@ impl GameFile {
                 value: it.value,
                 equip: it.equip.clone(),
                 mount: it.mount,
+                rarity: it.rarity,
             });
         }
         let mut seen = HashSet::new();
@@ -1668,6 +1709,7 @@ impl GameFile {
                 drops.push(DropRt { item, chance_pct: d.chance_pct, min: d.min, max: d.max });
             }
             archs.push(ArchRt {
+                loot: a.loot.as_ref().and_then(|l| self.loot.iter().position(|t| &t.name == l)),
                 drops,
                 home,
                 rules,
@@ -1707,7 +1749,8 @@ impl GameFile {
                 }
             }
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency })
+        let realm = self.realm()?;
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, realm })
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {
@@ -2159,7 +2202,7 @@ mod tests {
         .unwrap();
         assert!(old.build().is_ok());
         let mut more = ok.clone();
-        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0 });
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() });
         assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
         g.items.clear();
         assert!(g.build().is_err(), "drops of items that no longer exist are caught");

@@ -48,6 +48,11 @@ pub struct Record {
     /// What is worn, by item name per gear slot ("" for nothing).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gear: Vec<String>,
+    /// Their side and calling, by name (`realm.rs`), empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub faction: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub class: String,
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -76,6 +81,8 @@ enum Msg {
     Save(Vec<(PlayerId, Record)>),
     /// `None` forgets the saved world.
     World(Option<String>),
+    /// Another document kept in the world table under its key (the realm's guilds, plots and crops).
+    Doc(&'static str, String),
     Flush(Sender<()>),
 }
 
@@ -143,9 +150,13 @@ impl Store {
                     let mut acks: Vec<Sender<()>> = Vec::new();
                     // Only the newest world snapshot matters; `Some(None)` is a request to forget it.
                     let mut world: Option<Option<String>> = None;
+                    let mut docs: HashMap<&'static str, String> = HashMap::new();
                     let mut take = |m: Msg, batch: &mut Vec<(PlayerId, Record)>, acks: &mut Vec<Sender<()>>| match m {
                         Msg::Save(v) => batch.extend(v),
                         Msg::World(w) => world = Some(w),
+                        Msg::Doc(k, text) => {
+                            docs.insert(k, text);
+                        }
                         Msg::Flush(a) => acks.push(a),
                     };
                     take(first, &mut batch, &mut acks);
@@ -159,6 +170,11 @@ impl Store {
                             None => write.execute("DELETE FROM world WHERE key = 'bots'", []),
                         };
                         if r.is_err() {
+                            st.errors.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    for (k, text) in docs {
+                        if write.execute("INSERT OR REPLACE INTO world (key, data, updated) VALUES (?1, ?2, ?3)", params![k, text, now_secs()]).is_err() {
                             st.errors.fetch_add(1, Ordering::Relaxed);
                         }
                     }
@@ -212,6 +228,17 @@ impl Store {
         if let Ok(text) = serde_json::to_string(w) {
             let _ = self.tx.send(Msg::World(Some(text)));
         }
+    }
+
+    /// Queue a document for the world table under `key`. Only the newest of each key is written.
+    pub fn save_doc(&self, key: &'static str, text: String) {
+        let _ = self.tx.send(Msg::Doc(key, text));
+    }
+
+    /// A document from the world table. Call `flush` first if you just saved.
+    pub fn load_doc(&self, key: &str) -> Option<String> {
+        let conn = self.read.lock().ok()?;
+        conn.query_row("SELECT data FROM world WHERE key = ?1", [key], |r| r.get(0)).optional().ok().flatten()
     }
 
     /// Forget the saved world (a deliberate restart under new definitions).
@@ -425,6 +452,8 @@ mod tests {
         let bot = |arch: &str, x: f32| BotRec { arch: arch.into(), x, y: x + 1.0, attrs: BTreeMap::from([("health".to_string(), 12.0)]) };
         st.save_world(&WorldSave { bots: vec![bot("old", 1.0)] });
         st.save_world(&WorldSave { bots: vec![bot("drone", 5.0), bot("guard", 7.0)] });
+        st.save_doc("realm", "{\"guilds\":[]}".into());
+        st.save_doc("realm", "{\"plots\":[]}".into());
         st.flush();
         let w = st.load_world().unwrap();
         assert_eq!(w.bots.len(), 2);
@@ -432,6 +461,7 @@ mod tests {
         drop(st);
         let st = Store::open(&path).unwrap();
         assert_eq!(st.load_world().unwrap().bots.len(), 2, "survives a reopen");
+        assert_eq!(st.load_doc("realm").as_deref(), Some("{\"plots\":[]}"), "the newest document of a key");
         st.clear_world();
         st.flush();
         assert_eq!(st.load_world(), None);
