@@ -378,6 +378,9 @@ func _start() -> void:
 		actions_by_id[int(a["id"])] = a
 	questui.set_quests(info.get("quests", []) if info.get("quests") is Array else [])
 	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
+	for it in info.get("items", []):
+		if it.has("rarity"):
+			hud.rarity[String(it["name"])] = String(it["rarity"])
 	all_spells = info.get("actions", []).slice(1)
 	bar_order = _load_bar()
 	_apply_bar()
@@ -2284,6 +2287,17 @@ func _watch_progress() -> void:
 func _spell_title(a: Dictionary) -> String:
 	return String(a["name"]).replace("_", " ").capitalize()
 
+## The spell schools our class may use (lower case), or null when the game has no classes or does not tell us ours
+## (no replicated `class` attribute). With classes and none chosen, that is no schools at all.
+func _calling(me: Dictionary):
+	var classes: Array = info.get("realm", {}).get("classes", [])
+	if classes.is_empty() or not me.has("class"):
+		return null
+	var k := int(me["class"])
+	if k <= 0 or k > classes.size():
+		return []
+	return (classes[k - 1].get("schools", []) as Array).map(func(s): return String(s).to_lower())
+
 func _can_pay(a: Dictionary, me: Dictionary) -> bool:
 	if not a.has("requires"):
 		return true
@@ -2304,6 +2318,9 @@ func _cast(i: int) -> void:
 	if my_level > 0 and int(a.get("level", 0)) > my_level:
 		return _notice("You learn %s at level %d." % [title, int(a["level"])])
 	var me := _my_entity()
+	var calling = _calling(me)
+	if calling != null and String(a.get("school", "")) != "" and not String(a["school"]).to_lower() in calling:
+		return _notice("%s is %s magic, not of your calling. /class to choose one." % [title, a["school"]])
 	if not _can_pay(a, me):
 		return _notice("Not enough %s for %s." % [a["requires"]["attr"], title])
 	var target := 0

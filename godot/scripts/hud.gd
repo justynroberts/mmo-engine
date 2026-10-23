@@ -678,6 +678,9 @@ func set_abilities(torch: int, lit: bool, building: bool, map_open: bool, can_bu
 	b.active = building
 	b.queue_redraw()
 
+## Item name -> how rare it is ("rare", "epic", ...), for anything better than common (from /play/info).
+var rarity := {}
+
 func set_bag(contents: Array) -> void:
 	for i in slots.size():
 		var s := slots[i]
@@ -690,7 +693,9 @@ func set_bag(contents: Array) -> void:
 		s.title = item
 		s.count = count
 		s.color = col
-		s.tooltip_text = "%s x%d  (%d to use, Shift+%d to drop)" % [item, count, i + 1, i + 1] if item != "" else "Empty"
+		var rare := String(rarity.get(item, ""))
+		var named := "%s (%s)" % [item, rare] if rare != "" else item
+		s.tooltip_text = "%s x%d  (%d to use, Shift+%d to drop)" % [named, count, i + 1, i + 1] if item != "" else "Empty"
 		s.queue_redraw()
 
 ## The build bar: one button per block material, a picture of it and its key.

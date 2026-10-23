@@ -287,10 +287,12 @@ impl Sim {
             }
             self.rs.dirty = true;
         }
-        if let Some(a) = self.defs.attrs.iter().position(|d| d.name == proto::realm::FACTION_ATTR) {
-            for s in 0..self.ents.high {
-                if self.is_player(s) {
-                    self.ents.attrs[a][s] = self.rs.faction[s] as f32;
+        for (name, of) in [(proto::realm::FACTION_ATTR, &self.rs.faction), (proto::realm::CLASS_ATTR, &self.rs.class)] {
+            if let Some(a) = self.defs.attrs.iter().position(|d| d.name == name) {
+                for s in 0..self.ents.high {
+                    if self.ents.alive[s] && self.ents.owner[s] < DRIVEN {
+                        self.ents.attrs[a][s] = of[s] as f32;
+                    }
                 }
             }
         }

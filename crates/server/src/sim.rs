@@ -1728,7 +1728,7 @@ impl Sim {
             if self.ents.alive[s] && self.ents.god[s] {
                 for (a, def) in self.defs.attrs.iter().enumerate() {
                     // Not the reserved ones the server keeps itself (a jump, a hold, speed, level, a light).
-                    let reserved = [proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::SPEED_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR];
+                    let reserved = [proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::SPEED_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR, proto::realm::FACTION_ATTR, proto::realm::CLASS_ATTR];
                     if !reserved.contains(&def.name.as_str()) {
                         self.ents.attrs[a][s] = def.max;
                     }

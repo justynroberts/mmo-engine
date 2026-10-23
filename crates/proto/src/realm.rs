@@ -22,6 +22,9 @@ pub const MAX_DUNGEONS: usize = 32;
 /// none). Make it replicated and clients can tell friend from foe.
 pub const FACTION_ATTR: &str = "faction";
 
+/// Likewise for each player's class (index + 1, 0 for none): replicated, clients know which spells are theirs.
+pub const CLASS_ATTR: &str = "class";
+
 /// How rare an item is: clients colour its name by this, and a drop of `Rare` or better is announced.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "lowercase")]
