@@ -1826,7 +1826,7 @@ func _drive() -> void:
 	if hud.typing():
 		net.set_move(Vector2.ZERO)
 		return
-	if _fetch_pile != 0 and _fetch():
+	if _fetch_pile != 0 and _go_get_loot():
 		return
 	if args.has("walk"):
 		if String(args["walk"]) == "near" and me_pos != Vector2.ZERO:
@@ -1869,7 +1869,7 @@ func _drive() -> void:
 
 ## Going for a pile of loot that was clicked: walk to it and pick it up there. Any movement key, the pile going
 ## (someone else took it) or a long time trying gives it up. True while it is steering us.
-func _fetch() -> bool:
+func _go_get_loot() -> bool:
 	var keys := [KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
 	var at := Vector2.INF
 	for g in net.ground():
