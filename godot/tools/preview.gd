@@ -1,7 +1,8 @@
 extends SceneTree
 ## The fantasy theme's look at given points of a world file, with no server: for comparing what the theme draws.
 ##   godot --path godot --script res://tools/preview.gd -- --world FILE [--game game.json] --at X,Y[;X,Y...]
-##       --out PREFIX [--zoom 34] [--time 0.3] [--pitch 0.85] [--yaw 0.6] [--size 1280x720]
+##       --out PREFIX [--zoom 34] [--time 0.3] [--pitch 0.85] [--yaw 0.6] [--size 1280x720] [--blocks DIR]
+## --blocks draws what is built, from a server's <world>.blocks.d region files.
 ## Saves PREFIX_0.png, PREFIX_1.png ... one per point, and prints the settlement each point is in.
 var a := {}
 
@@ -36,6 +37,14 @@ func _run() -> void:
 	root.add_child(theme)
 	theme.setup(info, world)
 	theme.time_override = float(a.get("time", 0.3))
+	if a.has("blocks"):
+		var all := {}
+		for f in DirAccess.get_files_at(String(a["blocks"])):
+			var r = JSON.parse_string(FileAccess.get_file_as_string(String(a["blocks"]).path_join(f)))
+			if r is Dictionary:
+				for c in r.get("cols", []):
+					all[int(c[1]) << 15 | int(c[0])] = {"b": int(c[2]), "k": String(c[3])}
+		theme.set_blocks(all, all.keys())
 	var cam := Camera3D.new()
 	cam.fov = 50.0
 	root.add_child(cam)

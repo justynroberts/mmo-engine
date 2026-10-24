@@ -680,6 +680,14 @@ func block_base(cx: int, cy: int) -> float:
 	var y0 := cy * bs
 	return minf(minf(height(x0, y0), height(x0 + bs, y0)), minf(height(x0, y0 + bs), height(x0 + bs, y0 + bs)))
 
+## The highest corner of a cell's ground: a column's lowest block rests on the ground (its underside hidden, its
+## bottom edges square) when this reaches its underside, even though the column starts at the lowest corner.
+func block_ground_top(cx: int, cy: int) -> float:
+	var bs := block_size()
+	var x0 := cx * bs
+	var y0 := cy * bs
+	return maxf(maxf(height(x0, y0), height(x0 + bs, y0)), maxf(height(x0, y0 + bs), height(x0 + bs, y0 + bs)))
+
 ## The layer a new column in this cell starts in. Layer z fills heights z * block_size() to (z + 1) * block_size(),
 ## the same everywhere, so blocks line up however the ground runs.
 func block_layer(cx: int, cy: int) -> int:
@@ -778,7 +786,7 @@ func _chunk_input(ck: int) -> Dictionary:
 	var look := {}
 	for k in _block_index.get(ck, {}):
 		var c: Dictionary = _blocks[k]
-		cols.append([k & 0x7fff, k >> 15, int(c["b"]), String(c["k"])])
+		cols.append([k & 0x7fff, k >> 15, int(c["b"]), String(c["k"]), block_ground_top(k & 0x7fff, k >> 15)])
 		look[k] = _look_of(c["b"], c["k"])
 		for d in [1, -1, 1 << 15, -(1 << 15)]:
 			var n = _blocks.get(k + d)
@@ -816,10 +824,30 @@ func _mesh_chunk(input: Dictionary) -> Dictionary:
 		var cy: int = c[1]
 		var base: int = c[2]
 		var kinds: String = c[3]
+		# Up to the first solid block, a block rests on the ground when the ground's highest corner reaches it.
+		var ground_top: float = c[4] if c.size() > 4 else -INF
+		var below_solid := false
 		for i in kinds.length():
 			var kind := block_kind(kinds[i])
 			if kind < 0:
 				continue
+			var grounded := not below_solid and (i == 0 or ground_top >= (base + i) * bs - 0.05)
+			below_solid = true
+			if grounded and i > 0 and not CROP_SCALE.has(kind) and kind not in [GLASS, FIRE, LAMP]:
+				# On a slope the ground falls away below it: plain sides of the same stuff down to the column's
+				# lowest corner, so no light shows under its downhill side.
+				for m in i:
+					var sides := 0
+					for f in [0, 1, 4, 5]:
+						var d: Vector3i = BLOCK_FACES[f]
+						var n = look.get((cy + d.z) << 15 | (cx + d.x))
+						var j: int = base + m - (n[0] if n != null else 0)
+						if n == null or j < 0 or j >= 16 or n[1] & (1 << j) == 0:
+							sides |= 1 << f
+					if sides != 0:
+						if not per_kind.has(kind):
+							per_kind[kind] = SurfaceTool.new()
+						per_kind[kind].append_from(_block_flat[sides], 0, Transform3D(Basis(), Vector3((cx + 0.5) * bs, (base + m + 0.5) * bs, (cy + 0.5) * bs)))
 			var p := Vector3((cx + 0.5) * bs, (base + i + 0.5) * bs, (cy + 0.5) * bs)
 			if kind == FIRE:
 				fires.append(p)
@@ -829,7 +857,7 @@ func _mesh_chunk(input: Dictionary) -> Dictionary:
 			var faces := 0
 			var z := base + i
 			for f in 6:
-				if f == 3 and i == 0:
+				if f == 3 and grounded:
 					continue # the underside of a column's first block, on the ground
 				var d: Vector3i = BLOCK_FACES[f]
 				var n = look.get((cy + d.z) << 15 | (cx + d.x))
@@ -893,6 +921,7 @@ func build_blocks_from(res: Dictionary) -> Node3D:
 func build_blocks(cols: Array) -> Node3D:
 	_warm_block_shapes()
 	var look := {}
+	cols = cols.map(func(c): return c if c.size() > 4 else c + [block_ground_top(int(c[0]), int(c[1]))])
 	for c in cols:
 		look[int(c[1]) << 15 | int(c[0])] = _look_of(c[2], c[3])
 	for k in _blocks:

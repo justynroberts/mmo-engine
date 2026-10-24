@@ -13,7 +13,10 @@ fades; the music itself is unchanged.
 | `explore_3.ogg` | Mist over the Isles (take 2) | made for this game by the project owner with Suno | owned by the project |
 | `eerie_5.ogg` | Cavernous Dissonance | made for this game by the project owner with Suno | owned by the project |
 | `battle_5.ogg` | Modal March | made for this game by the project owner with Suno | owned by the project |
-| `../theme/ar_aghaidh.ogg` | Ar Aghaidh (main title theme) | made for this game by the project owner with Suno | owned by the project |
+| `../theme/eirigh_linn.ogg` | Éirigh Linn (main title theme) | made for this game by the project owner | owned by the project |
+| `../theme/ar_aghaidh.ogg` | Ar Aghaidh (the old title theme, kept for later; not played) | made for this game by the project owner with Suno | owned by the project |
+| `holy_5.ogg` | Ceremonial Build (take 1), mastered 3 dB under the others to sit back | made for this game by the project owner | owned by the project |
+| `city_2.ogg` | Ceremonial Build (take 2), mastered 3 dB under the others to sit back | made for this game by the project owner | owned by the project |
 
 ## Kevin MacLeod (incompetech.com), CC BY 4.0
 

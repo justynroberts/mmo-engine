@@ -1415,21 +1415,21 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 			put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, door + out * (VS * 6.2) - side * (VS * 1.6)))
 	if hsh % 3 != 0:
 		put.call("Wall_Arch", Transform3D(rot * tile, door + out * (VS * 6.0)))
-	# A wooden lean-to shed, or a stall roof both ways, beside the path, on most houses.
+	# A wooden lean-to beside the path on most houses: one sloping roof of two Roof_Wooden_2x1 (high along its
+	# origin edge, falling ~1.1 over its 1.5 depth) on four timber posts cut to meet it, high side towards the house.
 	if hsh % 4 != 3:
 		var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
-		var shed_face := rot * Basis(Vector3.UP, PI / 2.0) * tile
+		var high := (2.4 + 0.3 * float(hsh % 3)) * VS          # the eaves against the house, above the ground
+		var across := Vector3.UP.cross(out).normalized()      # the roof's own x, so its z runs down the slope, outwards
+		var roof_b := Basis(across, Vector3.UP, out) * tile
+		var back := shed - out * (0.75 * VS)
 		for sx2 in [-1.0, 1.0]:
-			put.call("Prop_Support", Transform3D(shed_face, shed + side * sx2 * (VS * 2.2) + Vector3(0, -1.2 * VS, 0)))
-		if hsh % 2 == 0:
-			var run := ["Roof_Wooden_2x1_L", "Roof_Wooden_2x1_Middle", "Roof_Wooden_2x1_R"]
-			for k in run.size():
-				put.call(run[k], Transform3D(shed_face, shed + side * (VS * 2.2 * (k - 1)) + Vector3(0, 2.0 * VS, 0)))
-			put.call("Roof_Wooden_2x1_Corner", Transform3D(shed_face, shed + side * (VS * 3.4) + Vector3(0, 2.0 * VS, 0)))
-		else:
-			put.call("Roof_Wooden_2x1_Center", Transform3D(shed_face, shed + Vector3(0, 2.0 * VS, 0)))
-			put.call("Roof_Wooden_2x1_Center_Mirror", Transform3D(shed_face, shed + side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
-			put.call("Roof_Wooden_2x1", Transform3D(shed_face, shed - side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
+			put.call("Roof_Wooden_2x1", Transform3D(roof_b, back + across * (sx2 * 1.1 * VS) + Vector3(0, high - 1.0 * VS, 0)))
+		for corner in [[-1.0, 0.1, 0.0], [1.0, 0.1, 0.0], [-1.0, 1.3, 0.83], [1.0, 1.3, 0.83]]:
+			# Corner_Exterior_Wood is a post 3 tall from its foot; scaled to reach the roof's underside there.
+			var tall: float = high - float(corner[2]) * VS - 0.05 * VS
+			var at: Vector3 = back + across * (float(corner[0]) * 2.05 * VS) + out * (float(corner[1]) * VS)
+			put.call("Corner_Exterior_Wood", Transform3D(Basis(across, Vector3.UP, out) * Basis.from_scale(Vector3(VS, tall / 3.0, VS)), at))
 		# Under the shed, the trade's goods.
 		var goods: Array = TownsScript.TRADES[town["trade"]]["yard"]
 		for k in 2:
