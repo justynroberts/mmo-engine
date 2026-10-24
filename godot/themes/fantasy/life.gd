@@ -67,6 +67,8 @@ static func ensure_globals() -> void:
 	for n in ["world_wet", "world_puddles", "world_snow"]:
 		RenderingServer.global_shader_parameter_add(n, RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
 
+var _placing: Array = []    # what is left to place after a survey, one a frame
+
 func setup(p_theme: Node3D) -> void:
 	theme = p_theme
 	_rng.seed = 7151
@@ -114,11 +116,15 @@ func step(center: Vector2, dt: float) -> void:
 	if _survey_in <= 0.0 or _survey_at == Vector2.INF or center.distance_to(_survey_at) > 24.0:
 		_survey_in = SURVEY_SECS
 		_survey_at = center
+		var t := Time.get_ticks_usec()
 		_survey()
-		_place_flocks()
-		_place_deer()
-		_place_stock()
-		_place_smoke()
+		theme.lap("life survey", t)
+		_placing = [_place_flocks, _place_deer, _place_stock, _place_smoke]
+	elif not _placing.is_empty():
+		var t := Time.get_ticks_usec()
+		var f: Callable = _placing.pop_front()
+		f.call() # one a frame, so looking round never stalls a frame
+		theme.lap("life " + f.get_method(), t)
 	_birds(dt)
 	_deer_step(dt)
 	_stock_step(dt)

@@ -26,6 +26,7 @@ var _next_flash := 0.0
 var meshes := {}             # path -> Mesh, pulled out of the glTF pieces once
 var _built_bodies := 0       # how many KayKit characters were made (for the smoke test)
 const LifeScript := preload("res://themes/fantasy/life.gd")
+const TownsScript := preload("res://themes/fantasy/towns.gd")
 var life: Node3D             # birds, deer, stock, chimney smoke, fireflies, and the weather on the ground (life.gd)
 var _life_ms := 0
 var _chimney_at := Vector3.INF # set by _house_roof: where the last house's chimney stands (before its base height)
@@ -34,10 +35,24 @@ var _snow_overlay: ShaderMaterial
 var grass: MultiMeshInstance3D  # themes/fantasy/grass.gd, round the player (null with --no-grass or no heights)
 var air: Node3D                 # themes/fantasy/air.gd: mist, haze and wisps between the weathers
 var _here := Vector2.ZERO        # where we are, for the air
+var towns = TownsScript.new()     # every settlement's look and trade (towns.gd)
+var _pal_meshes := {}            # "path#palette" -> a piece with its materials tinted to that palette
+var _pal_mats := {}
 
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
 	world = p_world
+	towns.survey(world)
+	_prefetch()
+	# Every palette's tinted materials and washed textures now, while loading, not as the first village comes near;
+	# its copy of each piece over the next frames (_warm).
+	for pal in TownsScript.PALETTES.size():
+		for piece in ["Roof_RoundTiles_6x8", "Wall_UnevenBrick_Window_Wide_Round", "Roof_Front_Brick6"]:
+			_mesh_pal(VILLAGE + piece + ".gltf", pal)
+		if pal > 0:
+			for f in _fetching:
+				if String(f).begins_with(VILLAGE):
+					_warming.append([f, pal])
 	LifeScript.ensure_globals() # before any shader that reads them is made
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	var env := WorldEnvironment.new()
@@ -348,15 +363,21 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	var above := minf(14.0, camera_zoom * 0.5) if _rain_kind in ["rain", "storm"] else 6.0
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
 	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
+	var t := Time.get_ticks_usec()
 	if grass:
 		grass.follow(center, float(_wx["wind"]))
+	t = lap("grass", t)
 	_here = center
 	super.frame(center, camera_zoom)
+	t = lap("theme", t)
 	var now := Time.get_ticks_msec()
 	var dt := clampf((now - _life_ms) / 1000.0, 0.0, 0.25) if _life_ms > 0 else 0.0
 	_life_ms = now
 	if life:
 		life.step(center, dt)
+	t = lap("life", t)
+	_warm(center, 1.5)
+	lap("warm", t)
 
 ## How dark the night is: the moon's light, and the share of the day's ambient light left at night. Torches and
 ## fires carry the dark hours.
@@ -447,6 +468,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 	var batch := {}
 	var lights := []
 	var chimneys := []
+	var pt := Time.get_ticks_usec()
 	for o in world.in_cell(cx, cy):
 		var t := String(o.get("t", ""))
 		match t:
@@ -463,9 +485,15 @@ func build_cell(cx: int, cy: int) -> Node3D:
 					node.add_child(_lantern(at))
 					lights.append([at, "lantern"])
 			"keep", "castle", "tower", "wall", "block":
-				node.add_child(_keep(o, batch))
-				# Braziers burn at two corners of a keep, a castle or a tower.
-				if t in ["keep", "castle", "tower"]:
+				var ob: Array = o.get("b", [0, 0, 0, 0])
+				var oc := Vector2((float(ob[0]) + float(ob[2])) / 2.0, (float(ob[1]) + float(ob[3])) / 2.0)
+				if t in ["keep", "tower"] and not towns.in_city(oc):
+					# A manor, a fort or a church tower: built in stone from the village kit, like the houses round it.
+					node.add_child(_build_house(ob, float(o.get("y", 0.0)), int(o.get("v", 0)), batch, {}, true))
+				else:
+					node.add_child(_keep(o, batch))
+				# Braziers burn at two corners of a keep or a castle, and of the city's towers.
+				if t in ["keep", "castle"] or (t == "tower" and towns.in_city(oc)):
 					var b: Array = o["b"]
 					for c in [Vector2(float(b[0]) - 1.2, float(b[1]) - 1.2), Vector2(float(b[2]) + 1.2, float(b[3]) + 1.2)]:
 						var at := Vector3(c.x, height(c.x, c.y), c.y)
@@ -476,6 +504,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 				var short := minf(float(b[2]) - float(b[0]), float(b[3]) - float(b[1]))
 				node.add_child(_crag_rocks(b, clampf(short * 0.7, 8.0, 28.0), short / 2.0))
 				node.add_child(_rim_rocks(b, float(o.get("y", 0.0)), 9.0))
+				_crag_diggings(b, int(o.get("v", 0)), batch)
 			"lake":
 				var b: Array = o["b"]
 				node.add_child(_rim_rocks(b, float(o.get("y", 0.0)), 5.0))
@@ -489,6 +518,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 				at.y = height(at.x, at.z)
 				node.add_child(_campfire(at))
 				lights.append([at + Vector3(0, 1.2, 0), "fire"])
+				_square_dress(o, batch)
 			"city":
 				pass # open ground: the heights already level it
 			"sea", "ford":
@@ -496,10 +526,16 @@ func build_cell(cx: int, cy: int) -> Node3D:
 			_:
 				if o.get("solid", false):
 					node.add_child(block(o)) # a type this theme does not know: draw it plainly
-	for path in batch:
-		var m := _mesh(path)
+	pt = lap("cell objects", pt)
+	for key in batch:
+		var path := String(key).get_slice("#", 0)
+		var fresh := not meshes.has(path)
+		var m := _mesh_pal(path, int(String(key).get_slice("#", 1)) if String(key).contains("#") else 0)
+		pt = lap("cell load" if fresh else "cell palette", pt)
 		if m:
-			node.add_child(_multi(m, batch[path], _tint(path)))
+			node.add_child(_multi(m, batch[key], _tint(path)))
+		pt = lap("cell multi", pt)
+	pt = lap("cell multimesh", pt)
 	add_lights(world.key(cx, cy), lights)
 	if life:
 		if chimneys.is_empty():
@@ -564,13 +600,22 @@ func _brazier(at: Vector3) -> Node3D:
 	n.add_child(f)
 	return n
 
-## A glowing lantern on a short bracket.
+## A lantern (the RPG Tools one) on a short bracket, with a glow inside it.
 func _lantern(at: Vector3) -> Node3D:
+	var root := Node3D.new()
+	root.position = at
+	var model := _mesh(TOOLS + "lantern.gltf")
+	if model:
+		var mi := MeshInstance3D.new()
+		mi.mesh = model
+		mi.scale = Vector3.ONE * 0.75
+		mi.position.y = -0.35
+		root.add_child(mi)
 	var n := MeshInstance3D.new()
 	var bm := BoxMesh.new()
-	bm.size = Vector3(0.28, 0.4, 0.28)
+	bm.size = Vector3(0.18, 0.26, 0.18)
 	n.mesh = bm
-	n.position = at
+	root.add_child(n)
 	var m := StandardMaterial3D.new()
 	m.albedo_color = Color("ffd98c")
 	m.emission_enabled = true
@@ -578,7 +623,7 @@ func _lantern(at: Vector3) -> Node3D:
 	m.emission_energy_multiplier = 2.5
 	n.material_override = m
 	n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	return n
+	return root
 
 var _plain_mats := {}
 func _plain_mat(c: Color) -> StandardMaterial3D:
@@ -613,6 +658,16 @@ func _prop(o: Dictionary, batch: Dictionary) -> void:
 	if not batch.has(path):
 		batch[path] = []
 	batch[path].append(Transform3D(turn.scaled(Vector3.ONE * s), Vector3(x, height(x, y) - 0.15, y)))
+	# Now and then a felled log lies by a tree, and a woodcutter's axe in a stump.
+	if t == "tree" and v % 23 == 0:
+		var a := float(v % 628) / 100.0
+		var at := Vector2(x, y) + Vector2(cos(a), sin(a)) * (2.2 + s)
+		var dress := {}
+		_dress(dress, ["Wood_Log_A", "Wood_Log_B"][v % 2], 1.4, Vector3(at.x, height(at.x, at.y), at.y), a + 1.2)
+		if v % 3 == 0:
+			_dress(dress, "t:axe", 1.3, Vector3(at.x + 1.2, height(at.x + 1.2, at.y), at.y), a)
+		for pth in dress:
+			_batch(batch, pth, dress[pth], 0.0)
 
 ## You are the class you asked for (knight, barbarian, mage or rogue); everyone else is one of the mobs,
 ## chosen from the entity id so every client shows the same one.
@@ -797,6 +852,9 @@ const DUNGEON := "res://themes/fantasy/assets/dungeon/"
 
 const VILLAGE := "res://themes/fantasy/assets/village/"
 
+const RES := "res://themes/fantasy/assets/resources/" # KayKit Resource Bits: logs, planks, stone, ore, cloth
+const TOOLS := "res://themes/fantasy/assets/tools/"    # KayKit RPG Tools Bits: anvil, grindstone, axes, rope, lanterns
+
 const VS := 1.4 # Quaternius builds in metres; this brings the village up to the chibi characters' size
 
 ## Roofs by footprint [width along x, length along z], ridge along z, in kit units.
@@ -824,16 +882,116 @@ const BUSHES := ["Bush_1_A_Color1", "Bush_1_B_Color1", "Bush_1_C_Color1", "Bush_
 
 const SMALL_ROCKS := ["Rock_1_A_Color1", "Rock_1_B_Color1", "Rock_1_C_Color1", "Rock_1_D_Color1", "Rock_1_E_Color1", "Rock_1_F_Color1", "Rock_1_G_Color1", "Rock_1_H_Color1", "Rock_1_I_Color1", "Rock_1_J_Color1", "Rock_2_A_Color1", "Rock_2_B_Color1", "Rock_2_C_Color1", "Rock_2_D_Color1", "Rock_3_A_Color1", "Rock_3_B_Color1", "Rock_3_C_Color1", "Rock_3_D_Color1", "Rock_3_E_Color1", "Rock_3_F_Color1", "Rock_3_G_Color1", "Rock_3_H_Color1", "Rock_3_I_Color1", "Rock_3_J_Color1", "Rock_3_K_Color1", "Rock_3_L_Color1"]
 
+## The settlement at `p` and its character (towns.gd), for tools and tests.
+func settlement_at(p: Vector2) -> Dictionary:
+	return towns.at(p)
+
+## A piece with its kit materials tinted to a settlement's palette (towns.gd PALETTES), made once per palette.
+func _mesh_pal(path: String, pal: int) -> Mesh:
+	var m := _mesh(path)
+	if pal == 0 or not m is ArrayMesh:
+		return m
+	var key := "%s#%d" % [path, pal]
+	if _pal_meshes.has(key):
+		return _pal_meshes[key]
+	var tints: Dictionary = TownsScript.PALETTES[pal]
+	var am := (m as ArrayMesh).duplicate() as ArrayMesh
+	for i in am.get_surface_count():
+		var src := am.surface_get_material(i)
+		if src is BaseMaterial3D and tints.has(src.resource_name):
+			var mk := "%s#%d" % [src.resource_name, pal]
+			if not _pal_mats.has(mk):
+				var t := (src as BaseMaterial3D).duplicate() as BaseMaterial3D
+				var tint = tints[src.resource_name]
+				if tint is Array:
+					t.albedo_texture = _washed(t.albedo_texture, float(tint[1]))
+					tint = tint[0]
+				t.albedo_color = (src as BaseMaterial3D).albedo_color * (tint as Color)
+				_pal_mats[mk] = t
+			am.surface_set_material(i, _pal_mats[mk])
+	_pal_meshes[key] = am
+	return am
+
+## A texture with its colour washed out to `sat` (0 grey .. 1 as it was), made once.
+var _washed_tex := {}
+func _washed(tex: Texture2D, sat: float) -> Texture2D:
+	if tex == null or sat >= 1.0:
+		return tex
+	var k := "%d#%.2f" % [tex.get_rid().get_id(), sat]
+	if not _washed_tex.has(k):
+		var img := tex.get_image()
+		if img.is_compressed():
+			img.decompress()
+		img.adjust_bcs(1.0, 1.0, sat)
+		img.generate_mipmaps()
+		_washed_tex[k] = ImageTexture.create_from_image(img)
+	return _washed_tex[k]
+
+var _warming: Array = [] # [piece, palette] copies still to make
+
+## Make palette copies of loaded pieces for up to `budget_ms`, so a village's first cell finds them made. The
+## palettes of the settlements nearest us go first.
+func _warm(center: Vector2, budget_ms: float) -> void:
+	if _warming.is_empty():
+		return
+	if _warm_sorted_at.distance_to(center) > 200.0:
+		_warm_sorted_at = center
+		var near := {}
+		for t in towns.list:
+			near[t["pal"]] = minf(near.get(t["pal"], INF), (t["c"] as Vector2).distance_to(center))
+		_warming.sort_custom(func(a, b): return near.get(a[1], INF) < near.get(b[1], INF))
+	var t0 := Time.get_ticks_usec()
+	var i := 0
+	while i < _warming.size() and (Time.get_ticks_usec() - t0) < budget_ms * 1000.0:
+		var w: Array = _warming[i]
+		if meshes.has(w[0]) or ResourceLoader.load_threaded_get_status(w[0]) == ResourceLoader.THREAD_LOAD_LOADED:
+			_mesh_pal(w[0], w[1])
+			_warming.remove_at(i)
+		else:
+			i += 1
+			if i > 64:
+				break # the rest are still loading
+var _warm_sorted_at := Vector2.INF
+
+## Start loading every piece the theme may draw on the loader's threads, so the first village that needs one does
+## not wait for it to load (the pieces come in during the loading screen).
+func _prefetch() -> void:
+	for dir in [VILLAGE, RES, TOOLS, DUNGEON, FOREST]:
+		for f in DirAccess.get_files_at(dir):
+			var name := f.trim_suffix(".import").trim_suffix(".remap") # an exported game lists the import files
+			if name.ends_with(".gltf") and not _fetching.has(dir + name):
+				_fetching[dir + name] = true
+				ResourceLoader.load_threaded_request(dir + name)
+
+var _fetching := {}
+
 ## The first mesh in a glTF piece, kept so each piece is loaded once and drawn with MultiMesh.
 func _mesh(path: String) -> Mesh:
 	if meshes.has(path):
 		return meshes[path]
 	var m: Mesh = null
 	if ResourceLoader.exists(path):
-		var inst := (load(path) as PackedScene).instantiate()
+		var res: Resource = ResourceLoader.load_threaded_get(path) if _fetching.has(path) else load(path)
+		var inst := (res as PackedScene).instantiate()
 		var found := inst.find_children("*", "MeshInstance3D", true, false)
-		if not found.is_empty():
+		if found.size() == 1:
 			m = (found[0] as MeshInstance3D).mesh
+		elif found.size() > 1:
+			# A piece in parts (a lantern's frame and glass, a grindstone's wheel and stand): one mesh, each part's
+			# surfaces moved to where it sits in the piece.
+			var am := ArrayMesh.new()
+			for mi: MeshInstance3D in found:
+				var xf := mi.transform
+				var up := mi.get_parent()
+				while up != null and up != inst and up is Node3D:
+					xf = (up as Node3D).transform * xf
+					up = up.get_parent()
+				for i in mi.mesh.get_surface_count():
+					var st := SurfaceTool.new()
+					st.append_from(mi.mesh, i, xf)
+					st.set_material(mi.mesh.surface_get_material(i))
+					st.commit(am)
+			m = am
 		inst.free()
 	meshes[path] = m
 	return m
@@ -919,7 +1077,14 @@ func _gem_node(color: String, rare := false) -> Node3D:
 ## floors, corner posts, windows with shutters, a tiled roof with gable ends, chimney and dormers, vines, a
 ## balcony now and then, and a paved yard with a fence, a wagon and crates out front. The walls fill the box
 ## exactly, so the house is what the server's wall is.
-func _build_house(b: Array, base: float, v: int, batch: Dictionary) -> Node3D:
+## `town` is the settlement's character (towns.gd): its palette tints every piece, its style sets the odds of each
+## choice below, so a village is of a piece while its houses still differ. `grand` builds in stone throughout (a
+## manor, a fort, a church tower).
+func _build_house(b: Array, base: float, v: int, batch: Dictionary, town: Dictionary = {}, grand := false) -> Node3D:
+	if town.is_empty():
+		town = towns.at(Vector2((float(b[0]) + float(b[2])) / 2.0, (float(b[1]) + float(b[3])) / 2.0))
+	var style: Dictionary = town["style"]
+	var pal: int = town["pal"]
 	var x0: float = b[0]
 	var y0: float = b[1]
 	var x1: float = b[2]
@@ -938,20 +1103,29 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary) -> Node3D:
 	var w := x1 - x0
 	var d := y1 - y0
 	var tower := absf(w - d) < 2.5 and maxf(w, d) <= 14.0
-	var floors := 3 if tower else 1 + hsh % 2
+	var fl: Array = style["floors"]
+	var floors := 3 if tower else (2 if grand else int(fl[0]) + hsh % (int(fl[1]) - int(fl[0]) + 1))
 	var door_side := rng.randi() % 4
-	# Style, all from the corner: a plaster or stone ground floor, round or flat door in a brick or timber frame,
-	# and on two-storey houses sometimes a jettied upper floor that overhangs the street.
-	var stone := (hsh / 7) % 3 != 0
-	var round_door := (hsh / 3) % 2 == 0
-	var timber_frame := (hsh / 5) % 2 == 0
-	var jetty := floors == 2 and (hsh / 11) % 3 == 0
+	# The settlement's style sets the odds; the house's own number makes the call, so neighbours differ: a plaster
+	# or stone ground floor, a round or flat door in the settlement's kind of frame, and on two-storey houses
+	# sometimes a jettied upper floor that overhangs the street.
+	var roll := func(salt: int) -> float: return float((hsh / salt) % 100) / 100.0
+	var stone: bool = grand or roll.call(7) < float(style["stone"])
+	var round_door: bool = roll.call(3) < float(style["round_door"])
+	var timber_frame: bool = style["timber_frame"]
+	var jetty: bool = not grand and floors == 2 and roll.call(11) < float(style["jetty"])
 	var shape := "Round" if round_door else "Flat"
 	var door_wall: String = ("Wall_UnevenBrick_Door_%s" % shape) if stone else (["Wall_Plaster_Door_Round", "Wall_Plaster_Door_RoundInset"][(hsh / 13) % 2] if round_door else "Wall_Plaster_Door_Flat")
 	var frame := "DoorFrame_%s_%s" % [shape, "WoodDark" if timber_frame else "Brick"]
 	var door := "Door_%d_%s" % [[1, 2, 4, 8][hsh % 4], shape]
-	var plaster := ["Wall_Plaster_Straight", "Wall_Plaster_WoodGrid", "Wall_Plaster_Straight_L", "Wall_Plaster_Straight_R", "Wall_Plaster_Straight_Base"]
-	var shutters := ["WindowShutters_Wide_Round_Open", "WindowShutters_Wide_Round_Closed", "WindowShutters_Wide_Flat_Open", "WindowShutters_Wide_Flat_Closed"]
+	# Plain upper walls: timber framed as often as the settlement likes it; shutters mostly open, or mostly shut.
+	var plaster := ["Wall_Plaster_Straight", "Wall_Plaster_Straight_L", "Wall_Plaster_Straight_R", "Wall_Plaster_Straight_Base"]
+	var woodgrid := float(style["woodgrid"])
+	var plain_wall := func(n: int) -> String:
+		if grand:
+			return "Wall_UnevenBrick_Straight"
+		return "Wall_Plaster_WoodGrid" if float(n % 10) / 10.0 < woodgrid else plaster[n % plaster.size()]
+	var shutters := ["WindowShutters_Wide_Round_Open", "WindowShutters_Wide_Flat_Open"] if style["shutters_open"] else ["WindowShutters_Wide_Round_Closed", "WindowShutters_Wide_Flat_Closed", "WindowShutters_Wide_Round_Open"]
 	var sides := [
 		[Vector3(x0, 0, y0), Vector3(1, 0, 0), w, Vector3(0, 0, -1)],
 		[Vector3(x1, 0, y1), Vector3(-1, 0, 0), w, Vector3(0, 0, 1)],
@@ -991,7 +1165,7 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary) -> Node3D:
 							put.call(["Wall_Plaster_Window_Thin_Round", "Wall_Plaster_Window_Wide_Flat", "Wall_Plaster_Window_Wide_Round"][k], xf)
 						put.call(["Window_Thin_Round1", "Window_Wide_Flat1", "Window_Wide_Round1"][k], Transform3D(plain, at))
 					else:
-						put.call("Wall_UnevenBrick_Straight" if stone else plaster[(i + si) % plaster.size()], xf)
+						put.call("Wall_UnevenBrick_Straight" if stone else plain_wall.call(i + si), xf)
 					put.call("Wall_BottomCover", Transform3D(wall, at + Vector3(0, 0.05, 0)))
 					put.call(["Prop_ExteriorBorder_Straight1", "Prop_ExteriorBorder_Straight2"][(i + si) % 2], Transform3D(wall, at + out * (0.09 * VS)))
 				elif jetty:
@@ -1005,7 +1179,10 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary) -> Node3D:
 					put.call("Overhang_Roof_%s" % ("UnevenBricks" if mat == "UnevenBrick" else mat), Transform3D(wall, at + lift + out * VS))
 				elif (i + f + si + hsh) % 2 == 0:
 					var kind := (i + f * 3 + si) % 4
-					put.call(["Wall_Plaster_Window_Wide_Round", "Wall_Plaster_Window_Wide_Flat", "Wall_Plaster_Window_Wide_Flat2", "Wall_Plaster_Window_Thin_Round"][kind], xf)
+					if grand:
+						put.call(["Wall_UnevenBrick_Window_Wide_Round", "Wall_UnevenBrick_Window_Wide_Flat", "Wall_UnevenBrick_Window_Wide_Flat", "Wall_UnevenBrick_Window_Thin_Round"][kind], xf)
+					else:
+						put.call(["Wall_Plaster_Window_Wide_Round", "Wall_Plaster_Window_Wide_Flat", "Wall_Plaster_Window_Wide_Flat2", "Wall_Plaster_Window_Thin_Round"][kind], xf)
 					var win: String = ["Window_Wide_Round1", "Window_Wide_Flat1", "Window_Wide_Flat1", "Window_Thin_Round1"][kind]
 					put.call(win, Transform3D(plain, at + lift))
 					if kind < 3:
@@ -1013,11 +1190,11 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary) -> Node3D:
 					else:
 						put.call(["Window_Thin_Flat1", "WindowShutters_Thin_Round_Open", "WindowShutters_Thin_Round_Closed", "WindowShutters_Thin_Flat_Open", "WindowShutters_Thin_Flat_Closed"][(i + hsh) % 5], Transform3D(plain, at + lift))
 				else:
-					put.call(plaster[(i * 7 + f + si + hsh) % plaster.size()], xf)
+					put.call(plain_wall.call(i * 7 + f + si + hsh), xf)
 				# Vines hang from the top of some walls; a balcony on the odd upper one.
-				if f == floors - 1 and (i * 5 + si + hsh) % 7 == 0:
+				if f == floors - 1 and float((i * 5 + si + hsh) % 20) / 20.0 < float(style["vines"]):
 					put.call(["Prop_Vine1", "Prop_Vine2", "Prop_Vine4", "Prop_Vine5", "Prop_Vine6", "Prop_Vine9"][(i + si) % 6], Transform3D(plain, at + lift + Vector3(0, tall, 0) + out * 0.2))
-				if f == 1 and (i + si * 2 + hsh) % 9 == 0:
+				if f == 1 and style["balconies"] and not grand and (i + si * 2 + hsh) % 9 == 0:
 					put.call(["Balcony_Simple_Straight", "Balcony_Cross_Straight"][(i + hsh) % 2], Transform3D(plain, at + lift))
 					put.call("Prop_Support", Transform3D(plain, at + lift - Vector3(0, tall * 0.55, 0)))
 	# Corner posts, stone below and timber above.
@@ -1031,24 +1208,30 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary) -> Node3D:
 				put.call(["Overhang_Plaster_Corner", "Overhang_Plaster_Corner_Front", "Overhang_UnevenBrick_Corner", "Overhang_UnevenBrick_Corner_Front"][(hsh + int(float(cc[1]) * 2.0)) % 4], Transform3D(face, c + Vector3(0, tall, 0)))
 				put.call(["Overhang_RoofIncline_Plaster", "Overhang_RoofIncline_UnevenBricks"][hsh % 2], Transform3D(face, c + Vector3(0, tall, 0)))
 				continue
-			var post := "Corner_ExteriorWide_Brick" if f == 0 and w > 16.0 else ("Corner_Exterior_Brick" if f == 0 else ("Corner_ExteriorWide_Wood" if w > 16.0 else "Corner_Exterior_Wood"))
+			var post := "Corner_ExteriorWide_Brick" if (f == 0 or grand) and w > 16.0 else ("Corner_Exterior_Brick" if f == 0 or grand else ("Corner_ExteriorWide_Wood" if w > 16.0 else "Corner_Exterior_Wood"))
 			if f == floors - 1 and f > 0 and (hsh / 19) % 2 == 0:
 				post = "Corner_Exterior_TopDown"
 			put.call(post, Transform3D(Basis.from_scale(Vector3.ONE * VS), c + Vector3(0, tall * f, 0)))
 		if tower:
 			put.call(["Balcony_Simple_Corner", "Balcony_Cross_Corner"][hsh % 2], Transform3D(face, c + Vector3(0, tall * 2, 0)))
 	put.call("Corner_Exterior_TopOnly", Transform3D(Basis.from_scale(Vector3.ONE * VS), Vector3(x0, tall * floors, y0)))
-	_house_roof(put, b, tall * floors, tower, hsh)
-	_house_yard(put, rng, door_at, door_out, hsh)
+	_house_roof(put, b, tall * floors, tower, hsh, float(style["pitch"]), int(style["chimney"]))
+	var dress := {}
+	_house_yard(put, rng, door_at, door_out, hsh, town, dress)
 	_house_porch(put, door_at, door_out, hsh)
-	if floors == 2 and not jetty:
+	if floors == 2 and not jetty and not grand:
 		_house_stairs(put, sides[(door_side + 1) % 4], tall, hsh)
+	if not grand:
+		_woodpile(sides[(door_side + 2) % 4], hsh, town, dress)
+	var suffix := "#%d" % pal if pal > 0 else ""
 	for name in parts:
-		_batch(batch, VILLAGE + String(name) + ".gltf", parts[name], node.position.y)
+		_batch(batch, VILLAGE + String(name) + ".gltf" + suffix, parts[name], node.position.y)
+	for path in dress:
+		_batch(batch, path, dress[path], node.position.y)
 	return node
 
 ## A tiled roof chosen for the footprint's shape and stretched to fit it, gable ends, a chimney and dormers.
-func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int) -> void:
+func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int, pitch := 1.0, chimney_kind := -1) -> void:
 	var w: float = b[2] - b[0]
 	var d: float = b[3] - b[1]
 	var centre := Vector3((b[0] + b[2]) / 2.0, top, (b[1] + b[3]) / 2.0)
@@ -1059,6 +1242,22 @@ func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int) -> 
 	var along_x := w > d
 	var span := d if along_x else w
 	var length := w if along_x else d
+	# A hall too wide or long for one roof gets several side by side (a double pile) or end to end, so the tiles
+	# stay the size they are on the houses; the chimney goes on the first.
+	if span > 13.0 or length > 20.0:
+		var across := maxi(1, int(ceil(span / 11.0)))
+		var along := maxi(1, int(ceil(length / 16.0)))
+		var n := 0
+		for i in across:
+			for j in along:
+				var u0 := float(i) / across
+				var u1 := float(i + 1) / across
+				var v0 := float(j) / along
+				var v1 := float(j + 1) / along
+				var sub: Array = [lerpf(b[0], b[2], v0), lerpf(b[1], b[3], u0), lerpf(b[0], b[2], v1), lerpf(b[1], b[3], u1)] if along_x else [lerpf(b[0], b[2], u0), lerpf(b[1], b[3], v0), lerpf(b[0], b[2], u1), lerpf(b[1], b[3], v1)]
+				_house_roof(put, sub, top, false, hsh + n * 31, pitch, chimney_kind if n == 0 else -2)
+				n += 1
+		return
 	var best: Array = ROOFS[0]
 	for r in ROOFS:
 		if absf(float(r[1]) / float(r[0]) - length / span) < absf(float(best[1]) / float(best[0]) - length / span):
@@ -1068,25 +1267,28 @@ func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int) -> 
 	var sx := (span + 1.0) / (float(best[0]) + 2.0)
 	var sz := (length + 1.0) / (float(best[1]) + 2.0)
 	var turn := Basis(Vector3.UP, PI / 2.0) if along_x else Basis()
-	put.call(name, Transform3D(turn * Basis.from_scale(Vector3(sx, minf(sx, VS * 1.2), sz)), centre))
+	var ry := minf(sx, VS * 1.2) * pitch # the settlement's roofs are steeper or flatter
+	put.call(name, Transform3D(turn * Basis.from_scale(Vector3(sx, ry, sz)), centre))
 	# Gable ends, the brick triangle matching the roof's width, at both ends.
 	var gable := "Roof_Front_Brick%d" % clampi(best[0], 4, 8)
 	if best[0] == 4 or best[0] == 6 or best[0] == 8:
 		for end in [-1.0, 1.0]:
 			var face: Basis = turn * Basis(Vector3.UP, 0.0 if end > 0 else PI)
 			var at: Vector3 = centre + turn * Vector3(0, 0, end * length / 2.0)
-			put.call(gable, Transform3D(face * Basis.from_scale(Vector3(sx, minf(sx, VS * 1.2), VS)), at))
+			put.call(gable, Transform3D(face * Basis.from_scale(Vector3(sx, ry, VS)), at))
 	# A beam under each gable, and a ridge log along the top of the bigger roofs.
 	for end in [-1.0, 1.0]:
 		put.call("Roof_FrontSupports", Transform3D(turn * Basis(Vector3.UP, 0.0 if end > 0 else PI) * Basis.from_scale(Vector3(sx, VS, VS)), centre + turn * Vector3(0, 0, end * length / 2.0)))
 	if best[0] == 8:
-		put.call("Roof_Log", Transform3D(turn * Basis.from_scale(Vector3(sx, minf(sx, VS * 1.2), (length + 1.0) / 10.7)), centre))
+		put.call("Roof_Log", Transform3D(turn * Basis.from_scale(Vector3(sx, ry, (length + 1.0) / 10.7)), centre))
 	# Ridge caps every couple of units along the ridge.
-	var ridge_y := 6.0 * minf(sx, VS * 1.2) * (float(best[0]) / 8.0) * 0.95
+	var ridge_y := 6.0 * ry * (float(best[0]) / 8.0) * 0.95
 	for k in int(length / (2.4 * VS)):
 		put.call("Roof_Modular_RoundTiles", Transform3D(turn * Basis.from_scale(Vector3.ONE * VS), centre + turn * Vector3(0, ridge_y, -length / 2.0 + 1.2 * VS + k * 2.4 * VS)))
 	# A chimney through the ridge and dormers on long roofs.
-	var chimney: String = ["Prop_Chimney", "Prop_Chimney2"][hsh % 2]
+	if chimney_kind == -2:
+		return # one chimney to a hall: the first of its roofs has it
+	var chimney: String = ["Prop_Chimney", "Prop_Chimney2"][hsh % 2 if chimney_kind < 0 else chimney_kind]
 	var chimney_at := centre + turn * Vector3(span * 0.15, 0, length * 0.25)
 	put.call(chimney, Transform3D(Basis.from_scale(Vector3.ONE * VS), chimney_at))
 	var cm := _mesh(VILLAGE + chimney + ".gltf")
@@ -1130,48 +1332,157 @@ func _house_stairs(put: Callable, side: Array, tall: float, hsh: int) -> void:
 	put.call(tops[(hsh / 7) % tops.size()], Transform3D(face, base + dir * (VS * steps) + Vector3(0, tall - VS, 0)))
 	put.call("Balcony_Simple_Straight", Transform3D(Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3.ONE * VS), base + dir * (VS * (steps + 1.5)) - out * (1.0 * VS) + Vector3(0, tall, 0)))
 
-## The yard in front of the door: a paved path, a fence each side, and a wagon, crates and bricks about. All
-## outside the box, so you walk through them (the server only knows the house).
-func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int) -> void:
+## A square's dressing, by its settlement's trade (towns.gd TRADES): logs to sit on round the fire, stalls with
+## goods on their tables in a ring, and the trade's piles at the corners. Out of the server's way: a square is open
+## ground and these are cosmetic.
+func _square_dress(o: Dictionary, batch: Dictionary) -> void:
+	var b: Array = o["b"]
+	var c := Vector2((float(b[0]) + float(b[2])) / 2.0, (float(b[1]) + float(b[3])) / 2.0)
+	var w := float(b[2]) - float(b[0])
+	var d := float(b[3]) - float(b[1])
+	var town := towns.at(c)
+	var trade: Dictionary = TownsScript.TRADES[town["trade"]]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = absi(int(o.get("v", 0)))
+	var dress := {}
+	var on_ground := func(p: Vector2) -> Vector3: return Vector3(p.x, height(p.x, p.y), p.y)
+	for k in 3:
+		var a := TAU * k / 3.0 + rng.randf() * 0.5
+		_dress(dress, "Wood_Log_A", 1.6, on_ground.call(c + Vector2(cos(a), sin(a)) * 3.2), -a)
+	var stalls := mini(int(trade["stalls"]), int(minf(w, d) / 5.0))
+	var ring := minf(w, d) * 0.36
+	var goods: Array = trade["stall"]
+	var spin := rng.randf() * TAU
+	for k in stalls:
+		var a := spin + TAU * k / maxf(stalls, 1)
+		var p := c + Vector2(cos(a), sin(a)) * ring
+		var face := -a + PI / 2.0 # the table's long side to the fire
+		var base: Vector3 = on_ground.call(p)
+		_dress(dress, "d:table_medium_tablecloth" if k % 2 == 0 else "d:table_long_tablecloth", 1.2, base, face)
+		for g in 2:
+			var along := Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * (0.5 if g == 0 else -0.5)
+			_dress(dress, String(goods[(k * 2 + g) % goods.size()]), 0.8, base + Vector3(along.x, 1.2, along.y), face + g)
+		var behind := c + Vector2(cos(a), sin(a)) * (ring + 2.0)
+		_dress(dress, ["d:crates_stacked", "d:barrel_small", "d:box_small", "d:keg"][k % 4], 1.0, on_ground.call(behind), rng.randf() * TAU)
+		_dress(dress, "d:stool", 1.1, on_ground.call(c + Vector2(cos(a), sin(a)) * (ring - 1.6)), face)
+	var piles: Array = trade["square"]
+	var corners := [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]
+	for k in 4:
+		var g: Array = piles[k % piles.size()]
+		var p: Vector2 = c + (corners[k] as Vector2) * Vector2(w / 2.0 - 2.5, d / 2.0 - 2.5)
+		_dress(dress, String(g[0]), float(g[1]), on_ground.call(p), rng.randf() * TAU)
+	for pth in dress:
+		_batch(batch, pth, dress[pth], 0.0)
+
+## Diggings at the foot of a crag, on some: broken stone, ore, a pick or a shovel left by the rock.
+func _crag_diggings(b: Array, v: int, batch: Dictionary) -> void:
+	if absi(v) % 3 != 0:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = absi(v)
+	var dress := {}
+	var picks := ["Stone_Chunks_Small", "Iron_Nuggets", "Copper_Nuggets", "Stone_Chunks_Large", "t:pickaxe", "t:shovel", "t:bucket_metal", "Silver_Nuggets"]
+	var side := rng.randi() % 4
+	for k in 4:
+		var f := rng.randf_range(0.2, 0.8)
+		var p := [Vector2(lerpf(b[0], b[2], f), float(b[1]) - 3.0), Vector2(lerpf(b[0], b[2], f), float(b[3]) + 3.0),
+			Vector2(float(b[0]) - 3.0, lerpf(b[1], b[3], f)), Vector2(float(b[2]) + 3.0, lerpf(b[1], b[3], f))][side] as Vector2
+		_dress(dress, String(picks[rng.randi() % picks.size()]), 1.3, Vector3(p.x, height(p.x, p.y), p.y), rng.randf() * TAU)
+	for pth in dress:
+		_batch(batch, pth, dress[pth], 0.0)
+
+## The yard in front of the door: a paved path, the settlement's kind of fence each side, an arch, a lean-to shed
+## or a stall roof, and what its trade leaves lying about (towns.gd TRADES), into `dress` by file. All outside the
+## box, so you walk through them (the server only knows the house).
+func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int, town: Dictionary, dress: Dictionary) -> void:
 	if out == Vector3.ZERO:
 		return
+	var style: Dictionary = town["style"]
 	var rot := Basis(Vector3.UP, atan2(out.x, out.z))
 	var side := rot * Vector3(1, 0, 0)
 	var tile := Basis.from_scale(Vector3.ONE * VS)
-	var paving: String = ["Floor_UnevenBrick", "Floor_Brick", "Floor_RedBrick"][hsh % 3]
 	for k in 3:
-		put.call(paving, Transform3D(tile, door + out * (VS * (1.0 + 2.0 * k)) + Vector3(0, 0.05, 0)))
-	for s2 in [-1.0, 1.0]:
-		for k in 3:
-			var at: Vector3 = door + out * (VS * (1.0 + 2.0 * k)) + side * s2 * (VS * 2.6)
-			var piece: String = "Prop_WoodenFence_Single" if k == 0 else ["Prop_WoodenFence_Extension1", "Prop_WoodenFence_Extension2"][k % 2]
-			put.call(piece, Transform3D(rot * Basis(Vector3.UP, PI / 2.0) * tile, at))
-	if hsh % 3 == 0:
-		put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, door + out * (VS * 6.2) + side * (VS * 1.6)))
-		put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, door + out * (VS * 6.2) - side * (VS * 1.6)))
-	put.call("Wall_Arch", Transform3D(rot * tile, door + out * (VS * 6.0)))
-	put.call("Prop_Wagon", Transform3D(rot * Basis(Vector3.UP, 0.4) * tile, door + out * (VS * 4.0) + side * (VS * 5.0)))
-	# A wooden lean-to shed, or a market stall with a roof both ways, beside the path.
-	var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
-	var shed_face := rot * Basis(Vector3.UP, PI / 2.0) * tile
-	for sx2 in [-1.0, 1.0]:
-		put.call("Prop_Support", Transform3D(shed_face, shed + side * sx2 * (VS * 2.2) + Vector3(0, -1.2 * VS, 0)))
-	if hsh % 2 == 0:
-		var run := ["Roof_Wooden_2x1_L", "Roof_Wooden_2x1_Middle", "Roof_Wooden_2x1_R"]
-		for k in run.size():
-			put.call(run[k], Transform3D(shed_face, shed + side * (VS * 2.2 * (k - 1)) + Vector3(0, 2.0 * VS, 0)))
-		put.call("Roof_Wooden_2x1_Corner", Transform3D(shed_face, shed + side * (VS * 3.4) + Vector3(0, 2.0 * VS, 0)))
-		var half: int = [4, 6, 8][hsh % 3]
-		put.call("Roof_Front_Brick%d_Half_L" % half, Transform3D(shed_face * Basis.from_scale(Vector3.ONE * 0.35), shed - side * (VS * 3.4) + Vector3(0, 0.6, 0)))
-		put.call("Roof_Front_Brick%d_Half_R" % half, Transform3D(shed_face * Basis.from_scale(Vector3.ONE * 0.35), shed + side * (VS * 3.4) + Vector3(0, 0.6, 0)))
+		put.call(String(style["paving"]), Transform3D(tile, door + out * (VS * (1.0 + 2.0 * k)) + Vector3(0, 0.05, 0)))
+	match String(style["fence"]):
+		"wood":
+			for s2 in [-1.0, 1.0]:
+				for k in 3:
+					var at: Vector3 = door + out * (VS * (1.0 + 2.0 * k)) + side * s2 * (VS * 2.6)
+					var piece: String = "Prop_WoodenFence_Single" if k == 0 else ["Prop_WoodenFence_Extension1", "Prop_WoodenFence_Extension2"][k % 2]
+					put.call(piece, Transform3D(rot * Basis(Vector3.UP, PI / 2.0) * tile, at))
+		"metal":
+			put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, door + out * (VS * 6.2) + side * (VS * 1.6)))
+			put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, door + out * (VS * 6.2) - side * (VS * 1.6)))
+	if hsh % 3 != 0:
+		put.call("Wall_Arch", Transform3D(rot * tile, door + out * (VS * 6.0)))
+	# A wooden lean-to shed, or a stall roof both ways, beside the path, on most houses.
+	if hsh % 4 != 3:
+		var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
+		var shed_face := rot * Basis(Vector3.UP, PI / 2.0) * tile
+		for sx2 in [-1.0, 1.0]:
+			put.call("Prop_Support", Transform3D(shed_face, shed + side * sx2 * (VS * 2.2) + Vector3(0, -1.2 * VS, 0)))
+		if hsh % 2 == 0:
+			var run := ["Roof_Wooden_2x1_L", "Roof_Wooden_2x1_Middle", "Roof_Wooden_2x1_R"]
+			for k in run.size():
+				put.call(run[k], Transform3D(shed_face, shed + side * (VS * 2.2 * (k - 1)) + Vector3(0, 2.0 * VS, 0)))
+			put.call("Roof_Wooden_2x1_Corner", Transform3D(shed_face, shed + side * (VS * 3.4) + Vector3(0, 2.0 * VS, 0)))
+		else:
+			put.call("Roof_Wooden_2x1_Center", Transform3D(shed_face, shed + Vector3(0, 2.0 * VS, 0)))
+			put.call("Roof_Wooden_2x1_Center_Mirror", Transform3D(shed_face, shed + side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
+			put.call("Roof_Wooden_2x1", Transform3D(shed_face, shed - side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
+		# Under the shed, the trade's goods.
+		var goods: Array = TownsScript.TRADES[town["trade"]]["yard"]
+		for k in 2:
+			var g: Array = goods[(hsh / 3 + k * 2) % goods.size()]
+			_dress(dress, String(g[0]), float(g[1]), shed + side * (VS * (k * 2.0 - 1.0)), rng.randf() * TAU)
+	# The trade's workshop (a smithy's anvil and grindstone, a sawpit, a fish store) on one house in a few; a couple
+	# more of the trade's things out in the yard on the rest.
+	var trade: Dictionary = TownsScript.TRADES[town["trade"]]
+	if (hsh / 5) % int(trade["work_every"]) == 0:
+		var work: Array = trade["work"]
+		for k in work.size():
+			var g: Array = work[k]
+			var at: Vector3 = door + out * (VS * (1.6 + 1.5 * (k / 2))) + side * (VS * (3.5 + 1.3 * (k % 2)))
+			_dress(dress, String(g[0]), float(g[1]), at, rng.randf_range(-0.4, 0.4) + atan2(out.x, out.z))
 	else:
-		put.call("Roof_Wooden_2x1_Center", Transform3D(shed_face, shed + Vector3(0, 2.0 * VS, 0)))
-		put.call("Roof_Wooden_2x1_Center_Mirror", Transform3D(shed_face, shed + side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
-		put.call("Roof_Wooden_2x1", Transform3D(shed_face, shed - side * (VS * 2.3) + Vector3(0, 2.0 * VS, 0)))
-	for k in 3:
-		put.call("Prop_Crate", Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * tile, door + out * (VS * rng.randf_range(1.0, 4.0)) - side * (VS * rng.randf_range(3.6, 5.0))))
-	for k in 4:
-		put.call("Prop_Brick%d" % (k + 1), Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * tile, door + out * (VS * rng.randf_range(0.6, 5.0)) + side * (VS * rng.randf_range(-2.0, 2.0)) + Vector3(0, 0.1, 0)))
+		var goods: Array = trade["yard"]
+		for k in 2:
+			var g: Array = goods[(hsh / 7 + k * 3 + 1) % goods.size()]
+			_dress(dress, String(g[0]), float(g[1]), door + out * (VS * rng.randf_range(2.0, 4.5)) + side * (VS * rng.randf_range(3.4, 4.8) * (1.0 if k == 0 else -1.0)), rng.randf() * TAU)
+
+## A woodpile against the back wall, on most houses: logs for the fire, or the trade's own stack.
+func _woodpile(side: Array, hsh: int, town: Dictionary, dress: Dictionary) -> void:
+	if hsh % 3 == 0:
+		return
+	var start: Vector3 = side[0]
+	var dir: Vector3 = side[1]
+	var length: float = side[2]
+	var out: Vector3 = side[3]
+	var turn := atan2(dir.x, dir.z)
+	var at := start + dir * (length * (0.25 + float(hsh % 50) / 100.0)) + out * 1.1
+	_dress(dress, "Wood_Log_Stack", 1.3, at, turn)
+	if town["trade"] == "mining":
+		_dress(dress, "Stone_Bricks_Stack_Small", 1.2, at + dir * 2.2, turn)
+	elif length > 10.0:
+		_dress(dress, "Wood_Log_Stack", 1.3, at + dir * 2.0, turn + PI)
+
+## One loose thing by name (towns.gd: "d:" a Dungeon piece, "v:" a village piece, "t:" a tool, else a Resource
+## Bits one), resting on the ground at `at` (relative to the building's base), turned `turn`.
+func _dress(dress: Dictionary, name: String, scale: float, at: Vector3, turn: float) -> void:
+	var path := _dress_path(name)
+	var m := _mesh(path)
+	if m == null:
+		return
+	if not dress.has(path):
+		dress[path] = []
+	dress[path].append(Transform3D(Basis(Vector3.UP, turn).scaled(Vector3.ONE * scale), at - Vector3(0, m.get_aabb().position.y * scale, 0)))
+
+func _dress_path(name: String) -> String:
+	match name.left(2):
+		"d:": return DUNGEON + name.substr(2) + ".gltf"
+		"v:": return VILLAGE + name.substr(2) + ".gltf"
+		"t:": return TOOLS + name.substr(2) + ".gltf"
+	return RES + name + ".gltf"
 
 ## A flame that blooms (brighter than white, so glow picks it up) and the warm light it casts.
 func _flame(node: Node3D, at: Vector3, r: float) -> void:
@@ -1276,6 +1587,16 @@ func _dock(b: Array, water: float, v: int) -> Node3D:
 		var m := _mesh(VILLAGE + String(name) + ".gltf")
 		if m:
 			node.add_child(_multi(m, per[name]))
+	# What a jetty has on it: rope, a bucket, a crate or a covered pallet, a lantern at the end.
+	var cargo := {}
+	var deck := shore + into * (VS * 2.0) + Vector3(0, water + 0.45 + 0.1, 0)
+	var across := Vector3(into.z, 0, -into.x)
+	_dress(cargo, ["t:rope_bundle_A", "t:rope_bundle_B"][hsh % 2], 1.3, deck + across * 1.0, float(hsh % 7))
+	_dress(cargo, ["Pallet_Wood_Covered_A", "d:crates_stacked", "d:barrel_small"][hsh % 3], 1.0, deck + into * 2.2 - across * 0.9, float(hsh % 5))
+	_dress(cargo, "t:bucket_metal", 1.1, deck + into * 3.2 + across * 1.0, 0.0)
+	_dress(cargo, "t:lantern", 1.3, end + into * 0.6 + Vector3(0, 0.1, 0), 0.0)
+	for pth in cargo:
+		node.add_child(_multi(_mesh(pth), cargo[pth]))
 	return node
 
 ## Rocks along a box's edge, every `gap` units or so, from the box's corner so every client agrees.
@@ -1465,7 +1786,8 @@ func _keep(o: Dictionary, batch: Dictionary) -> Node3D:
 		if length >= 16.0:
 			var mid := start + dir * (length / 2.0) - out * 0.5
 			var banners := ["banner_red.gltf", "banner_blue.gltf", "banner_patternA_red.gltf", "banner_patternB_blue.gltf",
-				"banner_shield_green.gltf", "banner_triple_yellow.gltf", "banner_thin_white.gltf"]
+				"banner_shield_green.gltf", "banner_triple_yellow.gltf", "banner_thin_white.gltf", "banner_green.gltf",
+				"banner_patternA_white.gltf", "banner_patternC_red.gltf", "banner_shield_red.gltf", "banner_thin_yellow.gltf", "banner_triple_red.gltf"]
 			var deco: String = "torch_mounted.gltf" if (hsh + si) % 3 == 2 else banners[(hsh + si * 5) % banners.size()]
 			var lift := 0.0 if deco.begins_with("banner") else 2.6
 			put.call(deco, Transform3D(rot, mid + out * (0.0 if deco.begins_with("banner") else 0.5) + Vector3(0, lift + 4.0 * (layers - 1), 0)))

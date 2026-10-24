@@ -12,6 +12,7 @@ var world: RefCounted     # scripts/world_data.gd
 var info: Dictionary      # /play/info
 var entity_scale := 1.0   # characters are scaled to the server's entity_radius
 var time_override := -1.0 # 0 .. 1 pins the time of day (--time), for themes that have one; below 0 follows the clock
+var prof := {}            # --perf: ms per part this frame (lap()), which main.gd reports when a frame runs long
 
 var _env: Environment
 var _sun: DirectionalLight3D
@@ -68,6 +69,12 @@ func ground_material() -> Material:
 
 ## Called as the player moves: queue what has come near (built over the next frames, `build_some`) and drop what
 ## is far away, ground included.
+## Adds the time since `t0` (usec) to `part` in `prof` and returns now, for the next lap.
+func lap(part: String, t0: int) -> int:
+	var t := Time.get_ticks_usec()
+	prof[part] = prof.get(part, 0.0) + (t - t0) / 1000.0
+	return t
+
 func update(center: Vector2) -> void:
 	_centre = center
 	_update_ground(center)
@@ -122,12 +129,14 @@ func build_some(budget_ms := BUILD_MS) -> int:
 		var q: Array = _queue.pop_front()
 		_queued.erase([q[0], q[3]])
 		var k: int = q[3]
+		var lt := Time.get_ticks_usec()
 		if q[0]:
 			var g := _ground_cell(q[1], q[2])
 			if _terrain.has(k):
 				_terrain[k].queue_free()
 			_terrain[k] = g
 			add_child(g)
+			lap("cell ground", lt)
 		else:
 			# Lights belong to the cell: the old drawing's go now, and building the new one adds its own.
 			remove_lights(k)
@@ -136,7 +145,9 @@ func build_some(budget_ms := BUILD_MS) -> int:
 				_chunks[k].queue_free()
 			_chunks[k] = n
 			_cell_of[k] = Vector2i(q[1], q[2])
+			lt = Time.get_ticks_usec()
 			add_child(n)
+			lap("cell add", lt)
 		if (Time.get_ticks_usec() - t0) / 1000.0 >= budget_ms:
 			break
 	return _queue.size()

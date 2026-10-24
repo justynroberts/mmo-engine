@@ -588,6 +588,21 @@ func _set_health_bar(n: Node3D, hp: float, show: bool) -> void:
 
 var _perf_t := 0.0
 
+var _last_prof := {}
+
+## --perf: a frame that took over 50 ms is reported with where the last frame's time went (theme.prof; `delta` is
+## the time since it began), so a freeze can be put down to a part. What the parts don't cover is rendering.
+func _hitch(delta: float) -> void:
+	if args.has("perf") and delta > 0.05:
+		var parts := []
+		for k in _last_prof:
+			if _last_prof[k] >= 1.0:
+				parts.append("%s %.0f" % [k, _last_prof[k]])
+		print("HITCH %.0f ms  process %.0f ms  render cpu %.0f ms  %s" % [delta * 1000.0, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+			RenderingServer.viewport_get_measured_render_time_cpu(get_viewport().get_viewport_rid()), " ".join(parts)])
+	_last_prof = theme.prof.duplicate()
+	theme.prof.clear()
+
 func _process(delta: float) -> void:
 	if args.has("perf"): # --perf: frame rate, frame time, draw calls and the like every two seconds
 		_perf_t += delta
@@ -621,6 +636,7 @@ func _process(delta: float) -> void:
 		if not _hopping:
 			_hop_zone()
 		return
+	var t0 := Time.get_ticks_usec()
 	var list: Array = net.entities()
 	var self_id: int = net.get_self_id()
 	var seen := {}
@@ -690,24 +706,32 @@ func _process(delta: float) -> void:
 		if c[1] <= 0.0:
 			c[0].queue_free()
 			corpses.erase(c)
+	var t: int = theme.lap("entities", t0)
 	_sync_ground()
 	_poll_names(delta, list)
+	t = theme.lap("ground", t)
 	_poll_blocks(delta)
+	t = theme.lap("blocks", t)
 	_show_weather()
 	if self_id != 0:
 		_where()
 	_poll_tiles(delta)
 	_poll_world(delta)
+	t = theme.lap("tiles", t)
 	_aim()
 	_mine(delta)
 	_fly_debris(delta)
+	t = theme.lap("aim", t)
 	var bag: Array = net.bag()
 	hud.set_bag(bag)
 	_hear_bag(bag)
+	t = theme.lap("bag", t)
 	_footsteps()
 	_listen(delta)
+	t = theme.lap("listen", t)
 	_camera()
 	_weather(delta)
+	t = theme.lap("weather", t)
 	if world_map.visible:
 		var around := []
 		for e in list:
@@ -716,7 +740,9 @@ func _process(delta: float) -> void:
 		world_map.places = locations
 		world_map.marks = _map_marks()
 		world_map.update_markers(me_pos, heading, around)
+	t = theme.lap("map", t)
 	_drive()
+	t = theme.lap("drive", t)
 	if me_pos.distance_to(_heading_from) > 0.05:
 		var d := me_pos - _heading_from
 		heading = atan2(-d.x, -d.y) # so (-sin, -cos) of it is the way we went, as forward is for yaw
@@ -725,8 +751,12 @@ func _process(delta: float) -> void:
 	if stream_t > 0.4 and me_pos.distance_to(last_stream) > 20.0:
 		stream_t = 0.0
 		last_stream = me_pos
+		t = Time.get_ticks_usec()
 		theme.update(me_pos)
+		t = theme.lap("stream", t)
+	t = Time.get_ticks_usec()
 	_spells_frame(list, self_id)
+	t = theme.lap("spells", t)
 	# Everyone near us carries a torch at night; the theme gives the nearest ones real light.
 	var me_node: Node3D = ents.get(self_id)
 	var carried := []
@@ -737,8 +767,10 @@ func _process(delta: float) -> void:
 	# Our light, for the server (the library sends it when no other action is going, and repeats it).
 	if has_lit:
 		net.set_light(theme.torch_lit())
+	t = theme.lap("torches", t)
 	theme.set_characters(me_node.position if me_node else Vector3(me_pos.x, _height(me_pos.x, me_pos.y), me_pos.y), carried)
 	theme.frame(me_pos, zoom)
+	t = Time.get_ticks_usec()
 	target_ring.visible = target_id != 0 and ents.has(target_id)
 	if target_ring.visible:
 		target_ring.position = (ents[target_id] as Node3D).position + Vector3(0, 0.06, 0)
@@ -788,6 +820,8 @@ func _process(delta: float) -> void:
 	if _arriving and status == 1 and ents.has(self_id):
 		_arriving = false
 		hud.arrive()
+	theme.lap("hud", t)
+	_hitch(delta)
 
 ## What the loading screen says at each stage, a new line every few seconds so a slow stage has something to read.
 const QUIPS := {

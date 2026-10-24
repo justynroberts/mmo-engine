@@ -18,6 +18,13 @@ var _mat: ShaderMaterial
 var _img: Image
 var _tex: ImageTexture
 var _map_at := Vector2(INF, INF)
+var _task := -1                 # the worker drawing the next map, or -1
+var _origin := Vector2.ZERO     # the next map's corner, and what _gather took for it
+var _segs: Array = []
+var _boxes: Array = []
+var _lakes: Array = []
+var _data := PackedFloat32Array() # the drawn map, and its corner
+var _data_origin := Vector2.ZERO
 
 const SHADER := """shader_type spatial;
 render_mode cull_disabled, world_vertex_coords, specular_disabled;
@@ -123,45 +130,77 @@ func _blade() -> ArrayMesh:
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	return m
 
-## Every frame: where we are and how hard the wind blows (0..1).
+## Every frame: where we are and how hard the wind blows (0..1). The map under the grass is redrawn on a worker
+## thread when we have walked MAP_STEP from its centre (the margin covers us meanwhile); the first is drawn at once.
 func follow(center: Vector2, wind: float) -> void:
 	_mat.set_shader_parameter("center", center)
 	_mat.set_shader_parameter("wind", wind)
-	if center.distance_to(_map_at) > MAP_STEP:
-		_draw_map(center)
+	if _task != -1 and WorkerThreadPool.is_task_completed(_task):
+		WorkerThreadPool.wait_for_task_completion(_task)
+		_task = -1
+		_show_map()
+	if _task == -1 and center.distance_to(_map_at) > MAP_STEP:
+		var first := _map_at == Vector2.INF
+		_map_at = center
+		_gather(center)
+		if first:
+			_draw_map()
+			_show_map()
+		else:
+			_task = WorkerThreadPool.add_task(_draw_map, false, "grass map")
 
-## Heights and where grass grows, round `center`.
-func _draw_map(center: Vector2) -> void:
-	_map_at = center
-	var cell := MAP_SIZE / MAP_N
-	var origin := center - Vector2(MAP_SIZE, MAP_SIZE) * 0.5
-	var grow := PackedFloat32Array()
-	grow.resize(MAP_N * MAP_N)
-	grow.fill(1.0)
-	# Roads, rivers and lakes, and what is built (anything with a footprint), are bare.
+func _exit_tree() -> void:
+	if _task != -1:
+		WorkerThreadPool.wait_for_task_completion(_task)
+		_task = -1
+
+## On the main thread, as the world's cells change under it: the roads, rivers and footprints round `center`, and
+## the lakes, for _draw_map.
+func _gather(center: Vector2) -> void:
+	_origin = center - Vector2(MAP_SIZE, MAP_SIZE) * 0.5
+	var origin := _origin
 	var area := Rect2(origin, Vector2(MAP_SIZE, MAP_SIZE))
 	var c0 := Vector2i(int(floor(origin.x / world.CELL)), int(floor(origin.y / world.CELL)))
 	var c1 := Vector2i(int(floor((origin.x + MAP_SIZE) / world.CELL)), int(floor((origin.y + MAP_SIZE) / world.CELL)))
-	var segs: Array = []
+	_segs = []
+	_boxes = []
 	for cx in range(c0.x, c1.x + 1):
 		for cy in range(c0.y, c1.y + 1):
 			for s in world.road_segments(cx, cy):
-				segs.append([Vector2(s[0], s[1]), Vector2(s[2], s[3]), float(s[4]) + 0.6])
+				_segs.append([Vector2(s[0], s[1]), Vector2(s[2], s[3]), float(s[4]) + 0.6])
 			for o in world.in_cell(cx, cy):
 				if o.has("b"):
 					var b: Array = o["b"]
-					_clear_box(grow, origin, cell, Rect2(float(b[0]) - 0.5, float(b[1]) - 0.5, float(b[2]) - float(b[0]) + 1.0, float(b[3]) - float(b[1]) + 1.0))
+					_boxes.append(Rect2(float(b[0]) - 0.5, float(b[1]) - 0.5, float(b[2]) - float(b[0]) + 1.0, float(b[3]) - float(b[1]) + 1.0))
 	for r in world.rivers:
 		var pts: Array = r["pts"]
 		for k in pts.size() - 1:
-			segs.append([Vector2(pts[k][0], pts[k][1]), Vector2(pts[k + 1][0], pts[k + 1][1]), float(r.get("half_width", 5.0)) + 1.5])
-	for s in segs:
+			var a := Vector2(pts[k][0], pts[k][1])
+			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+			var hw := float(r.get("half_width", 5.0)) + 1.5
+			if Rect2(a, Vector2.ZERO).expand(b).grow(hw).intersects(area):
+				_segs.append([a, b, hw])
+	_lakes = []
+	for l in world.lakes:
+		var lb: Array = l["b"]
+		if Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1])).intersects(area):
+			_lakes.append([Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1])), float(l.get("level", 0.0)) + 0.4])
+
+## Heights and where grass grows (roads, rivers, lakes and what is built are bare), from what _gather took. Runs on
+## a worker thread: it reads only those and the ground's heights, and writes only _data.
+func _draw_map() -> void:
+	var origin := _origin
+	var cell := MAP_SIZE / MAP_N
+	var grow := PackedFloat32Array()
+	grow.resize(MAP_N * MAP_N)
+	grow.fill(1.0)
+	for r in _boxes:
+		_clear_box(grow, origin, cell, r)
+	for s in _segs:
 		var a: Vector2 = s[0]
 		var b: Vector2 = s[1]
 		var hw: float = s[2]
 		var box := Rect2(a, Vector2.ZERO).expand(b).grow(hw)
-		if not box.intersects(area):
-			continue
 		var i0 := clampi(int((box.position.x - origin.x) / cell), 0, MAP_N - 1)
 		var i1 := clampi(int((box.end.x - origin.x) / cell), 0, MAP_N - 1)
 		var j0 := clampi(int((box.position.y - origin.y) / cell), 0, MAP_N - 1)
@@ -178,15 +217,18 @@ func _draw_map(center: Vector2) -> void:
 			var p := origin + Vector2(i + 0.5, j + 0.5) * cell
 			var hgt: float = world.height(p.x, p.y)
 			var g := grow[j * MAP_N + i]
-			for l in world.lakes:
-				var lb: Array = l["b"]
-				if p.x >= float(lb[0]) and p.x <= float(lb[2]) and p.y >= float(lb[1]) and p.y <= float(lb[3]) and hgt < float(l.get("level", 0.0)) + 0.4:
+			for l in _lakes:
+				if (l[0] as Rect2).has_point(p) and hgt < float(l[1]):
 					g = 0.0
 			data[(j * MAP_N + i) * 2] = hgt
 			data[(j * MAP_N + i) * 2 + 1] = g
-	_img.set_data(MAP_N, MAP_N, false, Image.FORMAT_RGF, data.to_byte_array())
+	_data = data
+	_data_origin = origin
+
+func _show_map() -> void:
+	_img.set_data(MAP_N, MAP_N, false, Image.FORMAT_RGF, _data.to_byte_array())
 	_tex.update(_img)
-	_mat.set_shader_parameter("map_origin", origin)
+	_mat.set_shader_parameter("map_origin", _data_origin)
 
 func _clear_box(grow: PackedFloat32Array, origin: Vector2, cell: float, r: Rect2) -> void:
 	var i0 := clampi(int((r.position.x - origin.x) / cell), 0, MAP_N - 1)
