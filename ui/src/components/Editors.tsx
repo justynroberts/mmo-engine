@@ -757,6 +757,7 @@ export function BotsEditor({
             </div>
             <div className="grid grid-cols-4 gap-x-2 pt-1">
               <NumField label="Experience" value={a.xp ?? 0} onCommit={(n) => patch(i, { xp: Math.max(0, Math.round(n)) || undefined })} />
+              <NumField label="Lasts (s, 0 for ever)" value={a.lasts_secs ?? 0} onCommit={(n) => patch(i, { lasts_secs: Math.max(0, Math.round(n)) || undefined })} />
               <NumField label="Level" value={a.level ?? 1} onCommit={(n) => patch(i, { level: Math.min(100, Math.max(1, Math.round(n))) > 1 ? Math.min(100, Math.round(n)) : undefined })} />
             </div>
             <div className="grid grid-cols-4 gap-x-2 pt-1">

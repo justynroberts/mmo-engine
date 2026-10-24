@@ -199,7 +199,26 @@ otherwise an index into the response's `owners` plus one. An owner tag is 16 hex
 public key, so a client knows its own (`mmo_account_tag`). With `full: false` the list holds only the columns changed
 after `VER` (an empty `layers` is a cleared column); with `full: true` (no `since`, a version from before a restart,
 or one too far behind) it is every column and the client drops what it had. Poll it every second or so, and soon
-after building.
+after building. This whole-world feed is kept for older clients; a world with many blocks should be streamed by
+region instead.
+
+Blocks by region: `GET /play/blocks/r?c=rx,ry,ver;...` (at most 64 regions). A region is 128 x 128 block cells,
+256 world units, the same squares as the wall tiles; `ver` is the version of that region the client holds (0 for
+none). Only regions whose version differs come back, so polling the 5 x 5 regions round the player every second
+costs a few bytes when nothing changed. The reply is binary, little endian, gzipped if the request takes it:
+
+```text
+u8 format (1) | u16 n | n x region
+region: u16 rx | u16 ry | u32 ver | u16 n_owners | n_owners x 8 bytes (an owner's tag) | u16 n_cols | n_cols x col
+col:    u16 cell (local y * 128 + local x) | i8 base | u16 mask | per set bit, lowest first: u8 material | u8 owner
+```
+
+`mask` bit k is a block in layer base + k; `owner` 0 is nobody, otherwise the region's owner table plus one. A
+region's record is everything in it now, so the client replaces what it held there; a region with no columns (or
+version 0) clears it. A version a server never gave (one from before a restart) simply differs, so the client gets
+the region afresh. Let go of regions more than three away. `proto::blockfeed` is the reference, with a byte fixture
+shared by `ui/src/play/blocks.test.ts`; Godot decodes the same in `main.gd` `_poll_block_regions`. A server
+without it answers 404, and the client falls back to `/play/blocks?since=`.
 
 Version 8 added `z` to snapshot entries (13 bytes plus attributes; with two 8 bit attributes `max_visible` can be at
 most 72) and a two byte `arg` to INPUT.
@@ -235,4 +254,6 @@ u8 format (2) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n x (u
 
 Each tile ends with its road cells: the tile is 64 x 64 cells of 4 units, and each road cell is `row * 64 + column`. Movement is `road_speed` times faster (from `/play/info`, 1.5 unless the game file says otherwise) for a tick that starts on a road cell: `proto::world::integrate` checks `World::on_road(x, y)`, the cell `(floor(x / 4), floor(y / 4))`, so prediction must hold the same cells. A box touching several tiles appears in each with the same id, and its corners are the server's f32s bit for bit (collide with exactly those). Class 0 is a wall or building; class 1 is solid scenery the world file draws (a trunk, a rock), which a client should not draw as a block. A reply names its version, so it is cached for good (`Cache-Control: immutable`); asked for another version the server answers 409, which means the walls changed: read `/play/info` again and start over. More than 64 tiles is a 400. Keep the 5x5 tiles around the player and let go of tiles more than three away. No tile holds more than 4,096 boxes. `proto::tiles` implements both ends (`TileSet`, `TileStream`) and the C SDK exposes it as `mmo_tiles_wanted` / `mmo_put_tiles` / `mmo_set_walls`.
 
-Chat channels 4 (a whisper to you, `from` the speaker), 5 (your own whisper echoed, `from` whom it went to) and 6 (party) are server to client only. Input actions 232 talk, 233 accept a quest (`arg`), 234 give one up, 235 buy (`target` the merchant, `arg` the shop line), 236 sell (`arg` the bag slot), 237 take off gear (`arg` the slot).
+Chat channels 4 (a whisper to you, `from` the speaker), 5 (your own whisper echoed, `from` whom it went to) and 6 (party) are server to client only. Input actions 232 talk, 233 accept a quest (`arg`), 234 give one up, 235 buy (`target` the merchant, `arg` the shop line), 236 sell (`arg` the bag slot), 237 take off gear (`arg` the slot), 238 choose a class (`arg` its index), 239 rise again after falling.
+
+Chat channel 7 is a bot's passing remark, heard within 24 units (sender the bot): show it over the speaker's head rather than in the chat log; a client that does not know it can show it as a line said nearby. A player whose health runs out is not respawned: they stay where they fell with health held at its minimum, cannot move or act, and are left out of everyone else's snapshots, until they send action 239; then they come back whole in the nearest place marked `safe` (anywhere free, if there is none). A client tells it is down from its own health being at the minimum. Bots that have gone indoors (`indoors` rule) are also left out of snapshots. (No version change: none of this alters a packet.)

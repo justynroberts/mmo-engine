@@ -292,6 +292,22 @@ pub enum Cond {
     Chance {
         pct: f32,
     },
+    /// Sees a bot of one type (by name) within `within`: the one targeted by chase, flee and attack.
+    SeesKind {
+        bot: String,
+        #[serde(default = "d_sight")]
+        within: f32,
+    },
+    /// The time of day is in one of these parts (`DayPart::during`): dawn the early morning, day the rest of the
+    /// daylight, dusk the evening, night the dark hours.
+    During {
+        parts: Vec<DayPart>,
+    },
+    /// The weather where the bot stands is one of these (by name); with none listed, any weather at all.
+    Weather {
+        #[serde(default)]
+        names: Vec<String>,
+    },
 }
 
 /// What a rule makes the bot do. `say` has no effect on movement and the rules after it still run.
@@ -314,6 +330,13 @@ pub enum Act {
         text: String,
         #[serde(default)]
         shout: bool,
+    },
+    /// Go home (the type's `home` place) and go indoors: once there it is out of sight until another rule moves it.
+    Indoors,
+    /// Say one of these lines, picked at random, to players close by: shown over its head, not in the chat. Like
+    /// `say`, it has no effect on movement.
+    Chat {
+        lines: Vec<String>,
     },
 }
 
@@ -371,6 +394,9 @@ pub struct Archetype {
     /// What it sells (talk to one to trade): items at a price in the game's `currency`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shop: Vec<ShopItem>,
+    /// Seconds one lasts before it is gone of itself (0 for as long as it lives): a fire burns down, a fair ends.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub lasts_secs: u32,
 }
 fn d_color() -> String {
     "#888888".into()
@@ -437,6 +463,36 @@ pub struct GameFile {
     /// Character classes a player chooses from once (`ClassFile`). Not in the content hash: edits apply live.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub classes: Vec<ClassFile>,
+    /// Limits on building, against one player (or a crowd) filling the map. Not in the content hash.
+    #[serde(default, skip_serializing_if = "BuildLimits::is_default")]
+    pub building: BuildLimits,
+}
+
+/// How much may be built: blocks per player (by account; guests' blocks belong to nobody and count only against
+/// the region) and per region (`blockfeed::REGION` cells square, 256 world units). 0 means no limit.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BuildLimits {
+    #[serde(default = "d_per_player")]
+    pub per_player: u32,
+    #[serde(default = "d_per_region")]
+    pub per_region: u32,
+}
+fn d_per_player() -> u32 {
+    20_000
+}
+fn d_per_region() -> u32 {
+    60_000
+}
+impl Default for BuildLimits {
+    fn default() -> Self {
+        BuildLimits { per_player: d_per_player(), per_region: d_per_region() }
+    }
+}
+impl BuildLimits {
+    pub fn is_default(&self) -> bool {
+        *self == BuildLimits::default()
+    }
 }
 
 /// Experience and levels. A character earns experience for beating bots (their type's `xp`), for finding named
@@ -801,6 +857,9 @@ pub const MAX_CLASSES: usize = 15;
 pub const CLASS_ATTR: &str = "class";
 /// Choose class `arg` (once: a character keeps the class it chose).
 pub const ACT_CLASS: u8 = 238;
+/// Rise again after falling: a player whose health runs out stays down where they fell (health held at its
+/// minimum, out of sight and out of reach) until they send this, then comes back in the nearest safe place.
+pub const ACT_RISE: u8 = 239;
 
 /// Buy item `arg` of the shop of the bot targeted.
 pub const ACT_BUY: u8 = 235;
@@ -1030,6 +1089,22 @@ pub enum DayPart {
 }
 
 impl DayPart {
+    /// Which part of the day `phase` (0..1 from sunrise) is in, for `Cond::During`: the first and last 15% of the
+    /// daylight are dawn and dusk, dusk runs on into the first 15% of the night, and the rest of the dark is night.
+    pub fn during(phase: f64, night_share: f64) -> DayPart {
+        let light = 1.0 - night_share;
+        let p = phase.rem_euclid(1.0);
+        if p < light * 0.15 {
+            DayPart::Dawn
+        } else if p < light * 0.85 {
+            DayPart::Day
+        } else if p < light + night_share * 0.15 {
+            DayPart::Dusk
+        } else {
+            DayPart::Night
+        }
+    }
+
     /// Where in the day (`daylight::Daylight::phase`) this part starts, given the night's share of it.
     pub fn phase(self, night_share: f64) -> f64 {
         match self {
@@ -1113,6 +1188,7 @@ pub struct ArchRt {
     pub level: u8,
     /// (item index, price)
     pub shop: Vec<(usize, u16)>,
+    pub lasts_secs: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -1123,6 +1199,10 @@ pub enum CondRt {
     AttrAbove { attr: usize, value: f32 },
     InPlace { place: usize },
     Chance { pct: f32 },
+    SeesKind { kind: u8, within: f32 },
+    /// A bit per `DayPart` (dawn 1, day 2, dusk 4, night 8).
+    During { parts: u8 },
+    Weather { names: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -1135,6 +1215,8 @@ pub enum ActRt {
     Patrol { route: usize },
     Goto { place: usize },
     Say { text: String, shout: bool },
+    Indoors,
+    Chat { lines: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -1157,6 +1239,7 @@ pub struct Game {
     /// The money item's index.
     pub currency: Option<usize>,
     pub classes: Vec<ClassRt>,
+    pub building: BuildLimits,
 }
 
 /// Most walls a game file may place.
@@ -1227,6 +1310,7 @@ impl GameFile {
             xp: 0,
             level: 0,
             shop: Vec::new(),
+            lasts_secs: 0,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -1280,6 +1364,7 @@ impl GameFile {
             quests: Vec::new(),
             currency: None,
             classes: Vec::new(),
+            building: BuildLimits::default(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -1677,6 +1762,28 @@ impl GameFile {
                         }
                         CondRt::Chance { pct: *pct }
                     }
+                    Cond::SeesKind { bot: kind, within } => {
+                        if !(within.is_finite() && *within > 0.0 && *within <= self.interest_radius) {
+                            return Err(format!("{rc}: 'within' must be 1..interest_radius"));
+                        }
+                        let k = self.archetypes.iter().position(|x| x.name == *kind).ok_or_else(|| format!("{rc}: no bot type '{kind}'"))?;
+                        reach = reach.max(*within);
+                        CondRt::SeesKind { kind: k as u8, within: *within }
+                    }
+                    Cond::During { parts } => {
+                        if parts.is_empty() {
+                            return Err(format!("{rc}: 'during' needs at least one part of the day"));
+                        }
+                        CondRt::During { parts: parts.iter().fold(0u8, |m, p| m | (1 << *p as u8)) }
+                    }
+                    Cond::Weather { names } => {
+                        for n in names {
+                            if !self.weather.iter().any(|w| w.name == *n) {
+                                return Err(format!("{rc}: no weather '{n}'"));
+                            }
+                        }
+                        CondRt::Weather { names: names.clone() }
+                    }
                 };
                 let then = match &r.then {
                     Act::Idle => ActRt::Idle,
@@ -1694,6 +1801,19 @@ impl GameFile {
                     Act::Say { text, shout } => {
                         let clean = crate::chat::sanitize(text).ok_or_else(|| format!("{rc}: say needs some text"))?;
                         ActRt::Say { text: clean, shout: *shout }
+                    }
+                    Act::Indoors => {
+                        if a.home.is_none() {
+                            return Err(format!("{rc}: 'indoors' needs the bot type to have a home"));
+                        }
+                        ActRt::Indoors
+                    }
+                    Act::Chat { lines } => {
+                        if lines.is_empty() || lines.len() > 16 {
+                            return Err(format!("{rc}: chat needs 1 to 16 lines"));
+                        }
+                        let clean = lines.iter().map(|l| crate::chat::sanitize(l).ok_or_else(|| format!("{rc}: an empty chat line"))).collect::<Result<Vec<_>, _>>()?;
+                        ActRt::Chat { lines: clean }
                     }
                 };
                 rules.push(RuleRt { when, then });
@@ -1727,6 +1847,7 @@ impl GameFile {
                 start,
                 xp: a.xp,
                 level: a.level.clamp(1, MAX_LEVEL),
+                lasts_secs: a.lasts_secs,
                 shop: a
                     .shop
                     .iter()
@@ -1771,7 +1892,7 @@ impl GameFile {
                 }
             }
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes })
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building })
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {

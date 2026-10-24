@@ -146,11 +146,16 @@ export type Cond =
   | { kind: 'attr_above'; attr: string; value: number }
   | { kind: 'in_place'; place: string }
   | { kind: 'chance'; pct: number }
+  | { kind: 'sees_kind'; bot: string; within: number }
+  | { kind: 'during'; parts: DayPart[] }
+  /** The weather where it stands is one of these; none listed means any weather at all. */
+  | { kind: 'weather'; names: string[] }
 export type Act =
-  | { kind: 'idle' | 'wander' | 'chase' | 'flee' | 'attack' }
+  | { kind: 'idle' | 'wander' | 'chase' | 'flee' | 'attack' | 'indoors' }
   | { kind: 'patrol'; route: string }
   | { kind: 'goto'; place: string }
   | { kind: 'say'; text: string; shout: boolean }
+  | { kind: 'chat'; lines: string[] }
 export interface Rule {
   when: Cond
   then: Act
@@ -235,6 +240,8 @@ export interface Archetype {
   level?: number
   /** What it sells (players talk to one to trade), priced in the game's currency. */
   shop?: ShopItem[]
+  /** Seconds one lasts before it is gone of itself (absent for as long as it lives): a fire burns down. */
+  lasts_secs?: number
 }
 export interface Drain {
   attr: string
@@ -340,6 +347,8 @@ export interface GameFile {
   classes?: ClassFile[]
   /** The item that is money: what shops take and pay. Applies live. */
   currency?: string
+  /** Limits on building (blocks per player and per 256-unit region; 0 for none). Not in the content hash. */
+  building?: { per_player: number; per_region: number }
 }
 
 export interface Perf {

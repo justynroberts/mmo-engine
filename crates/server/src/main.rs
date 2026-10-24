@@ -285,18 +285,28 @@ fn main() {
     if let Some(w) = &world_file {
         sim.terrain = w.terrain.clone();
     }
-    // What players built, kept beside the world file.
+    // What players built, kept by region beside the world file (or, from before, in one file: read once and
+    // written out by region, the old file left as it was).
+    let blocks_dir = blocks::dir_for(&world_path);
     let blocks_path = blocks::path_for(&world_path);
-    if let Ok(text) = std::fs::read_to_string(&blocks_path) {
+    let started = Instant::now();
+    if let Some(cols) = blocks::load_dir(&blocks_dir) {
+        let dropped = sim.set_blocks(cols);
+        eprintln!("restored {} built block(s) in {} region(s) from {} in {:.0?}{}", sim.blocks.total, sim.blocks.regions.len(), blocks_dir.display(), started.elapsed(), if dropped > 0 { format!(" ({dropped} column(s) inside walls or under the ground left out)") } else { String::new() });
+        sim.blocks.take_dirty();
+        sim.blocks.unsaved = false;
+    } else if let Ok(text) = std::fs::read_to_string(&blocks_path) {
         match blocks::Blocks::parse(&text) {
             Ok(cols) => {
                 let dropped = sim.set_blocks(cols);
-                eprintln!("restored {} built block(s) from {}{}", sim.blocks.total, blocks_path.display(), if dropped > 0 { format!(" ({dropped} column(s) inside walls or under the ground left out)") } else { String::new() });
-                sim.blocks.unsaved = false;
+                eprintln!("restored {} built block(s) from {}, to be kept by region in {}{}", sim.blocks.total, blocks_path.display(), blocks_dir.display(), if dropped > 0 { format!(" ({dropped} column(s) inside walls or under the ground left out)") } else { String::new() });
+                sim.blocks.take_dirty();
+                sim.blocks.all_dirty();
             }
             Err(e) => eprintln!("{}: {e}; starting with no built blocks", blocks_path.display()),
         }
     }
+    let block_writer = blocks::RegionWriter::new(blocks_dir.clone());
     let mut director = director::Director::new();
     director.sync(&game_file, 0, cfg.hz);
     let mut botdir = cfg.bots_dir.as_deref().map(botdir::BotDir::open);
@@ -584,8 +594,9 @@ fn main() {
             }
         }
         if sim.blocks.unsaved && sim.tick % (cfg.hz * 5).max(1) == 0 {
+            // Only the regions that changed, as text here and written by the writer thread.
             sim.blocks.unsaved = false;
-            blocks::save_in_background(blocks_path.clone(), sim.blocks.to_json());
+            block_writer.save(sim.blocks.take_dirty());
         }
         let t2 = Instant::now();
 
@@ -674,12 +685,8 @@ fn main() {
 
     // Everyone online is saved before we exit, and so are the blocks.
     net::save_all(&sim, &clients, hs.store.as_deref());
-    if sim.blocks.unsaved {
-        let tmp = blocks_path.with_extension("tmp");
-        if let Err(e) = std::fs::write(&tmp, sim.blocks.to_json()).and_then(|_| std::fs::rename(&tmp, &blocks_path)) {
-            eprintln!("blocks: not saved to {}: {e}", blocks_path.display());
-        }
-    }
+    block_writer.save(sim.blocks.take_dirty());
+    block_writer.finish();
     if let Some(st) = &hs.store {
         st.flush();
     }

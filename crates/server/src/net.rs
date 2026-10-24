@@ -843,6 +843,8 @@ pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
 
 /// Radius within which `say` is heard.
 pub const SAY_RADIUS: f32 = 64.0;
+/// How far a bot's passing remark carries (`Act::Chat`): only to those walking by.
+pub const NEARBY_RADIUS: f32 = 24.0;
 
 /// Deliver one line from an entity to everyone who should hear it, and log it.
 pub fn say_from(sim: &Sim, clients: &mut Clients, slot: usize, channel: u8, text: &str) {
@@ -904,6 +906,18 @@ pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
     }
     sim.npc_say = said;
     sim.npc_say.clear();
+    for (slot, text) in std::mem::take(&mut sim.npc_chat) {
+        if sim.ents.alive[slot] && !sim.ents.hidden[slot] {
+            let from = sim.ents.id_of(slot);
+            let (sx, sy) = (sim.ents.x[slot], sim.ents.y[slot]);
+            for c in clients.slab.iter_mut().flatten() {
+                let (dx, dy) = (sim.ents.x[c.slot] - sx, sim.ents.y[c.slot] - sy);
+                if dx * dx + dy * dy <= NEARBY_RADIUS * NEARBY_RADIUS {
+                    c.chat.deliver(from, proto::chat::channel::NEARBY, &text);
+                }
+            }
+        }
+    }
     clients.chat_in = events;
     clients.chat_in.clear();
 }
@@ -1015,7 +1029,7 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
         let ents = &sim.ents;
         let me = c.slot as u32;
         sim.grid.for_neighbours(px, py, |s| {
-            if s != me {
+            if s != me && !ents.hidden[s as usize] {
                 let dx = ents.x[s as usize] - px;
                 let dy = ents.y[s as usize] - py;
                 let d2 = dx * dx + dy * dy;

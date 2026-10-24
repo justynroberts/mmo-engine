@@ -260,6 +260,22 @@ fn respond_with(conn: &mut TcpStream, status: u16, ctype: &str, body: &[u8], ext
     conn.write_all(body)
 }
 
+/// Where the client updates live, relative to the working directory (`/play/client`).
+const CLIENT_DIR: &str = "client";
+
+/// Send a file without reading it all into memory first (a packaged app is a couple of hundred megabytes).
+fn stream_file(conn: &mut TcpStream, path: &Path, ctype: &str) -> std::io::Result<()> {
+    let Ok(mut f) = std::fs::File::open(path) else { return respond(conn, 404, "text/plain", b"not found") };
+    let len = f.metadata()?.len();
+    conn.set_write_timeout(Some(Duration::from_secs(30)))?;
+    write!(
+        conn,
+        "HTTP/1.1 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {len}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
+    )?;
+    std::io::copy(&mut f, conn)?;
+    Ok(())
+}
+
 /// Gzip `body` for a client that takes it (Vary says the reply depends on that).
 fn maybe_gzip(gzip: bool, body: Vec<u8>, extra: &str) -> (Vec<u8>, String) {
     if gzip && body.len() > 256 {
@@ -319,6 +335,13 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
                 },
             }
         }
+        // The newest client for players to update to: `client/mac.json` (version, size, sha256, written by
+        // scripts/package_godot.sh) in the working directory, and the app itself, streamed from `client/mac.zip`.
+        "/play/client" => match std::fs::read(Path::new(CLIENT_DIR).join("mac.json")) {
+            Ok(body) => respond(&mut conn, 200, "application/json", &body),
+            Err(_) => respond(&mut conn, 404, "text/plain", b"no client to update to"),
+        },
+        "/play/client/mac.zip" => stream_file(&mut conn, &Path::new(CLIENT_DIR).join("mac.zip"), "application/zip"),
         "/play/names" => {
             // ?ids=1,2,3: the names of those entities (players, bots by their type).
             let ids: Vec<u32> = head.query.split('&').find_map(|kv| kv.strip_prefix("ids=")).unwrap_or("").split(',').filter_map(|v| v.parse().ok()).collect();
@@ -331,6 +354,19 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
             let since = head.query.split('&').find_map(|kv| kv.strip_prefix("since=")).and_then(|v| v.parse().ok()).unwrap_or(0);
             let body = gw.blocks.read().map(|f| f.since(since)).unwrap_or_default();
             respond(&mut conn, 200, "application/json", body.as_bytes())
+        }
+        // The blocks near a client, by region: `c=rx,ry,ver;...` (the version of each it holds, 0 for none), and
+        // only the regions that differ come back (`proto::blockfeed`). Binary, gzipped when the client takes it.
+        "/play/blocks/r" => {
+            let c = head.query.split('&').find_map(|kv| kv.strip_prefix("c=")).unwrap_or("");
+            match proto::blockfeed::parse_ask(c) {
+                None => respond(&mut conn, 400, "text/plain", format!("c must be rx,ry,ver;... (at most {})", proto::blockfeed::MAX_ASK).as_bytes()),
+                Some(ask) => {
+                    let body = gw.blocks.read().map(|f| f.regions_reply(&ask)).unwrap_or_default();
+                    let (body, extra) = maybe_gzip(head.gzip, body, "Cache-Control: no-store\r\n");
+                    respond_with(&mut conn, 200, "application/octet-stream", &body, &extra)
+                }
+            }
         }
         "/play/tiles" => {
             // `v` is the walls' version from /play/info: a reply is for that version only, so it can be cached for

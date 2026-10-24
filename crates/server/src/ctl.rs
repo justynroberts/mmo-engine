@@ -1102,6 +1102,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.set_items(game.items);
         c.sim.places = game.places;
         c.sim.pvp = game.pvp;
+        c.sim.building = game.building;
         c.sim.levels = game.levels;
         // Quests are kept by name: everyone's are sent again, as indices may have moved.
         c.sim.quests = game.quests;

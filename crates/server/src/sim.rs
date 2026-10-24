@@ -37,8 +37,18 @@ pub struct Entities {
     /// Patrol progress: next waypoint index and direction.
     pub wp: Vec<u8>,
     pub wp_fwd: Vec<bool>,
+    /// Where it stood at its last patrol decision, and decisions since then it has hardly moved: a patrol
+    /// pinned against a wall beside a waypoint gives up on it and goes on to the next.
+    pub wp_last: Vec<(f32, f32)>,
+    pub wp_stall: Vec<u8>,
     /// Tick before which this bot will not speak again.
     pub say_at: Vec<u32>,
+    /// Indoors (`Act::Indoors`): left out of snapshots and of what bots see, until a rule moves it again.
+    pub hidden: Vec<bool>,
+    /// A player who has fallen and not yet chosen to rise (`ACT_RISE`): still, hidden, health held at nothing.
+    pub fallen: Vec<bool>,
+    /// Tick at which it is gone of itself (its type's `lasts_secs`), 0 for never.
+    pub expire: Vec<u32>,
     /// God mode (admin only): attributes held at their maximum every tick, so it cannot die or run dry.
     pub god: Vec<bool>,
     /// Ticks of the current jump still to come (0 = on the ground).
@@ -113,7 +123,12 @@ impl Entities {
             speed: vec![0.0; cap],
             wp: vec![0; cap],
             wp_fwd: vec![true; cap],
+            wp_last: vec![(f32::MAX, f32::MAX); cap],
+            wp_stall: vec![0; cap],
             say_at: vec![0; cap],
+            hidden: vec![false; cap],
+            fallen: vec![false; cap],
+            expire: vec![0; cap],
             attrs: (0..n_attrs).map(|_| vec![0.0; cap]).collect(),
             name: vec![None; cap],
             name_claimed: vec![false; cap],
@@ -171,6 +186,9 @@ impl Entities {
             self.name[slot] = None;
             self.name_claimed[slot] = false;
             self.fleeting[slot] = false;
+            self.hidden[slot] = false;
+            self.fallen[slot] = false;
+            self.expire[slot] = 0;
             self.renamed.push(slot as u32);
             self.free.push(slot as u32);
             self.live -= 1;
@@ -304,6 +322,8 @@ pub struct SimStats {
     pub zaps: u64,
     pub respawns: u64,
     pub rejected_actions: u64,
+    /// Builds refused for a build limit (`GameFile::building`).
+    pub build_limited: u64,
     pub jumps: u64,
     /// Actions that missed because the target was in the air.
     pub dodges: u64,
@@ -334,12 +354,18 @@ pub struct Sim {
     pub daylight: proto::daylight::Daylight,
     /// Whether it is night now (worked out from `daylight` each tick).
     pub night: bool,
+    /// Which part of the day it is (`Cond::During`), updated once a second with `night`.
+    pub daypart: proto::game::DayPart,
     /// Players may harm each other outside safe places (`GameFile::pvp`).
     pub pvp: bool,
+    /// How much may be built (`GameFile::building`).
+    pub building: proto::game::BuildLimits,
     /// The `lit` attribute, when the game has one (sneaking).
     lit_attr: Option<usize>,
     /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
     pub npc_say: Vec<(usize, bool, String)>,
+    /// Chat lines from bots (`Act::Chat`) this tick: shown over the speaker's head to players close by.
+    pub npc_chat: Vec<(usize, String)>,
     /// Actions requested by bots this tick.
     npc_actions: Vec<PendingAction>,
     /// Effects spread over time (burns, curses, slow heals) still running.
@@ -459,7 +485,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -481,9 +507,12 @@ impl Sim {
             routes,
             daylight,
             night: false,
+            daypart: proto::game::DayPart::Day,
             pvp,
+            building,
             lit_attr: None,
             npc_say: Vec::new(),
+            npc_chat: Vec::new(),
             npc_actions: Vec::new(),
             over_time: Vec::new(),
             undo: Vec::new(),
@@ -593,7 +622,12 @@ impl Sim {
         e.speed[slot] = speed;
         e.wp[slot] = 0;
         e.wp_fwd[slot] = true;
+        e.wp_last[slot] = (f32::MAX, f32::MAX);
+        e.wp_stall[slot] = 0;
         e.say_at[slot] = 0;
+        e.hidden[slot] = false;
+        e.fallen[slot] = false;
+        e.expire[slot] = self.archs.get(arch as usize).filter(|a| a.lasts_secs > 0 && owner == NONE).map_or(0, |a| self.tick + a.lasts_secs * self.tick_hz);
         e.name[slot] = None;
         e.name_claimed[slot] = false;
         e.renamed.push(slot as u32);
@@ -910,6 +944,11 @@ impl Sim {
         if col.index(z).is_none() || col.solid(z) || self.blocks.total >= crate::blocks::MAX_BLOCKS {
             return false;
         }
+        let (owner, lim) = (self.ents.account[s], self.building);
+        if (lim.per_region > 0 && self.blocks.in_region(key) >= lim.per_region) || (owner != 0 && lim.per_player > 0 && self.blocks.by_owner(owner) >= lim.per_player) {
+            self.stats.build_limited += 1;
+            return false; // this place, or this builder, has built all it may
+        }
         // It rests on the ground, or against a block above, below or beside it.
         let beside = |c: Option<(u32, u32)>| c.and_then(|(x, y)| self.blocks.get(block_key(x, y))).is_some_and(|n| n.solid(z));
         let supported = z == base as i16
@@ -922,7 +961,6 @@ impl Sim {
         if !supported || !self.cell_free(cx, cy, base, Some(z)) {
             return false;
         }
-        let owner = self.ents.account[s];
         self.blocks.put(key, base, z, kind, owner);
         let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
         self.world.set_column(cx, cy, mask);
@@ -1017,7 +1055,10 @@ impl Sim {
         self.tick += 1;
         if self.tick % self.tick_hz.max(1) == 1 {
             self.lit_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::LIT_ATTR);
-            self.night = self.daylight.phase(proto::daylight::now_ms()) >= 1.0 - self.daylight.night_share();
+            let phase = self.daylight.phase(proto::daylight::now_ms());
+            self.night = phase >= 1.0 - self.daylight.night_share();
+            self.daypart = proto::game::DayPart::during(phase, self.daylight.night_share());
+            self.system_expire();
         }
         self.npc_actions.clear();
         let old = self.tick.saturating_sub(CAST_TICKS);
@@ -1100,6 +1141,11 @@ impl Sim {
 
         // One neighbour scan: nearest player, nearest other bot, nearest of either.
         let mut near: [Option<(f32, usize)>; 3] = [None; 3];
+        // The nearest of each bot type a `sees_kind` rule asks about (a few at most).
+        let mut kinds: [(u8, Option<(f32, usize)>); 4] = [(NO_ARCH, None); 4];
+        for (k, r) in self.archs[a].rules.iter().filter_map(|r| if let CondRt::SeesKind { kind, .. } = r.when { Some(kind) } else { None }).take(4).enumerate() {
+            kinds[k].0 = r;
+        }
         let scan = reach.max(attack_range);
         if scan > 0.0 {
             let e = &self.ents;
@@ -1116,8 +1162,13 @@ impl Sim {
                 if d2 > scan * scan * m * m {
                     return;
                 }
-                if e.owner[t] == GHOST {
+                if e.owner[t] == GHOST || e.hidden[t] {
                     return;
+                }
+                for k in kinds.iter_mut() {
+                    if k.0 != NO_ARCH && k.0 == e.arch[t] && k.1.map_or(true, |(b, _)| d2 < b) {
+                        k.1 = Some((d2, t));
+                    }
                 }
                 let cat = if e.owner[t] < DRIVEN { 0 } else if e.arch[t] == me_arch && me_arch != NO_ARCH { return } else { 1 };
                 for c in [cat, 2] {
@@ -1153,6 +1204,15 @@ impl Sim {
                     (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r
                 }
                 CondRt::Chance { pct } => self.rng.f32() * 100.0 < pct,
+                CondRt::SeesKind { kind, within } => {
+                    target = kinds.iter().find(|k| k.0 == kind).and_then(|k| k.1).filter(|(d2, _)| *d2 <= (within * m) * (within * m));
+                    target.is_some()
+                }
+                CondRt::During { parts } => parts & (1 << self.daypart as u8) != 0,
+                CondRt::Weather { ref names } => match self.weather_name_at(x, y) {
+                    Some(w) => names.is_empty() || names.iter().any(|n| n == w),
+                    None => false,
+                },
             };
             if !hit {
                 continue;
@@ -1168,6 +1228,26 @@ impl Sim {
                         self.npc_say.push((s, shout, text));
                     }
                     continue;
+                }
+                ActRt::Chat { lines } => {
+                    if self.tick >= self.ents.say_at[s] {
+                        // Not every bot every time: a line now and then, so a street murmurs rather than shouts.
+                        self.ents.say_at[s] = self.tick + self.tick_hz * (14 + self.rng.below(16));
+                        let line = lines[self.rng.below(lines.len() as u32) as usize].clone();
+                        self.npc_chat.push((s, line));
+                    }
+                    continue;
+                }
+                ActRt::Indoors => {
+                    let Some(h) = self.archs[a].home else { continue };
+                    let p = &self.places[h];
+                    let (px, py, r) = (p.x, p.y, p.r);
+                    if (px - x).powi(2) + (py - y).powi(2) <= (r * 0.35).powi(2) {
+                        self.ents.hidden[s] = true;
+                        (0, 0)
+                    } else {
+                        self.toward_static(s, px, py, (r * 0.3).max(1.0))
+                    }
                 }
                 ActRt::Idle => (0, 0),
                 ActRt::Wander => self.wander_dir(s, a),
@@ -1197,7 +1277,14 @@ impl Sim {
                     let mut i = (self.ents.wp[s] as usize).min(n - 1);
                     let mut fwd = self.ents.wp_fwd[s];
                     let [px, py] = r.points[i];
-                    if (px - x).powi(2) + (py - y).powi(2) < 9.0 {
+                    let d2 = (px - x).powi(2) + (py - y).powi(2);
+                    let (lx, ly) = self.ents.wp_last[s];
+                    let still = (lx - x).powi(2) + (ly - y).powi(2) < 0.25;
+                    self.ents.wp_last[s] = (x, y);
+                    self.ents.wp_stall[s] = if still { self.ents.wp_stall[s].saturating_add(1) } else { 0 };
+                    // There, or pinned short of it (not moving at all for three seconds): on to the next point.
+                    if d2 < 9.0 || self.ents.wp_stall[s] >= 6 {
+                        self.ents.wp_stall[s] = 0;
                         if fwd {
                             if i + 1 < n {
                                 i += 1;
@@ -1220,11 +1307,35 @@ impl Sim {
                     self.toward_static(s, px, py, 0.5)
                 }
             };
+            if !matches!(then, ActRt::Indoors) {
+                self.ents.hidden[s] = false;
+            }
             self.ents.dir_x[s] = steer.0;
             self.ents.dir_y[s] = steer.1;
             return true;
         }
+        self.ents.hidden[s] = false;
         false
+    }
+
+    /// The weather where (x, y) is: a weather zone's there, otherwise the weather everywhere, if any.
+    fn weather_name_at(&self, x: f32, y: f32) -> Option<&str> {
+        for z in &self.zones {
+            if (x - z.x).powi(2) + (y - z.y).powi(2) <= z.r * z.r {
+                return Some(&z.weather);
+            }
+        }
+        self.weather.as_ref().map(|w| w.name.as_str())
+    }
+
+    /// Bots whose time is up (their type's `lasts_secs`) are gone: a fire burnt down, a fair packed away.
+    fn system_expire(&mut self) {
+        for s in 0..self.ents.high {
+            let t = self.ents.expire[s];
+            if t != 0 && self.tick >= t && self.ents.alive[s] {
+                self.ents.despawn(s);
+            }
+        }
     }
 
     /// Bots are ordinary entities. Their "AI" writes the same direction fields
@@ -1326,7 +1437,7 @@ impl Sim {
         let e = &mut self.ents;
         for s in 0..e.high {
             // Standing still on the bare ground changes nothing; up on blocks it may (one broken underfoot).
-            if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0 && e.z[s] == proto::world::GROUND) || e.held[s] != 0 {
+            if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0 && e.z[s] == proto::world::GROUND) || e.held[s] != 0 || e.fallen[s] {
                 continue;
             }
             let speed = e.speed[s] * self.speed_attr.map_or(1.0, |a| e.attrs[a][s]);
@@ -1349,6 +1460,13 @@ impl Sim {
     fn system_actions(&mut self, pending: &[PendingAction]) {
         for p in pending {
             if !self.ents.alive[p.slot] {
+                continue;
+            }
+            if self.ents.fallen[p.slot] || p.action == proto::game::ACT_RISE {
+                // Down is down: the only thing a fallen player can do is rise.
+                if !(p.action == proto::game::ACT_RISE && self.rise(p.slot)) {
+                    self.stats.rejected_actions += 1;
+                }
                 continue;
             }
             if p.action == proto::game::ACT_LIGHT {
@@ -1755,7 +1873,26 @@ impl Sim {
             }
             let min = self.defs.attrs[a].min;
             for s in 0..self.ents.high {
+                if self.ents.fallen[s] {
+                    self.ents.attrs[a][s] = min; // no healing (or regen) back up from the ground
+                    continue;
+                }
                 if self.ents.alive[s] && self.ents.owner[s] != GHOST && self.ents.attrs[a][s] <= min {
+                    if self.ents.owner[s] < DRIVEN {
+                        // A player stays down where they fell until they choose to rise (`rise`).
+                        let e = &mut self.ents;
+                        e.fallen[s] = true;
+                        e.hidden[s] = true;
+                        e.dir_x[s] = 0;
+                        e.dir_y[s] = 0;
+                        e.air[s] = 0;
+                        e.held[s] = 0;
+                        e.lift_until[s] = 0;
+                        self.mounted[s] = 0.0;
+                        self.tells.push((s, "You have fallen.".into()));
+                        self.stats.respawns += 1;
+                        continue;
+                    }
                     if self.is_bot(s) {
                         self.credit(s);
                         self.loot_from(s);
@@ -1775,6 +1912,29 @@ impl Sim {
                 }
             }
         }
+    }
+
+    /// A fallen player rises (`ACT_RISE`): whole again, in the safe place nearest where they fell (anywhere free,
+    /// in a game with no safe places).
+    pub fn rise(&mut self, s: usize) -> bool {
+        if !self.ents.fallen[s] {
+            return false;
+        }
+        let (x, y) = (self.ents.x[s], self.ents.y[s]);
+        let safe = self.places.iter().filter(|p| p.safe).min_by(|a, b| ((a.x - x).powi(2) + (a.y - y).powi(2)).total_cmp(&((b.x - x).powi(2) + (b.y - y).powi(2)))).map(|p| (p.x, p.y, p.r));
+        self.ents.fallen[s] = false;
+        self.ents.hidden[s] = false;
+        self.reset_attrs(s);
+        let placed = safe.is_some_and(|(px, py, pr)| {
+            let (a, d) = (self.rng.f32() * std::f32::consts::TAU, self.rng.f32() * pr * 0.4);
+            self.put(s, px + a.cos() * d, py + a.sin() * d)
+        });
+        if !placed {
+            let (nx, ny) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
+            self.ents.x[s] = nx;
+            self.ents.y[s] = ny;
+        }
+        true
     }
 
     /// Wire entry for a slot (quantised position and replicated attributes).
@@ -2029,6 +2189,29 @@ mod tests {
     }
 
     #[test]
+    fn build_limits_stop_a_builder_and_a_crowded_region() {
+        use proto::game::{build_arg, build_target, ACT_BUILD};
+        let mut s = sim();
+        let a = s.spawn(0).unwrap();
+        s.set_account(a, Some("aaaaaaaaaaaaaaaa"));
+        place(&mut s, a, 100.0, 101.0);
+        s.grid.rebuild(&s.ents);
+        let act = |s: &mut Sim, z: i8| {
+            let before = s.stats.rejected_actions;
+            s.step(&[PendingAction { slot: a, action: ACT_BUILD, target: build_target(53, 50), arg: build_arg(z, 1) }]);
+            s.stats.rejected_actions == before
+        };
+        s.building = proto::game::BuildLimits { per_player: 2, per_region: 0 };
+        assert!(act(&mut s, 0) && act(&mut s, 1));
+        assert!(!act(&mut s, 2), "two is this builder's limit");
+        assert_eq!((s.stats.build_limited, s.blocks.by_owner(s.ents.account[a])), (1, 2));
+        s.building = proto::game::BuildLimits { per_player: 0, per_region: 3 };
+        assert!(act(&mut s, 2));
+        assert!(!act(&mut s, 3), "the region is full");
+        assert_eq!(s.blocks.in_region(proto::world::block_key(53, 50)), 3);
+    }
+
+    #[test]
     fn blocks_stack_bridge_and_stop_movement_and_only_their_owner_breaks_them() {
         use proto::game::{build_arg, build_target, ACT_BREAK, ACT_BUILD, MAX_STACK};
         use proto::world::{block_key, GROUND};
@@ -2199,7 +2382,31 @@ mod tests {
         let tid = s.ents.id_of(b);
         s.step(&[PendingAction { slot: a, action: ACTION_ZAP, target: tid, arg: 0 }]);
         assert_eq!(s.stats.respawns, 1);
+        // A player stays down, health held at nothing, unseen, until they choose to rise.
+        assert!(s.ents.fallen[b] && s.ents.hidden[b]);
+        run(&mut s, 40);
+        assert_eq!(s.ents.attrs[0][b], 0.0, "no regen while fallen");
+        s.step(&[PendingAction { slot: b, action: proto::game::ACT_JUMP, target: 0, arg: 0 }]);
+        assert_eq!(s.ents.air[b], 0, "nothing but rising while down");
+        s.step(&[PendingAction { slot: b, action: proto::game::ACT_RISE, target: 0, arg: 0 }]);
+        assert!(!s.ents.fallen[b] && !s.ents.hidden[b]);
         assert_eq!(s.ents.attrs[0][b], 100.0);
+        assert_eq!(s.stats.respawns, 1, "counted once, not every tick down");
+    }
+
+    #[test]
+    fn a_fallen_player_rises_in_the_nearest_safe_place() {
+        let mut s = sim_with(|g| {
+            let town = |name: &str, x: f32| Place { name: name.into(), x, y: 100.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true };
+            g.places = vec![town("near", 150.0), town("far", 450.0)];
+        });
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 100.0, 100.0);
+        s.ents.attrs[0][p] = 0.0;
+        s.step(&[]);
+        assert!(s.ents.fallen[p]);
+        s.step(&[PendingAction { slot: p, action: proto::game::ACT_RISE, target: 0, arg: 0 }]);
+        assert!((s.ents.x[p] - 150.0).hypot(s.ents.y[p] - 100.0) <= 5.0, "at ({}, {})", s.ents.x[p], s.ents.y[p]);
     }
 
     #[test]
@@ -2310,6 +2517,7 @@ mod tests {
             xp: 0,
             level: 0,
             shop: Vec::new(),
+            lasts_secs: 0,
         }
     }
 
@@ -2520,6 +2728,96 @@ mod tests {
         run(&mut s, 400);
         let (x, y) = (s.ents.x[bot], s.ents.y[bot]);
         assert!((x - 300.0).hypot(y - 100.0) <= 6.0, "arrived at the gate: ({x}, {y})");
+    }
+
+    fn home_place() -> Place {
+        Place { name: "home".into(), x: 300.0, y: 100.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false }
+    }
+
+    #[test]
+    fn indoors_walks_home_and_drops_out_of_sight_until_another_rule_moves_it() {
+        let rules = vec![
+            Rule { when: Cond::During { parts: vec![proto::game::DayPart::Dusk, proto::game::DayPart::Night] }, then: Act::Indoors },
+            Rule { when: Cond::Always, then: Act::Goto { place: "away".into() } },
+        ];
+        let mut s = sim_with(|g| {
+            let mut away = home_place();
+            away.name = "away".into();
+            away.x = 100.0;
+            g.places = vec![home_place(), away];
+            let mut a = arch("b", Behaviour::Idle, rules);
+            a.home = Some("home".into());
+            g.archetypes = vec![a];
+        });
+        let bot = s.spawn_as(NONE, 0, Some((150.0, 100.0))).unwrap();
+        s.daypart = proto::game::DayPart::Night;
+        s.tick_hz = 1000; // keep step() from setting the real time of day for the length of the test
+        for _ in 0..600 {
+            s.step(&[]);
+            s.daypart = proto::game::DayPart::Night;
+        }
+        assert!(s.ents.hidden[bot], "home and indoors at night, at ({}, {})", s.ents.x[bot], s.ents.y[bot]);
+        assert!((s.ents.x[bot] - 300.0).abs() < 8.0);
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 300.0, 108.0);
+        assert!(!s.ents.hidden[p], "a player arriving is never hidden");
+        for _ in 0..40 {
+            s.step(&[]);
+            s.daypart = proto::game::DayPart::Day;
+        }
+        assert!(!s.ents.hidden[bot], "out again by day");
+    }
+
+    #[test]
+    fn day_parts_split_the_cycle() {
+        use proto::game::DayPart::*;
+        let ns = 0.35;
+        assert_eq!(proto::game::DayPart::during(0.02, ns), Dawn);
+        assert_eq!(proto::game::DayPart::during(0.3, ns), Day);
+        assert_eq!(proto::game::DayPart::during(0.6, ns), Dusk);
+        assert_eq!(proto::game::DayPart::during(0.67, ns), Dusk);
+        assert_eq!(proto::game::DayPart::during(0.8, ns), Night);
+        assert_eq!(proto::game::DayPart::during(1.01, ns), Dawn);
+    }
+
+    #[test]
+    fn sees_kind_picks_out_one_bot_type_and_chat_lines_come_and_go() {
+        let rules = vec![
+            Rule { when: Cond::SeesKind { bot: "raider".into(), within: 40.0 }, then: Act::Flee },
+            Rule { when: Cond::Always, then: Act::Chat { lines: vec!["Fine morning.".into(), "Mind the wolves.".into()] } },
+        ];
+        let mut s = sim_with(|g| {
+            g.archetypes = vec![arch("villager", Behaviour::Idle, rules), arch("raider", Behaviour::Idle, vec![]), arch("cow", Behaviour::Idle, vec![])];
+        });
+        let v = s.spawn_as(NONE, 0, Some((200.0, 200.0))).unwrap();
+        let _cow = s.spawn_as(NONE, 2, Some((210.0, 200.0))).unwrap();
+        let mut lines = 0;
+        for _ in 0..1200 {
+            s.step(&[]);
+            lines += s.npc_chat.len();
+            s.npc_chat.clear();
+        }
+        assert_eq!((s.ents.x[v], s.ents.y[v]), (200.0, 200.0), "a cow is not a raider");
+        assert!((2..=5).contains(&lines), "a line every 14-30 s over 60 s, got {lines}");
+        let _r = s.spawn_as(NONE, 1, Some((225.0, 200.0))).unwrap();
+        run(&mut s, 60);
+        assert!(s.ents.x[v] < 195.0, "fled the raider, x={}", s.ents.x[v]);
+    }
+
+    #[test]
+    fn a_bot_that_lasts_a_while_is_gone_when_its_time_is_up() {
+        let mut s = sim_with(|g| {
+            let mut fire = arch("fire", Behaviour::Idle, vec![]);
+            fire.lasts_secs = 3;
+            g.archetypes = vec![fire];
+        });
+        let f = s.spawn_as(NONE, 0, Some((200.0, 200.0))).unwrap();
+        let hz = s.tick_hz;
+        run(&mut s, hz * 2);
+        assert!(s.ents.alive[f]);
+        let hz = s.tick_hz;
+        run(&mut s, hz * 2);
+        assert!(!s.ents.alive[f], "burnt out after 3 s");
     }
 
     #[test]

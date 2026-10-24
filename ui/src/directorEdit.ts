@@ -65,10 +65,27 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
       return out
     })
     .filter((e) => e.steps.length > 0)
+  // Rules name bot types (sees_kind) and weather; a rule left pointing at nothing goes (an emptied weather list
+  // would mean any weather, so it goes too).
+  const ruled: Archetype[] =
+    kind === 'arch' || kind === 'weather'
+      ? g.archetypes.map((a) => ({
+          ...a,
+          rules: a.rules.flatMap((r) => {
+            const w = r.when
+            if (kind === 'arch' && w.kind === 'sees_kind' && w.bot === from) return to === null ? [] : [{ ...r, when: { ...w, bot: to } }]
+            if (kind === 'weather' && w.kind === 'weather' && w.names.includes(from)) {
+              const names = to === null ? w.names.filter((n) => n !== from) : w.names.map((n) => (n === from ? to : n))
+              return names.length === 0 ? [] : [{ ...r, when: { ...w, names } }]
+            }
+            return [r]
+          }),
+        }))
+      : g.archetypes
   // Loot tables and shops name items too, and so does the currency.
   const archetypes: Archetype[] =
     kind === 'item'
-      ? g.archetypes.map((a) => {
+      ? ruled.map((a) => {
           if (!a.drops && !a.shop) return a
           const out = { ...a }
           if (a.drops) out.drops = a.drops.flatMap((d) => (d.item !== from ? [d] : to === null ? [] : [{ ...d, item: to }]))
@@ -79,7 +96,7 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
           }
           return out
         })
-      : g.archetypes
+      : ruled
   // Quests name bot types, places and items (and each other, handled by renameQuest/removeQuest).
   const quests = g.quests ? { quests: rewriteQuestRefs(g.quests, kind, from, to) } : {}
   const next: GameFile = { ...g, archetypes, weather, events, ...(g.zones ? { zones } : {}), ...quests }

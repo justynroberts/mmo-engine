@@ -282,6 +282,7 @@ func frame(center: Vector2, _camera_zoom: float) -> void:
 	var dt := clampf((now - _last_ms) / 1000.0, 0.0, 0.25) if _last_ms > 0 else 0.0
 	_last_ms = now
 	_daylight_frame(dt)
+	_build_pending_blocks(center)
 	_lights(Vector3(center.x, height(center.x, center.y), center.y), dt)
 	var mist_light := lerpf(1.0, 0.45, darkness)
 	for n in _zone_nodes.values():
@@ -553,6 +554,13 @@ var _block_nodes := {}    # chunk key -> Node3D of that chunk's blocks
 var _block_index := {}    # chunk key -> {column key: true}
 var _blocks := {}         # column key (cy << 15 | cx) -> {"b": base layer, "k": a character per layer, "o": owners}
 var _block_mats := {}     # material -> Material
+var _block_pending := {}  # chunk key -> true: chunks whose blocks changed and are not drawn again yet
+## Milliseconds a frame may spend building block chunks; the nearest go first, the rest wait for the next frame.
+## A town of thousands arriving at once comes in over a few frames instead of in one long stall.
+const BLOCK_BUDGET_MS := 4.0
+## Block chunks are not drawn beyond this (world units): past it the fog has them anyway. No fade, which would put
+## every block in the transparent pass.
+const BLOCK_DRAW_RANGE := 520.0
 
 const BLOCK_NAMES := ["stone", "timber", "red brick", "plaster", "brick", "rough brick", "roof tiles", "iron", "glass", "slate", "mossy stone", "sandstone", "lamp", "fire"]
 const BLOCK_COLOURS := ["8a8f96", "8a5a34", "a6463a", "d8cfb8", "9a6a4a", "7d6b5a", "8c3b2e", "4a4d52", "bfe3ee", "4b5160", "6f7f58", "c9a66b", "ffe6a8", "5a4a40"]
@@ -619,34 +627,111 @@ func set_blocks(all: Dictionary, changed: Array) -> void:
 			_block_index[ck][k] = true
 		elif _block_index.has(ck):
 			_block_index[ck].erase(k)
+	_warm_block_shapes()
 	for ck in dirty:
-		if _block_nodes.has(ck):
-			_block_nodes[ck].queue_free()
-			_block_nodes.erase(ck)
-		var cols: Array = []
-		for k in _block_index.get(ck, {}):
-			cols.append([k & 0x7fff, k >> 15, int(_blocks[k]["b"]), String(_blocks[k]["k"])])
-		var glow := []
-		if not cols.is_empty():
-			_block_nodes[ck] = build_blocks(cols)
-			add_child(_block_nodes[ck])
-			for c in cols:
-				for i in String(c[3]).length():
-					var kind := block_kind(c[3][i])
-					if kind == LAMP or kind == FIRE:
-						glow.append([Vector3((c[0] + 0.5) * bs, (c[2] + i + 1.0) * bs + 0.3, (c[1] + 0.5) * bs), "lamp" if kind == LAMP else "fire"])
-		add_lights("blocks %d" % ck, glow)
+		_block_pending[ck] = true
 
-## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer): one mesh per material, each
-## block in its layer. A block is drawn with only the faces that show (block_faces), its edges rounded where two of
-## them meet (block_shape), so walls soften at their ends and tops but still join flat. The shapes are merged into
-## one mesh per material rather than instanced per shape, which would cost a draw call for every material and shape.
-func build_blocks(cols: Array) -> Node3D:
-	var node := Node3D.new()
-	var bs := block_size()
-	var per_kind := {}    # kind -> SurfaceTool
-	var fires: Array = []
-	for c in cols:
+## Draw the chunks waiting to be, nearest first. Their meshes are made on worker threads from a copy of what they
+## need (their columns and the ones round their edge), a few at a time, and put in the scene here as each is done;
+## a chunk keeps its old drawing until then, so nothing flickers away while it waits. Chunks near us have rounded
+## edges, chunks further off plain ones (a fifth of the triangles), and they change over as we walk.
+func _build_pending_blocks(center: Vector2) -> void:
+	_block_center = center
+	# Finished meshes into the scene, for at most BLOCK_BUDGET_MS of this frame.
+	var start := Time.get_ticks_usec()
+	for ck in _block_tasks.keys():
+		var id: int = _block_tasks[ck]
+		if not WorkerThreadPool.is_task_completed(id):
+			continue
+		WorkerThreadPool.wait_for_task_completion(id)
+		_block_tasks.erase(ck)
+		_block_results_lock.lock()
+		var res: Dictionary = _block_results.get(ck, {})
+		_block_results.erase(ck)
+		_block_results_lock.unlock()
+		if not _block_pending.has(ck) and not res.is_empty():
+			_attach_block_chunk(ck, res)
+		if (Time.get_ticks_usec() - start) / 1000.0 > BLOCK_BUDGET_MS:
+			break
+	# Near chunks drawn plain (or far ones drawn rounded) are drawn again the other way.
+	for ck in _block_nodes:
+		if not _block_pending.has(ck) and not _block_tasks.has(ck) and _block_lod.get(ck, true) != _chunk_rounded(ck):
+			_block_pending[ck] = true
+	if _block_pending.is_empty():
+		return
+	var order: Array = _block_pending.keys()
+	order.sort_custom(func(a, b): return _chunk_dist2(a) < _chunk_dist2(b))
+	for ck in order:
+		if _block_tasks.size() >= BLOCK_TASKS:
+			break
+		if _block_tasks.has(ck):
+			continue # still being made from older blocks: made again once that is done
+		_block_pending.erase(ck)
+		var input := _chunk_input(ck)
+		if input["cols"].is_empty():
+			_attach_block_chunk(ck, {})
+			continue
+		_block_tasks[ck] = WorkerThreadPool.add_task(func():
+			var r := _mesh_chunk(input)
+			_block_results_lock.lock()
+			_block_results[ck] = r
+			_block_results_lock.unlock(), false, "block chunk")
+
+var _block_center := Vector2.ZERO
+var _block_tasks := {}         # chunk key -> WorkerThreadPool task making its meshes
+var _block_results := {}       # chunk key -> what the task made (under _block_results_lock)
+var _block_results_lock := Mutex.new()
+var _block_lod := {}           # chunk key -> drawn rounded (true) or plain
+## Chunks being meshed at once, and how near (world units) a chunk is drawn with rounded edges (with some slack
+## either side, so walking along the line does not redraw it back and forth).
+const BLOCK_TASKS := 4
+const BLOCK_ROUND_NEAR := 170.0
+
+func _chunk_dist2(ck: int) -> float: # chunk keys are cx * 100003 + cy (WorldData.key)
+	return _block_center.distance_squared_to((Vector2(ck / 100003, ck % 100003) + Vector2(0.5, 0.5)) * world.CELL)
+
+func _chunk_rounded(ck: int) -> bool:
+	var near := BLOCK_ROUND_NEAR + (25.0 if _block_lod.get(ck, true) else -25.0)
+	return _chunk_dist2(ck) < near * near
+
+## What a chunk's meshes are made from, copied so the worker never reads what the main thread is changing: its
+## columns, every column within a cell of it (whose blocks hide faces), the block size and how to draw it.
+func _chunk_input(ck: int) -> Dictionary:
+	var cols: Array = []
+	var look := {}
+	for k in _block_index.get(ck, {}):
+		var c: Dictionary = _blocks[k]
+		cols.append([k & 0x7fff, k >> 15, int(c["b"]), String(c["k"])])
+		look[k] = _look_of(c["b"], c["k"])
+		for d in [1, -1, 1 << 15, -(1 << 15)]:
+			var n = _blocks.get(k + d)
+			if n != null and not look.has(k + d):
+				look[k + d] = _look_of(n["b"], n["k"])
+	return {"cols": cols, "look": look, "bs": block_size(), "round": _chunk_rounded(ck)}
+
+## A column as face culling needs it: [base layer, a bit per solid layer, a bit per glass layer].
+static func _look_of(base, kinds) -> PackedInt32Array:
+	var solid := 0
+	var glass := 0
+	var ks := String(kinds)
+	for i in mini(ks.length(), 16):
+		var k := block_kind(ks[i])
+		if k >= 0:
+			solid |= 1 << i
+			if k == GLASS:
+				glass |= 1 << i
+	return PackedInt32Array([int(base), solid, glass])
+
+## A chunk's meshes, one per material, with where its fires and lamps are. Runs on a worker thread: it reads only
+## `input` and the block shapes, all of which are made before any worker runs (_warm_block_shapes).
+func _mesh_chunk(input: Dictionary) -> Dictionary:
+	var bs: float = input["bs"]
+	var look: Dictionary = input["look"]
+	var shapes: Dictionary = _block_shapes if input["round"] else _block_flat
+	var per_kind := {}
+	var fires := []
+	var glow := []
+	for c in input["cols"]:
 		var cx: int = c[0]
 		var cy: int = c[1]
 		var base: int = c[2]
@@ -658,25 +743,83 @@ func build_blocks(cols: Array) -> Node3D:
 			var p := Vector3((cx + 0.5) * bs, (base + i + 0.5) * bs, (cy + 0.5) * bs)
 			if kind == FIRE:
 				fires.append(p)
-			var faces := block_faces(cx, cy, base + i, kind, i == 0)
+			if kind == LAMP or kind == FIRE:
+				glow.append([p + Vector3(0, bs * 0.5 + 0.3, 0), "lamp" if kind == LAMP else "fire"])
+			# A face shows unless a block is against it (glass hides only glass, so a wall shows through a window).
+			var faces := 0
+			var z := base + i
+			for f in 6:
+				if f == 3 and i == 0:
+					continue # the underside of a column's first block, on the ground
+				var d: Vector3i = BLOCK_FACES[f]
+				var n = look.get((cy + d.z) << 15 | (cx + d.x))
+				var hidden := false
+				if n != null:
+					var j: int = z + d.y - n[0]
+					if j >= 0 and j < 16 and n[1] & (1 << j) != 0:
+						hidden = n[2] & (1 << j) == 0 or kind == GLASS
+				if not hidden:
+					faces |= 1 << f
 			if faces == 0:
 				continue
 			if not per_kind.has(kind):
 				per_kind[kind] = SurfaceTool.new()
-			per_kind[kind].append_from(block_shape(faces), 0, Transform3D(Basis(), p))
+			per_kind[kind].append_from(shapes[faces], 0, Transform3D(Basis(), p))
+	var meshes := {}
 	for kind in per_kind:
+		meshes[kind] = per_kind[kind].commit()
+	return {"meshes": meshes, "fires": fires, "glow": glow, "round": input["round"]}
+
+## A made chunk into the scene, in place of its old drawing.
+func _attach_block_chunk(ck: int, res: Dictionary) -> void:
+	if _block_nodes.has(ck):
+		_block_nodes[ck].queue_free()
+		_block_nodes.erase(ck)
+	_block_lod.erase(ck)
+	if not res.is_empty() and not res["meshes"].is_empty():
+		_block_nodes[ck] = build_blocks_from(res)
+		_block_lod[ck] = res["round"]
+		add_child(_block_nodes[ck])
+	add_lights("blocks %d" % ck, res.get("glow", []))
+
+## The node for a made chunk: a MeshInstance3D per material, and a flame on every fire block (only the top one of
+## a stack would show, but blocks rarely stack fires). A theme can add to it (snow, say) by overriding this.
+func build_blocks_from(res: Dictionary) -> Node3D:
+	var node := Node3D.new()
+	for kind in res["meshes"]:
 		if not _block_mats.has(kind):
 			_block_mats[kind] = block_material(kind)
 		var mi := MeshInstance3D.new()
-		mi.mesh = per_kind[kind].commit()
+		mi.mesh = res["meshes"][kind]
 		mi.material_override = _block_mats[kind]
+		mi.visibility_range_end = BLOCK_DRAW_RANGE
 		node.add_child(mi)
-	# A flame on every fire block (only the top one of a stack would show, but blocks rarely stack fires).
-	for p in fires.slice(0, 64):
-		var f := flame(bs)
-		f.position = p + Vector3(0, bs * 0.5, 0)
+	for p in (res["fires"] as Array).slice(0, 64):
+		var f := flame(block_size())
+		f.position = p + Vector3(0, block_size() * 0.5, 0)
 		node.add_child(f)
 	return node
+
+## One chunk's blocks ([[cx, cy, base layer, "layers"], ...], "." for an empty layer), made here and now with
+## rounded edges: one mesh per material, each block with only the faces that show (block_faces), its edges rounded
+## where two of them meet (block_shape), so walls soften at their ends and tops but still join flat.
+func build_blocks(cols: Array) -> Node3D:
+	_warm_block_shapes()
+	var look := {}
+	for c in cols:
+		look[int(c[1]) << 15 | int(c[0])] = _look_of(c[2], c[3])
+	for k in _blocks:
+		if not look.has(k):
+			look[k] = _look_of(_blocks[k]["b"], _blocks[k]["k"])
+	return build_blocks_from(_mesh_chunk({"cols": cols, "look": look, "bs": block_size(), "round": true}))
+
+## Every block shape, both ways, made once on the main thread before any worker needs one.
+func _warm_block_shapes() -> void:
+	if _block_shape_size == block_size() and _block_flat.size() == 63:
+		return
+	for f in range(1, 64): # 0, no faces showing, is never drawn
+		block_shape(f)
+		block_shape(f, false)
 
 ## How far in an exposed edge is rounded, as a share of the block, and the steps round each curve.
 const BLOCK_ROUND := 0.18
@@ -684,7 +827,8 @@ const ROUND_STEPS := 2
 ## A block's faces as bits, in this order: east, west, top, bottom, south, north (+x, -x, +y, -y, +z, -z). The
 ## vectors are (cell x, layer, cell y).
 const BLOCK_FACES := [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
-var _block_shapes := {}   # faces -> Mesh, for _block_shape_size
+var _block_shapes := {}   # faces -> Mesh, for _block_shape_size: rounded
+var _block_flat := {}     # faces -> Mesh: plain, for chunks further off
 var _block_shape_size := 0.0
 
 ## The material of the block in column (cx, cy) at layer z, or -1 for none.
@@ -713,16 +857,19 @@ func block_faces(cx: int, cy: int, z: int, kind: int, first: bool) -> int:
 
 ## A block with only the given faces, each edge between two of them rounded (corners where three meet are round
 ## too). An edge against a hidden face stays square, so neighbours meet flat and a wall reads as one wall.
-func block_shape(faces: int) -> Mesh:
+func block_shape(faces: int, rounded := true) -> Mesh:
 	var bs := block_size()
 	if bs != _block_shape_size:
 		_block_shapes.clear()
+		_block_flat.clear()
 		_block_shape_size = bs
-	if _block_shapes.has(faces):
-		return _block_shapes[faces]
+	var cache: Dictionary = _block_shapes if rounded else _block_flat
+	if cache.has(faces):
+		return cache[faces]
 	var h := bs * 0.5
 	var r := bs * BLOCK_ROUND
-	var shows := func(axis: int, sgn: float) -> bool: return faces & (1 << (axis * 2 + (0 if sgn > 0.0 else 1))) != 0
+	# Plain: no face rounds into its neighbour, so each shows as one quad.
+	var shows := func(axis: int, sgn: float) -> bool: return rounded and faces & (1 << (axis * 2 + (0 if sgn > 0.0 else 1))) != 0
 	# BLOCK_FACES orders faces by axis x, y, z with + first, so face axis * 2 (+ 1 for -) is a bit in `faces`.
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
@@ -788,7 +935,7 @@ func block_shape(faces: int) -> Mesh:
 	arr[Mesh.ARRAY_INDEX] = idx
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	_block_shapes[faces] = mesh
+	cache[faces] = mesh
 	return mesh
 
 ## A picture of the whole playable world, px by px, for the map (M).

@@ -173,6 +173,9 @@ export const COND_KINDS: readonly { kind: Cond['kind']; label: string }[] = [
   { kind: 'attr_above', label: 'attribute is above' },
   { kind: 'in_place', label: 'is inside a place' },
   { kind: 'chance', label: 'by chance' },
+  { kind: 'sees_kind', label: 'sees a bot type' },
+  { kind: 'during', label: 'at a time of day' },
+  { kind: 'weather', label: 'in weather' },
 ]
 export const ACT_KINDS: readonly { kind: Act['kind']; label: string }[] = [
   { kind: 'wander', label: 'wander' },
@@ -183,6 +186,8 @@ export const ACT_KINDS: readonly { kind: Act['kind']; label: string }[] = [
   { kind: 'patrol', label: 'patrol a route' },
   { kind: 'goto', label: 'go to a place' },
   { kind: 'say', label: 'say' },
+  { kind: 'chat', label: 'pass a remark' },
+  { kind: 'indoors', label: 'go home, indoors' },
 ]
 
 export function defaultCond(kind: Cond['kind'], g: GameFile): Cond {
@@ -200,6 +205,12 @@ export function defaultCond(kind: Cond['kind'], g: GameFile): Cond {
       return { kind, place: g.places[0]?.name ?? '' }
     case 'chance':
       return { kind, pct: 10 }
+    case 'sees_kind':
+      return { kind, bot: g.archetypes[0]?.name ?? '', within: 30 }
+    case 'during':
+      return { kind, parts: ['dusk', 'night'] }
+    case 'weather':
+      return { kind, names: [] }
   }
 }
 
@@ -211,6 +222,8 @@ export function defaultAct(kind: Act['kind'], g: GameFile): Act {
       return { kind, place: g.places[0]?.name ?? '' }
     case 'say':
       return { kind, text: 'Hello.', shout: false }
+    case 'chat':
+      return { kind, lines: ['Fine day.'] }
     default:
       return { kind }
   }
@@ -230,7 +243,13 @@ export function describeRule(r: Rule): string {
             ? `When ${w.attr} is above ${w.value}`
             : w.kind === 'in_place'
               ? `When inside ${w.place}`
-              : `${w.pct}% of the time`
+              : w.kind === 'sees_kind'
+                ? `When it sees a ${w.bot} within ${w.within}`
+                : w.kind === 'during'
+                  ? `At ${w.parts.join(' or ')}`
+                  : w.kind === 'weather'
+                    ? w.names.length ? `In ${w.names.join(' or ')}` : 'In any weather'
+                    : `${w.pct}% of the time`
   const t = r.then
   const then =
     t.kind === 'patrol'
@@ -239,6 +258,8 @@ export function describeRule(r: Rule): string {
         ? `go to ${t.place}`
         : t.kind === 'say'
           ? `${t.shout ? 'shout' : 'say'} "${t.text}"`
+          : t.kind === 'chat'
+            ? `remark "${t.lines[0] ?? ''}"${t.lines.length > 1 ? ` (or ${t.lines.length - 1} more)` : ''}`
           : ACT_KINDS.find((a) => a.kind === t.kind)?.label ?? t.kind
   return `${when}: ${then}`
 }
@@ -327,7 +348,8 @@ export function removePlace(g: GameFile, index: number): GameFile {
     archetypes: g.archetypes.map((a) => ({
       ...a,
       home: a.home === gone ? null : a.home,
-      rules: a.rules.filter((r) => !refsPlace(r.when, gone) && !refsPlace(r.then, gone)),
+      // Going indoors means going home: with the home gone, so are those rules.
+      rules: a.rules.filter((r) => !refsPlace(r.when, gone) && !refsPlace(r.then, gone) && !(a.home === gone && r.then.kind === 'indoors')),
     })),
   }, 'place', gone, null)
 }

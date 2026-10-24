@@ -25,10 +25,17 @@ var _rain_want := 0.0     # how hard the weather wants them to fall
 var _next_flash := 0.0
 var meshes := {}             # path -> Mesh, pulled out of the glTF pieces once
 var _built_bodies := 0       # how many KayKit characters were made (for the smoke test)
+const LifeScript := preload("res://themes/fantasy/life.gd")
+var life: Node3D             # birds, deer, stock, chimney smoke, fireflies, and the weather on the ground (life.gd)
+var _life_ms := 0
+var _chimney_at := Vector3.INF # set by _house_roof: where the last house's chimney stands (before its base height)
+var _snow_on := false        # snow lies: every batch and block wears the snow overlay
+var _snow_overlay: ShaderMaterial
 
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
 	world = p_world
+	LifeScript.ensure_globals() # before any shader that reads them is made
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
@@ -118,11 +125,13 @@ void fragment() {
 	# Meadow: two greens, dry patches and worn dirt, all from world position so every client sees the same field.
 	var sh := Shader.new()
 	sh.code = """shader_type spatial;
-render_mode specular_disabled;
 uniform float rocky = 0.0; // 1 on crags: rock except in the flattest hollows
 uniform sampler2D road_map : filter_linear, repeat_disable; // a cell's roads: r how much road, g paved (ground_material_at)
 uniform vec2 road_origin;
 uniform float road_on = 0.0;
+global uniform float world_wet;     // life.gd: how wet the ground is after rain
+global uniform float world_puddles; // standing water, which lasts longer
+global uniform float world_snow;    // snow lying
 varying vec3 wp;
 varying vec3 wn;
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
@@ -143,9 +152,10 @@ void fragment() {
 	vec3 rock = vec3(0.47, 0.45, 0.42) * (0.8 + 0.4 * fbm(q * 0.25 + wp.y * 0.1));
 	c = mix(c, rock, max(smoothstep(0.28, 0.5, slope), rocky * smoothstep(0.04, 0.12, slope + 0.05 * n(q * 0.3))));
 	// Roads: packed earth with a ragged grassy edge in the country, cobbles in the city.
+	float road = 0.0;
 	if (road_on > 0.5) {
 		vec2 rm = texture(road_map, (q - road_origin) / 128.0).rg;
-		float road = smoothstep(0.2, 0.6, rm.r + 0.25 * (n(q * 0.7) - 0.5));
+		road = smoothstep(0.2, 0.6, rm.r + 0.25 * (n(q * 0.7) - 0.5));
 		vec3 dirt = vec3(0.52, 0.43, 0.30) * (0.86 + 0.22 * fbm(q * 0.9)) * (0.92 + 0.12 * n(q * 3.0));
 		vec2 cq = q * vec2(1.25, 1.6);
 		cq.x += 0.5 * floor(cq.y);
@@ -155,8 +165,18 @@ void fragment() {
 		c = mix(c, mix(dirt, cob, smoothstep(0.4, 0.6, rm.g)), road);
 	}
 	c = mix(c, vec3(0.93, 0.95, 0.98), smoothstep(30.0, 42.0, wp.y + 6.0 * n(q * 0.05)) * (1.0 - smoothstep(0.55, 0.8, slope)));
+	// Weather that lies: snow on the level ground (roads trodden through), then rain darkening everything and
+	// shining on the roads, with puddles in the ruts and hollows that outlast it.
+	float lvl = smoothstep(0.75, 0.95, wn.y);
+	float sn = lvl * smoothstep(0.15, 0.5, world_snow * 1.2 + 0.4 * (fbm(q * 0.35) - 0.5)) * (1.0 - 0.5 * road);
+	c = mix(c, vec3(0.9, 0.92, 0.96) * (0.95 + 0.05 * n(q * 2.0)), sn);
+	float wk = world_wet * (1.0 - sn);
+	c *= 1.0 - 0.3 * wk * (0.6 + 0.4 * road);
+	float pud = world_puddles * (1.0 - sn) * lvl * smoothstep(0.6, 0.7, fbm(q / 2.6 + 3.1)) * (0.3 + 0.7 * road);
+	c = mix(c, c * 0.4 + vec3(0.02, 0.03, 0.045), pud);
 	ALBEDO = pow(c, vec3(2.2)); // the colours above are sRGB; albedo is linear
-	ROUGHNESS = 1.0;
+	ROUGHNESS = mix(mix(1.0, mix(0.6, 0.28, road), wk), 0.04, pud);
+	SPECULAR = 0.5 * max(wk * (0.3 + 0.7 * road), pud);
 }"""
 	var m := ShaderMaterial.new()
 	m.shader = sh
@@ -198,6 +218,53 @@ void fragment() {
 		water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		water.position = Vector3((float(b[0]) + float(b[2])) / 2.0, float(l["level"]), (float(b[1]) + float(b[3])) / 2.0)
 		add_child(water)
+	_start_life()
+
+func _start_life() -> void:
+	life = LifeScript.new()
+	add_child(life)
+	life.setup(self)
+	var sh := Shader.new()
+	sh.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_never;
+global uniform float world_snow;
+varying vec3 wn;
+varying vec3 wp;
+float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+void vertex() { wn = normalize(MODEL_NORMAL_MATRIX * NORMAL); wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	// Snow on whatever faces up: roof slopes, wall tops, the tops of blocks, branches; thin and patchy as it starts.
+	float up = smoothstep(0.3, 0.62, wn.y);
+	float a = up * smoothstep(0.0, 0.5, world_snow * 1.4 - 0.35 * h(floor(wp.xz * 3.0)));
+	if (a < 0.02) { discard; }
+	ALBEDO = vec3(0.86, 0.88, 0.92);
+	ROUGHNESS = 0.85;
+	ALPHA = a;
+}"""
+	_snow_overlay = ShaderMaterial.new()
+	_snow_overlay.shader = sh
+
+## Snow lies (or has melted): roofs, tops and blocks wear the snow overlay, or stop (life.gd says when).
+func show_snow(on: bool) -> void:
+	_snow_on = on
+	for n in get_tree().get_nodes_in_group("snowable"):
+		(n as GeometryInstance3D).material_overlay = _snow_overlay if on else null
+
+func _snowable(g: GeometryInstance3D) -> void:
+	g.add_to_group("snowable")
+	if _snow_on:
+		g.material_overlay = _snow_overlay
+
+func build_blocks_from(res: Dictionary) -> Node3D:
+	var n := super.build_blocks_from(res)
+	for m in n.find_children("*", "MeshInstance3D", true, false):
+		_snowable(m as GeometryInstance3D)
+	return n
+
+func remove_lights(owner) -> void:
+	super.remove_lights(owner)
+	if life:
+		life.chimneys.erase(owner)
 
 func ground_material() -> Material:
 	return terrain_mat
@@ -273,6 +340,11 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
 	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
 	super.frame(center, camera_zoom)
+	var now := Time.get_ticks_msec()
+	var dt := clampf((now - _life_ms) / 1000.0, 0.0, 0.25) if _life_ms > 0 else 0.0
+	_life_ms = now
+	if life:
+		life.step(center, dt)
 
 ## How dark the night is: the moon's light, and the share of the day's ambient light left at night. Torches and
 ## fires carry the dark hours.
@@ -359,11 +431,15 @@ func build_cell(cx: int, cy: int) -> Node3D:
 	var node := Node3D.new()
 	var batch := {}
 	var lights := []
+	var chimneys := []
 	for o in world.in_cell(cx, cy):
 		var t := String(o.get("t", ""))
 		match t:
 			"house":
+				_chimney_at = Vector3.INF
 				node.add_child(_build_house(o["b"], float(o.get("y", 0.0)), int(o.get("v", 0)), batch))
+				if _chimney_at != Vector3.INF:
+					chimneys.append(_chimney_at + Vector3(0, float(o.get("y", 0.0)), 0))
 				# Every third house hangs a lantern by its south wall.
 				if absi(int(o.get("v", 0))) % 3 == 0:
 					var b: Array = o["b"]
@@ -410,6 +486,11 @@ func build_cell(cx: int, cy: int) -> Node3D:
 		if m:
 			node.add_child(_multi(m, batch[path], _tint(path)))
 	add_lights(world.key(cx, cy), lights)
+	if life:
+		if chimneys.is_empty():
+			life.chimneys.erase(world.key(cx, cy))
+		else:
+			life.chimneys[world.key(cx, cy)] = chimneys
 	return node
 
 # ------------------------------------------------------------------------------------- what burns at night
@@ -565,6 +646,8 @@ func snap_weather() -> void:
 	_rain_ratio = _rain_want if _rain_kind != "" else 0.0
 	if _rain_kind != "":
 		_set_rain(_rain_kind, float(_wx_want["k"]), _wx_want["col"])
+	if life:
+		life.snap()
 
 ## Set the particles up for a kind of weather (they fall at amount_ratio, which _ease_weather moves).
 func _set_rain(kind: String, k: float, col: Color) -> void:
@@ -687,6 +770,8 @@ func smoke_checks() -> Array:
 		["fantasy theme built kit pieces", batched > 0, "%d batches" % batched],
 		["characters are KayKit models", _built_bodies > 0, "%d made" % _built_bodies],
 		["ground built from the heights", _terrain.size() > 0, "%d chunks" % _terrain.size()],
+		["wildlife, smoke and fireflies are pooled round us", life != null and life._deer.size() > 0 and life._smoke.size() > 0, str(life.counts()) if life else "none"],
+		["the ground knows how wet and snowy it is", Engine.has_meta("life_globals"), "wet %.2f snow %.2f" % [life.wet, life.snow] if life else ""],
 	]
 
 # ---------------------------------------------------------------- builders and pieces
@@ -747,6 +832,7 @@ func _multi(mesh: Mesh, xforms: Array, tint := Color.WHITE) -> MultiMeshInstance
 		mm.set_instance_transform(i, xforms[i])
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
+	_snowable(mmi)
 	if tint != Color.WHITE and mesh.get_surface_count() > 0 and mesh.surface_get_material(0) is StandardMaterial3D:
 		var m := (mesh.surface_get_material(0) as StandardMaterial3D).duplicate() as StandardMaterial3D
 		m.albedo_color = tint
@@ -985,7 +1071,11 @@ func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int) -> 
 	for k in int(length / (2.4 * VS)):
 		put.call("Roof_Modular_RoundTiles", Transform3D(turn * Basis.from_scale(Vector3.ONE * VS), centre + turn * Vector3(0, ridge_y, -length / 2.0 + 1.2 * VS + k * 2.4 * VS)))
 	# A chimney through the ridge and dormers on long roofs.
-	put.call(["Prop_Chimney", "Prop_Chimney2"][hsh % 2], Transform3D(Basis.from_scale(Vector3.ONE * VS), centre + turn * Vector3(span * 0.15, 0, length * 0.25)))
+	var chimney: String = ["Prop_Chimney", "Prop_Chimney2"][hsh % 2]
+	var chimney_at := centre + turn * Vector3(span * 0.15, 0, length * 0.25)
+	put.call(chimney, Transform3D(Basis.from_scale(Vector3.ONE * VS), chimney_at))
+	var cm := _mesh(VILLAGE + chimney + ".gltf")
+	_chimney_at = chimney_at + Vector3(0, (cm.get_aabb().end.y if cm else 3.0) * VS + 0.2, 0)
 	if length >= 12.0:
 		for k in [-0.2, 0.2]:
 			var at: Vector3 = centre + turn * Vector3(span * 0.25, 0.4, length * k)

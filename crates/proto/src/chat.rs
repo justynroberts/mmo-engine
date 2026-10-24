@@ -37,6 +37,9 @@ pub mod channel {
     pub const WHISPER_SENT: u8 = 5;
     /// Server to client: said to your party (`/p`).
     pub const PARTY: u8 = 6;
+    /// Server to client: a bot passing the time of day (`Act::Chat`), heard close by. Clients show it over the
+    /// speaker's head rather than in the chat; older ones show it as a line said nearby.
+    pub const NEARBY: u8 = 7;
 }
 
 pub mod kind {

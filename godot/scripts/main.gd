@@ -20,6 +20,7 @@ const ShopScript := preload("res://scripts/shop.gd")
 const ClassPickScript := preload("res://scripts/classpick.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const TutorialScript := preload("res://scripts/tutorial.gd")
+const FallenScript := preload("res://scripts/fallen.gd")
 ## Logged out (the menu): the scene reloads to the join screen, even when started with --host.
 static var _logged_out := false
 ## The title theme: it plays over the join and loading screens and fades as the world appears.
@@ -92,6 +93,10 @@ var track := {}     # entity id -> {hp, pos, vel, face_until}
 var corpses: Array = [] # [node, seconds left]
 var entity_scale := 1.0
 const ACT_CLASS := 238
+const ACT_RISE := 239
+## Bots drawn as something other than a person, by the name their type gives them.
+const CARTERS := ["Ceannai Taistil", "Fear Cairte"]
+const FIRES := ["Tine"]
 const ACT_JUMP := 251
 const JUMP_SECS := 0.6
 const JUMP_HEIGHT := 2.2
@@ -117,6 +122,7 @@ var _walked := 0.0          # distance walked (for the tutorial)
 var _seen_target := 0
 var _walk_from := Vector2.INF
 var _tutorial_offered := false
+var fallen: CanvasLayer     # "You have fallen" and the button to rise: scripts/fallen.gd
 var classes: Array = []     # /play/info classes
 var my_class := 0           # our class (index + 1; 0 until chosen)
 var _class_asked := -100.0  # when the class picker last went up
@@ -151,7 +157,14 @@ var build := {}           # /play/info "build"; empty if the server does not off
 var building := false     # build mode (B toggles, Esc leaves); otherwise action mode. Only with build offered.
 var build_kind := 0
 var blocks := {}          # column key (cy << 15 | cx) -> {"b": base layer, "k": "..01" (a layer each), "o": owners}
-var block_owners := []    # owner tags, as /play/blocks numbers them (1 = the first)
+var block_owners := []    # owner tags, as the old /play/blocks numbers them (1 = the first)
+## Blocks stream by region (proto::blockfeed): the regions round us we hold, by key (ry << 16 | rx), and the
+## version of each, and false once the server has said it has no regions to give (an older one: the whole-world feed).
+const BLOCK_REGION := 128     # cells along a region's side (256 world units)
+const BLOCK_WINDOW := 2       # regions each way from ours that we keep (a 5 x 5 square)
+var block_regions := {}
+var block_by_region := true
+var block_index := {}         # region key -> {column key: true}, the columns we hold in it
 var my_tag := ""          # the tag our own blocks carry
 var my_layer := GROUND    # the layer our feet are in
 var blocks_ver := 0
@@ -255,6 +268,9 @@ func _ready() -> void:
 	journal.settings_requested.connect(func(): settingsui.open())
 	tutorial = TutorialScript.new()
 	add_child(tutorial)
+	fallen = FallenScript.new()
+	add_child(fallen)
+	fallen.rise.connect(func(): net.act(ACT_RISE, 0))
 	_apply_settings(settingsui.values)
 	shopui.bought.connect(func(i: int): net.buy(_shop_with, i))
 	shopui.sold.connect(func(slot: int): net.sell(_shop_with, slot))
@@ -460,6 +476,8 @@ func _start() -> void:
 			hud.say("[color=#e8a0ff]To %s:[/color] [color=#f0d8ff]%s[/color]" % [_name(from), text])
 		elif channel == 6: # party chat
 			hud.say("[color=#8fd3ff][Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
+		elif channel == 7: # a passing remark: over their head, not in the chat
+			_bubble(from, text)
 		else:
 			var who := "You" if from == net.get_self_id() else _name(from)
 			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))
@@ -980,6 +998,10 @@ func _poll_blocks(delta: float) -> void:
 		return
 	blocks_poll = 1.0
 	blocks_busy = true
+	if block_by_region:
+		await _poll_block_regions()
+		blocks_busy = false
+		return
 	var text := await _fetch("http://%s/play/blocks?since=%d" % [args["web"], blocks_ver])
 	blocks_busy = false
 	var d = JSON.parse_string(text) if text != "" else null
@@ -1008,6 +1030,111 @@ func _poll_blocks(delta: float) -> void:
 	_blocks_ready = true
 	if not changed.is_empty():
 		theme.set_blocks(blocks, changed.keys())
+
+## The regions round us: ask for each with the version we hold, take what changed, and let go of those we have
+## walked away from (a little beyond the window, so walking along an edge does not fetch the same region again).
+func _poll_block_regions() -> void:
+	var span := BLOCK_REGION * float(build["block"])
+	var rx := int(floor(me_pos.x / span))
+	var ry := int(floor(me_pos.y / span))
+	var ask := PackedStringArray()
+	for dy in range(-BLOCK_WINDOW, BLOCK_WINDOW + 1):
+		for dx in range(-BLOCK_WINDOW, BLOCK_WINDOW + 1):
+			if rx + dx >= 0 and ry + dy >= 0:
+				var rk := (ry + dy) << 16 | (rx + dx)
+				ask.append("%d,%d,%d" % [rx + dx, ry + dy, int(block_regions.get(rk, 0))])
+	var got: Array = await _fetch_raw("http://%s/play/blocks/r?c=%s" % [args["web"], ";".join(ask)])
+	if int(got[0]) == 404:
+		block_by_region = false # an older server: everything at once, as before
+		blocks_poll = 0.0
+		return
+	if int(got[0]) != 200:
+		return
+	var changed := {}
+	var b: PackedByteArray = got[1]
+	if b.size() < 3 or b[0] != 1:
+		return
+	var n := b.decode_u16(1)
+	var p := 3
+	for i in n:
+		if p + 10 > b.size():
+			break
+		var grx := b.decode_u16(p)
+		var gry := b.decode_u16(p + 2)
+		var ver := b.decode_u32(p + 4)
+		var n_owners := b.decode_u16(p + 8)
+		p += 10
+		var owners := []
+		for o in n_owners:
+			owners.append(b.slice(p, p + 8).hex_encode())
+			p += 8
+		var n_cols := b.decode_u16(p)
+		p += 2
+		var rk: int = gry << 16 | grx
+		var was := _region_cols(grx, gry)
+		for c in n_cols:
+			var local := b.decode_u16(p)
+			var base := b.decode_s8(p + 2)
+			var mask := b.decode_u16(p + 3)
+			p += 5
+			var top := 0
+			for k in 16:
+				if mask & (1 << k):
+					top = k + 1
+			var kinds := ""
+			var own := []
+			for k in top:
+				if mask & (1 << k):
+					kinds += "0123456789abcdefghijklmnopqrstuvwxyz"[b[p]]
+					own.append(String(owners[b[p + 1] - 1]) if b[p + 1] > 0 and b[p + 1] <= owners.size() else "")
+					p += 2
+				else:
+					kinds += "."
+					own.append("")
+			var cx := grx * BLOCK_REGION + local % BLOCK_REGION
+			var cy := gry * BLOCK_REGION + local / BLOCK_REGION
+			var key := cy << 15 | cx
+			was.erase(key)
+			_set_block_col(cx, cy, base, kinds, own, changed)
+		for key in was:
+			_set_block_col(key & 0x7fff, key >> 15, 0, "", [], changed)
+		if ver == 0:
+			block_regions.erase(rk)
+		else:
+			block_regions[rk] = ver
+	# Regions well behind us are let go of: their blocks leave the drawing and the prediction.
+	for rk in block_regions.keys():
+		if absi((rk & 0xffff) - rx) > BLOCK_WINDOW + 1 or absi((rk >> 16) - ry) > BLOCK_WINDOW + 1:
+			for key in _region_cols(rk & 0xffff, rk >> 16):
+				_set_block_col(key & 0x7fff, key >> 15, 0, "", [], changed)
+			block_regions.erase(rk)
+	_blocks_ready = true
+	if not changed.is_empty():
+		theme.set_blocks(blocks, changed.keys())
+
+## The column keys we hold in a region (a copy, safe to change while going through it).
+func _region_cols(rx: int, ry: int) -> Dictionary:
+	return block_index.get(ry << 16 | rx, {}).duplicate()
+
+## One column as the server now has it ("" kinds: none), into what we draw and what prediction collides with.
+func _set_block_col(cx: int, cy: int, base: int, kinds: String, owners: Array, changed: Dictionary) -> void:
+	var key := cy << 15 | cx
+	_crumble_gone(cx, cy, blocks.get(key, {}), base, kinds)
+	changed[key] = true
+	var rk := (cy / BLOCK_REGION) << 16 | (cx / BLOCK_REGION)
+	if kinds == "":
+		blocks.erase(key)
+		if block_index.has(rk):
+			block_index[rk].erase(key)
+			if block_index[rk].is_empty():
+				block_index.erase(rk)
+		net.set_column(cx, cy, 0, 0)
+	else:
+		blocks[key] = {"b": base, "k": kinds, "o": owners}
+		if not block_index.has(rk):
+			block_index[rk] = {}
+		block_index[rk][key] = true
+		net.set_column(cx, cy, base, _mask(kinds))
 
 ## Blocks that were in a column and are not now crumble, if they are near enough to see (anyone's, not only ours;
 ## ours already crumbled when we broke them).
@@ -1260,7 +1387,11 @@ func _owner_of(cx: int, cy: int, z: int) -> String:
 		return ""
 	var k: int = z - int(c["b"])
 	var o: Array = c["o"]
-	var n := int(o[k]) if k >= 0 and k < o.size() else 0
+	if k < 0 or k >= o.size():
+		return ""
+	if o[k] is String:
+		return o[k] # streamed by region: the tag itself
+	var n := int(o[k])
 	return String(block_owners[n - 1]) if n > 0 and n <= block_owners.size() else ""
 
 ## Whether a block is ours to break: ours, or nobody's.
@@ -1392,7 +1523,7 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 			body.rotation = node.rotation
 			_corpse(body)
 			if mine:
-				hud.say("[color=#ff8a70]You were slain. You wake at a safe spot.[/color]")
+				hud.say("[color=#ff8a70]You rise again, whole, somewhere safe.[/color]")
 				node.set_dead(true)
 				node.set_dead(false) # plays the stand-up
 		t["vel"] = Vector3.ZERO
@@ -1830,10 +1961,18 @@ func _look_of(e: Dictionary, mine: bool) -> String:
 		return l if l != "" else "knight"
 	if mine:
 		return String(args.get("class", "knight"))
+	if names.has(int(e["id"])):
+		var n := String(names[int(e["id"])])
+		if n in FIRES:
+			return "fire"
 	return ""
 
 func _entity_node(id: int, mine: bool, look := "") -> Node3D:
-	var n: Node3D = theme.entity_node(id, mine, {"class": look} if look != "" else {})
+	var n: Node3D
+	if look == "fire":
+		n = _fire_node()
+	else:
+		n = theme.entity_node(id, mine, {"class": look} if look != "" else {})
 	n.set_meta("look", look)
 	_nameplate(n, id, mine)
 	return n
@@ -1906,8 +2045,8 @@ func _camera() -> void:
 func _drive() -> void:
 	if smoke:
 		return # the scripted session steers
-	if _loading or my_held in [1, 2, 3]:
-		net.set_move(Vector2.ZERO) # held: the server would refuse the steps anyway
+	if _loading or my_held in [1, 2, 3] or fallen.down:
+		net.set_move(Vector2.ZERO) # held or fallen: the server would refuse the steps anyway
 		return
 	if hud.typing():
 		net.set_move(Vector2.ZERO)
@@ -1987,6 +2126,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_pick(_pointer())
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
 		var k: int = ev.keycode
+		if fallen.down and k != KEY_ESCAPE:
+			return # down: only rising (fallen.gd) or the menu
 		# The journal and the menu come first: Esc closes them, and while one is up the game keys rest.
 		if k == KEY_F2:
 			journal.toggle_journal()
@@ -2244,6 +2385,9 @@ func _social_frame(list: Array, self_id: int) -> void:
 		by_id[int(e["id"])] = e
 	# Our class: ask once we are in, if the game has classes and we have none yet; a new one resets the default bar.
 	var me_now: Dictionary = by_id.get(self_id, {})
+	# Fallen: our health held at nothing by the server until we choose to rise.
+	if not me_now.is_empty() and health_idx != "" and not smoke:
+		fallen.set_down(float(me_now.get(health_idx, 1.0)) <= 0.001 or args.has("fallen")) # --fallen: to look at it
 	var c := int(round(float(me_now.get("class", 0.0))))
 	if c != my_class:
 		my_class = c
@@ -2279,7 +2423,7 @@ func _social_frame(list: Array, self_id: int) -> void:
 	if bool(gear.get("riding", false)):
 		riding[self_id] = true
 	for e in list:
-		if float(e.get("speed", 1.0)) >= 1.75:
+		if float(e.get("speed", 1.0)) >= 1.75 or String(names.get(int(e["id"]), "")) in CARTERS:
 			riding[int(e["id"])] = true
 	for id in _horses.keys():
 		if not riding.has(id) or not ents.has(id):
@@ -2291,6 +2435,8 @@ func _social_frame(list: Array, self_id: int) -> void:
 		var node: Node3D = ents[id]
 		if not _horses.has(id):
 			var h := _make_horse()
+			if String(names.get(id, "")) in CARTERS:
+				h.add_child(_make_cart())
 			add_child(h)
 			_horses[id] = h
 		var horse: Node3D = _horses[id]
@@ -2298,6 +2444,116 @@ func _social_frame(list: Array, self_id: int) -> void:
 		horse.rotation.y = node.rotation.y
 		node.position.y += 0.95 # in the saddle
 		horse.get_node("legs").rotation.x = sin(t_total * 14.0) * 0.35 * minf(1.0, (track.get(id, {}).get("vel", Vector3.ZERO) as Vector3).length() / 10.0)
+
+## A two-wheeled cart behind a horse (+Z is behind, as the horse faces -Z), with a load under a cover.
+func _make_cart() -> Node3D:
+	var cart := Node3D.new()
+	cart.name = "cart"
+	cart.position = Vector3(0, 0, 2.6)
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color("6b4a2c")
+	wood.roughness = 0.9
+	var cloth := StandardMaterial3D.new()
+	cloth.albedo_color = Color("c9b98f")
+	cloth.roughness = 1.0
+	var add := func(mesh: Mesh, at: Vector3, mat: Material, rot := Vector3.ZERO) -> void:
+		var m := MeshInstance3D.new()
+		m.mesh = mesh
+		m.position = at
+		m.rotation = rot
+		m.material_override = mat
+		cart.add_child(m)
+	var bed := BoxMesh.new()
+	bed.size = Vector3(1.6, 0.2, 2.0)
+	add.call(bed, Vector3(0, 0.75, 0), wood)
+	for side in [-1.0, 1.0]:
+		var rail := BoxMesh.new()
+		rail.size = Vector3(0.08, 0.35, 2.0)
+		add.call(rail, Vector3(0.78 * side, 1.0, 0), wood)
+		var wheel := CylinderMesh.new()
+		wheel.top_radius = 0.55
+		wheel.bottom_radius = 0.55
+		wheel.height = 0.12
+		add.call(wheel, Vector3(0.9 * side, 0.55, 0.1), wood, Vector3(0, 0, PI / 2))
+		var shaft := BoxMesh.new()
+		shaft.size = Vector3(0.07, 0.07, 1.6)
+		add.call(shaft, Vector3(0.45 * side, 0.8, -1.6), wood)
+	var load := SphereMesh.new()
+	load.radius = 0.7
+	load.height = 0.9
+	add.call(load, Vector3(0, 1.15, 0), cloth)
+	return cart
+
+## A fire a raid left burning: the theme's flames (a ring of stones round them), a light, and smoke.
+func _fire_node() -> Node3D:
+	var n := Node3D.new()
+	if theme.has_method("_campfire"):
+		var f: Node3D = theme.call("_campfire", Vector3.ZERO)
+		f.scale = Vector3.ONE * 1.8
+		n.add_child(f)
+	var l := OmniLight3D.new()
+	l.light_color = Color("ff8a3a")
+	l.light_energy = 2.2
+	l.omni_range = 12.0
+	l.position.y = 1.2
+	n.add_child(l)
+	var smoke_p := CPUParticles3D.new()
+	smoke_p.amount = 24
+	smoke_p.lifetime = 4.0
+	smoke_p.direction = Vector3.UP
+	smoke_p.spread = 12.0
+	smoke_p.initial_velocity_min = 1.0
+	smoke_p.initial_velocity_max = 2.0
+	smoke_p.gravity = Vector3(0.3, 0.4, 0)
+	smoke_p.scale_amount_min = 1.0
+	smoke_p.scale_amount_max = 2.6
+	smoke_p.position.y = 1.5
+	var puff := QuadMesh.new()
+	puff.size = Vector2(1.6, 1.6)
+	var sm := StandardMaterial3D.new()
+	sm.albedo_texture = _puff_tex()
+	sm.albedo_color = Color(0.2, 0.19, 0.18, 0.5)
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sm.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	sm.vertex_color_use_as_albedo = true
+	puff.material = sm
+	var fade := Gradient.new()
+	fade.set_color(0, Color(1, 1, 1, 0.0))
+	fade.add_point(0.15, Color(1, 1, 1, 1.0))
+	fade.set_color(1, Color(1, 1, 1, 0.0))
+	smoke_p.color_ramp = fade
+	smoke_p.mesh = puff
+	n.add_child(smoke_p)
+	return n
+
+## A passing remark over someone's head, for a few seconds (chat channel 7).
+func _bubble(id: int, text: String) -> void:
+	if not ents.has(id):
+		return
+	var node: Node3D = ents[id]
+	var old := node.get_node_or_null("bubble")
+	if old:
+		old.queue_free()
+	var b := Label3D.new()
+	b.name = "bubble"
+	b.text = text
+	b.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	b.pixel_size = 0.009
+	b.font_size = 28
+	b.font = HudScript.BODY
+	b.outline_size = 10
+	b.outline_modulate = Color(0, 0, 0, 0.85)
+	b.modulate = Color("fff4d6")
+	b.width = 520.0
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.no_depth_test = true
+	b.position.y = 3.7
+	node.add_child(b)
+	var tw := b.create_tween()
+	tw.tween_interval(5.0)
+	tw.tween_property(b, "modulate:a", 0.0, 0.8)
+	tw.tween_callback(b.queue_free)
 
 ## A plain low-poly horse, chestnut with a dark mane, facing -Z like the characters.
 func _make_horse() -> Node3D:
@@ -2763,6 +3019,8 @@ func _smoke() -> void:
 		if built >= 0:
 			var bx := built & 0x7fff
 			var by := built >> 15
+			# Drawn a frame or few later: chunks are meshed on worker threads (theme.gd _build_pending_blocks).
+			await _wait(3.0, func(): return theme._block_nodes.size() > 0)
 			_check("and the theme draws it", theme._block_nodes.size() > 0, "%d chunk(s)" % theme._block_nodes.size())
 			_check("and it is ours", my_tag != "" and _owner_of(bx, by, base) == my_tag, "owner '%s', us '%s'" % [_owner_of(bx, by, base), my_tag])
 			# One block high is a step: walk onto it, stand on top, and come back down.

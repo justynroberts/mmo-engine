@@ -10,7 +10,15 @@ const SAVED := "user://join.cfg"
 ## The title art, behind the join screen and (dimmed) the loading screen.
 const ART := "res://ui/title.jpg"
 
+## The version this app was packaged as (scripts/package_godot.sh writes it); run from the project there is none,
+## and it never updates itself.
+const VERSION_FILE := "res://version.txt"
+const UPDATE_ZIP := "user://update.zip"
+
 var server_in := LineEdit.new()
+var update_btn := Button.new()
+var _update := {}          # what the server offers: {version, size, sha256}
+var _dl: HTTPRequest       # the download, while it runs
 var name_in := LineEdit.new()
 var note := Label.new()
 
@@ -88,6 +96,13 @@ func _ready() -> void:
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	note.custom_minimum_size = Vector2(680, 0)
 	col.add_child(note)
+	update_btn.visible = false
+	update_btn.custom_minimum_size = Vector2(260, 32)
+	update_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	update_btn.focus_mode = Control.FOCUS_NONE
+	update_btn.pressed.connect(_start_update)
+	col.add_child(update_btn)
+	_check_update.call_deferred()
 	server_in.text_submitted.connect(func(_t): name_in.grab_focus())
 	name_in.text_submitted.connect(func(_t): _go())
 	(name_in if server_in.text != "" else server_in).grab_focus.call_deferred()
@@ -201,6 +216,111 @@ func _check_saved(saved: String, other: String) -> void:
 	if server_in.text == saved and await _answers(other):
 		server_in.text = other
 		note.text = "%s did not answer; %s does." % [saved, other]
+
+# ---------------------------------------------------------------- updating
+
+static func version() -> String:
+	return FileAccess.get_file_as_string(VERSION_FILE).strip_edges() if FileAccess.file_exists(VERSION_FILE) else ""
+
+func _web(server: String) -> String:
+	var s := server.strip_edges().trim_prefix("http://").trim_suffix("/")
+	return s if ":" in s else "%s:7790" % s
+
+## Ask the server for the newest client; offer it when it is newer than this one (versions are dates, so they
+## sort as text). Only a packaged app updates itself.
+func _check_update() -> void:
+	await get_tree().create_timer(1.6).timeout # after the saved-server check has had its say
+	var mine := version()
+	if mine == "" or not OS.has_feature("template") or server_in.text.strip_edges() == "":
+		return
+	var r := HTTPRequest.new()
+	r.timeout = 3.0
+	add_child(r)
+	if r.request("http://%s/play/client" % _web(server_in.text)) != OK:
+		r.queue_free()
+		return
+	var res: Array = await r.request_completed
+	r.queue_free()
+	if res[0] != HTTPRequest.RESULT_SUCCESS or res[1] != 200:
+		return
+	var m = JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8())
+	if not (m is Dictionary) or String(m.get("version", "")) <= mine:
+		return
+	_update = m
+	update_btn.text = "Update to the newest version (%d MB)" % int(float(m.get("size", 0)) / 1048576.0)
+	update_btn.visible = true
+	note.text = "A newer version of the game is on this server."
+
+func _start_update() -> void:
+	if _dl != null or _update.is_empty():
+		return
+	update_btn.disabled = true
+	_dl = HTTPRequest.new()
+	_dl.download_file = UPDATE_ZIP
+	_dl.body_size_limit = -1
+	_dl.timeout = 600.0
+	add_child(_dl)
+	_dl.request_completed.connect(_downloaded)
+	if _dl.request("http://%s/play/client/mac.zip" % _web(server_in.text)) != OK:
+		_update_failed("could not start the download")
+
+func _process(_delta: float) -> void:
+	if _dl != null and _update.has("size"):
+		var pct := 100.0 * float(_dl.get_downloaded_bytes()) / maxf(float(_update["size"]), 1.0)
+		update_btn.text = "Downloading... %d%%" % int(pct)
+
+func _downloaded(result: int, code: int, _h: PackedStringArray, _b: PackedByteArray) -> void:
+	_dl.queue_free()
+	_dl = null
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		return _update_failed("the download did not finish")
+	update_btn.text = "Checking..."
+	await get_tree().process_frame
+	if FileAccess.get_sha256(UPDATE_ZIP) != String(_update.get("sha256", "")):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(UPDATE_ZIP))
+		return _update_failed("the download was damaged")
+	_install()
+
+## Swap the app for the new one and start it: a small script waits for this process to end, unpacks the new app
+## next to the old, moves it into place (putting the old one back if that fails) and opens it. An app macOS runs
+## from a hidden copy (one never moved out of Downloads) cannot replace itself, so the new one goes to
+## ~/Applications instead.
+func _install() -> void:
+	var app := OS.get_executable_path().get_base_dir().get_base_dir().get_base_dir()
+	if not app.ends_with(".app"):
+		return _update_failed("cannot find the app to replace")
+	if app.contains("/AppTranslocation/"):
+		app = OS.get_environment("HOME").path_join("Applications").path_join(app.get_file())
+	var script := """#!/bin/sh
+pid="$1"; zip="$2"; app="$3"
+while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+tmp=$(mktemp -d) || exit 1
+ditto -x -k "$zip" "$tmp" || { open "$app"; exit 1; }
+new=$(find "$tmp" -maxdepth 1 -name '*.app' | head -1)
+mkdir -p "$(dirname "$app")"
+rm -rf "$app.old"
+[ -e "$app" ] && mv "$app" "$app.old"
+if mv "$new" "$app"; then rm -rf "$app.old"; else mv "$app.old" "$app"; fi
+rm -rf "$tmp" "$zip"
+open "$app"
+"""
+	var path := ProjectSettings.globalize_path("user://update.sh")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return _update_failed("cannot write the installer")
+	f.store_string(script)
+	f.close()
+	var pid := OS.create_process("/bin/sh", [path, str(OS.get_process_id()), ProjectSettings.globalize_path(UPDATE_ZIP), app])
+	if pid <= 0:
+		return _update_failed("cannot start the installer")
+	update_btn.text = "Restarting with the new version..."
+	await get_tree().create_timer(0.4).timeout
+	get_tree().quit()
+
+func _update_failed(why: String) -> void:
+	update_btn.disabled = false
+	update_btn.text = "Try the update again"
+	note.text = "Update failed: %s." % why
 
 func _label(t: String) -> Label:
 	var l := Label.new()

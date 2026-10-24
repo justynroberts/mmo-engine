@@ -2353,6 +2353,18 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     assert_eq!(f["full"], false);
     assert_eq!(f["owners"], serde_json::json!([tag]));
     assert_eq!(f["cols"], serde_json::json!([[cx, cy, 0, "1b", [1, 1]]]));
+    // The same by region (proto::blockfeed), binary: the region it is in, with the builder's tag; asked again
+    // with the version just given, nothing; a neighbouring empty region never comes back at all.
+    let (rx, ry) = proto::blockfeed::region_of(cx, cy);
+    let ask = format!("/play/blocks/r?c={rx},{ry},0;{},{ry},0", rx + 1);
+    let (st, _, body) = web_get_bytes(web, &ask, false);
+    assert_eq!(st, 200);
+    let regions = proto::blockfeed::decode_reply(&body).expect("a region reply");
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].cols, vec![(proto::world::block_key(cx, cy), 0, vec![(0, 1, tag.clone()), (1, 11, tag.clone())])]);
+    let again = proto::blockfeed::decode_reply(&web_get_bytes(web, &format!("/play/blocks/r?c={rx},{ry},{}", regions[0].ver), false).2).unwrap();
+    assert!(again.is_empty(), "nothing changed since that version");
+    assert_eq!(web_get_bytes(web, "/play/blocks/r?c=1,x", false).0, 400);
     // Refused: out of reach, and a block with nothing under it or beside it.
     act_arg(&mut c, ACT_BUILD, build_target(cx + 40, cy), build_arg(0, 0));
     c.pump(250);
@@ -2376,7 +2388,9 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     let dir = std::mem::replace(&mut srv.dir, PathBuf::from("/nonexistent-keep"));
     drop(c);
     drop(srv);
-    assert!(dir.join("world.blocks.json").is_file());
+    // Kept by region: one small file for the one region built in.
+    let (rx, ry) = proto::blockfeed::region_of(cx, cy);
+    assert!(dir.join("world.blocks.d").join(format!("{rx}_{ry}.json")).is_file());
     let srv = start_in(dir, &[]);
     assert_eq!(total(&srv), 1);
     let b = json(&srv, "GET", "/api/blocks", "").1;

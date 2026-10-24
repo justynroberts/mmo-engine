@@ -4,6 +4,7 @@
 //! real client later), so the wire format, the attribute schema and the
 //! collision maths cannot drift apart.
 
+pub mod blockfeed;
 pub mod chat;
 pub mod daylight;
 pub mod defs;

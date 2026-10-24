@@ -5,7 +5,10 @@ import {
 } from './protocol'
 import { Interpolator } from './interp'
 import { GROUND, Predictor, World } from './sim'
-import { maskOf, type BlockCol } from './blocks'
+import { decodeRegions, maskOf, regionAsk, REGION, type BlockCol } from './blocks'
+
+/** Regions each way from ours whose blocks we keep (a 5 x 5 square, as the walls). */
+const BLOCK_WINDOW = 2
 import { WallStore, type WallsMeta } from './walls'
 import { playUrl } from './base'
 
@@ -135,6 +138,10 @@ export class GameClient {
   readonly blocks = new Map<number, BlockCol>()
   blocksRev = 0
   private blocksVer = 0
+  /** Blocks stream by region round us (`/play/blocks/r`): the version held of each, by ry << 16 | rx. False once
+   * the server has said it has no such thing (an older one: everything from /play/blocks, as before). */
+  private blockRegions = new Map<number, number>()
+  private byRegion = true
   private blocksTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
@@ -172,7 +179,8 @@ export class GameClient {
 
   /** What changed in the built blocks since last time: kept for drawing, and put in the collision world so
    * prediction stops at them as the server does. */
-  private async pollBlocks() {
+  private async pollBlocks(): Promise<void> {
+    if (this.byRegion) return this.pollBlockRegions()
     try {
       const r = await fetch(playUrl(`/play/blocks?since=${this.blocksVer}`))
       if (!r.ok) return
@@ -189,6 +197,53 @@ export class GameClient {
       }
       if (d.full || d.cols.length) this.blocksRev++
       this.blocksVer = d.ver
+    } catch {
+      // the next poll tries again
+    }
+  }
+
+  /** The regions round us: each asked for with the version held, only those that changed come back; regions well
+   * behind us are let go of. */
+  private async pollBlockRegions(): Promise<void> {
+    const at = this.pred ?? this.visual
+    const block = this.info.build?.block
+    if (!at || !block) return
+    try {
+      const r = await fetch(playUrl(`/play/blocks/r?c=${regionAsk(at.x, at.y, block, BLOCK_WINDOW, this.blockRegions)}`))
+      if (r.status === 404) {
+        this.byRegion = false
+        return this.pollBlocks()
+      }
+      if (!r.ok) return
+      const regions = decodeRegions(await r.arrayBuffer())
+      if (!regions) return
+      const drop = (rk: number) => {
+        for (const [k, c] of this.blocks)
+          if (((Math.floor(c.cy / REGION) << 16) | Math.floor(c.cx / REGION)) === rk) {
+            this.blocks.delete(k)
+            this.world.setColumn(c.cx, c.cy, { base: 0, mask: 0 })
+          }
+      }
+      for (const g of regions) {
+        const rk = (g.ry << 16) | g.rx
+        drop(rk)
+        for (const c of g.cols) {
+          this.blocks.set((c.cy << 15) | c.cx, c)
+          this.world.setColumn(c.cx, c.cy, { base: c.base, mask: maskOf(c.kinds) })
+        }
+        if (g.ver) this.blockRegions.set(rk, g.ver)
+        else this.blockRegions.delete(rk)
+      }
+      const span = REGION * block
+      const [rx, ry] = [Math.floor(at.x / span), Math.floor(at.y / span)]
+      let dropped = false
+      for (const rk of [...this.blockRegions.keys()])
+        if (Math.abs((rk & 0xffff) - rx) > BLOCK_WINDOW + 1 || Math.abs((rk >> 16) - ry) > BLOCK_WINDOW + 1) {
+          drop(rk)
+          this.blockRegions.delete(rk)
+          dropped = true
+        }
+      if (regions.length || dropped) this.blocksRev++
     } catch {
       // the next poll tries again
     }

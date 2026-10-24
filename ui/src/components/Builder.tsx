@@ -164,6 +164,39 @@ function CondFields({ c, game, set }: { c: Cond; game: GameFile; set: (c: Cond) 
       )
     case 'chance':
       return <NumField label="Percent per decision" value={c.pct} onCommit={(pct) => set({ ...c, pct: clamp(pct, 0, 100) })} className="col-span-2" />
+    case 'sees_kind':
+      return (
+        <>
+          <SelectField label="Bot type" value={c.bot} options={opts(game.archetypes.map((a) => a.name), '(no bot types)')} onChange={(bot) => set({ ...c, bot })} />
+          <NumField label="Within" value={c.within} onCommit={(n) => set({ ...c, within: clamp(n, 1, game.interest_radius) })} />
+        </>
+      )
+    case 'during':
+      return (
+        <div className="col-span-2 flex flex-wrap gap-x-3">
+          {(['dawn', 'day', 'dusk', 'night'] as const).map((p) => (
+            <Toggle
+              key={p}
+              label={p}
+              checked={c.parts.includes(p)}
+              onChange={(on) => {
+                const parts = on ? [...c.parts, p] : c.parts.filter((x) => x !== p)
+                if (parts.length > 0) set({ ...c, parts })
+              }}
+            />
+          ))}
+        </div>
+      )
+    case 'weather':
+      return (
+        <SelectField
+          label="Weather"
+          value={c.names[0] ?? ''}
+          options={[{ value: '', label: 'any weather' }, ...(game.weather ?? []).map((w) => ({ value: w.name, label: w.name }))]}
+          onChange={(n) => set({ ...c, names: n === '' ? [] : [n] })}
+          className="col-span-2"
+        />
+      )
     default:
       return null
   }
@@ -197,6 +230,18 @@ function ActFields({ a, game, set }: { a: Act; game: GameFile; set: (a: Act) => 
           <TextField label="Text" value={a.text} onCommit={(text) => set({ ...a, text: text.slice(0, 120) })} />
           <Toggle label="Shout" checked={a.shout} onChange={(shout) => set({ ...a, shout })} />
         </>
+      )
+    case 'chat':
+      return (
+        <TextField
+          label="Lines, separated by |"
+          value={a.lines.join(' | ')}
+          onCommit={(t) => {
+            const lines = t.split('|').map((l) => l.trim().slice(0, 120)).filter((l) => l !== '').slice(0, 16)
+            if (lines.length > 0) set({ ...a, lines })
+          }}
+          className="col-span-2"
+        />
       )
     default:
       return null
@@ -249,10 +294,11 @@ function RuleRow({
             value={rule.then.kind}
             options={ACT_OPTIONS}
             onChange={(k) => onChange({ ...rule, then: defaultAct(k, game) })}
-            className={['patrol', 'goto', 'say'].includes(rule.then.kind) ? '' : 'col-span-2'}
+            className={['patrol', 'goto', 'say', 'chat'].includes(rule.then.kind) ? '' : 'col-span-2'}
           />
           <ActFields a={rule.then} game={game} set={(then) => onChange({ ...rule, then })} />
         </div>
+        {rule.then.kind === 'indoors' && <p className="text-label text-fg-3">Walks to its home and goes inside, out of sight, until a rule above stops matching.</p>}
         {rule.then.kind === 'say' && <p className="text-label text-fg-3">Speaking does not stop movement; the rules below still run.</p>}
       </div>
       <div className="flex flex-col gap-1">
