@@ -8,6 +8,9 @@ const HUD := preload("res://scripts/hud.gd")
 
 var panel := PanelContainer.new()
 var _list := VBoxContainer.new()
+var _buttons: Array[Button] = []
+var _armed := -1               # the class clicked once, waiting for the confirming click
+var _opened_at := 0
 
 func _ready() -> void:
 	layer = 7
@@ -46,6 +49,9 @@ func _ready() -> void:
 func open(classes: Array, spell_title: Callable) -> void:
 	for c in _list.get_children():
 		c.queue_free()
+	_buttons.clear()
+	_armed = -1
+	_opened_at = Time.get_ticks_msec()
 	for i in classes.size():
 		var c: Dictionary = classes[i]
 		var row := HBoxContainer.new()
@@ -83,11 +89,22 @@ func open(classes: Array, spell_title: Callable) -> void:
 		var go := Button.new()
 		go.text = "Choose"
 		go.focus_mode = Control.FOCUS_NONE
-		go.custom_minimum_size = Vector2(110, 34)
+		go.custom_minimum_size = Vector2(150, 34)
 		go.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var title := String(c["title"]).get_slice(" (", 0)
+		# A class is for good: a click right as the panel opens is ignored, and the choice is confirmed.
 		go.pressed.connect(func():
+			if Time.get_ticks_msec() - _opened_at < 1000:
+				return
+			if _armed != i:
+				_armed = i
+				for b in _buttons:
+					b.text = "Choose"
+				go.text = "Confirm: " + title
+				return
 			panel.visible = false
 			chosen.emit(i))
+		_buttons.append(go)
 		row.add_child(go)
 		_list.add_child(row)
 	panel.visible = true

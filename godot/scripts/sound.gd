@@ -52,6 +52,8 @@ var music_for := "explore" # the piece the moment calls for ("" for silence)
 ## What is on: 0 everything, 1 effects and ambience but no music, 2 nothing.
 var mode := 0
 var incidental := ""       # "town", "farm" or "" (INCIDENTAL)
+## The player's volume for each kind of sound (Settings), in dB on top of the levels here.
+var gain := {"music": 0.0, "ambience": 0.0, "effects": 0.0}
 var daylight := 1.0        # 0 night .. 1 day; under 0.35 the day-only incidentals keep quiet
 var _amb := {}             # name -> AudioStreamPlayer
 var _vol := {}             # name -> 0..1 now
@@ -147,7 +149,7 @@ func _process(delta: float) -> void:
 		if v > 0.003 and p.stream:
 			if not p.playing:
 				p.play(randf() * maxf(0.0, p.stream.get_length() - 1.0)) # start each loop somewhere new
-			p.volume_db = AMB_DB.get(n, -6.0) + linear_to_db(v)
+			p.volume_db = AMB_DB.get(n, -6.0) + linear_to_db(v) + float(gain["ambience"])
 		elif p.playing:
 			p.stop()
 	_music_step(delta, "" if mode != 0 else music_for)
@@ -215,7 +217,7 @@ func _incidental_play(what: String, bus: int, db: float) -> void:
 	_inc_bus = bus
 	_inc.stream = s
 	_inc.bus = _inc_buses[bus]
-	_inc.volume_db = randf_range(INCIDENTAL_DB.x, INCIDENTAL_DB.y) + db
+	_inc.volume_db = randf_range(INCIDENTAL_DB.x, INCIDENTAL_DB.y) + db + float(gain["ambience"])
 	_inc.pitch_scale = 1.0 + randf_range(-INCIDENTAL_PITCH, INCIDENTAL_PITCH)
 	_inc.play()
 
@@ -253,7 +255,7 @@ func _music_step(delta: float, piece: String) -> void:
 		_music_gain[i] = clampf(_music_gain[i] + _music_rate[i] * delta, 0.0, 1.0)
 		if _music_rate[i] < 0.0 and _music_gain[i] <= 0.0 and m.playing:
 			m.stop()
-		m.volume_db = MUSIC_DB + linear_to_db(maxf(sin(_music_gain[i] * PI * 0.5), 0.0001))
+		m.volume_db = MUSIC_DB + linear_to_db(maxf(sin(_music_gain[i] * PI * 0.5), 0.0001)) + float(gain["music"])
 
 func _fade_out(i: int, secs: float) -> void:
 	if _music[i].playing:
@@ -320,7 +322,7 @@ func play(name: String, db := 0.0, spread := 0.06) -> void:
 	var v := _voices[_next_voice]
 	_next_voice = (_next_voice + 1) % VOICES
 	v.stream = s
-	v.volume_db = SFX_DB + db
+	v.volume_db = SFX_DB + db + float(gain["effects"])
 	v.pitch_scale = 1.0 + randf_range(-spread, spread)
 	v.play()
 

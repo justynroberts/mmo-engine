@@ -376,6 +376,8 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             if i.mount > 0.0 { v["mount"] = json!(i.mount); }
             v
         }).collect::<Vec<_>>(),
+        // Where each kind of bot lives (by the name its bots go by), for a map to mark quest givers and traders.
+        "homes": sim.archs.iter().filter_map(|a| a.home.and_then(|h| sim.places.get(h)).map(|p| (proto::names::bot(&a.name).to_string(), json!([p.x, p.y, p.r])))).collect::<serde_json::Map<String, serde_json::Value>>(),
         // Classes a player chooses from, with what each may cast.
         "classes": hs_classes(sim),
         // Money, and what each merchant sells (by the name its bots go by).

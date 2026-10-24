@@ -24,6 +24,11 @@ func _ready() -> void:
 		fallback = FileAccess.get_file_as_string("res://default_server.txt").strip_edges()
 	server_in.text = String(cfg.get_value("join", "server", fallback))
 	name_in.text = String(cfg.get_value("join", "name", ""))
+	# The server remembered may be on a network we have left: if it does not answer, offer the built-in one (or,
+	# run from the project, this machine) when that does.
+	var other := fallback if fallback != "" else "127.0.0.1"
+	if server_in.text != "" and server_in.text != other:
+		_check_saved.call_deferred(server_in.text, other)
 
 	var back := ColorRect.new()
 	back.color = Color(0.03, 0.035, 0.04)
@@ -177,6 +182,25 @@ static func fade_rect(from: float) -> TextureRect:
 	r.stretch_mode = TextureRect.STRETCH_SCALE
 	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return r
+
+func _answers(server: String) -> bool:
+	var web := server if ":" in server else "%s:7790" % server
+	var r := HTTPRequest.new()
+	r.timeout = 1.5
+	add_child(r)
+	if r.request("http://%s/play/info" % web) != OK:
+		r.queue_free()
+		return false
+	var res: Array = await r.request_completed
+	r.queue_free()
+	return res[0] == HTTPRequest.RESULT_SUCCESS and res[1] == 200
+
+func _check_saved(saved: String, other: String) -> void:
+	if await _answers(saved):
+		return
+	if server_in.text == saved and await _answers(other):
+		server_in.text = other
+		note.text = "%s did not answer; %s does." % [saved, other]
 
 func _label(t: String) -> Label:
 	var l := Label.new()

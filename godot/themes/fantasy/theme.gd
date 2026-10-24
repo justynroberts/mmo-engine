@@ -274,6 +274,12 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
 	super.frame(center, camera_zoom)
 
+## How dark the night is: the moon's light, and the share of the day's ambient light left at night. Torches and
+## fires carry the dark hours.
+const NIGHT_MOON := 0.12
+const NIGHT_AMBIENT := 0.22
+const NIGHT_EXPOSURE := 0.6
+
 ## Sun, moon, light, fog and sky for the time of day (the server's schedule) and the weather.
 func _daylight_frame(dt: float) -> void:
 	var sun_dir := sun_direction()
@@ -307,13 +313,14 @@ func _daylight_frame(dt: float) -> void:
 	_sun.transform.basis = Basis.looking_at(-light_dir, Vector3.FORWARD if absf(light_dir.y) > 0.99 else Vector3.UP)
 	var warm := (_clear["sun_color"] as Color).lerp(Color("ffb27a"), dusk * 0.7)
 	_sun.light_color = warm if sun_dir.y > -0.05 else Color("9db4ff")
-	var sun_energy: float = _clear["sun"] * (0.25 + 0.75 * day) if sun_dir.y > -0.05 else 0.22
+	var sun_energy: float = _clear["sun"] * (0.25 + 0.75 * day) if sun_dir.y > -0.05 else NIGHT_MOON
 	_sun.light_energy = sun_energy * (1.0 - (0.55 + 0.2 * storm) * k)
 	var e := _env
-	e.ambient_light_color = Color("2a3552").lerp(_clear["ambient_color"], day)
-	e.ambient_light_energy = _clear["ambient"] * (0.55 + 0.45 * day) * (1.0 - 0.35 * k) + _flash * 1.5
+	e.tonemap_exposure = lerpf(NIGHT_EXPOSURE, 0.95, day) # the whole picture darker at night, the sky with it
+	e.ambient_light_color = Color("1a2238").lerp(_clear["ambient_color"], day)
+	e.ambient_light_energy = _clear["ambient"] * (NIGHT_AMBIENT + (1.0 - NIGHT_AMBIENT) * day) * (1.0 - 0.35 * k) + _flash * 1.5
 	var fog_day: Color = (_clear["fog_color"] as Color).lerp(Color("e0a07a"), dusk * 0.35)
-	var fog := Color("141b28").lerp(fog_day, day)
+	var fog := Color("0a0e17").lerp(fog_day, day)
 	var thick: float = _wx["thick"]
 	e.fog_light_color = fog.lerp(col.darkened(0.2 * (1.0 - day)), 0.6 * k)
 	e.fog_density = _clear["fog"] + 0.012 * k * thick

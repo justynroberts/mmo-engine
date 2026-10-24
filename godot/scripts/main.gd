@@ -18,6 +18,8 @@ const JournalScript := preload("res://scripts/journal.gd")
 const QuestsScript := preload("res://scripts/quests.gd")
 const ShopScript := preload("res://scripts/shop.gd")
 const ClassPickScript := preload("res://scripts/classpick.gd")
+const SettingsScript := preload("res://scripts/settings.gd")
+const TutorialScript := preload("res://scripts/tutorial.gd")
 ## Logged out (the menu): the scene reloads to the join screen, even when started with --host.
 static var _logged_out := false
 ## The title theme: it plays over the join and loading screens and fades as the world appears.
@@ -109,6 +111,12 @@ var journal: CanvasLayer    # the spell journal and the menu: scripts/journal.gd
 var questui: CanvasLayer    # quest offers, the quest log and the tracker: scripts/quests.gd
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
 var classui: CanvasLayer    # choosing a class: scripts/classpick.gd
+var settingsui: CanvasLayer # volumes, graphics, full screen: scripts/settings.gd
+var tutorial: CanvasLayer   # the first walk through: scripts/tutorial.gd
+var _walked := 0.0          # distance walked (for the tutorial)
+var _seen_target := 0
+var _walk_from := Vector2.INF
+var _tutorial_offered := false
 var classes: Array = []     # /play/info classes
 var my_class := 0           # our class (index + 1; 0 until chosen)
 var _class_asked := -100.0  # when the class picker last went up
@@ -187,8 +195,8 @@ func _ready() -> void:
 	if _hop.has("to"):
 		args.erase("walk") # where --walk pointed was on the map we left
 	smoke = args.has("smoke")
-	# The packaged app opens full screen (F11 or --windowed for a window); run from the project it stays windowed.
-	if args.has("fullscreen") or (OS.has_feature("template") and not args.has("windowed")):
+	# --fullscreen and --windowed say so outright; otherwise Settings decides (the packaged app starts full screen).
+	if args.has("fullscreen"):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	if args.has("zoom"):
 		zoom = clampf(float(args["zoom"]), 8.0, 60.0)
@@ -238,7 +246,16 @@ func _ready() -> void:
 	add_child(shopui)
 	classui = ClassPickScript.new()
 	add_child(classui)
-	classui.chosen.connect(func(i: int): net.act_arg(ACT_CLASS, 0, i))
+	classui.chosen.connect(func(i: int):
+		_class_asked = t_total # give the server time to say so before asking again
+		net.act_arg(ACT_CLASS, 0, i))
+	settingsui = SettingsScript.new()
+	add_child(settingsui)
+	settingsui.changed.connect(_apply_settings)
+	journal.settings_requested.connect(func(): settingsui.open())
+	tutorial = TutorialScript.new()
+	add_child(tutorial)
+	_apply_settings(settingsui.values)
 	shopui.bought.connect(func(i: int): net.buy(_shop_with, i))
 	shopui.sold.connect(func(slot: int): net.sell(_shop_with, slot))
 	journal.unequip.connect(func(g: int): net.unequip(g))
@@ -362,6 +379,7 @@ func _start() -> void:
 	for a in info.get("attrs", []):
 		has_lit = has_lit or String(a.get("name", "")) == "lit"
 	theme.setup(info, world)
+	_apply_settings(settingsui.values) # the theme's lights are here now (shadows follow the graphics setting)
 	theme.set_zones(info.get("weather_zones", []) if info.get("weather_zones") is Array else [])
 	locations = info.get("locations", []) if info.get("locations") is Array else []
 	# One picture of the world serves the minimap and the world map (M).
@@ -669,6 +687,8 @@ func _process(delta: float) -> void:
 		for e in list:
 			if e["id"] != self_id:
 				around.append(e["position"])
+		world_map.places = locations
+		world_map.marks = _map_marks()
 		world_map.update_markers(me_pos, heading, around)
 	_drive()
 	if me_pos.distance_to(_heading_from) > 0.05:
@@ -1761,6 +1781,46 @@ func _swatch(kind: int) -> Texture2D:
 	return ImageTexture.create_from_image(img)
 
 ## A character: the theme's body, with the name and health bar on top.
+## Settings: how loud each kind of sound is, how much the graphics do, and full screen.
+func _apply_settings(v: Dictionary) -> void:
+	if sound:
+		for k in ["music", "ambience", "effects"]:
+			sound.gain[k] = linear_to_db(maxf(float(v.get(k, 0.8)), 0.0001))
+	var q := int(v.get("graphics", 2))
+	var vp := get_viewport()
+	vp.msaa_3d = Viewport.MSAA_2X if q >= 2 else Viewport.MSAA_DISABLED
+	vp.scaling_3d_scale = 0.75 if q == 0 else 1.0
+	if theme:
+		for l in theme.find_children("*", "DirectionalLight3D", true, false):
+			(l as DirectionalLight3D).shadow_enabled = q > 0
+	if not args.has("fullscreen") and not args.has("windowed") and not smoke and not args.has("shot"):
+		var full := bool(v.get("fullscreen", false))
+		var now := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+		if full != now:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if full else DisplayServer.WINDOW_MODE_WINDOWED)
+
+## The tutorial: started for a new character once we are in (and have chosen a class), and told what we do.
+func _tutorial_frame() -> void:
+	if _loading or smoke or args.has("shot") or classui.is_open():
+		return
+	if not tutorial.running():
+		if not TutorialScript.done() and my_level <= 2 and int(_progress.get("xp", 0)) < 100 and (classes.is_empty() or my_class > 0) and not _tutorial_offered:
+			_tutorial_offered = true
+			_walk_from = me_pos
+			_walked = 0.0
+			tutorial.start()
+		return
+	# Steps walked, not jumps (arriving, a respawn): anything over a stride in one frame does not count.
+	var stride := me_pos.distance_to(_walk_from)
+	if stride < 3.0:
+		_walked += stride
+	_walk_from = me_pos
+	if _walked > 12.0:
+		tutorial.did("walk")
+	if target_id != 0 and target_id != _seen_target:
+		tutorial.did("target")
+	_seen_target = target_id
+
 ## How to draw an entity: a player by their class's look (or, for us before choosing, the --class asked for), a bot
 ## as the theme likes ("").
 func _look_of(e: Dictionary, mine: bool) -> String:
@@ -1934,9 +1994,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_F3:
 			questui.toggle_log()
 			return
-		if k == KEY_ESCAPE and (shopui.escape() or questui.escape() or journal.escape()):
+		if k == KEY_ESCAPE and (settingsui.escape() or shopui.escape() or questui.escape() or journal.escape()):
 			return
-		if journal.is_open() or questui.is_open() or shopui.is_open() or classui.is_open():
+		if journal.is_open() or questui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open():
 			return
 		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
@@ -2025,6 +2085,7 @@ func _attack() -> void:
 	if track.has(target_id) and track[target_id].get("air", 0.0) > 0.0:
 		_float_text((ents[target_id] as Node3D).position, "dodge", Color("9fe8e0"))
 	net.act(attack_id, target_id)
+	tutorial.did("strike")
 	next_swing = t_total + 0.5
 	sound.play("swing", -2.0)
 	_fight_at = t_total
@@ -2177,6 +2238,7 @@ func _quests_frame(list: Array, self_id: int) -> void:
 
 ## Each frame: the party frames, what we wear (the journal), the shop's view of our bag, and horses under riders.
 func _social_frame(list: Array, self_id: int) -> void:
+	_tutorial_frame()
 	var by_id := {}
 	for e in list:
 		by_id[int(e["id"])] = e
@@ -2188,7 +2250,9 @@ func _social_frame(list: Array, self_id: int) -> void:
 		if not _has_saved_bar():
 			bar_order = _load_bar()
 		_apply_bar()
-	if not classes.is_empty() and my_class == 0 and not _loading and not me_now.is_empty() and not classui.is_open() and t_total - _class_asked > 8.0:
+	if my_class > 0 and classui.is_open():
+		classui.panel.visible = false # chosen (here or elsewhere): nothing left to ask
+	if not classes.is_empty() and my_class == 0 and not _loading and not me_now.is_empty() and not classui.is_open() and t_total - _class_asked > 8.0 and not args.has("shot") and not smoke:
 		_class_asked = t_total
 		classui.open(classes, func(n: String) -> String:
 			for a in all_spells:
@@ -2283,6 +2347,23 @@ func _make_horse() -> Node3D:
 			l.rotation.x = 0.0
 	return root
 
+## What the world map marks: quest givers with a quest for us (!), where to hand one in (?), and traders, each
+## at the place their kind lives (/play/info "homes"; bots wander, their home does not).
+func _map_marks() -> Array:
+	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
+	var out := []
+	var quest_marks: Dictionary = questui.marks(my_level)
+	for who in quest_marks:
+		if homes.has(who):
+			var h: Array = homes[who]
+			out.append([Vector2(float(h[0]), float(h[1])), quest_marks[who]])
+	var shops: Dictionary = info.get("shops", {}) if info.get("shops") is Dictionary else {}
+	for who in shops:
+		if homes.has(who) and not quest_marks.has(who):
+			var h: Array = homes[who]
+			out.append([Vector2(float(h[0]) + 6.0, float(h[1]) + 6.0), "trade"])
+	return out
+
 ## F: talk to the one targeted (or the nearest with a quest mark) if they are in reach; otherwise pick up.
 func _talk_or_pickup() -> void:
 	var reach := 8.0
@@ -2297,6 +2378,7 @@ func _talk_or_pickup() -> void:
 				who = id
 	if who != 0:
 		net.talk(who)
+		tutorial.did("talk")
 		var me: Node3D = ents.get(net.get_self_id())
 		if me:
 			_face(me, (ents[who] as Node3D).position)
@@ -2381,6 +2463,7 @@ func _cast(i: int) -> void:
 				target_id = near
 			target = target_id
 	net.act(id, target)
+	tutorial.did("cast")
 	var cd := float(a.get("cooldown_ticks", 0)) / maxf(float(info.get("hz", 20)), 1.0)
 	spell_ready[id] = t_total + cd
 	_gcd_until = t_total + minf(cd, 0.5)

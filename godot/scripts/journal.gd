@@ -9,6 +9,7 @@ signal bar_changed(order: Array)        # action names, in bar order
 signal log_out
 signal quit
 signal unequip(gear_slot: int)
+signal settings_requested
 
 const HUD := preload("res://scripts/hud.gd")
 
@@ -119,6 +120,9 @@ func _build_menu() -> void:
 	v.add_child(_title("Menu", 26))
 	v.add_child(_button("Back to the game", func(): menu.visible = false, 220))
 	v.add_child(_button("Spell journal", _menu_journal, 220))
+	v.add_child(_button("Settings", func():
+		menu.visible = false
+		settings_requested.emit(), 220))
 	v.add_child(_button("Log out", func(): log_out.emit(), 220))
 	v.add_child(_button("Quit", func(): quit.emit(), 220))
 
