@@ -1217,7 +1217,7 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary, town: Dictio
 	put.call("Corner_Exterior_TopOnly", Transform3D(Basis.from_scale(Vector3.ONE * VS), Vector3(x0, tall * floors, y0)))
 	_house_roof(put, b, tall * floors, tower, hsh, float(style["pitch"]), int(style["chimney"]))
 	var dress := {}
-	_house_yard(put, rng, door_at, door_out, hsh, town, dress)
+	_house_yard(put, rng, door_at, door_out, hsh, town, dress, base)
 	_house_porch(put, door_at, door_out, hsh)
 	if floors == 2 and not jetty and not grand:
 		_house_stairs(put, sides[(door_side + 1) % 4], tall, hsh)
@@ -1303,12 +1303,15 @@ func _house_roof(put: Callable, b: Array, top: float, tower: bool, hsh: int, pit
 func _house_porch(put: Callable, door: Vector3, out: Vector3, hsh: int) -> void:
 	if out == Vector3.ZERO:
 		return
-	var face := Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3.ONE * VS)
-	var at := door + Vector3(0, 2.75 * VS, 0)
-	put.call(["Roof_RoundTile_2x1", "Roof_RoundTile_2x1_Long", "Roof_2x4_RoundTile"][hsh % 3], Transform3D(face, at))
-	put.call("Roof_Front_Brick2", Transform3D(face, at + out * (1.4 * VS)))
-	for sx in [-1.2, 1.2]:
-		put.call("Roof_Support2", Transform3D(face, at + face * Vector3(sx / VS, 0, 0)))
+	# A small wooden canopy over the door on two wall brackets: Roof_Wooden_2x1 is high along its origin edge (put
+	# against the wall) and falls away outwards; Roof_Support2 runs out from the wall below it.
+	var across := Vector3.UP.cross(out).normalized()
+	var face := Basis(across, Vector3.UP, out)
+	var k := 0.85 * VS
+	var at := door + out * 0.05 + Vector3(0, (2.8 + 0.08 * float(hsh % 3)) * VS, 0) # above the frame (2.59) and below the floor above (3.12)
+	put.call("Roof_Wooden_2x1", Transform3D(face * Basis.from_scale(Vector3(k, k, k)), at - Vector3(0, 1.0 * k, 0)))
+	for sx in [-0.9, 0.9]: # just outside the frame (0.8 each side)
+		put.call("Roof_Support2", Transform3D(face * Basis.from_scale(Vector3.ONE * VS), at + across * (sx * VS) - Vector3(0, 0.12 * VS, 0)))
 
 ## An outside staircase up one side of a two-storey house to a balcony: a flight of steps, its railings, and a
 ## landing at the top, each picked from the kit's variants.
@@ -1394,47 +1397,66 @@ func _crag_diggings(b: Array, v: int, batch: Dictionary) -> void:
 ## The yard in front of the door: a paved path, the settlement's kind of fence each side, an arch, a lean-to shed
 ## or a stall roof, and what its trade leaves lying about (towns.gd TRADES), into `dress` by file. All outside the
 ## box, so you walk through them (the server only knows the house).
-func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int, town: Dictionary, dress: Dictionary) -> void:
+func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int, town: Dictionary, dress: Dictionary, base: float) -> void:
 	if out == Vector3.ZERO:
 		return
 	var style: Dictionary = town["style"]
 	var rot := Basis(Vector3.UP, atan2(out.x, out.z))
 	var side := rot * Vector3(1, 0, 0)
 	var tile := Basis.from_scale(Vector3.ONE * VS)
+	# Everything out here stands on the ground where it is, not at the house's floor (the house sits on the lowest
+	# corner of its plot; the yard runs on up or down the slope).
+	var gy := func(q: Vector3) -> Vector3: return Vector3(q.x, height(q.x, q.z) - base, q.z)
+	# The path: the settlement's paving, each slab laid along the slope, a touch above the ground.
 	for k in 3:
-		put.call(String(style["paving"]), Transform3D(tile, door + out * (VS * (1.0 + 2.0 * k)) + Vector3(0, 0.05, 0)))
+		var at: Vector3 = door + out * (VS * (1.0 + 2.0 * k))
+		var dx := height(at.x + 1.0, at.z) - height(at.x - 1.0, at.z)
+		var dz := height(at.x, at.z + 1.0) - height(at.x, at.z - 1.0)
+		var up := Vector3(-dx * 0.5, 1.0, -dz * 0.5).normalized()
+		put.call(String(style["paving"]), Transform3D(Basis(Quaternion(Vector3.UP, up)) * tile, gy.call(at) + up * 0.04))
 	match String(style["fence"]):
 		"wood":
 			for s2 in [-1.0, 1.0]:
 				for k in 3:
 					var at: Vector3 = door + out * (VS * (1.0 + 2.0 * k)) + side * s2 * (VS * 2.6)
 					var piece: String = "Prop_WoodenFence_Single" if k == 0 else ["Prop_WoodenFence_Extension1", "Prop_WoodenFence_Extension2"][k % 2]
-					put.call(piece, Transform3D(rot * Basis(Vector3.UP, PI / 2.0) * tile, at))
+					put.call(piece, Transform3D(rot * Basis(Vector3.UP, PI / 2.0) * tile, gy.call(at) - Vector3(0, 0.1, 0)))
 		"metal":
-			put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, door + out * (VS * 6.2) + side * (VS * 1.6)))
-			put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, door + out * (VS * 6.2) - side * (VS * 1.6)))
+			put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, gy.call(door + out * (VS * 6.2) + side * (VS * 1.6)) - Vector3(0, 0.1, 0)))
+			put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, gy.call(door + out * (VS * 6.2) - side * (VS * 1.6)) - Vector3(0, 0.1, 0)))
 	if hsh % 3 != 0:
-		put.call("Wall_Arch", Transform3D(rot * tile, door + out * (VS * 6.0)))
+		# The arch's feet on the lower side of the slope, so neither floats.
+		var arch := door + out * (VS * 6.0)
+		var low := minf(gy.call(arch - side * VS).y, gy.call(arch + side * VS).y)
+		put.call("Wall_Arch", Transform3D(rot * tile, Vector3(arch.x, low - 0.05, arch.z)))
 	# A wooden lean-to beside the path on most houses: one sloping roof of two Roof_Wooden_2x1 (high along its
 	# origin edge, falling ~1.1 over its 1.5 depth) on four timber posts cut to meet it, high side towards the house.
 	if hsh % 4 != 3:
 		var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
-		var high := (2.4 + 0.3 * float(hsh % 3)) * VS          # the eaves against the house, above the ground
+		var high := (2.4 + 0.3 * float(hsh % 3)) * VS          # the eaves above the ground at the back
 		var across := Vector3.UP.cross(out).normalized()      # the roof's own x, so its z runs down the slope, outwards
 		var roof_b := Basis(across, Vector3.UP, out) * tile
-		var back := shed - out * (0.75 * VS)
-		for sx2 in [-1.0, 1.0]:
-			put.call("Roof_Wooden_2x1", Transform3D(roof_b, back + across * (sx2 * 1.1 * VS) + Vector3(0, high - 1.0 * VS, 0)))
+		var back: Vector3 = shed - out * (0.75 * VS)
+		# The roof sits level off the highest of its four feet, so every post reaches it.
+		var feet := []
 		for corner in [[-1.0, 0.1, 0.0], [1.0, 0.1, 0.0], [-1.0, 1.3, 0.83], [1.0, 1.3, 0.83]]:
+			feet.append([gy.call(back + across * (float(corner[0]) * 2.05 * VS) + out * (float(corner[1]) * VS)), float(corner[2])])
+		var top := -INF
+		for f in feet:
+			top = maxf(top, (f[0] as Vector3).y + float(f[1]) * VS)
+		var eave := top + high
+		for sx2 in [-1.0, 1.0]:
+			put.call("Roof_Wooden_2x1", Transform3D(roof_b, Vector3(back.x, eave - 1.0 * VS, back.z) + across * (sx2 * 1.1 * VS)))
+		for f in feet:
 			# Corner_Exterior_Wood is a post 3 tall from its foot; scaled to reach the roof's underside there.
-			var tall: float = high - float(corner[2]) * VS - 0.05 * VS
-			var at: Vector3 = back + across * (float(corner[0]) * 2.05 * VS) + out * (float(corner[1]) * VS)
-			put.call("Corner_Exterior_Wood", Transform3D(Basis(across, Vector3.UP, out) * Basis.from_scale(Vector3(VS, tall / 3.0, VS)), at))
+			var foot: Vector3 = f[0]
+			var tall: float = eave - float(f[1]) * VS - 0.05 * VS - foot.y + 0.1
+			put.call("Corner_Exterior_Wood", Transform3D(Basis(across, Vector3.UP, out) * Basis.from_scale(Vector3(VS, tall / 3.0, VS)), foot - Vector3(0, 0.1, 0)))
 		# Under the shed, the trade's goods.
 		var goods: Array = TownsScript.TRADES[town["trade"]]["yard"]
 		for k in 2:
 			var g: Array = goods[(hsh / 3 + k * 2) % goods.size()]
-			_dress(dress, String(g[0]), float(g[1]), shed + side * (VS * (k * 2.0 - 1.0)), rng.randf() * TAU)
+			_dress(dress, String(g[0]), float(g[1]), gy.call(shed + side * (VS * (k * 2.0 - 1.0))), rng.randf() * TAU)
 	# The trade's workshop (a smithy's anvil and grindstone, a sawpit, a fish store) on one house in a few; a couple
 	# more of the trade's things out in the yard on the rest.
 	var trade: Dictionary = TownsScript.TRADES[town["trade"]]
@@ -1443,12 +1465,12 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 		for k in work.size():
 			var g: Array = work[k]
 			var at: Vector3 = door + out * (VS * (1.6 + 1.5 * (k / 2))) + side * (VS * (3.5 + 1.3 * (k % 2)))
-			_dress(dress, String(g[0]), float(g[1]), at, rng.randf_range(-0.4, 0.4) + atan2(out.x, out.z))
+			_dress(dress, String(g[0]), float(g[1]), gy.call(at), rng.randf_range(-0.4, 0.4) + atan2(out.x, out.z))
 	else:
 		var goods: Array = trade["yard"]
 		for k in 2:
 			var g: Array = goods[(hsh / 7 + k * 3 + 1) % goods.size()]
-			_dress(dress, String(g[0]), float(g[1]), door + out * (VS * rng.randf_range(2.0, 4.5)) + side * (VS * rng.randf_range(3.4, 4.8) * (1.0 if k == 0 else -1.0)), rng.randf() * TAU)
+			_dress(dress, String(g[0]), float(g[1]), gy.call(door + out * (VS * rng.randf_range(2.0, 4.5)) + side * (VS * rng.randf_range(3.4, 4.8) * (1.0 if k == 0 else -1.0))), rng.randf() * TAU)
 
 ## A woodpile against the back wall, on most houses: logs for the fire, or the trade's own stack.
 func _woodpile(side: Array, hsh: int, town: Dictionary, dress: Dictionary) -> void:
