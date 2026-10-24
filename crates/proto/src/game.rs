@@ -404,6 +404,9 @@ pub struct Archetype {
     /// The faction it belongs to (`GameFile::factions`, by name): beating one changes a player's standing with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faction: Option<String>,
+    /// A loot table (`GameFile::loot`) rolled when it falls, on top of its `drops`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot: Option<String>,
 }
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
@@ -478,6 +481,17 @@ pub struct GameFile {
     /// Factions bot types belong to, and how players stand with them. Not in the content hash: edits apply live.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub factions: Vec<FactionFile>,
+    /// Loot tables, crafting, farming, land and dungeons (`realm.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loot: Vec<crate::realm::LootTable>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipes: Vec<crate::realm::Recipe>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub crops: Vec<crate::realm::CropDef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plots: Option<crate::realm::PlotRules>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dungeons: Vec<crate::realm::DungeonDef>,
 }
 
 /// How much may be built: blocks per player (by account; guests' blocks belong to nobody and count only against
@@ -522,6 +536,9 @@ pub struct FactionFile {
     /// What players see ("The Folk of the Vale"); empty, the name.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+    /// Its colour, for its members (players who joined it with `/faction`, and its bot types) in clients.
+    #[serde(default = "d_faction_color")]
+    pub color: String,
     #[serde(default = "d_kill")]
     pub kill: i32,
     #[serde(default = "d_hostile")]
@@ -531,6 +548,9 @@ pub struct FactionFile {
     pub hates: Vec<String>,
     #[serde(default = "d_bounty")]
     pub bounty: i32,
+}
+fn d_faction_color() -> String {
+    "#c0c0c0".into()
 }
 fn d_kill() -> i32 {
     -10
@@ -807,8 +827,15 @@ pub const BUILD_REACH: f32 = 8.0;
 /// Most blocks in one column: the layers it spans above its base.
 pub const MAX_STACK: usize = crate::world::COLUMN_LAYERS as usize;
 /// Block materials (the client's theme decides what each looks like; 12 is a lamp and 13 a fire, which give light at
-/// night). Text gives each a character: `0`-`9`, then `a`-`z` (see `block_char`).
-pub const BLOCK_KINDS: u8 = 14;
+/// night; 14 is tilled soil, and 15 and 16 a crop growing and ripe). Text gives each a character: `0`-`9`, then
+/// `a`-`z` (see `block_char`).
+pub const BLOCK_KINDS: u8 = 17;
+/// Tilled soil: built like any block; a seed planted beside it grows on top of it.
+pub const SOIL: u8 = 14;
+/// A crop growing, and ripe (`realm::CropDef`). Nobody builds these: planting a seed makes the first, and time the
+/// second.
+pub const SPROUT: u8 = 15;
+pub const RIPE: u8 = 16;
 
 /// The target of a build or break: the column's cell.
 pub fn build_target(cx: u32, cy: u32) -> u32 {
@@ -882,6 +909,9 @@ pub struct ItemDef {
     /// using an action, gets you down.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub mount: f32,
+    /// How rare it is: clients colour it by this, and a drop of a rare one or better is announced.
+    #[serde(default, skip_serializing_if = "crate::realm::Rarity::is_common")]
+    pub rarity: crate::realm::Rarity,
 }
 
 fn is_zero_u16(v: &u16) -> bool {
@@ -935,9 +965,13 @@ pub struct ClassFile {
     pub toughness: f32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spells: Vec<String>,
+    /// Schools of spells it may use as well (`ActionFile::school`): every action of one of these schools, and the
+    /// actions with no school (plain blows). `/class Name` picks a class over chat, as the class picker does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schools: Vec<String>,
 }
 
-/// A class as the server uses it: its bonuses and the action ids it may use (empty: any).
+/// A class as the server uses it: its bonuses and the action ids it may use (`any`: all of them).
 #[derive(Clone, Debug)]
 pub struct ClassRt {
     pub name: String,
@@ -947,6 +981,8 @@ pub struct ClassRt {
     pub might: f32,
     pub toughness: f32,
     pub spells: Vec<u8>,
+    /// It names neither spells nor schools: every action is its to use.
+    pub any: bool,
 }
 
 pub const MAX_CLASSES: usize = 15;
@@ -1001,6 +1037,7 @@ pub struct ItemRt {
     pub value: u16,
     pub equip: Option<EquipFile>,
     pub mount: f32,
+    pub rarity: crate::realm::Rarity,
 }
 
 #[derive(Clone, Debug)]
@@ -1291,6 +1328,8 @@ pub struct ArchRt {
     pub leash: f32,
     /// Its faction's index in `Game::factions`.
     pub faction: Option<usize>,
+    /// Its loot table (`Realm::loot`).
+    pub loot: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1343,6 +1382,8 @@ pub struct Game {
     pub classes: Vec<ClassRt>,
     pub building: BuildLimits,
     pub factions: Vec<FactionFile>,
+    /// Loot tables, recipes, crops, plots and dungeons, resolved (`realm.rs`).
+    pub realm: crate::realm::Realm,
 }
 
 /// Most walls a game file may place.
@@ -1350,7 +1391,7 @@ pub const MAX_WALLS: usize = 2000;
 
 /// A usable item with the given effects (none makes it a keepsake or trade good).
 fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
-    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0 }
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() }
 }
 
 /// What the sample bots leave behind.
@@ -1416,6 +1457,7 @@ impl GameFile {
             lasts_secs: 0,
             leash: 0.0,
             faction: None,
+            loot: None,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -1471,6 +1513,11 @@ impl GameFile {
             classes: Vec::new(),
             building: BuildLimits::default(),
             factions: Vec::new(),
+            loot: Vec::new(),
+            recipes: Vec::new(),
+            crops: Vec::new(),
+            plots: None,
+            dungeons: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -1789,6 +1836,7 @@ impl GameFile {
                 value: it.value,
                 equip: it.equip.clone(),
                 mount: it.mount,
+                rarity: it.rarity,
             });
         }
         let mut seen = HashSet::new();
@@ -1949,6 +1997,7 @@ impl GameFile {
             archs.push(ArchRt {
                 leash,
                 faction,
+                loot: a.loot.as_ref().and_then(|l| self.loot.iter().position(|t| &t.name == l)),
                 drops,
                 home,
                 rules,
@@ -1985,12 +2034,24 @@ impl GameFile {
             if c.desc.chars().count() > 300 || !(c.might.is_finite() && c.toughness.is_finite() && (0.0..=2.0).contains(&c.might) && (0.0..=2.0).contains(&c.toughness)) {
                 return Err(format!("class '{}': desc at most 300 characters, might and toughness 0..2", c.name));
             }
-            let spells = c
+            let mut spells = c
                 .spells
                 .iter()
                 .map(|n| self.actions.iter().find(|a| &a.name == n).map(|a| a.id).ok_or_else(|| format!("class '{}': '{n}' is not an action", c.name)))
                 .collect::<Result<Vec<u8>, String>>()?;
-            classes.push(ClassRt { name: c.name.clone(), title: c.title.clone(), desc: c.desc.clone(), look: c.look.clone(), might: c.might, toughness: c.toughness, spells });
+            if c.schools.len() > 8 || c.schools.iter().any(|s| s.trim().is_empty() || s.chars().count() > 32) {
+                return Err(format!("class '{}': at most 8 schools, each 1..32 characters", c.name));
+            }
+            if !c.schools.is_empty() {
+                for a in &self.actions {
+                    let school = a.school.as_str();
+                    let ok = school.is_empty() || c.schools.iter().any(|s| s.eq_ignore_ascii_case(school));
+                    if ok && !spells.contains(&a.id) {
+                        spells.push(a.id);
+                    }
+                }
+            }
+            classes.push(ClassRt { name: c.name.clone(), title: c.title.clone(), desc: c.desc.clone(), look: c.look.clone(), might: c.might, toughness: c.toughness, spells, any: c.spells.is_empty() && c.schools.is_empty() });
         }
         self.check_factions()?;
         let currency = match &self.currency {
@@ -2018,7 +2079,8 @@ impl GameFile {
                 }
             }
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone() })
+        let realm = self.realm()?;
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm })
     }
 
     /// Factions: names unique, numbers in range, and what they hate there.
@@ -2034,6 +2096,9 @@ impl GameFile {
             }
             if f.title.chars().count() > MAX_TITLE {
                 return Err(format!("{ctx}: title at most {MAX_TITLE} characters"));
+            }
+            if !f.color.is_empty() {
+                crate::realm::color_ok(&f.color, &ctx)?;
             }
             for (v, what) in [(f.kill, "kill"), (f.hostile, "hostile"), (f.bounty, "bounty")] {
                 if !(-STANDING_MAX..=STANDING_MAX).contains(&v) {
@@ -2496,7 +2561,7 @@ mod tests {
         .unwrap();
         assert!(old.build().is_ok());
         let mut more = ok.clone();
-        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0 });
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() });
         assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
         g.items.clear();
         assert!(g.build().is_err(), "drops of items that no longer exist are caught");

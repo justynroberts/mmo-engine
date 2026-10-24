@@ -86,7 +86,7 @@ export function groundImage(w: WorldData, px = 512): HTMLCanvasElement | null {
 
 /** Built block materials 0..13, as the Godot themes name them: stone, timber, red brick, plaster, brick, uneven
  * brick, roof tiles, iron, glass, slate, mossy stone, sandstone, lamp, fire. */
-export const BLOCK_COLOURS = ['#8a8f96', '#8a5a34', '#a6463a', '#d8cfb8', '#9a6a4a', '#7d6b5a', '#8c3b2e', '#4a4d52', '#bfe3ee', '#4b5160', '#6f7f58', '#c9a66b', '#ffe6a8', '#d4622a'] as const
+export const BLOCK_COLOURS = ['#8a8f96', '#8a5a34', '#a6463a', '#d8cfb8', '#9a6a4a', '#7d6b5a', '#8c3b2e', '#4a4d52', '#bfe3ee', '#4b5160', '#6f7f58', '#c9a66b', '#ffe6a8', '#d4622a', '#5a3f2a', '#7fbf4a', '#e8a23a'] as const
 /** Edge of a built block, in world units (proto::world::BLOCK). */
 export const BLOCK = 2
 

@@ -622,13 +622,19 @@ const BLOCK_BUDGET_MS := 4.0
 ## every block in the transparent pass.
 const BLOCK_DRAW_RANGE := 520.0
 
-const BLOCK_NAMES := ["stone", "timber", "red brick", "plaster", "brick", "rough brick", "roof tiles", "iron", "glass", "slate", "mossy stone", "sandstone", "lamp", "fire"]
-const BLOCK_COLOURS := ["8a8f96", "8a5a34", "a6463a", "d8cfb8", "9a6a4a", "7d6b5a", "8c3b2e", "4a4d52", "bfe3ee", "4b5160", "6f7f58", "c9a66b", "ffe6a8", "5a4a40"]
+const BLOCK_NAMES := ["stone", "timber", "red brick", "plaster", "brick", "rough brick", "roof tiles", "iron", "glass", "slate", "mossy stone", "sandstone", "lamp", "fire", "soil", "sprout", "ripe crop"]
+const BLOCK_COLOURS := ["8a8f96", "8a5a34", "a6463a", "d8cfb8", "9a6a4a", "7d6b5a", "8c3b2e", "4a4d52", "bfe3ee", "4b5160", "6f7f58", "c9a66b", "ffe6a8", "5a4a40", "5a3f2a", "7fbf4a", "e8a23a"]
 ## The material glass is: see-through in any theme.
 const GLASS := 8
 ## Blocks that give light at night: a lamp glows all over; a fire is a hearth stone with a flame on top.
 const LAMP := 12
 const FIRE := 13
+## Farming: tilled soil is built like any block; a crop grows on it from a seed, a sprout and then ripe. Crops are
+## drawn smaller than a block and hide nothing behind them.
+const SOIL := 14
+const SPROUT := 15
+const RIPE := 16
+const CROP_SCALE := {SPROUT: Vector3(0.3, 0.45, 0.3), RIPE: Vector3(0.6, 0.8, 0.6)}
 
 ## Names of the block materials (0..11, as /play/info build.kinds says), for the HUD.
 func block_name(kind: int) -> String:
@@ -773,6 +779,7 @@ func _chunk_input(ck: int) -> Dictionary:
 static func _look_of(base, kinds) -> PackedInt32Array:
 	var solid := 0
 	var glass := 0
+	var crop := 0
 	var ks := String(kinds)
 	for i in mini(ks.length(), 16):
 		var k := block_kind(ks[i])
@@ -780,7 +787,9 @@ static func _look_of(base, kinds) -> PackedInt32Array:
 			solid |= 1 << i
 			if k == GLASS:
 				glass |= 1 << i
-	return PackedInt32Array([int(base), solid, glass])
+			if CROP_SCALE.has(k):
+				crop |= 1 << i
+	return PackedInt32Array([int(base), solid, glass, crop])
 
 ## A chunk's meshes, one per material, with where its fires and lamps are. Runs on a worker thread: it reads only
 ## `input` and the block shapes, all of which are made before any worker runs (_warm_block_shapes).
@@ -817,14 +826,21 @@ func _mesh_chunk(input: Dictionary) -> Dictionary:
 				if n != null:
 					var j: int = z + d.y - n[0]
 					if j >= 0 and j < 16 and n[1] & (1 << j) != 0:
-						hidden = n[2] & (1 << j) == 0 or kind == GLASS
+						# A crop does not fill its block, so it hides nothing.
+						hidden = n[3] & (1 << j) == 0 and (n[2] & (1 << j) == 0 or kind == GLASS)
 				if not hidden:
 					faces |= 1 << f
 			if faces == 0:
 				continue
 			if not per_kind.has(kind):
 				per_kind[kind] = SurfaceTool.new()
-			per_kind[kind].append_from(shapes[faces], 0, Transform3D(Basis(), p))
+			var at := Transform3D(Basis(), p)
+			if CROP_SCALE.has(kind):
+				# A plant standing on its soil: smaller, its foot on the layer's floor, every face showing.
+				var k: Vector3 = CROP_SCALE[kind]
+				at = Transform3D(Basis().scaled(k), p - Vector3(0, bs * (1.0 - k.y) * 0.5, 0))
+				faces = 63
+			per_kind[kind].append_from(shapes[faces], 0, at)
 	var meshes := {}
 	for kind in per_kind:
 		meshes[kind] = per_kind[kind].commit()
@@ -911,7 +927,7 @@ func block_faces(cx: int, cy: int, z: int, kind: int, first: bool) -> int:
 			continue
 		var d: Vector3i = BLOCK_FACES[f]
 		var other := block_at(cx + d.x, cy + d.z, z + d.y)
-		if other < 0 or (other == GLASS and kind != GLASS):
+		if other < 0 or (other == GLASS and kind != GLASS) or (CROP_SCALE.has(other) and other != kind):
 			faces |= 1 << f
 	return faces
 

@@ -704,6 +704,7 @@ export function cleanClass(c: ClassFile): ClassFile {
   if (!out.might) delete out.might
   if (!out.toughness) delete out.toughness
   if (!out.spells?.length) delete out.spells
+  if (!out.schools?.length) delete out.schools
   return out
 }
 
@@ -737,6 +738,7 @@ export function classProblems(g: GameFile): string[] {
     if ([...(c.desc ?? '')].length > 300) out.push(`${at}: a description of at most 300 characters`)
     if (!share(c.might) || !share(c.toughness)) out.push(`${at}: might and toughness from 0 to 2`)
     for (const n of c.spells ?? []) if (!acts.has(n)) out.push(`${at}: “${n}” is not an action`)
+    if ((c.schools ?? []).length > 8 || (c.schools ?? []).some((s) => !s.trim() || [...s].length > 32)) out.push(`${at}: at most 8 schools, each 1 to 32 characters`)
   }
   return out
 }

@@ -152,6 +152,9 @@ export interface ClassFile {
   toughness?: number
   /** The actions (by name) it may use besides the plain attack (the game's first action); absent or empty: all. */
   spells?: string[]
+  /** Schools of spells (ActionFile.school) it may use too: every action of these, and those of no school. Players
+   * can also choose a class over chat with /class Name. */
+  schools?: string[]
 }
 export type Seek = 'player' | 'bot' | 'any'
 export type Cond =
@@ -216,6 +219,62 @@ export interface ItemDef {
   equip?: EquipFile
   /** A mount (0..4): riding it adds this to the `speed` attribute. Absent or 0, not a mount. */
   mount?: number
+  /** How rare it is (absent: common). A drop of a rare one or better is announced. */
+  rarity?: Rarity
+}
+
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
+export const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary']
+/** How each rarity is coloured wherever an item is named. */
+export const RARITY_COLOURS: Record<Rarity, string> = { common: '#d8d8d8', uncommon: '#5fd35f', rare: '#4f9dff', epic: '#b46cff', legendary: '#ff9a2e' }
+
+/** A side players join with /faction; the same side never harms each other. */
+/** A calling (/class): the spell schools it may use. */
+export interface LootEntry {
+  item: string
+  weight?: number
+  min?: number
+  max?: number
+}
+export interface LootTable {
+  name: string
+  rolls?: number
+  nothing?: number
+  entries: LootEntry[]
+}
+export interface Stack {
+  item: string
+  count?: number
+}
+/** /craft name: takes `needs`, gives `count` of `makes`, optionally only near a place. */
+export interface Recipe {
+  name: string
+  needs: Stack[]
+  makes: string
+  count?: number
+  near?: string
+}
+/** A seed planted beside tilled soil grows in `grow_secs` into a crop that harvests into `yields`. */
+export interface CropDef {
+  name: string
+  seed: string
+  yields: string
+  min?: number
+  max?: number
+  grow_secs?: number
+}
+/** Land players claim with /claim: `size` blocks on a side, `per_player` each. */
+export interface PlotRules {
+  size?: number
+  per_player?: number
+}
+/** A place that gives each party its own copy of these monsters. */
+export interface DungeonDef {
+  name: string
+  place: string
+  bots: { bot: string; count?: number }[]
+  xp?: number
+  reward?: Stack
 }
 export const GEAR_SLOTS = ['weapon', 'armour', 'trinket'] as const
 export type GearSlot = (typeof GEAR_SLOTS)[number]
@@ -264,6 +323,8 @@ export interface Archetype {
   leash?: number
   /** The faction it belongs to (GameFile.factions, by name): beating one moves a player's standing with it. */
   faction?: string
+  /** A loot table (`GameFile.loot`) rolled when it falls, on top of its drops. */
+  loot?: string
 }
 /** A faction (GameFile.factions, at most 32). Beating one of its members moves a player's standing by `kill`
  * (default -10), and with every faction that `hates` it by that faction's `bounty` (default 2). Below `hostile`
@@ -274,6 +335,9 @@ export interface FactionFile {
   name: string
   /** What players see; empty, the name. */
   title?: string
+  /** Its colour (#rrggbb), for its members in clients; players join one as their side with /faction, and
+   * members never harm each other nor are taken for enemies by its fighters. */
+  color?: string
   kill?: number
   hostile?: number
   hates?: string[]
@@ -386,6 +450,12 @@ export interface GameFile {
   /** Limits on building (blocks per player and per 256-unit region; 0 for none). Not in the content hash. */
   building?: { per_player: number; per_region: number }
   factions?: FactionFile[]
+  /** Loot tables, crafting, farming, land and dungeons. All apply live. */
+  loot?: LootTable[]
+  recipes?: Recipe[]
+  crops?: CropDef[]
+  plots?: PlotRules
+  dungeons?: DungeonDef[]
 }
 
 export interface Perf {

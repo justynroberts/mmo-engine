@@ -147,6 +147,14 @@ size_t mmo_party(const MmoClient *c, uint32_t *out, size_t cap);
    the other and lets go when one falls or we get away; a player is in it until one of us falls or neither lands a
    blow for 8 s. Play the battle music while there are any. */
 size_t mmo_encounter(const MmoClient *c, uint32_t *out, size_t cap);
+/* The crowd past our snapshot (up to 480, twice the interest radius, a few times a second): side is the faction
+   (index + 1, 0 none), player 1 for a player. Returns how many there are; copies up to cap. */
+typedef struct {
+    uint32_t id;
+    float x, y;
+    uint8_t side, player;
+} MmoCrowd;
+size_t mmo_crowd(const MmoClient *c, MmoCrowd *out, size_t cap);
 void mmo_gear(const MmoClient *c, uint8_t *out3, uint8_t *riding);
 
 #ifdef __cplusplus

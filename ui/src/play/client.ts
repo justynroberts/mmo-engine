@@ -1,7 +1,7 @@
 // A game session over the web gateway: handshake, input loop, snapshots, chat, reconnect.
 import {
   ChatClient, ClientHs, ClientView, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
-  kind, reject, decodeGround, decodeInventory, type BagSlot, type ChatMsg, type Defs, type GroundItem, type Session,
+  kind, reject, decodeCrowd, decodeGround, decodeInventory, type BagSlot, type ChatMsg, type CrowdEntry, type Defs, type GroundItem, type Session,
 } from './protocol'
 import { Interpolator } from './interp'
 import { GROUND, Predictor, World } from './sim'
@@ -13,6 +13,8 @@ import { WallStore, type WallsMeta } from './walls'
 import { playUrl } from './base'
 
 export interface PlayInfo {
+  /** Sides, callings, recipes, crops and dungeons (all reached by "/" chat commands). */
+  realm?: { factions?: { name: string; title?: string; color?: string }[] }
   server_key: string
   content_hash: string
   proto: number
@@ -134,6 +136,8 @@ export class GameClient {
   readonly walls: WallStore
   private worldRev = -1
   ground: GroundItem[] = []
+  /** The crowd past our snapshot, by part (each part replaced when it comes again). */
+  crowdParts: CrowdEntry[][] = []
   /** Blocks players have built, by cy << 15 | cx; `blocksRev` counts changes. */
   readonly blocks = new Map<number, BlockCol>()
   blocksRev = 0
@@ -381,6 +385,12 @@ export class GameClient {
         } else if (inner[0] === kind.GROUND) {
           const g = decodeGround(inner)
           if (g) this.ground = g
+        } else if (inner[0] === kind.CROWD) {
+          const c = decodeCrowd(inner)
+          if (c) {
+            this.crowdParts.length = c.parts
+            this.crowdParts[c.part] = c.list
+          }
         } else if (inner[0] === kind.REDIRECT) {
           const r = decodeRedirect(inner)
           const base = r && this.info.zones?.[r.zone]

@@ -155,7 +155,7 @@ var smoke_log: Array[String] = []
 # Building: blocks on one grid in all three directions (/play/info "build"), fetched from /play/blocks. Layer z
 # fills heights z * block to (z + 1) * block everywhere, so blocks line up however the ground runs.
 const GROUND := -128      # the layer of something on the bare ground
-const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL, KEY_BRACKETLEFT, KEY_BRACKETRIGHT]
+const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_BACKSLASH]
 var build := {}           # /play/info "build"; empty if the server does not offer it
 var building := false     # build mode (B toggles, Esc leaves); otherwise action mode. Only with build offered.
 var build_kind := 0
@@ -425,6 +425,9 @@ func _start() -> void:
 	questui.set_quests(info.get("quests", []) if info.get("quests") is Array else [])
 	classes = info.get("classes", []) if info.get("classes") is Array else []
 	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
+	for it in info.get("items", []):
+		if it.has("rarity"):
+			hud.rarity[String(it["name"])] = String(it["rarity"])
 	all_spells = info.get("actions", []).slice(1)
 	bar_order = _load_bar()
 	_apply_bar()
@@ -481,6 +484,8 @@ func _start() -> void:
 			hud.say("[color=#8fd3ff][Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
 		elif channel == 7: # a passing remark: over their head, not in the chat
 			_bubble(from, text)
+		elif channel == 8: # guild chat
+			hud.say("[color=#7fe08a][Guild] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
 		else:
 			var who := "You" if from == net.get_self_id() else _name(from)
 			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))
@@ -2761,10 +2766,59 @@ func _my_entity() -> Dictionary:
 			return e
 	return {}
 
+var _crowd_mm: MultiMeshInstance3D
+var _crowd_t := 0.0
+
+## The crowd past our snapshot (a battle bigger than a snapshot holds): a figure each, in its faction's colour (a
+## plain grey for monsters), redrawn ten times a second. Anyone the snapshot carries is drawn properly instead.
+func _crowd_frame() -> void:
+	_crowd_t -= get_process_delta_time()
+	if _crowd_t > 0.0:
+		return
+	_crowd_t = 0.1
+	var raw: PackedInt32Array = net.crowd()
+	if _crowd_mm == null:
+		if raw.is_empty():
+			return
+		var body := CapsuleMesh.new()
+		body.radius = 0.35
+		body.height = 1.7
+		var mat := StandardMaterial3D.new()
+		mat.vertex_color_use_as_albedo = true
+		mat.roughness = 0.9
+		body.material = mat
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_colors = true
+		mm.mesh = body
+		_crowd_mm = MultiMeshInstance3D.new()
+		_crowd_mm.multimesh = mm
+		_crowd_mm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_crowd_mm)
+	var factions: Array = info.get("realm", {}).get("factions", [])
+	var mm := _crowd_mm.multimesh
+	mm.instance_count = raw.size() / 4
+	var shown := 0
+	for i in range(0, raw.size(), 4):
+		if ents.has(raw[i]):
+			continue
+		var x := float(raw[i + 1])
+		var y := float(raw[i + 2])
+		var side := raw[i + 3] & 0xff
+		var player := raw[i + 3] >= 256
+		var col := Color("8c8c8c") if not player else Color("e6e6e6")
+		if side > 0 and side <= factions.size():
+			col = Color(String(factions[side - 1].get("color", "#c0c0c0")))
+		mm.set_instance_transform(shown, Transform3D(Basis(), Vector3(x, theme.height(x, y) + 0.85, y)))
+		mm.set_instance_color(shown, col)
+		shown += 1
+	mm.visible_instance_count = shown
+
 ## Each frame: draw the spells used near us (the server tells everyone near, us included), show who is held, and
 ## keep the spell bar's cooldowns and costs current.
 func _spells_frame(list: Array, self_id: int) -> void:
 	_watch_progress()
+	_crowd_frame()
 	_quests_frame(list, self_id)
 	for k in net.take_casts():
 		var a: Dictionary = actions_by_id.get(int(k["action"]), {})

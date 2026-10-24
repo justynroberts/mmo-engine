@@ -4,6 +4,9 @@
 //! `encounter.rs`), its traders will not deal with them and its quest givers will not speak to them. Bad standing
 //! is forgiven slowly, one point a minute back towards 0.
 //!
+//! Players may also join a faction as their side (`/faction`, `realm.rs`): members never harm each other and its
+//! fighters never take a member for an enemy.
+//!
 //! Standing is kept by faction name, so editing the game file never scrambles it, and saved with the character.
 
 use crate::sim::{Sim, DRIVEN};
@@ -58,7 +61,8 @@ impl Sim {
             return false;
         }
         let Some(f) = self.archs.get(self.ents.arch[b] as usize).and_then(|a| a.faction) else { return false };
-        self.standing(p, f) < self.factions[f].hostile
+        // A player who joined the faction (`/faction`) is one of its own.
+        self.rs.faction[p] as usize != f + 1 && self.standing(p, f) < self.factions[f].hostile
     }
 
     /// Why a bot will not deal with a player (trade, quests), if it will not.

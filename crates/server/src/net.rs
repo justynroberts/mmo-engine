@@ -71,6 +71,8 @@ pub struct Client {
     /// Level and experience: the version last sent, and how many more times to send it (as with the bag).
     pub prog_sent: u32,
     pub prog_burst: u8,
+    /// Whether the last crowd round sent anyone (so an emptied crowd is sent once, as nothing).
+    pub crowd_had: bool,
     /// Quests: as with progress.
     pub quest_sent: u32,
     pub quest_burst: u8,
@@ -426,6 +428,7 @@ fn on_connect(
         inv_sent: u32::MAX,
         inv_burst: 0,
         prog_sent: u32::MAX,
+                crowd_had: false,
         prog_burst: 0,
         quest_sent: u32::MAX,
         quest_burst: 0,
@@ -958,9 +961,15 @@ pub fn reap(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>, timeout
     }
 }
 
+/// How far the crowd reaches, in interest radii (grid cells are at least one), and how often a client hears it.
+pub const CROWD_REACH: usize = 2;
+pub const CROWD_HZ: u32 = 4;
+
 #[derive(Default)]
 pub struct SnapScratch {
     cand: Vec<(f32, u32)>,
+    crowd: Vec<(f32, u32)>,
+    crowd_out: Vec<wire::CrowdEntry>,
     ground: Vec<wire::GroundEntry>,
     entries: Vec<Entry>,
     buf: Vec<u8>,
@@ -970,6 +979,9 @@ pub struct SnapScratch {
 #[derive(Default, Clone, Copy)]
 pub struct SnapStats {
     pub snapshots: u64,
+    /// CROWD packets sent, and the entities they carried.
+    pub crowd_packets: u64,
+    pub crowd_entries: u64,
     pub chat_batches: u64,
     pub full: u64,
     pub entries_visible: u64,
@@ -1035,8 +1047,10 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
         let cand = &mut sc.cand;
         let ents = &sim.ents;
         let me = c.slot as u32;
+        // Another phase (a dungeon's copy for another party) is not sent; players are, whatever their phase.
+        let (phase, my_phase) = (&sim.rs.phase, sim.rs.phase[c.slot]);
         sim.grid.for_neighbours(px, py, |s| {
-            if s != me && !ents.hidden[s as usize] {
+            if s != me && !ents.hidden[s as usize] && (phase[s as usize] == my_phase || ents.owner[s as usize] < crate::sim::DRIVEN) {
                 let dx = ents.x[s as usize] - px;
                 let dy = ents.y[s as usize] - py;
                 let d2 = dx * dx + dy * dy;
@@ -1075,6 +1089,56 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
             st.full += 1;
         }
         st.entries_changed += u16::from_le_bytes([sc.buf[13], sc.buf[14]]) as u64;
+
+        // The crowd past the snapshot: everything else out to CROWD_REACH interest radii, nearest first, a few
+        // times a second (staggered by slot, so a round's work is spread over the ticks).
+        if (tick.wrapping_add(c.slot as u32)) % (sim.tick_hz / CROWD_HZ).max(1) == 0 {
+            sc.crowd.clear();
+            let reach = sim.defs.interest_radius * CROWD_REACH as f32;
+            let (entries, crowd) = (&sc.entries, &mut sc.crowd);
+            sim.grid.for_within(px, py, CROWD_REACH, |s| {
+                let su = s as usize;
+                if su == c.slot || ents.hidden[su] || !(phase[su] == my_phase || ents.owner[su] < crate::sim::DRIVEN) {
+                    return;
+                }
+                let (dx, dy) = (ents.x[su] - px, ents.y[su] - py);
+                let d2 = dx * dx + dy * dy;
+                if d2 <= reach * reach && entries.binary_search_by_key(&ents.id_of(su), |e| e.id).is_err() {
+                    crowd.push((d2, s));
+                }
+            });
+            let cap = wire::CROWD_PARTS * wire::CROWD_PER_PACKET;
+            if sc.crowd.len() > cap {
+                sc.crowd.select_nth_unstable_by(cap, |a, b| a.0.total_cmp(&b.0));
+                sc.crowd.truncate(cap);
+            }
+            if !sc.crowd.is_empty() || c.crowd_had {
+                c.crowd_had = !sc.crowd.is_empty();
+                sc.crowd_out.clear();
+                for &(_, s) in &sc.crowd {
+                    let s = s as usize;
+                    // A player's side is the faction they joined; a bot's, its type's faction.
+                    let side = if ents.owner[s] < crate::sim::DRIVEN {
+                        sim.rs.faction[s] | wire::CROWD_PLAYER
+                    } else {
+                        sim.archs.get(ents.arch[s] as usize).and_then(|a| a.faction).map_or(0, |f| (f as u8 + 1).min(0x7F))
+                    };
+                    let q = |v: f32| v.clamp(0.0, 65535.0) as u16;
+                    sc.crowd_out.push(wire::CrowdEntry { id: ents.id_of(s), x: q(ents.x[s]), y: q(ents.y[s]), side });
+                }
+                let parts = sc.crowd_out.len().div_ceil(wire::CROWD_PER_PACKET).max(1);
+                for part in 0..parts {
+                    let from = part * wire::CROWD_PER_PACKET;
+                    let to = (from + wire::CROWD_PER_PACKET).min(sc.crowd_out.len());
+                    wire::encode_crowd(&mut sc.buf, part as u8, parts as u8, &sc.crowd_out[from..to]);
+                    if c.session.seal(&sc.buf, &mut sc.out) {
+                        tx.queue(c.addr, &sc.out);
+                    }
+                    st.crowd_packets += 1;
+                }
+                st.crowd_entries += sc.crowd_out.len() as u64;
+            }
+        }
         if c.chat.build(&mut sc.buf) && c.session.seal(&sc.buf, &mut sc.out) {
             tx.queue(c.addr, &sc.out);
             st.chat_batches += 1;
@@ -1093,8 +1157,10 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 tx.queue(c.addr, &sc.out);
             }
         }
-        // Your level and experience: when they change, and every few seconds regardless (only with levels on).
-        if let Some(l) = &sim.levels {
+        // Your level and experience: when they change, and every few seconds regardless (only with levels on). Not
+        // before the session is proven: until then the character is the fresh one the save has yet to replace, and
+        // a client told "level 1" and then the saved level celebrates a level up at every sign-in.
+        if let Some(l) = sim.levels.as_ref().filter(|_| c.proven) {
             let ver = sim.progress_ver[c.slot];
             if c.prog_sent != ver {
                 c.prog_sent = ver;
@@ -1110,8 +1176,9 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 }
             }
         }
-        // Your quests and any quest put to you: when they change (a few times over, as UDP may drop one).
-        if !sim.quests.is_empty() {
+        // Your quests and any quest put to you: when they change (a few times over, as UDP may drop one). Proven
+        // sessions only, like progress.
+        if !sim.quests.is_empty() && c.proven {
             let ver = sim.quest_ver[c.slot];
             if c.quest_sent != ver {
                 c.quest_sent = ver;
@@ -1292,6 +1359,7 @@ mod tests {
                 inv_sent: u32::MAX,
                 inv_burst: 0,
                 prog_sent: u32::MAX,
+                crowd_had: false,
                 prog_burst: 0,
                 quest_sent: u32::MAX,
                 quest_burst: 0,
@@ -1337,11 +1405,77 @@ mod tests {
             while let Ok(n) = sink.recv(&mut buf) {
                 let sid = data_sid(&buf[..n]).unwrap() as usize;
                 let inner = peers[sid].open(&buf[..n], &mut scratch).expect("authentic");
-                assert!([kind::SNAPSHOT, kind::INVENTORY, kind::GROUND].contains(&inner[0]), "unexpected message {:#x}", inner[0]);
+                assert!([kind::SNAPSHOT, kind::INVENTORY, kind::GROUND, kind::CROWD].contains(&inner[0]), "unexpected message {:#x}", inner[0]);
                 ok += (inner[0] == kind::SNAPSHOT) as usize;
             }
             assert!(ok >= 150, "only {ok} of 200 packets arrived ({lanes_n} lanes)");
         }
+    }
+
+    #[test]
+    fn a_crowd_carries_who_the_snapshot_cannot() {
+        // 300 players in a small arena: a snapshot holds max_visible of them, the crowd brings the rest.
+        let (mut sim, mut clients, mut peers, sink, out) = fixture(300, 256);
+        sink.set_nonblocking(true).unwrap();
+        let mut lanes = vec![Worker::new(out.as_raw_fd())];
+        let mut crowd: HashMap<usize, Vec<u32>> = HashMap::new();
+        let (mut buf, mut scratch) = ([0u8; 2048], Vec::new());
+        // One round: every client hears its crowd once in any CROWD_HZ-th of a second.
+        for _ in 0..(sim.tick_hz / CROWD_HZ) {
+            sim.tick += 1;
+            build_snapshots(&sim, &mut clients, &mut lanes, None);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            while let Ok(n) = sink.recv(&mut buf) {
+                let sid = data_sid(&buf[..n]).unwrap() as usize;
+                let inner = peers[sid].open(&buf[..n], &mut scratch).expect("authentic");
+                if inner[0] == kind::CROWD {
+                    let (part, parts, list) = wire::decode_crowd(inner).expect("a valid crowd");
+                    assert!(part < parts && list.len() <= wire::CROWD_PER_PACKET);
+                    crowd.entry(sid).or_default().extend(list.iter().map(|e| e.id));
+                    assert!(list.iter().all(|e| e.side & wire::CROWD_PLAYER != 0), "they are all players");
+                }
+            }
+        }
+        let st = lanes[0].st;
+        assert!(crowd.len() >= 250, "most clients heard a crowd ({} did; {} packets)", crowd.len(), st.crowd_packets);
+        for (sid, ids) in &crowd {
+            let mine = sim.ents.id_of(clients.slab[*sid].as_ref().unwrap().slot);
+            let mut u = ids.clone();
+            u.sort_unstable();
+            u.dedup();
+            assert_eq!(u.len(), ids.len(), "nobody twice");
+            assert!(!ids.contains(&mine), "never yourself");
+            assert!(ids.len() + sim.defs.max_visible as usize >= 200, "the crowd fills in past the snapshot: {}", ids.len());
+        }
+    }
+
+    #[test]
+    fn progress_waits_for_the_session_to_be_proven() {
+        // Before a session proves itself its character is the fresh one the save has not yet replaced; telling the
+        // client "level 1" then would make it celebrate the saved level as a level up at every sign-in.
+        let (mut sim, mut clients, mut peers, sink, out) = fixture(4, 256);
+        sink.set_nonblocking(true).unwrap();
+        sim.levels = Some(proto::game::LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
+        let mut lanes = vec![Worker::new(out.as_raw_fd())];
+        let mut progress = |sim: &Sim, clients: &mut Clients| {
+            build_snapshots(sim, clients, &mut lanes, None);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let (mut buf, mut scratch, mut n_progress) = ([0u8; 2048], Vec::new(), 0);
+            while let Ok(n) = sink.recv(&mut buf) {
+                let sid = data_sid(&buf[..n]).unwrap() as usize;
+                let inner = peers[sid].open(&buf[..n], &mut scratch).expect("authentic");
+                n_progress += (inner[0] == kind::PROGRESS) as usize;
+            }
+            n_progress
+        };
+        for c in clients.slab.iter_mut().flatten() {
+            c.proven = false;
+        }
+        assert_eq!(progress(&sim, &mut clients), 0, "nothing before the save is in");
+        for c in clients.slab.iter_mut().flatten() {
+            c.proven = true;
+        }
+        assert_eq!(progress(&sim, &mut clients), 4, "each proven client hears its progress");
     }
 
     #[test]

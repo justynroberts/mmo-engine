@@ -211,8 +211,9 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             let line = if sim.party[slot] == 0 { "You are not in a party. /invite Name".to_string() } else { format!("Your party: {}", mates.join(", ")) };
             say(clients, slot, &line);
         }
+        _ if crate::realm::command(sim, clients, slot, text) => {}
         _ => {
-            say(clients, slot, "Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name");
+            say(clients, slot, &format!("Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name, {}", crate::realm::HELP));
             return false;
         }
     }

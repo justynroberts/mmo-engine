@@ -40,6 +40,8 @@ pub mod channel {
     /// Server to client: a bot passing the time of day (`Act::Chat`), heard close by. Clients show it over the
     /// speaker's head rather than in the chat; older ones show it as a line said nearby.
     pub const NEARBY: u8 = 7;
+    /// Server to client: said to your guild (`/g`).
+    pub const GUILD: u8 = 8;
 }
 
 pub mod kind {

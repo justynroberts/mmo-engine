@@ -323,7 +323,7 @@ func ground_material_at(cx: int, cy: int) -> Material:
 
 ## Building blocks from the Medieval Village textures, tiled so each block shows one texture repeat: the eight
 ## textures as they are, then glass, and the dressed stone tinted three ways (slate, moss, sandstone).
-const BLOCK_TEXTURES := ["RockTrim", "WoodTrim", "RedBrick", "Plaster", "Brick", "UnevenBrick", "RoundTiles", "MetalOrnaments", "", "RockTrim", "RockTrim", "RockTrim", "", "RockTrim"]
+const BLOCK_TEXTURES := ["RockTrim", "WoodTrim", "RedBrick", "Plaster", "Brick", "UnevenBrick", "RoundTiles", "MetalOrnaments", "", "RockTrim", "RockTrim", "RockTrim", "", "RockTrim", "", "", ""]
 const BLOCK_TINTS := {9: Color(0.55, 0.6, 0.72), 10: Color(0.7, 0.85, 0.55), 11: Color(1.15, 0.95, 0.68), 13: Color(0.45, 0.38, 0.34)}
 
 func block_material(kind: int) -> Material:

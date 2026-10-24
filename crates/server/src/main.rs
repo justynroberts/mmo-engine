@@ -14,6 +14,7 @@ mod life;
 mod io;
 mod nav;
 mod quests;
+mod realm;
 mod net;
 mod sim;
 mod social;
@@ -360,6 +361,16 @@ fn main() {
         }
         None => sim.populate_bots(),
     }
+    // Guilds, land and crops in the ground (after the blocks, which a crop must still be in).
+    if let Some(text) = store.as_ref().filter(|_| !cfg.fresh_world).and_then(|st| st.load_doc("realm")) {
+        match serde_json::from_str::<realm::Saved>(&text) {
+            Ok(saved) => {
+                eprintln!("restored {} guild(s), {} plot(s), {} crop(s)", saved.guilds.len(), saved.plots.len(), saved.crops.len());
+                sim.realm_restore(saved);
+            }
+            Err(e) => eprintln!("realm: saved state unreadable ({e}); starting without guilds, plots or crops"),
+        }
+    }
     for _ in 0..cfg.npcs {
         sim.spawn(NONE);
     }
@@ -601,6 +612,12 @@ fn main() {
             sim.blocks.unsaved = false;
             block_writer.save(sim.blocks.take_dirty());
         }
+        if sim.rs.dirty && sim.tick % (cfg.hz * 5).max(1) == 0 {
+            sim.rs.dirty = false;
+            if let (Some(st), Ok(text)) = (&hs.store, serde_json::to_string(&sim.realm_saved())) {
+                st.save_doc("realm", text);
+            }
+        }
         let t2 = Instant::now();
 
         // 3. Snapshots: built, encrypted and sent by the lanes (in parallel when workers > 1).
@@ -686,10 +703,13 @@ fn main() {
         }
     }
 
-    // Everyone online is saved before we exit, and so are the blocks.
+    // Everyone online is saved before we exit, and so are the blocks, guilds, land and crops.
     net::save_all(&sim, &clients, hs.store.as_deref());
     block_writer.save(sim.blocks.take_dirty());
     block_writer.finish();
+    if let (Some(st), Ok(text)) = (&hs.store, serde_json::to_string(&sim.realm_saved())) {
+        st.save_doc("realm", text);
+    }
     if let Some(st) = &hs.store {
         st.flush();
     }

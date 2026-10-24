@@ -7,7 +7,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-export const PROTO_VERSION = 10
+export const PROTO_VERSION = 11
 export const HELLO_LEN = 96
 export const CHALLENGE_LEN = 53
 export const CONNECT_LEN = 55 + 8 + 32 + 16
@@ -31,6 +31,8 @@ export const kind = {
   GROUND: 0x89,
   /** Spells and blows used nearby. Not decoded yet: the client ignores inner kinds it does not handle. */
   CASTS: 0x8a,
+  /** The crowd past the snapshot (proto::wire::kind::CROWD). */
+  CROWD: 0x90,
 } as const
 
 export const reject = { BAD_VERSION: 1, CONTENT_MISMATCH: 2, SERVER_FULL: 3 } as const
@@ -307,6 +309,29 @@ export function decodeGround(b: Uint8Array): GroundItem[] | null {
     out.push({ id: dv.getUint32(o, true), x: dpos(dv.getUint32(o + 4, true)), y: dpos(dv.getUint32(o + 8, true)), item: b[o + 12]!, count: b[o + 13]! })
   }
   return out
+}
+
+/** One distant entity in a CROWD packet: whole world units, its faction (index + 1, 0 for none), and whether it is
+ * a player. */
+export interface CrowdEntry {
+  id: number
+  x: number
+  y: number
+  side: number
+  player: boolean
+}
+
+/** A CROWD packet: which part of how many, and its entities (proto::wire::decode_crowd). */
+export function decodeCrowd(b: Uint8Array): { part: number; parts: number; list: CrowdEntry[] } | null {
+  if (b.length < 4 || b[0] !== kind.CROWD || b.length !== 4 + b[3]! * 9 || b[1]! >= b[2]!) return null
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  const list: CrowdEntry[] = []
+  for (let i = 0; i < b[3]!; i++) {
+    const o = 4 + i * 9
+    const side = b[o + 8]!
+    list.push({ id: dv.getUint32(o, true), x: dv.getUint16(o + 4, true) + 0.5, y: dv.getUint16(o + 6, true) + 0.5, side: side & 0x7f, player: (side & 0x80) !== 0 })
+  }
+  return { part: b[1]!, parts: b[2]!, list }
 }
 
 export interface Input {

@@ -73,7 +73,7 @@ export function ChatPanel({ selected, active }: { selected: number | null; activ
                 <span className="text-fg-2 w-28 shrink-0 truncate" title={`#${from & 0xffffff}`}>
                   {name || `#${from & 0xffffff}`}
                 </span>
-                <span className="lbl w-12 shrink-0 leading-6">{ch === 3 ? 'banner' : ch === 1 ? 'shout' : ch === 7 ? 'nearby' : 'say'}</span>
+                <span className="lbl w-12 shrink-0 leading-6">{ch === 3 ? 'banner' : ch === 1 ? 'shout' : ch === 7 ? 'nearby' : ch === 8 ? 'guild' : 'say'}</span>
                 <span className="min-w-0 break-words">{t}</span>
               </li>
             ))}
