@@ -780,7 +780,8 @@ func _chunk_rounded(ck: int) -> bool:
 	return _chunk_dist2(ck) < near * near
 
 ## What a chunk's meshes are made from, copied so the worker never reads what the main thread is changing: its
-## columns, every column within a cell of it (whose blocks hide faces), the block size and how to draw it.
+## columns, every column within a cell of it, diagonals too (whose blocks hide faces or need a cap), the block size
+## and how to draw it.
 func _chunk_input(ck: int) -> Dictionary:
 	var cols: Array = []
 	var look := {}
@@ -788,7 +789,7 @@ func _chunk_input(ck: int) -> Dictionary:
 		var c: Dictionary = _blocks[k]
 		cols.append([k & 0x7fff, k >> 15, int(c["b"]), String(c["k"]), block_ground_top(k & 0x7fff, k >> 15)])
 		look[k] = _look_of(c["b"], c["k"])
-		for d in [1, -1, 1 << 15, -(1 << 15)]:
+		for d in [1, -1, 1 << 15, -(1 << 15), (1 << 15) + 1, (1 << 15) - 1, -(1 << 15) + 1, -(1 << 15) - 1]:
 			var n = _blocks.get(k + d)
 			if n != null and not look.has(k + d):
 				look[k + d] = _look_of(n["b"], n["k"])
@@ -817,6 +818,7 @@ func _mesh_chunk(input: Dictionary) -> Dictionary:
 	var look: Dictionary = input["look"]
 	var shapes: Dictionary = _block_shapes if input["round"] else _block_flat
 	var per_kind := {}
+	var caps := {}        # kind -> SurfaceTool of _edge_caps (not indexed, so apart from the shapes)
 	var fires := []
 	var glow := []
 	for c in input["cols"]:
@@ -880,9 +882,13 @@ func _mesh_chunk(input: Dictionary) -> Dictionary:
 				at = Transform3D(Basis().scaled(k), p - Vector3(0, bs * (1.0 - k.y) * 0.5, 0))
 				faces = 63
 			per_kind[kind].append_from(shapes[faces], 0, at)
+			if input["round"] and not CROP_SCALE.has(kind) and kind != GLASS:
+				_edge_caps(caps, kind, look, cx, cy, z, faces, p, bs)
 	var meshes := {}
 	for kind in per_kind:
 		meshes[kind] = per_kind[kind].commit()
+		if caps.has(kind):
+			caps[kind].commit(meshes[kind]) # a second surface, same material (material_override)
 	return {"meshes": meshes, "fires": fires, "glow": glow, "round": input["round"]}
 
 ## A made chunk into the scene, in place of its old drawing.
@@ -928,6 +934,69 @@ func build_blocks(cols: Array) -> Node3D:
 		if not look.has(k):
 			look[k] = _look_of(_blocks[k]["b"], _blocks[k]["k"])
 	return build_blocks_from(_mesh_chunk({"cols": cols, "look": look, "bs": block_size(), "round": true}))
+
+## A solid block (not a crop) at column (cx, cy), layer z, in a chunk's `look`.
+static func _solid_in(look: Dictionary, cx: int, cy: int, z: int) -> bool:
+	var n = look.get(cy << 15 | cx)
+	if n == null:
+		return false
+	var j: int = z - n[0]
+	return j >= 0 and j < 16 and n[1] & (1 << j) != 0 and n[3] & (1 << j) == 0
+
+## Where a rounded edge of this block runs into a neighbour whose same edge is square (it has a block against one of
+## the two faces: a merlon on a wall, the step of a stair), the curve leaves a quarter-round hole in the corner. Fill
+## it with the neighbour's face there: the square corner less the quarter circle, in the plane between the two.
+## Vectors here are (cell x, layer, cell y), as BLOCK_FACES.
+func _edge_caps(caps: Dictionary, kind: int, look: Dictionary, cx: int, cy: int, z: int, faces: int, p: Vector3, bs: float) -> void:
+	var h := bs * 0.5
+	var r := bs * BLOCK_ROUND
+	for f in 6:
+		for g in range(f + 1, 6):
+			if f / 2 == g / 2 or faces & (1 << f) == 0 or faces & (1 << g) == 0:
+				continue
+			var a: int = 3 - f / 2 - g / 2 # the axis the edge runs along
+			var df: Vector3i = BLOCK_FACES[f]
+			var dg: Vector3i = BLOCK_FACES[g]
+			for sgn in [-1, 1]:
+				var n := Vector3i(cx, z, cy)
+				n[a] += sgn
+				if not _solid_in(look, n.x, n.z, n.y):
+					continue
+				var nf := n + df
+				var ng := n + dg
+				if not (_solid_in(look, nf.x, nf.z, nf.y) or _solid_in(look, ng.x, ng.z, ng.y)):
+					continue
+				var fa: int = f / 2
+				var ga: int = g / 2
+				var sf := 1.0 if f % 2 == 0 else -1.0
+				var sg := 1.0 if g % 2 == 0 else -1.0
+				var corner := Vector3.ZERO
+				corner[a] = sgn * h
+				corner[fa] = sf * h
+				corner[ga] = sg * h
+				var arc := []
+				for j in ROUND_STEPS * 2 + 1:
+					var t := j * PI / 2.0 / (ROUND_STEPS * 2)
+					var q := Vector3.ZERO
+					q[a] = sgn * h
+					q[fa] = sf * (h - r + r * cos(t))
+					q[ga] = sg * (h - r + r * sin(t))
+					arc.append(q)
+				# Both windings: one side faces this block, the other is inside the neighbour and never seen.
+				var nrm := Vector3.ZERO
+				nrm[a] = -sgn
+				if not caps.has(kind):
+					caps[kind] = SurfaceTool.new()
+					caps[kind].begin(Mesh.PRIMITIVE_TRIANGLES)
+				var st: SurfaceTool = caps[kind]
+				for j in arc.size() - 1:
+					for side in [1.0, -1.0]:
+						st.set_normal(nrm * side)
+						st.add_vertex(p + corner)
+						st.set_normal(nrm * side)
+						st.add_vertex(p + (arc[j] if side > 0.0 else arc[j + 1]))
+						st.set_normal(nrm * side)
+						st.add_vertex(p + (arc[j + 1] if side > 0.0 else arc[j]))
 
 ## Every block shape, both ways, made once on the main thread before any worker needs one.
 func _warm_block_shapes() -> void:
