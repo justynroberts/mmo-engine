@@ -84,6 +84,10 @@ pub struct Client {
     /// Gear and riding: as with progress.
     pub gear_sent: u32,
     pub gear_burst: u8,
+    /// The bots locked in a fight with you: as with the party (nothing is sent to someone never in a fight).
+    pub fight_sent: u32,
+    pub fight_burst: u8,
+    pub fight_had: bool,
     /// How many ground items the last list held, so an empty one is sent once to clear the client's.
     pub ground_n: u16,
     pub baseline_tick: u32,
@@ -431,6 +435,9 @@ fn on_connect(
         saved_vers: (0, 0, 0),
         gear_sent: u32::MAX,
         gear_burst: 0,
+        fight_sent: u32::MAX,
+        fight_burst: 0,
+        fight_had: false,
         ground_n: 0,
         baseline_tick: 0,
         baseline: Vec::new(),
@@ -1133,6 +1140,26 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
                 }
             }
         }
+        // Who is in a fight with you (bots and players), when that changes and now and then while anyone is.
+        {
+            let ver = sim.pursuer_ver[c.slot];
+            if c.fight_sent != ver {
+                c.fight_sent = ver;
+                c.fight_burst = 3;
+            }
+            let any = !sim.pursuers[c.slot].is_empty() || !sim.rivals[c.slot].is_empty();
+            if !any && !c.fight_had {
+                c.fight_burst = 0;
+            }
+            if c.fight_burst > 0 || (any && (tick.wrapping_add(c.slot as u32)) % 50 == 0) {
+                c.fight_burst = c.fight_burst.saturating_sub(1);
+                c.fight_had = any || c.fight_burst > 0;
+                wire::encode_encounter(&mut sc.buf, &sim.fighting(c.slot));
+                if c.session.seal(&sc.buf, &mut sc.out) {
+                    tx.queue(c.addr, &sc.out);
+                }
+            }
+        }
         // Your party (who is in it), when it changes and now and then while you are in one.
         {
             let ver = sim.party_ver[c.slot];
@@ -1274,6 +1301,9 @@ mod tests {
                 saved_vers: (0, 0, 0),
                 gear_sent: u32::MAX,
                 gear_burst: 0,
+                fight_sent: u32::MAX,
+                fight_burst: 0,
+                fight_had: false,
                 ground_n: 0,
                 baseline_tick: 0,
                 baseline: Vec::new(),

@@ -17,6 +17,8 @@ const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city"]
 const AMB_DB := {"sea": -4.0, "shore": -3.0, "river": -6.0, "forest": -7.0, "night": -8.0, "wind": -16.0, "rain": -5.0,
 	"fire": -6.0, "town": -8.0, "market": -6.0, "crypt": -5.0, "holy": -7.0, "battle": -8.0}
 const MUSIC_DB := -13.0
+## Moods that play louder (or softer) than MUSIC_DB, in dB: a fight should be heard over the din.
+const MUSIC_MOOD_DB := {"battle": 6.0}
 const SFX_DB := -4.0
 const FADE := 0.6          # ambience: share of the way to what is wanted, per second
 const MUSIC_FADE := 5.0    # seconds to cross over when the mood changes
@@ -60,6 +62,7 @@ var _vol := {}             # name -> 0..1 now
 var _music: Array[AudioStreamPlayer] = []  # three, so a quick change back and forth never cuts a piece off
 var _music_gain: Array[float] = []        # 0..1 per player, heard through an equal-power curve
 var _music_rate: Array[float] = []        # gain per second (+ coming up, - going down)
+var _music_mood: Array[String] = []       # the mood each player is playing (for MUSIC_MOOD_DB)
 var _music_cur := 0        # the player holding the mood's current piece
 var _music_now := ""
 var _music_wait := -1.0    # seconds of silence left before the next piece (-1: none pending)
@@ -92,6 +95,7 @@ func _ready() -> void:
 		_music.append(m)
 		_music_gain.append(0.0)
 		_music_rate.append(0.0)
+		_music_mood.append("")
 	for i in VOICES:
 		var v := AudioStreamPlayer.new()
 		add_child(v)
@@ -255,7 +259,7 @@ func _music_step(delta: float, piece: String) -> void:
 		_music_gain[i] = clampf(_music_gain[i] + _music_rate[i] * delta, 0.0, 1.0)
 		if _music_rate[i] < 0.0 and _music_gain[i] <= 0.0 and m.playing:
 			m.stop()
-		m.volume_db = MUSIC_DB + linear_to_db(maxf(sin(_music_gain[i] * PI * 0.5), 0.0001)) + float(gain["music"])
+		m.volume_db = MUSIC_DB + float(MUSIC_MOOD_DB.get(_music_mood[i], 0.0)) + linear_to_db(maxf(sin(_music_gain[i] * PI * 0.5), 0.0001)) + float(gain["music"])
 
 func _fade_out(i: int, secs: float) -> void:
 	if _music[i].playing:
@@ -278,6 +282,7 @@ func _music_start(secs: float) -> void:
 	m.play()
 	_music_gain[i] = 0.0
 	_music_rate[i] = 1.0 / secs
+	_music_mood[i] = _music_now
 	_music_cur = i
 	_music_last[_music_now] = path
 

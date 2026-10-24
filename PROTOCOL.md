@@ -1,4 +1,4 @@
-# Wire protocol, version 9
+# Wire protocol, version 10
 
 Everything is UDP, little-endian, byte aligned. The reference implementations are
 `crates/proto` (Rust) and `ui/src/play/protocol.ts` (TypeScript, cross-checked against Rust).
@@ -66,9 +66,10 @@ Inner messages:
 | `0x88` INVENTORY | S->C | `n u8 | n x (item+1 u8, count u8)`: your bag, sent when it changes and every second (item+1 of 0 is an empty slot) |
 | `0x89` GROUND | S->C | `n u8 | n x (id u32, x u32, y u32, item u8, count u8)`: up to 40 items lying nearest you, every half second; positions quantised like entities |
 | `0x8B` PROGRESS | S->C | `level u8 | xp u32 | at u32 | next u32`: your level and experience (`at` what this level needed, `next` the next one's, 0 at the cap), sent when they change and every few seconds |
-| `0x8C` QUESTS | S->C | `offer u8 | n u8 | n x (quest u8, step u8, count u16, state u8)`: your quests by index in `/play/info` quests (state 0 in hand, 1 ready to hand in, 2 done) and a quest a giver has just put to you (255 for none), sent when they change |
+| `0x8C` QUESTS | S->C | `offer u16 | n u8 | n x (quest u16, step u8, count u16, state u8) | m u8 | m bytes`: your quests by index in `/play/info` quests and a quest a giver has just put to you (0xFFFF for none), sent when they change. The n are the quests in hand (state 0) or ready to hand in (1), at most 25; the m bytes are a bitmap of the quests done (state 2): bit `k % 8` of byte `k / 8` for quest k. A game has at most 512 quests, so a player who has done them all still fits one packet |
 | `0x8D` PARTY | S->C | `n u8 | n x id u32`: your party, you among them (n 0: in none), sent when it changes |
 | `0x8E` GEAR | S->C | `weapon u8 | armour u8 | trinket u8 | riding u8`: what you wear (item index + 1, 0 for nothing) and whether you ride, sent when it changes (only in games with gear or mounts) |
+| `0x8F` ENCOUNTER | S->C | `n u8 | n x id u32`: who is in a fight with you (n 0 when nobody is), the bots locked on you first, then players. A bot locks on when either of you hurts the other and lets go when one of you falls, you get further than its leash, reach a safe place, or no blow lands for 10 s. A player (pvp) is in it from a blow either way until one of you falls or neither lands a blow on the other for 8 s. Sent when it changes and every 50 ticks while there are any; clients play battle music while it is not empty |
 | `0x8A` CASTS | S->C | `n u8 | n x (seq u32, caster u32, target u32, action u8)`: actions (blows and spells) used by anyone within your interest radius in the last 3 ticks, so each is sent about three times; `seq` counts up per use, so a repeat is known by it. `target` is 0 when it landed on the caster (aimed at self, or a friendly spell with no friend picked). Clients that do not know this kind ignore it; it carries nothing the simulation needs |
 
 Send INPUT at the server's tick rate (20 Hz). `dir_x`/`dir_y` are -127..127 intent, never speed. `seq` increases;
@@ -133,7 +134,7 @@ The web gateway relays one WebSocket binary message as one datagram, both ways, 
 Item kinds come from the game file (`items`), by index in file order, and are not part of the content hash; the play page
 fetches them from `/play/info`. There is no new client message: item actions ride the INPUT action byte. Game actions use ids
 below 200. `200 + n` uses bag slot n (0 to 7), `216 + n` drops slot n onto the ground, and `250` picks up the nearest item
-within 3 units. All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
+within 3 units (or, with `target` set to a pile's GROUND id, that pile if it is within 3 units). All of it is checked server side, with a short shared cooldown. Version 6 added INVENTORY and GROUND and
 nothing else; a client that ignores them still plays.
 
 ## Jump
@@ -254,6 +255,6 @@ u8 format (2) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n x (u
 
 Each tile ends with its road cells: the tile is 64 x 64 cells of 4 units, and each road cell is `row * 64 + column`. Movement is `road_speed` times faster (from `/play/info`, 1.5 unless the game file says otherwise) for a tick that starts on a road cell: `proto::world::integrate` checks `World::on_road(x, y)`, the cell `(floor(x / 4), floor(y / 4))`, so prediction must hold the same cells. A box touching several tiles appears in each with the same id, and its corners are the server's f32s bit for bit (collide with exactly those). Class 0 is a wall or building; class 1 is solid scenery the world file draws (a trunk, a rock), which a client should not draw as a block. A reply names its version, so it is cached for good (`Cache-Control: immutable`); asked for another version the server answers 409, which means the walls changed: read `/play/info` again and start over. More than 64 tiles is a 400. Keep the 5x5 tiles around the player and let go of tiles more than three away. No tile holds more than 4,096 boxes. `proto::tiles` implements both ends (`TileSet`, `TileStream`) and the C SDK exposes it as `mmo_tiles_wanted` / `mmo_put_tiles` / `mmo_set_walls`.
 
-Chat channels 4 (a whisper to you, `from` the speaker), 5 (your own whisper echoed, `from` whom it went to) and 6 (party) are server to client only. Input actions 232 talk, 233 accept a quest (`arg`), 234 give one up, 235 buy (`target` the merchant, `arg` the shop line), 236 sell (`arg` the bag slot), 237 take off gear (`arg` the slot), 238 choose a class (`arg` its index), 239 rise again after falling.
+Chat channels 4 (a whisper to you, `from` the speaker), 5 (your own whisper echoed, `from` whom it went to) and 6 (party) are server to client only. Input actions 232 talk, 233 accept a quest (`arg`), 234 give one up (`arg` 0xFFFF turns down the one offered), 235 buy (`target` the merchant, `arg` the shop line), 236 sell (`arg` the bag slot), 237 take off gear (`arg` the slot), 238 choose a class (`arg` its index), 239 rise again after falling.
 
 Chat channel 7 is a bot's passing remark, heard within 24 units (sender the bot): show it over the speaker's head rather than in the chat log; a client that does not know it can show it as a line said nearby. A player whose health runs out is not respawned: they stay where they fell with health held at its minimum, cannot move or act, and are left out of everyone else's snapshots, until they send action 239; then they come back whole in the nearest place marked `safe` (anywhere free, if there is none). A client tells it is down from its own health being at the minimum. Bots that have gone indoors (`indoors` rule) are also left out of snapshots. (No version change: none of this alters a packet.)

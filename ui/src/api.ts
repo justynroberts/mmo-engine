@@ -74,6 +74,21 @@ export interface Levels {
   toughness?: number
   /** For finding a named place the first time. */
   discover_xp?: number
+  /** Life experience: a little for everything a player does, banked and paid every ten seconds. */
+  life?: LifeXp
+}
+/** Experience per deed (fractions add up; 0 turns one off), at most per_min a minute. Absent: the defaults. */
+export interface LifeXp {
+  /** For each 100 units walked (1.5). */
+  walk?: number
+  /** For each action used, a blow or a spell (0.5). */
+  act?: number
+  /** For each block built or broken (0.5). */
+  build?: number
+  /** For an item used or picked up, a trade, a word with someone, a quest taken (1). */
+  deed?: number
+  /** The most it pays in a minute (30). */
+  per_min?: number
 }
 /** An item and how many (a quest reward). count 1..255. */
 export interface QuestItem {
@@ -90,7 +105,7 @@ export type QuestStep =
   | { kind: 'collect'; item: string; count: number }
   /** Talk to a bot of a type. */
   | { kind: 'talk'; archetype: string }
-/** A quest (GameFile.quests, at most 64). Not in the content hash: edits apply live, nobody is disconnected. */
+/** A quest (GameFile.quests, at most 512; a player holds at most 25 at once). Not in the content hash: edits apply live, nobody is disconnected. */
 export interface QuestFile {
   /** Unique id, at most 48 bytes. */
   name: string
@@ -242,6 +257,27 @@ export interface Archetype {
   shop?: ShopItem[]
   /** Seconds one lasts before it is gone of itself (absent for as long as it lives): a fire burns down. */
   lasts_secs?: number
+  /** Encounters: the first blow between it and a player locks it on that player, whom it then chases past its
+   * sight and fights back (unless a rule says flee) until one falls, or the player gets this far away (world
+   * units), reaches a safe place, or no blow lands for 10 seconds. Absent or 0: three times its sight, at least
+   * 60. Applies live. */
+  leash?: number
+  /** The faction it belongs to (GameFile.factions, by name): beating one moves a player's standing with it. */
+  faction?: string
+}
+/** A faction (GameFile.factions, at most 32). Beating one of its members moves a player's standing by `kill`
+ * (default -10), and with every faction that `hates` it by that faction's `bounty` (default 2). Below `hostile`
+ * (default -30) its members who can fight attack that player on sight, its traders will not deal and its quest
+ * givers will not speak with them. Bad standing creeps back to 0 by one a minute; players see theirs with /rep.
+ * Standing runs -1000..1000 and is kept by faction name. Applies live. */
+export interface FactionFile {
+  name: string
+  /** What players see; empty, the name. */
+  title?: string
+  kill?: number
+  hostile?: number
+  hates?: string[]
+  bounty?: number
 }
 export interface Drain {
   attr: string
@@ -349,6 +385,7 @@ export interface GameFile {
   currency?: string
   /** Limits on building (blocks per player and per 256-unit region; 0 for none). Not in the content hash. */
   building?: { per_player: number; per_region: number }
+  factions?: FactionFile[]
 }
 
 export interface Perf {

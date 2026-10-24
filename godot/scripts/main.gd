@@ -59,6 +59,9 @@ var sound: Node           # what the player hears: scripts/sound.gd
 var _listen_in := 0.0     # until the next look round for what to hear
 var _music_pick := ""     # the piece the moment calls for, and since when (music changes only once it has settled)
 var _music_since := 0.0
+var _fetch_pile := 0       # a pile of loot clicked, which we walk to and pick up (its ground id; 0 none)
+var _fetch_until := 0.0
+const PICKUP_REACH := 2.6  # a little inside the server's 3 units, so it is in reach when we ask
 var _fight_at := -100.0   # when we last struck or were struck: the music turns to battle for a while after
 var _step_from := Vector2.INF
 var _step_dist := 0.0
@@ -253,7 +256,7 @@ func _ready() -> void:
 	questui = QuestsScript.new()
 	add_child(questui)
 	questui.accepted.connect(func(i: int): net.accept_quest(i))
-	questui.declined.connect(func(): net.abandon_quest(255))
+	questui.declined.connect(func(): net.abandon_quest(-1))
 	questui.abandoned.connect(func(i: int): net.abandon_quest(i))
 	shopui = ShopScript.new()
 	add_child(shopui)
@@ -832,6 +835,7 @@ func _load_step(delta: float, status: int) -> void:
 		return
 	if _load_frames == 0:
 		theme.update(me_pos) # draw what has come before we are shown
+		theme.flush()
 		last_stream = me_pos
 		spellfx.prewarm(Vector3(me_pos.x, _height(me_pos.x, me_pos.y), me_pos.y))
 	_load_frames += 1
@@ -1734,7 +1738,9 @@ func _listen(delta: float) -> void:
 	sound.want = w
 	# Music: a fight first, then the place's own, then a town, then the night or the day. It changes only once the
 	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
-	var fighting := t_total - _fight_at < 8.0
+	# In a fight: a bot is locked on us (it holds through a chase with no blows) or a player is fighting us, or a
+	# blow passed lately.
+	var fighting: bool = t_total - _fight_at < 8.0 or (net != null and not net.encounter().is_empty())
 	var m := String(zone.get("music", ""))
 	# Now and then a smith, a dog, a cow or a rooster (sound.gd INCIDENTAL): a town has houses all round, a farm a few.
 	sound.daylight = 1.0 - dark
@@ -2051,6 +2057,8 @@ func _drive() -> void:
 	if hud.typing():
 		net.set_move(Vector2.ZERO)
 		return
+	if _fetch_pile != 0 and _go_get_loot():
+		return
 	if args.has("walk"):
 		if String(args["walk"]) == "near" and me_pos != Vector2.ZERO:
 			args["walk"] = _beside_nearest_building()
@@ -2089,6 +2097,25 @@ func _drive() -> void:
 	var fwd := Vector2(-sin(yaw), -cos(yaw))
 	var right := Vector2(cos(yaw), -sin(yaw))
 	net.set_move(fwd * f + right * r)
+
+## Going for a pile of loot that was clicked: walk to it and pick it up there. Any movement key, the pile going
+## (someone else took it) or a long time trying gives it up. True while it is steering us.
+func _go_get_loot() -> bool:
+	var keys := [KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
+	var at := Vector2.INF
+	for g in net.ground():
+		if g["id"] == _fetch_pile:
+			at = g["position"]
+	if at == Vector2.INF or t_total > _fetch_until or keys.any(func(k): return Input.is_key_pressed(k)):
+		_fetch_pile = 0
+		return false
+	if me_pos.distance_to(at) <= PICKUP_REACH:
+		net.set_move(Vector2.ZERO)
+		net.pickup_id(_fetch_pile)
+		_fetch_pile = 0
+		return true
+	net.set_move((at - me_pos).normalized())
+	return true
 
 ## First person on or off. Aiming (targeting, building) then goes through the crosshair in the middle.
 func _set_fpv(on: bool) -> void:
@@ -2903,8 +2930,24 @@ func _pick(screen: Vector2) -> void:
 	var dir := cam.project_ray_normal(screen)
 	if absf(dir.y) < 0.001:
 		return
+	# Where the ray meets the ground: on the flat first, then a few steps onto the hills' real height.
 	var t := -from.y / dir.y
 	var hit := from + dir * t
+	for _i in 4:
+		t = (_height(hit.x, hit.z) - from.y) / dir.y
+		hit = from + dir * t
+	# A pile of loot clicked: take it, walking over first when it is out of reach.
+	var pile := 0
+	var pile_d := 1.4
+	for g in net.ground():
+		var d := (g["position"] as Vector2).distance_to(Vector2(hit.x, hit.z))
+		if d < pile_d:
+			pile_d = d
+			pile = g["id"]
+	if pile != 0:
+		_fetch_pile = pile
+		_fetch_until = t_total + 12.0
+		return
 	var best := 0
 	var best_d := 2.6
 	for e in net.entities():

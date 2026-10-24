@@ -397,7 +397,16 @@ pub struct Archetype {
     /// Seconds one lasts before it is gone of itself (0 for as long as it lives): a fire burns down, a fair ends.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub lasts_secs: u32,
+    /// How far a player it is fighting may get before it gives up the chase, in world units. 0 (absent) means
+    /// three times its sight, and at least `MIN_LEASH`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub leash: f32,
+    /// The faction it belongs to (`GameFile::factions`, by name): beating one changes a player's standing with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faction: Option<String>,
 }
+/// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
+pub const MIN_LEASH: f32 = 60.0;
 fn d_color() -> String {
     "#888888".into()
 }
@@ -466,6 +475,9 @@ pub struct GameFile {
     /// Limits on building, against one player (or a crowd) filling the map. Not in the content hash.
     #[serde(default, skip_serializing_if = "BuildLimits::is_default")]
     pub building: BuildLimits,
+    /// Factions bot types belong to, and how players stand with them. Not in the content hash: edits apply live.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub factions: Vec<FactionFile>,
 }
 
 /// How much may be built: blocks per player (by account; guests' blocks belong to nobody and count only against
@@ -495,6 +507,63 @@ impl BuildLimits {
     }
 }
 
+pub const MAX_FACTIONS: usize = 32;
+/// Standing runs from -STANDING_MAX (hated) to STANDING_MAX (revered); everyone starts at 0.
+pub const STANDING_MAX: i32 = 1000;
+
+/// A faction: who its members are is said by bot types (`Archetype::faction`). Beating one of its members moves a
+/// player's standing with it by `kill` (and with every faction that `hates` this one by that faction's `bounty`).
+/// Below `hostile`, its members who can fight attack that player on sight, its traders will not deal with them and
+/// its quest givers will not speak to them. Standing below 0 creeps back towards 0 by one a minute.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FactionFile {
+    pub name: String,
+    /// What players see ("The Folk of the Vale"); empty, the name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    #[serde(default = "d_kill")]
+    pub kill: i32,
+    #[serde(default = "d_hostile")]
+    pub hostile: i32,
+    /// Factions whose members falling raises standing with this one, by `bounty` each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hates: Vec<String>,
+    #[serde(default = "d_bounty")]
+    pub bounty: i32,
+}
+fn d_kill() -> i32 {
+    -10
+}
+fn d_hostile() -> i32 {
+    -30
+}
+fn d_bounty() -> i32 {
+    2
+}
+
+impl FactionFile {
+    /// What players call it.
+    pub fn shown(&self) -> String {
+        if self.title.is_empty() { crate::names::bot(&self.name) } else { self.title.clone() }
+    }
+
+    /// How a standing reads.
+    pub fn mood(&self, standing: i32) -> &'static str {
+        if standing < self.hostile {
+            "hostile"
+        } else if standing < 0 {
+            "wary"
+        } else if standing < 30 {
+            "neutral"
+        } else if standing < 150 {
+            "friendly"
+        } else {
+            "honoured"
+        }
+    }
+}
+
 /// Experience and levels. A character earns experience for beating bots (their type's `xp`), for finding named
 /// places, and from quests; enough of it raises its level, up to `cap`. Each level above the first makes what it
 /// does stronger (`might`, a share more per level) and what it suffers weaker (`toughness`), so a bar of health
@@ -518,6 +587,33 @@ pub struct LevelsFile {
     /// For walking into a named place (a title) for the first time.
     #[serde(default = "d_discover")]
     pub discover_xp: u32,
+    /// Life experience: a little for everything a player does.
+    #[serde(default)]
+    pub life: LifeXp,
+}
+
+/// Life experience: a trickle of experience for living in the world, not only for fighting. Each is experience
+/// per deed (fractions add up); 0 turns that one off. It is banked and paid every ten seconds, at most `per_min`
+/// a minute, so walking in circles or swinging at the air is worth something, but not much.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct LifeXp {
+    /// For each 100 units walked (or ridden, or swum).
+    pub walk: f32,
+    /// For each action that is used (a blow, a spell).
+    pub act: f32,
+    /// For each block built or broken.
+    pub build: f32,
+    /// For everything else done: an item used or picked up, something bought or sold, a word with someone, a quest
+    /// taken.
+    pub deed: f32,
+    pub per_min: u32,
+}
+
+impl Default for LifeXp {
+    fn default() -> Self {
+        LifeXp { walk: 1.5, act: 0.5, build: 0.5, deed: 1.0, per_min: 30 }
+    }
 }
 
 fn d_cap() -> u8 {
@@ -545,7 +641,7 @@ mod level_tests {
 
     #[test]
     fn the_curve_climbs_and_stops_at_the_cap() {
-        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10 };
+        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10, life: Default::default() };
         assert_eq!((l.xp_for(1), l.xp_for(2)), (0, 100));
         assert!((2..=20).all(|v| l.xp_for(v) > l.xp_for(v - 1)));
         assert_eq!((l.level_of(0), l.level_of(99), l.level_of(100), l.level_of(u32::MAX)), (1, 1, 2, 20));
@@ -621,7 +717,9 @@ pub const ACT_ACCEPT: u8 = 233;
 pub const ACT_ABANDON: u8 = 234;
 /// How near a player must be to talk to a bot.
 pub const TALK_RANGE: f32 = 8.0;
-pub const MAX_QUESTS: usize = 64;
+pub const MAX_QUESTS: usize = 512;
+/// How many quests a player may have in hand (taken, not yet handed in) at once.
+pub const MAX_HELD_QUESTS: usize = 25;
 pub const MAX_QUEST_STEPS: usize = 8;
 
 /// A quest: a bot type gives it (`giver`), a player does its steps in order, then hands it in (to `turn_in`, or the
@@ -1189,6 +1287,10 @@ pub struct ArchRt {
     /// (item index, price)
     pub shop: Vec<(usize, u16)>,
     pub lasts_secs: u32,
+    /// How far a player it is fighting may get before it gives up (`Archetype::leash`, the default filled in).
+    pub leash: f32,
+    /// Its faction's index in `Game::factions`.
+    pub faction: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1240,6 +1342,7 @@ pub struct Game {
     pub currency: Option<usize>,
     pub classes: Vec<ClassRt>,
     pub building: BuildLimits,
+    pub factions: Vec<FactionFile>,
 }
 
 /// Most walls a game file may place.
@@ -1311,6 +1414,8 @@ impl GameFile {
             level: 0,
             shop: Vec::new(),
             lasts_secs: 0,
+            leash: 0.0,
+            faction: None,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -1365,6 +1470,7 @@ impl GameFile {
             currency: None,
             classes: Vec::new(),
             building: BuildLimits::default(),
+            factions: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -1832,7 +1938,17 @@ impl GameFile {
                 }
                 drops.push(DropRt { item, chance_pct: d.chance_pct, min: d.min, max: d.max });
             }
+            if !(a.leash.is_finite() && (0.0..=10_000.0).contains(&a.leash)) {
+                return Err(format!("{ctx}: leash must be 0..10000"));
+            }
+            let leash = if a.leash > 0.0 { a.leash } else { (a.sight * 3.0).max(MIN_LEASH) };
+            let faction = match &a.faction {
+                Some(f) => Some(self.factions.iter().position(|x| &x.name == f).ok_or_else(|| format!("{ctx}: there is no faction '{f}'"))?),
+                None => None,
+            };
             archs.push(ArchRt {
+                leash,
+                faction,
                 drops,
                 home,
                 rules,
@@ -1876,6 +1992,7 @@ impl GameFile {
                 .collect::<Result<Vec<u8>, String>>()?;
             classes.push(ClassRt { name: c.name.clone(), title: c.title.clone(), desc: c.desc.clone(), look: c.look.clone(), might: c.might, toughness: c.toughness, spells });
         }
+        self.check_factions()?;
         let currency = match &self.currency {
             Some(c) => Some(self.items.iter().position(|i| &i.name == c).ok_or_else(|| format!("currency '{c}' is not an item"))?),
             None => None,
@@ -1886,13 +2003,48 @@ impl GameFile {
             if l.cap < 1 || l.cap > MAX_LEVEL {
                 return Err(format!("levels.cap must be 1..{MAX_LEVEL}"));
             }
-            for (v, what, lo, hi) in [(l.base, "base", 1.0, 1e7), (l.exponent, "exponent", 0.5, 4.0), (l.might, "might", 0.0, 1.0), (l.toughness, "toughness", 0.0, 1.0)] {
+            for (v, what, lo, hi) in [
+                (l.base, "base", 1.0, 1e7),
+                (l.exponent, "exponent", 0.5, 4.0),
+                (l.might, "might", 0.0, 1.0),
+                (l.toughness, "toughness", 0.0, 1.0),
+                (l.life.walk, "life.walk", 0.0, 1000.0),
+                (l.life.act, "life.act", 0.0, 1000.0),
+                (l.life.build, "life.build", 0.0, 1000.0),
+                (l.life.deed, "life.deed", 0.0, 1000.0),
+            ] {
                 if !(v.is_finite() && (lo..=hi).contains(&v)) {
                     return Err(format!("levels.{what} must be {lo}..{hi}"));
                 }
             }
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building })
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone() })
+    }
+
+    /// Factions: names unique, numbers in range, and what they hate there.
+    fn check_factions(&self) -> Result<(), String> {
+        if self.factions.len() > MAX_FACTIONS {
+            return Err(format!("at most {MAX_FACTIONS} factions"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for f in &self.factions {
+            let ctx = format!("faction '{}'", f.name);
+            if f.name.trim().is_empty() || f.name.len() > 48 || !seen.insert(f.name.as_str()) {
+                return Err(format!("{ctx}: faction names must be unique, non-empty and at most 48 bytes"));
+            }
+            if f.title.chars().count() > MAX_TITLE {
+                return Err(format!("{ctx}: title at most {MAX_TITLE} characters"));
+            }
+            for (v, what) in [(f.kill, "kill"), (f.hostile, "hostile"), (f.bounty, "bounty")] {
+                if !(-STANDING_MAX..=STANDING_MAX).contains(&v) {
+                    return Err(format!("{ctx}: {what} must be -{STANDING_MAX}..{STANDING_MAX}"));
+                }
+            }
+            if let Some(h) = f.hates.iter().find(|h| *h == &f.name || !self.factions.iter().any(|o| &o.name == *h)) {
+                return Err(format!("{ctx}: hates '{h}', which is not another faction"));
+            }
+        }
+        Ok(())
     }
 
     pub fn from_json(s: &str) -> Result<GameFile, String> {

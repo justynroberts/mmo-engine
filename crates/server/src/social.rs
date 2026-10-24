@@ -1,8 +1,8 @@
 //! Talking to people rather than to a place: whispers, who is on, and parties.
 //!
 //! A chat line that starts with "/" is a command, not something said aloud: `/w Name text` whispers, `/r text`
-//! answers the last whisper, `/who` lists who is on, and `/invite Name`, `/accept`, `/decline`, `/leave`,
-//! `/p text` and `/party` make and run a party. A party shares the experience of a bot that falls near its
+//! answers the last whisper, `/who` lists who is on, `/rep` shows your standing with the factions, and
+//! `/invite Name`, `/accept`, `/decline`, `/leave`, `/p text` and `/party` make and run a party. A party shares the experience of a bot that falls near its
 //! members and their "beat N" quest steps, and its members see each other in a PARTY packet.
 
 use crate::net::Clients;
@@ -118,6 +118,10 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             sim.last_whisper[to] = me;
             clients.log_chat(sim.tick, me, channel::WHISPER, &format!("to {to_name}: {msg}"));
         }
+        "rep" | "standing" | "reputation" => {
+            let line = sim.standing_line(slot);
+            say(clients, slot, &line);
+        }
         "who" => {
             let mut names: Vec<String> = (0..sim.ents.high)
                 .filter(|&s| sim.ents.alive[s] && sim.ents.owner[s] < DRIVEN)
@@ -208,7 +212,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             say(clients, slot, &line);
         }
         _ => {
-            say(clients, slot, "Commands: /w Name words, /r words, /who, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name");
+            say(clients, slot, "Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name");
             return false;
         }
     }

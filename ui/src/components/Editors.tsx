@@ -105,6 +105,10 @@ export function SettingsEditor({ game, setGame }: Edit) {
             <NumField label="Might / level" value={game.levels.might ?? 0.06} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, might: Math.min(1, Math.max(0, n)) } })} />
             <NumField label="Toughness / level" value={game.levels.toughness ?? 0.05} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, toughness: Math.min(1, Math.max(0, n)) } })} />
             <NumField label="XP for a new place" value={game.levels.discover_xp ?? 10} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, discover_xp: Math.max(0, Math.round(n)) } })} />
+            <NumField label="Life XP / 100 walked" value={game.levels.life?.walk ?? 1.5} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, walk: Math.min(1000, Math.max(0, n)) } } })} />
+            <NumField label="Life XP / action" value={game.levels.life?.act ?? 0.5} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, act: Math.min(1000, Math.max(0, n)) } } })} />
+            <NumField label="Life XP / deed" value={game.levels.life?.deed ?? 1} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, deed: Math.min(1000, Math.max(0, n)) } } })} />
+            <NumField label="Life XP cap / min" value={game.levels.life?.per_min ?? 30} onCommit={(n) => setGame({ ...game, levels: { ...game.levels, life: { ...game.levels?.life, per_min: Math.max(0, Math.round(n)) } } })} />
           </>
         )}
       </div>
@@ -759,6 +763,15 @@ export function BotsEditor({
               <NumField label="Experience" value={a.xp ?? 0} onCommit={(n) => patch(i, { xp: Math.max(0, Math.round(n)) || undefined })} />
               <NumField label="Lasts (s, 0 for ever)" value={a.lasts_secs ?? 0} onCommit={(n) => patch(i, { lasts_secs: Math.max(0, Math.round(n)) || undefined })} />
               <NumField label="Level" value={a.level ?? 1} onCommit={(n) => patch(i, { level: Math.min(100, Math.max(1, Math.round(n))) > 1 ? Math.min(100, Math.round(n)) : undefined })} />
+              <NumField label="Gives up at (0 auto)" value={a.leash ?? 0} onCommit={(n) => patch(i, { leash: Math.min(10_000, Math.max(0, n)) || undefined })} />
+              {(game.factions ?? []).length > 0 && (
+                <SelectField
+                  label="Faction"
+                  value={a.faction ?? ''}
+                  options={[{ value: '', label: 'none' }, ...(game.factions ?? []).map((f) => ({ value: f.name, label: f.title || f.name }))]}
+                  onChange={(v) => patch(i, { faction: v === '' ? undefined : v })}
+                />
+              )}
             </div>
             <div className="grid grid-cols-4 gap-x-2 pt-1">
               <SelectField

@@ -51,6 +51,9 @@ pub struct Record {
     /// The class chosen, by name ("" for none yet).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub class: String,
+    /// Standing with factions, by faction name (those at 0 left out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub standing: Vec<(String, i32)>,
 }
 
 fn is_zero(v: &u32) -> bool {

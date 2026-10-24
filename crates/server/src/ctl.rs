@@ -1108,6 +1108,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.quests = game.quests;
         c.sim.currency = game.currency;
         c.sim.classes = game.classes;
+        c.sim.factions = game.factions;
         for v in c.sim.quest_ver.iter_mut() {
             *v = v.wrapping_add(1);
         }

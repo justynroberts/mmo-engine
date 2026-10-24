@@ -1,7 +1,7 @@
 //! Packet framing. Everything is little-endian, byte aligned (bit packing is a
 //! later optimisation: the schema already carries per-attribute bit widths).
 
-pub const PROTO_VERSION: u16 = 9;
+pub const PROTO_VERSION: u16 = 10;
 /// Conservative payload ceiling so a datagram never fragments.
 pub const MAX_PACKET: usize = 1200;
 
@@ -27,14 +27,21 @@ pub mod kind {
     /// Inner: your own progress, `level u8 | xp u32 | this level's xp u32 | next level's xp u32` (next 0 at the
     /// cap). Sent when it changes (a few times over) and now and then regardless.
     pub const PROGRESS: u8 = 0x8B;
-    /// Inner: your quests, `offer u8 | n u8 | n x (quest u8, step u8, count u16, state u8)`: `offer` is a quest a
-    /// giver has just put to you (255 for none); state 0 in hand, 1 ready to hand in, 2 done. Sent on a change.
+    /// Inner: your quests, `offer u16 | n u8 | n x (quest u16, step u8, count u16, state u8) | m u8 | m bytes`:
+    /// `offer` is a quest a giver has just put to you (0xFFFF for none); the n are the quests in hand (state 0) or
+    /// ready to hand in (1); the m bytes are a bitmap of the quests done (bit k%8 of byte k/8 for quest k). Sent
+    /// on a change.
     pub const QUESTS: u8 = 0x8C;
     /// Inner: your party, `n u8 | n x id u32` (you among them; n 0 when you are in none). Sent on a change.
     pub const PARTY: u8 = 0x8D;
     /// Inner: what you wear, `weapon u8 | armour u8 | trinket u8` (item index + 1, 0 for nothing), and whether you
     /// ride (`riding u8`). Sent on a change.
     pub const GEAR: u8 = 0x8E;
+    /// Inner: who is in a fight with you, `n u8 | n x id u32` (n 0 when nobody is): bots locked on you, then
+    /// players. A bot locks on when either of you hurts the other and lets go when one of you falls or you get
+    /// away; a player is in it from a blow either way until one of you falls or neither lands one for 8 s. Sent
+    /// on a change.
+    pub const ENCOUNTER: u8 = 0x8F;
 }
 
 pub mod reject {
@@ -332,7 +339,7 @@ pub fn decode_progress(buf: &[u8]) -> Option<Progress> {
 /// One quest of yours (`kind::QUESTS`): which (its index), which step it is on and how far, and its state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct QuestState {
-    pub quest: u8,
+    pub quest: u16,
     pub step: u8,
     pub count: u16,
     pub state: u8,
@@ -341,27 +348,76 @@ pub struct QuestState {
 pub const QUEST_ACTIVE: u8 = 0;
 pub const QUEST_READY: u8 = 1;
 pub const QUEST_DONE: u8 = 2;
-pub const NO_OFFER: u8 = 255;
+pub const NO_OFFER: u16 = u16::MAX;
 
-pub fn encode_quests(out: &mut Vec<u8>, offer: u8, list: &[QuestState]) {
+/// Quests done go as a bitmap, so a player who has done hundreds still fits one packet; the quests in hand
+/// (`game::MAX_HELD_QUESTS` at most) go one by one. A done quest comes back with step and count 0.
+pub fn encode_quests(out: &mut Vec<u8>, offer: u16, list: &[QuestState]) {
     out.clear();
     put_u8(out, kind::QUESTS);
-    put_u8(out, offer);
-    put_u8(out, list.len().min(255) as u8);
-    for q in list.iter().take(255) {
-        put_u8(out, q.quest);
+    put_u16(out, offer);
+    let open: Vec<&QuestState> = list.iter().filter(|q| q.state != QUEST_DONE).take(255).collect();
+    put_u8(out, open.len() as u8);
+    for q in open {
+        put_u16(out, q.quest);
         put_u8(out, q.step);
         put_u16(out, q.count);
         put_u8(out, q.state);
     }
+    let mut done = Vec::<u8>::new();
+    for q in list.iter().filter(|q| q.state == QUEST_DONE && (q.quest as usize) < 255 * 8) {
+        let (byte, bit) = (q.quest as usize / 8, q.quest % 8);
+        if done.len() <= byte {
+            done.resize(byte + 1, 0);
+        }
+        done[byte] |= 1 << bit;
+    }
+    put_u8(out, done.len() as u8);
+    out.extend_from_slice(&done);
 }
 
-pub fn decode_quests(buf: &[u8]) -> Option<(u8, Vec<QuestState>)> {
-    if buf.len() < 3 || buf[0] != kind::QUESTS || buf.len() != 3 + buf[2] as usize * 5 {
+pub fn decode_quests(buf: &[u8]) -> Option<(u16, Vec<QuestState>)> {
+    if buf.len() < 4 || buf[0] != kind::QUESTS {
         return None;
     }
-    let list = buf[3..].chunks_exact(5).map(|c| QuestState { quest: c[0], step: c[1], count: u16::from_le_bytes([c[2], c[3]]), state: c[4] }).collect();
-    Some((buf[1], list))
+    let offer = u16::from_le_bytes([buf[1], buf[2]]);
+    let n = buf[3] as usize;
+    let at = 4 + n * 6;
+    let m = *buf.get(at)? as usize;
+    if buf.len() != at + 1 + m {
+        return None;
+    }
+    let mut list: Vec<QuestState> = buf[4..at]
+        .chunks_exact(6)
+        .map(|c| QuestState { quest: u16::from_le_bytes([c[0], c[1]]), step: c[2], count: u16::from_le_bytes([c[3], c[4]]), state: c[5] })
+        .collect();
+    for (i, &b) in buf[at + 1..].iter().enumerate() {
+        for bit in 0..8 {
+            if b & (1 << bit) != 0 {
+                list.push(QuestState { quest: (i * 8 + bit) as u16, step: 0, count: 0, state: QUEST_DONE });
+            }
+        }
+    }
+    Some((offer, list))
+}
+
+/// The most bots (and, apart, players) one player may be in a fight with at once.
+pub const MAX_PURSUERS: usize = 16;
+
+pub fn encode_encounter(out: &mut Vec<u8>, ids: &[u32]) {
+    out.clear();
+    put_u8(out, kind::ENCOUNTER);
+    put_u8(out, ids.len().min(MAX_PURSUERS) as u8);
+    for &id in ids.iter().take(MAX_PURSUERS) {
+        put_u32(out, id);
+    }
+}
+
+pub fn decode_encounter(buf: &[u8]) -> Option<Vec<u32>> {
+    if buf.len() < 2 || buf[0] != kind::ENCOUNTER || buf.len() != 2 + buf[1] as usize * 4 {
+        return None;
+    }
+    Some(buf[2..].chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
 }
 
 pub fn encode_party(out: &mut Vec<u8>, ids: &[u32]) {
@@ -421,10 +477,30 @@ mod tests {
     #[test]
     fn quests_round_trip() {
         let mut b = Vec::new();
-        let l = [QuestState { quest: 3, step: 1, count: 4, state: QUEST_ACTIVE }, QuestState { quest: 0, step: 2, count: 0, state: QUEST_DONE }];
-        encode_quests(&mut b, 5, &l);
-        assert_eq!(decode_quests(&b), Some((5, l.to_vec())));
+        let l = [
+            QuestState { quest: 300, step: 1, count: 4, state: QUEST_ACTIVE },
+            QuestState { quest: 0, step: 0, count: 0, state: QUEST_DONE },
+            QuestState { quest: 511, step: 0, count: 0, state: QUEST_DONE },
+        ];
+        encode_quests(&mut b, 405, &l);
+        assert_eq!(decode_quests(&b), Some((405, l.to_vec())));
         assert_eq!(decode_quests(&b[..b.len() - 1]), None);
+        // Every quest of the most a game may have done, and a full hand: still one packet.
+        let mut all: Vec<QuestState> = (0..crate::game::MAX_QUESTS as u16).map(|k| QuestState { quest: k, state: QUEST_DONE, ..Default::default() }).collect();
+        all.extend((0..crate::game::MAX_HELD_QUESTS as u16).map(|k| QuestState { quest: k, step: 7, count: 65_000, state: QUEST_READY }));
+        encode_quests(&mut b, NO_OFFER, &all);
+        assert!(b.len() + 64 < MAX_PACKET, "{} bytes", b.len());
+        assert_eq!(decode_quests(&b).map(|(o, l)| (o, l.len())), Some((NO_OFFER, all.len())));
+    }
+
+    #[test]
+    fn encounter_round_trips() {
+        let mut b = Vec::new();
+        encode_encounter(&mut b, &[7, 0x0100_0042]);
+        assert_eq!(decode_encounter(&b), Some(vec![7, 0x0100_0042]));
+        assert_eq!(decode_encounter(&b[..b.len() - 1]), None);
+        encode_encounter(&mut b, &[]);
+        assert_eq!(decode_encounter(&b), Some(vec![]));
     }
 
     #[test]

@@ -49,6 +49,10 @@ impl Sim {
     /// Buy item `index` of the merchant's shop. False if it cannot be (out of reach, too dear, a full bag).
     pub fn buy(&mut self, s: usize, target: u32, index: u16) -> bool {
         let (Some(t), Some(_)) = (self.merchant(s, target), self.currency) else { return false };
+        if let Some(why) = self.refuses(t, s) {
+            self.tells.push((s, why));
+            return false;
+        }
         let Some(&(item, price)) = self.archs[self.ents.arch[t] as usize].shop.get(index as usize) else { return false };
         if self.money(s) < price as u32 {
             self.tells.push((s, "You cannot afford that.".into()));
@@ -65,7 +69,11 @@ impl Sim {
 
     /// Sell one of what is in bag slot `i` to the merchant (for the item's value). False if they will not buy it.
     pub fn sell(&mut self, s: usize, target: u32, i: u16) -> bool {
-        let (Some(_), Some(c)) = (self.merchant(s, target), self.currency) else { return false };
+        let (Some(t), Some(c)) = (self.merchant(s, target), self.currency) else { return false };
+        if let Some(why) = self.refuses(t, s) {
+            self.tells.push((s, why));
+            return false;
+        }
         let Some(&(tag, count)) = self.inv[s].get(i as usize) else { return false };
         if tag == 0 || tag as usize - 1 == c {
             return false;
@@ -244,7 +252,7 @@ mod tests {
     #[test]
     fn a_party_forms_shares_a_kill_and_ends_when_one_is_left() {
         let mut g = GameFile::default_game();
-        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0 });
+        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
         g.archetypes[0].xp = 30;
         let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
         let [a, b] = [0, 1].map(|o| s.spawn(o).unwrap());

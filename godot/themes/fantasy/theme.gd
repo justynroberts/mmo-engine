@@ -31,6 +31,9 @@ var _life_ms := 0
 var _chimney_at := Vector3.INF # set by _house_roof: where the last house's chimney stands (before its base height)
 var _snow_on := false        # snow lies: every batch and block wears the snow overlay
 var _snow_overlay: ShaderMaterial
+var grass: MultiMeshInstance3D  # themes/fantasy/grass.gd, round the player (null with --no-grass or no heights)
+var air: Node3D                 # themes/fantasy/air.gd: mist, haze and wisps between the weathers
+var _here := Vector2.ZERO        # where we are, for the air
 
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
@@ -122,6 +125,12 @@ void fragment() {
 	rain.emitting = false
 	rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(rain)
+	air = preload("res://themes/fantasy/air.gd").new()
+	add_child(air)
+	if world.has_heights and not OS.get_cmdline_user_args().has("--no-grass"):
+		grass = preload("res://themes/fantasy/grass.gd").new()
+		grass.setup(world)
+		add_child(grass)
 	# Meadow: two greens, dry patches and worn dirt, all from world position so every client sees the same field.
 	var sh := Shader.new()
 	sh.code = """shader_type spatial;
@@ -339,6 +348,9 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	var above := minf(14.0, camera_zoom * 0.5) if _rain_kind in ["rain", "storm"] else 6.0
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
 	((rain.draw_pass_1 as BoxMesh).material as ShaderMaterial).set_shader_parameter("center", rain.global_position)
+	if grass:
+		grass.follow(center, float(_wx["wind"]))
+	_here = center
 	super.frame(center, camera_zoom)
 	var now := Time.get_ticks_msec()
 	var dt := clampf((now - _life_ms) / 1000.0, 0.0, 0.25) if _life_ms > 0 else 0.0
@@ -402,6 +414,9 @@ func _daylight_frame(dt: float) -> void:
 	var sky_cover: float = _wx["sky"]
 	e.volumetric_fog_sky_affect = clampf(0.35 * k * thick, 0.0, 0.9) * sky_cover
 	e.fog_sky_affect = clampf(0.25 * k * thick, 0.0, 0.8) * sky_cover
+	# Between the weathers, the air's own: dawn mist in the hollows, a haze that comes and goes, drifting wisps.
+	var morning := fposmod(day_phase() - 0.25 + 0.5, 1.0) < 0.5 # before noon
+	air.frame(e, dt, _here, height(_here.x, _here.y), sun_dir.y, morning, day, dusk, k, float(_wx["wind"]))
 
 ## Move every part of the weather's look a step toward the new weather, so a change takes about WEATHER_SECS: most of
 ## the way in the first few seconds and settling gently, the way weather really rolls in.

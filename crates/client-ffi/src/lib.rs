@@ -76,11 +76,13 @@ pub struct Client {
     progress: wire::Progress,
     /// Our quests and any quest a giver has just put to us (`wire::kind::QUESTS`).
     quests: Vec<wire::QuestState>,
-    offer: u8,
+    offer: u16,
     /// Our party (entity ids, us among them; empty when in none), what we wear, and whether we ride.
     party: Vec<u32>,
     gear: [u8; 3],
     riding: bool,
+    /// Who is in a fight with us (entity ids, bots then players; empty when nobody is), from `wire::kind::ENCOUNTER`.
+    pursuers: Vec<u32>,
     item_names: Vec<std::ffi::CString>,
     item_colors: Vec<std::ffi::CString>,
     sock: UdpSocket,
@@ -294,6 +296,7 @@ pub unsafe extern "C" fn mmo_connect(host: *const c_char, port: u16, info_json: 
         party: Vec::new(),
         gear: [0; 3],
         riding: false,
+        pursuers: Vec::new(),
         item_names,
         item_colors,
         sock,
@@ -416,6 +419,10 @@ impl Client {
                 } else if inner.first() == Some(&kind::INVENTORY) {
                     if let Some(b) = wire::decode_inventory(inner) {
                         self.bag = b;
+                    }
+                } else if inner.first() == Some(&kind::ENCOUNTER) {
+                    if let Some(p) = wire::decode_encounter(inner) {
+                        self.pursuers = p;
                     }
                 } else if inner.first() == Some(&kind::PARTY) {
                     if let Some(p) = wire::decode_party(inner) {
@@ -956,6 +963,20 @@ pub unsafe extern "C" fn mmo_party(c: *const Client, out: *mut u32, cap: usize) 
     c.party.len()
 }
 
+/// Who is in a fight with us: copies up to `cap` entity ids (bots locked on us, then players) into `out` and returns
+/// how many (0: we are in no fight). A bot locks on when either side hurts the other and lets go when one falls or
+/// we get away; a player is in it until one of us falls or neither lands a blow for 8 s.
+#[no_mangle]
+pub unsafe extern "C" fn mmo_encounter(c: *const Client, out: *mut u32, cap: usize) -> usize {
+    let Some(c) = c.as_ref() else { return 0 };
+    if !out.is_null() {
+        for (i, &id) in c.pursuers.iter().take(cap).enumerate() {
+            *out.add(i) = id;
+        }
+    }
+    c.pursuers.len()
+}
+
 /// What we wear (item index + 1 per gear slot: weapon, armour, trinket; 0 for nothing) and whether we ride.
 #[no_mangle]
 pub unsafe extern "C" fn mmo_gear(c: *const Client, out: *mut u8, riding: *mut u8) {
@@ -975,16 +996,16 @@ pub unsafe extern "C" fn mmo_gear(c: *const Client, out: *mut u8, riding: *mut u
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct MmoQuest {
-    pub quest: u8,
+    pub quest: u16,
     pub step: u8,
     pub count: u16,
     pub state: u8,
 }
 
 /// Our quests: copies up to `cap` into `out` and returns how many we have; `offer` gets the quest a giver has just
-/// put to us (255 for none).
+/// put to us (0xFFFF for none).
 #[no_mangle]
-pub unsafe extern "C" fn mmo_quests(c: *const Client, out: *mut MmoQuest, cap: usize, offer: *mut u8) -> usize {
+pub unsafe extern "C" fn mmo_quests(c: *const Client, out: *mut MmoQuest, cap: usize, offer: *mut u16) -> usize {
     let Some(c) = c.as_ref() else { return 0 };
     if !offer.is_null() {
         *offer = c.offer;

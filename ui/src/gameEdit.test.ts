@@ -4,6 +4,8 @@ import { fixture } from './test/fixture'
 import {
   addWall,
   cleanAction,
+  removeFaction,
+  renameFaction,
   generatedWalls,
   MAX_WALLS,
   needsReset,
@@ -375,5 +377,22 @@ describe('classes', () => {
     expect(p).toMatch(/“nope” is not an action/)
     expect(directorProblems(bad).length).toBeGreaterThan(0)
     expect(classProblems({ ...g, classes: Array.from({ length: 16 }, (_, i) => ({ name: `c${i}`, title: 'C' })) })).toContain('at most 15 classes')
+  })
+})
+
+describe('factions', () => {
+  it('renaming or removing one carries its bot types and haters with it', () => {
+    const g = {
+      factions: [{ name: 'folk', hates: ['raiders'] }, { name: 'raiders' }],
+      archetypes: [{ name: 'farmer', faction: 'folk' }, { name: 'brigand', faction: 'raiders' }],
+    } as unknown as GameFile
+    const r = renameFaction(g, 1, 'brigands')
+    expect(r.factions?.[0]?.hates).toEqual(['brigands'])
+    expect(r.archetypes[1]?.faction).toBe('brigands')
+    const d = removeFaction(r, 1)
+    expect(d.factions!.map((f) => f.name)).toEqual(['folk'])
+    expect(d.factions?.[0]?.hates).toEqual([])
+    expect("faction" in (d.archetypes[1] ?? {})).toBe(false)
+    expect(d.archetypes[0]?.faction).toBe('folk')
   })
 })
