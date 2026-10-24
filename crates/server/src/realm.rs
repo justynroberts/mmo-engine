@@ -82,6 +82,13 @@ pub struct Saved {
     pub plots: Vec<Plot>,
     #[serde(default)]
     pub crops: Vec<SavedCrop>,
+    /// The auction house (`market.rs`): what is for sale, what is owed to sellers, and the next listing's id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub listings: Vec<crate::market::Listing>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post: Vec<crate::market::Post>,
+    #[serde(default)]
+    pub next_listing: u32,
 }
 
 /// One party's copy of a dungeon.
@@ -385,13 +392,23 @@ impl Sim {
             .map(|(&(key, z), (crop, at))| SavedCrop { key, z, crop: crop.clone(), secs_left: if *at == 0 { 0.0 } else { at.saturating_sub(self.tick) as f32 / hz } })
             .collect();
         crops.sort_by_key(|c| (c.key, c.z));
-        Saved { guilds: self.rs.guilds.clone(), plots: self.rs.plots.clone(), crops }
+        Saved {
+            guilds: self.rs.guilds.clone(),
+            plots: self.rs.plots.clone(),
+            crops,
+            listings: self.market.listings.clone(),
+            post: self.market.post.clone(),
+            next_listing: self.market.next_id,
+        }
     }
 
     /// Bring back what was kept. Call after the blocks are in: a crop whose block is gone is dropped.
     pub fn realm_restore(&mut self, saved: Saved) {
         self.rs.guilds = saved.guilds;
         self.rs.plots = saved.plots;
+        self.market.listings = saved.listings;
+        self.market.post = saved.post;
+        self.market.next_id = saved.next_listing.max(self.market.listings.iter().map(|l| l.id + 1).max().unwrap_or(1)).max(1);
         self.rs.crops.clear();
         for c in saved.crops {
             let there = self.blocks.get(c.key).and_then(|col| col.index(c.z).map(|k| col.kinds[k])).is_some_and(|k| k == SPROUT + 1 || k == RIPE + 1);
@@ -416,7 +433,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -430,6 +447,13 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "guild" => guild(sim, clients, slot, &rest),
         "g" => guild_say(sim, clients, slot, &rest),
         "craft" => craft(sim, clients, slot, &rest),
+        "trade" => match find(sim, &rest) {
+            Some(t) => {
+                let id = sim.ents.id_of(t);
+                sim.trade_action(slot, (proto::game::trade_op::ASK as u16) << 8, id);
+            }
+            None => say(clients, slot, "Nobody of that name is about."),
+        },
         "recipes" => {
             let line = if sim.realm.recipes.is_empty() {
                 "Nothing can be made here.".to_string()

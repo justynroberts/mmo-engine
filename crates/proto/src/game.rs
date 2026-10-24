@@ -725,8 +725,55 @@ fn d_visible() -> u32 {
 // ---------------------------------------------------------------- items
 
 pub const MAX_ITEMS: usize = 32;
-/// Inventory slots per player.
-pub const INV_SLOTS: usize = 8;
+/// Inventory slots per player, and in a player's bank. The action bar shows the first 8.
+pub const INV_SLOTS: usize = 24;
+pub const BANK_SLOTS: usize = 24;
+/// Bag slots the one-byte item actions reach (`ACT_USE + slot`, `ACT_DROP + slot`); `ACT_BAG` reaches them all.
+pub const QUICK_SLOTS: usize = 16;
+/// The bag and the bank (`market.rs`): the operation (`bag_op`) in the input's `arg` high byte, a slot in its low
+/// byte, a second slot in `target`.
+pub const ACT_BAG: u8 = 240;
+pub mod bag_op {
+    pub const USE: u8 = 0;
+    pub const DROP: u8 = 1;
+    /// Bag slot to bag slot `target`: onto a stack of the same thing, or swapping places.
+    pub const MOVE: u8 = 2;
+    /// Half the stack into the first empty slot.
+    pub const SPLIT: u8 = 3;
+    /// Bag slot into the bank, bank slot back into the bag, bank slot to bank slot `target` (only at a market).
+    pub const DEPOSIT: u8 = 4;
+    pub const WITHDRAW: u8 = 5;
+    pub const BANK_MOVE: u8 = 6;
+}
+/// Trading with another player (`trade_op` in the high byte of `arg`).
+pub const ACT_TRADE: u8 = 241;
+pub mod trade_op {
+    /// Ask the player `target` (an entity id) to trade, or say yes to them asking.
+    pub const ASK: u8 = 0;
+    /// Offer what is in bag slot `arg & 0xff`, `target` of it (0: the whole stack).
+    pub const OFFER: u8 = 1;
+    /// Take back the stack offered at index `arg & 0xff`.
+    pub const TAKE_BACK: u8 = 2;
+    /// Offer `target` of the game's money.
+    pub const COIN: u8 = 3;
+    /// Accept what is on the table; when both have, the swap is made.
+    pub const READY: u8 = 4;
+    pub const CANCEL: u8 = 5;
+}
+/// The auction house (`auction_op` in the high byte of `arg`; only at a market).
+pub const ACT_AUCTION: u8 = 242;
+pub mod auction_op {
+    /// A page (`arg & 0xff`) of listings, of item tag `target` (0: everything).
+    pub const BROWSE: u8 = 0;
+    /// Buy listing `target`.
+    pub const BUY: u8 = 1;
+    /// Put up bag slot `arg & 0xff` for `target` money.
+    pub const SELL: u8 = 2;
+    /// Take down your listing `target`.
+    pub const CANCEL: u8 = 3;
+    /// A page of your own listings.
+    pub const MINE: u8 = 4;
+}
 /// Action ids the client uses for items, so no wire change is needed for them: use slot N is ACT_USE + N, drop
 /// slot N is ACT_DROP + N, and ACT_PICKUP takes the nearest thing on the ground in reach. Game actions stay below.
 /// Talk to the bot targeted (a quest giver): it offers a quest, takes one handed in, or counts as a "talk" step.

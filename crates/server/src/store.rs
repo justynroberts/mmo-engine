@@ -29,6 +29,9 @@ pub struct Record {
     /// Carried items by name, so a changed item list never scrambles a bag.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inv: Vec<(String, u8)>,
+    /// What is kept in the bank, the same way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bank: Vec<(String, u8)>,
     /// The display name the player claimed (`proto::names`), empty if they never did.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,

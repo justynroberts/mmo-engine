@@ -4,7 +4,7 @@
 //! and is told what its bag and its surroundings look like; it never says what it has.
 
 use crate::sim::{Sim, DRIVEN, NO_ARCH};
-use proto::game::{ItemRt, ACT_DROP, ACT_PICKUP, ACT_USE, INV_SLOTS, PICKUP_RANGE};
+use proto::game::{ItemRt, ACT_DROP, ACT_PICKUP, ACT_USE, INV_SLOTS, PICKUP_RANGE, QUICK_SLOTS};
 
 /// One bag slot: (item index + 1, count). Item 0 means the slot is empty.
 pub type Bag = [(u8, u8); INV_SLOTS];
@@ -133,7 +133,7 @@ impl Sim {
     /// it is in reach, or the nearest one in reach when `target` is 0. Returns false if the action was not an item
     /// action.
     pub fn item_action(&mut self, slot: usize, action: u8, target: u32) -> bool {
-        let n = INV_SLOTS as u8;
+        let n = QUICK_SLOTS as u8;
         let kind = if (ACT_USE..ACT_USE + n).contains(&action) {
             0
         } else if (ACT_DROP..ACT_DROP + n).contains(&action) {
@@ -158,7 +158,7 @@ impl Sim {
         true
     }
 
-    fn use_slot(&mut self, slot: usize, i: usize) -> bool {
+    pub(crate) fn use_slot(&mut self, slot: usize, i: usize) -> bool {
         let (tag, count) = self.inv[slot][i];
         if tag == 0 {
             return false;
@@ -167,10 +167,15 @@ impl Sim {
         if self.realm.crops.iter().any(|c| c.seed == tag as usize - 1) {
             // A seed: planted in the nearest tilled soil, and used up only if it was.
             if !self.plant(slot, tag as usize - 1) {
+                self.tells.push((slot, "Seeds need tilled soil: lay some in build mode (B, then \\), stand by it and use them again.".into()));
                 return false;
             }
             self.inv[slot][i] = if count <= 1 { (0, 0) } else { (tag, count - 1) };
             self.bump_inv(slot);
+            if let Some(c) = self.realm.crops.iter().find(|c| c.seed == tag as usize - 1) {
+                let mins = (c.grow_secs / 60.0).ceil().max(1.0) as u32;
+                self.tells.push((slot, format!("Planted. Ripe in about {mins} minutes; break it in build mode to bring it in.")));
+            }
             return true;
         }
         if def.equip.is_some() {
@@ -196,7 +201,7 @@ impl Sim {
         true
     }
 
-    fn drop_slot(&mut self, slot: usize, i: usize) -> bool {
+    pub(crate) fn drop_slot(&mut self, slot: usize, i: usize) -> bool {
         let (tag, count) = self.inv[slot][i];
         if tag == 0 {
             return false;
@@ -261,6 +266,13 @@ impl Sim {
                     let n = fix(t, c, &new);
                     changed |= n != (t, c);
                     self.inv[s][i] = n;
+                }
+            }
+            for b in self.market.bank[s].iter_mut() {
+                if b.0 != 0 {
+                    let n = fix(b.0, b.1, &new);
+                    changed |= n != *b;
+                    *b = n;
                 }
             }
             if changed {
@@ -334,8 +346,8 @@ mod tests {
         assert_eq!(&s.inv[p][..3], &[(1, 3), (1, 3), (1, 1)]);
         assert_eq!(s.give(p, 0, 2), 0);
         assert_eq!(s.inv[p][2], (1, 3));
-        // 8 slots x 3 = 24 medkits, 9 are in.
-        assert_eq!(s.give(p, 0, 20), 20 - 15);
+        // INV_SLOTS slots of 3 each, 9 are in.
+        assert_eq!(s.give(p, 0, 100), 100 - (INV_SLOTS as u32 * 3 - 9));
     }
 
     #[test]
@@ -403,7 +415,7 @@ mod tests {
         let p = s.spawn(0).unwrap();
         s.ents.x[p] = 50.0;
         s.ents.y[p] = 50.0;
-        s.give(p, 0, 24);
+        s.give(p, 0, INV_SLOTS as u32 * 3);
         s.put_ground(50.0, 50.0, 0, 1);
         act(&mut s, p, ACT_PICKUP);
         assert_eq!(s.ground.len(), 1);
@@ -431,9 +443,9 @@ mod tests {
         let names = s.inv_names(p);
         assert_eq!(names, vec![("medkit".to_string(), 2), ("scrap".to_string(), 5)]);
         let q = s.spawn(1).unwrap();
-        s.restore_inv(q, &[("scrap".into(), 200), ("ghost".into(), 1)]);
+        s.restore_inv(q, &[("scrap".into(), 255), ("scrap".into(), 255), ("ghost".into(), 1)]);
         let q_names = s.inv_names(q);
-        assert_eq!(q_names.len(), 8, "a bag only holds 8 stacks and unknown names are dropped");
+        assert_eq!(q_names.len(), INV_SLOTS, "a bag only holds INV_SLOTS stacks and unknown names are dropped");
         assert!(q_names.iter().all(|(n, c)| n == "scrap" && *c == 10));
         // Reorder the list and drop medkit: scrap follows its name, medkit vanishes.
         let mut g = GameFile::default_game();

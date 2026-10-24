@@ -11,6 +11,7 @@ mod encounter;
 mod factions;
 mod items;
 mod life;
+mod market;
 mod io;
 mod nav;
 mod quests;

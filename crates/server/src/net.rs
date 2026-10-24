@@ -907,6 +907,11 @@ pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
             c.chat.deliver(0, proto::chat::channel::SAY, &text);
         }
     }
+    for (slot, from, ch, text) in std::mem::take(&mut sim.notes) {
+        if let Some(c) = clients.slab.iter_mut().flatten().find(|c| c.slot == slot) {
+            c.chat.deliver(from, ch, &text);
+        }
+    }
     let said = std::mem::take(&mut sim.npc_say);
     for (slot, shout, text) in &said {
         // A bot that died or was removed since it decided to speak stays quiet.
@@ -1152,7 +1157,7 @@ fn build_range(sim: &Sim, shard: &mut [Option<Client>], w: &mut Worker) {
         }
         if c.inv_burst > 0 || (tick.wrapping_add(c.slot as u32)) % 20 == 0 {
             c.inv_burst = c.inv_burst.saturating_sub(1);
-            wire::encode_inventory(&mut sc.buf, &sim.inv[c.slot]);
+            wire::encode_inventory(&mut sc.buf, &sim.bag_and_bank(c.slot));
             if c.session.seal(&sc.buf, &mut sc.out) {
                 tx.queue(c.addr, &sc.out);
             }

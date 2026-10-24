@@ -82,7 +82,7 @@ Spells are actions with optional fields (`aim`, `area`, `hits`, `hold`, `fx`, `b
 
 ## Social and trade
 
-`crates/server/src/social.rs` handles "/" chat commands (whispers, /who, parties: `Sim::party`, `party_of`); `crates/server/src/trade.rs` shops (`Archetype::shop`, `GameFile::currency`), gear (`ItemDef::equip`, `Sim::gear`, added in `Sim::scaled`) and mounts (`ItemDef::mount`, added to the `speed` attribute; `Sim::mounted`). Their private packets are PARTY and GEAR (`proto::wire`). The Godot client's `scripts/shop.gd` is the shop; party frames are in `hud.gd`, the horse in `main.gd` (`_make_horse`).
+`crates/server/src/social.rs` handles "/" chat commands (whispers, /who, parties: `Sim::party`, `party_of`); `crates/server/src/trade.rs` shops (`Archetype::shop`, `GameFile::currency`), gear (`ItemDef::equip`, `Sim::gear`, added in `Sim::scaled`) and mounts (`ItemDef::mount`, added to the `speed` attribute; `Sim::mounted`). Their private packets are PARTY and GEAR (`proto::wire`). The Godot client's `scripts/shop.gd` is the shop; party frames are in `hud.gd`, the horse in `main.gd` (`_make_horse`). `crates/server/src/market.rs` is the rest of the bag (24 slots, `ACT_BAG`), the bank (24 more, sent after the bag in INVENTORY, used only at a market: a `safe` place or near a merchant, saved in `store::Record::bank`), trading between players (`ACT_TRADE`, swapped all or nothing, state on chat channel 9) and the auction house (`ACT_AUCTION`, listings on channel 10, kept with the realm's save with what is owed to sellers, `Post`). Clients: `scripts/bag.gd` (F4), `trade.gd`, `auction.gd`.
 
 ## Classes
 

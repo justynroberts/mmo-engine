@@ -42,6 +42,11 @@ pub mod channel {
     pub const NEARBY: u8 = 7;
     /// Server to client: said to your guild (`/g`).
     pub const GUILD: u8 = 8;
+    /// Server to client: a trade's state, from the other player (see `market.rs`): "?" they ask you, "-" it is over,
+    /// otherwise "mine|coin|ready|theirs|coin|ready". Not shown as chat.
+    pub const TRADE: u8 = 9;
+    /// Server to client: auction house listings, a line each (see `market.rs`). Not shown as chat.
+    pub const AUCTION: u8 = 10;
 }
 
 pub mod kind {

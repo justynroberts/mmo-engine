@@ -458,6 +458,11 @@ pub struct Sim {
     /// who is on which side, guilds, plots, crops in the ground, dungeon runs (`realm.rs`).
     pub realm: proto::realm::Realm,
     pub rs: crate::realm::State,
+    /// Banks, trades between players and the auction house (`market.rs`).
+    pub market: crate::market::Market,
+    /// Chat lines for one player on a channel of their own (a trade's state, auction listings): (slot, from, channel,
+    /// text). Drained by the network layer.
+    pub notes: Vec<(usize, u32, u8, String)>,
 }
 
 /// The part of the weather that clients draw.
@@ -590,6 +595,8 @@ impl Sim {
             nav_goal: vec![(0.0, 0.0, -1.0); cap],
             realm,
             rs: crate::realm::State::new(cap),
+            market: crate::market::Market::new(cap),
+            notes: Vec::new(),
         }
     }
 
@@ -682,6 +689,7 @@ impl Sim {
         self.nav_goal[slot].2 = -1.0;
         self.reset_attrs(slot);
         self.clear_inv(slot);
+        self.reset_market(slot);
         self.item_cd[slot] = 0;
         Some(slot)
     }
@@ -693,6 +701,7 @@ impl Sim {
             y: self.ents.y[slot],
             attrs: self.defs.attrs.iter().enumerate().map(|(i, d)| (d.name.clone(), self.ents.attrs[i][slot])).collect(),
             inv: self.inv_names(slot),
+            bank: self.bank_names(slot),
             name: if self.ents.name_claimed[slot] { self.ents.name[slot].as_deref().unwrap_or("").to_string() } else { String::new() },
             zone: None,
             xp: self.ents.xp[slot],
@@ -770,6 +779,9 @@ impl Sim {
         }
         if !rec.inv.is_empty() {
             self.restore_inv(slot, &rec.inv);
+        }
+        if !rec.bank.is_empty() {
+            self.restore_bank(slot, &rec.bank);
         }
         if let Ok(n) = proto::names::clean(&rec.name) {
             self.set_name(slot, &n, true);
@@ -1142,6 +1154,7 @@ impl Sim {
                 self.system_forgive();
             }
             self.system_realm();
+            self.system_market();
         }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -1605,6 +1618,23 @@ impl Sim {
                     _ => self.unequip(p.slot, p.arg),
                 };
                 if ok {
+                    self.lived(p.slot, crate::life::Deed::Deed);
+                } else {
+                    self.stats.rejected_actions += 1;
+                }
+                continue;
+            }
+            if matches!(p.action, proto::game::ACT_BAG | proto::game::ACT_TRADE | proto::game::ACT_AUCTION) {
+                if self.tick < self.item_cd[p.slot] {
+                    continue;
+                }
+                let ok = match p.action {
+                    proto::game::ACT_BAG => self.bag_action(p.slot, p.arg, p.target),
+                    proto::game::ACT_TRADE => self.trade_action(p.slot, p.arg, p.target),
+                    _ => self.auction_action(p.slot, p.arg, p.target),
+                };
+                if ok {
+                    self.item_cd[p.slot] = self.tick + crate::items::ITEM_CD_TICKS;
                     self.lived(p.slot, crate::life::Deed::Deed);
                 } else {
                     self.stats.rejected_actions += 1;

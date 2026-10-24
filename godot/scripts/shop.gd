@@ -5,6 +5,7 @@ extends CanvasLayer
 
 signal bought(index: int)
 signal sold(bag_slot: int)
+signal auction_requested
 
 const HUD := preload("res://scripts/hud.gd")
 
@@ -45,6 +46,11 @@ func _ready() -> void:
 	_money.add_theme_color_override("font_color", HUD.ACCENT)
 	_money.add_theme_font_size_override("font_size", 15)
 	head.add_child(_money)
+	var ah := Button.new()
+	ah.text = "Auction house"
+	ah.focus_mode = Control.FOCUS_NONE
+	ah.pressed.connect(func(): auction_requested.emit())
+	head.add_child(ah)
 	v.add_child(head)
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 24)
@@ -84,6 +90,7 @@ func open(merchant: String, goods: Array, bag: Array) -> void:
 func refresh(bag: Array) -> void:
 	if not panel.visible:
 		return
+	bag = bag.slice(0, 24) # the bag; the bank's slots follow it
 	var money := 0
 	for b in bag:
 		if String(b["item"]) == _currency:

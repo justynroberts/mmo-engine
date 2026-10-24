@@ -7,7 +7,7 @@ extends Node3D
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue. --guest plays a throwaway character, not this machine's own.
-## Screenshots: --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
+## Screenshots: --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
@@ -17,6 +17,9 @@ const SpellFx := preload("res://scripts/spellfx.gd")
 const JournalScript := preload("res://scripts/journal.gd")
 const QuestsScript := preload("res://scripts/quests.gd")
 const ShopScript := preload("res://scripts/shop.gd")
+const BagScript := preload("res://scripts/bag.gd")
+const TradeScript := preload("res://scripts/trade.gd")
+const AuctionScript := preload("res://scripts/auction.gd")
 const ClassPickScript := preload("res://scripts/classpick.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const TutorialScript := preload("res://scripts/tutorial.gd")
@@ -97,6 +100,9 @@ var corpses: Array = [] # [node, seconds left]
 var entity_scale := 1.0
 const ACT_CLASS := 238
 const ACT_RISE := 239
+const ACT_BAG := 240
+const ACT_TRADE := 241
+const ACT_AUCTION := 242
 ## Bots drawn as something other than a person, by the name their type gives them.
 const CARTERS := ["Ceannai Taistil", "Fear Cairte"]
 const FIRES := ["Tine"]
@@ -118,6 +124,10 @@ var bar_order: Array = []   # the names on the spell bar, in key order: the play
 var journal: CanvasLayer    # the spell journal and the menu: scripts/journal.gd
 var questui: CanvasLayer    # quest offers, the quest log and the tracker: scripts/quests.gd
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
+var bagui: CanvasLayer      # the whole bag and the bank (F4): scripts/bag.gd
+var tradeui: CanvasLayer    # trading with another player: scripts/trade.gd
+var auctionui: CanvasLayer  # the auction house: scripts/auction.gd
+var _players := {}          # ids of the players about (those with a class), for trading
 var classui: CanvasLayer    # choosing a class: scripts/classpick.gd
 var settingsui: CanvasLayer # volumes, graphics, full screen: scripts/settings.gd
 var tutorial: CanvasLayer   # the first walk through: scripts/tutorial.gd
@@ -260,6 +270,18 @@ func _ready() -> void:
 	questui.abandoned.connect(func(i: int): net.abandon_quest(i))
 	shopui = ShopScript.new()
 	add_child(shopui)
+	bagui = BagScript.new()
+	add_child(bagui)
+	tradeui = TradeScript.new()
+	add_child(tradeui)
+	auctionui = AuctionScript.new()
+	add_child(auctionui)
+	bagui.bag_op.connect(func(op: int, slot: int, other: int): net.act_arg(ACT_BAG, other, op << 8 | slot))
+	bagui.offered.connect(func(slot: int): net.act_arg(ACT_TRADE, 0, 1 << 8 | slot))
+	bagui.auction_requested.connect(_open_auction)
+	tradeui.trade_op.connect(func(op: int, slot: int, target: int): net.act_arg(ACT_TRADE, target, op << 8 | slot))
+	auctionui.auction_op.connect(func(op: int, a: int, target: int): net.act_arg(ACT_AUCTION, target, op << 8 | a))
+	shopui.auction_requested.connect(_open_auction)
 	classui = ClassPickScript.new()
 	add_child(classui)
 	classui.chosen.connect(func(i: int):
@@ -425,6 +447,8 @@ func _start() -> void:
 	questui.set_quests(info.get("quests", []) if info.get("quests") is Array else [])
 	classes = info.get("classes", []) if info.get("classes") is Array else []
 	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
+	for ui in [bagui, tradeui, auctionui]:
+		ui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
 	for it in info.get("items", []):
 		if it.has("rarity"):
 			hud.rarity[String(it["name"])] = String(it["rarity"])
@@ -470,7 +494,14 @@ func _start() -> void:
 	net = ClassDB.instantiate("MmoClient")
 	add_child(net)
 	net.chat_heard.connect(func(from: int, channel: int, text: String):
-		if from == 0:
+		if channel == 9: # a trade's state, from the other player
+			tradeui.on_line(from, _name(from), text, net.bag())
+			bagui.trading = tradeui.is_open()
+			if text == "?":
+				sound.play("chime", -8.0, 0.0)
+		elif channel == 10: # auction house listings
+			auctionui.on_line(text)
+		elif from == 0:
 			hud.say("[color=#ffd27a]%s[/color]" % text)
 			if channel == 3: # a banner: an event's news, across the screen too, with a horn
 				hud.announce(text)
@@ -508,6 +539,12 @@ func _start() -> void:
 		_toggle_map.call_deferred()
 	if args.has("build"):
 		_set_building(true)
+	if args.has("open"): # --open bag|auction: to look at them (with --shot)
+		get_tree().create_timer(float(args.get("open_after", "4"))).timeout.connect(func():
+			if String(args["open"]) == "auction":
+				_open_auction()
+			else:
+				bagui.toggle(net.bag()))
 	if args.has("fpv"):
 		_set_fpv(true)
 		if args.has("pitch"):
@@ -724,7 +761,9 @@ func _process(delta: float) -> void:
 	t = theme.lap("aim", t)
 	var bag: Array = net.bag()
 	hud.set_bag(bag)
-	_hear_bag(bag)
+	_hear_bag(bag.slice(0, BagScript.SLOTS))
+	bagui.refresh(bag)
+	auctionui.refresh(bag)
 	t = theme.lap("bag", t)
 	_footsteps()
 	_listen(delta)
@@ -2201,9 +2240,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_F3:
 			questui.toggle_log()
 			return
-		if k == KEY_ESCAPE and (settingsui.escape() or shopui.escape() or questui.escape() or journal.escape()):
+		if k == KEY_F4:
+			bagui.toggle(net.bag())
 			return
-		if journal.is_open() or questui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open():
+		if k == KEY_ESCAPE and (settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
+			return
+		if journal.is_open() or questui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
 			return
 		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
@@ -2479,6 +2521,12 @@ func _social_frame(list: Array, self_id: int) -> void:
 	hud.set_party(mates)
 	var gear: Dictionary = net.gear()
 	journal.set_gear(gear)
+	_players.clear()
+	for e in list:
+		if float(e.get("class", 0.0)) > 0.0 and int(e["id"]) != self_id:
+			_players[int(e["id"])] = true
+	if tradeui.is_open() and int(t_total * 4.0) != int((t_total - get_process_delta_time()) * 4.0):
+		tradeui.refresh(net.bag())
 	if shopui.is_open():
 		if not ents.has(_shop_with) or _dist_to(_shop_with) > 10.0:
 			shopui.escape() # walked away
@@ -2720,7 +2768,17 @@ func _talk_or_pickup() -> void:
 		_shop_with = trader
 		shopui.open(_name(trader), shops[_name(trader)], net.bag())
 		return
+	# Another player targeted and near: ask them to trade.
+	if target_id != 0 and _players.has(target_id) and _dist_to(target_id) <= 12.0:
+		net.act_arg(ACT_TRADE, target_id, 0)
+		return
 	net.pickup()
+
+## The auction house (from the bag or a merchant's shop); the server says if this is not the place for it.
+func _open_auction() -> void:
+	shopui.escape()
+	bagui.escape()
+	auctionui.open(net.bag())
 
 ## Our level and experience from the server: show what we earned over our head, and celebrate a new level.
 func _watch_progress() -> void:
