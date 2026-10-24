@@ -1195,8 +1195,12 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary, town: Dictio
 				if f == floors - 1 and float((i * 5 + si + hsh) % 20) / 20.0 < float(style["vines"]):
 					put.call(["Prop_Vine1", "Prop_Vine2", "Prop_Vine4", "Prop_Vine5", "Prop_Vine6", "Prop_Vine9"][(i + si) % 6], Transform3D(plain, at + lift + Vector3(0, tall, 0) + out * 0.2))
 				if f == 1 and style["balconies"] and not grand and (i + si * 2 + hsh) % 9 == 0:
+					# The balcony piece is only its railing, a unit out from the wall: a floor of boards from the wall
+					# to the rail (half a floor tile, turned to run outwards), and two short brackets under it.
 					put.call(["Balcony_Simple_Straight", "Balcony_Cross_Straight"][(i + hsh) % 2], Transform3D(plain, at + lift))
-					put.call("Prop_Support", Transform3D(plain, at + lift - Vector3(0, tall * 0.55, 0)))
+					put.call("Floor_WoodDark_Half1", Transform3D(plain * Basis(Vector3.UP, PI / 2.0), at + lift + Vector3(0, 0.03, 0)))
+					for bx in [-0.75, 0.75]:
+						put.call("Roof_Support2", Transform3D(plain, at + lift + plain * Vector3(bx, 0, 0)))
 	# Corner posts, stone below and timber above.
 	var corners := [[Vector3(x0, 0, y0), PI], [Vector3(x1, 0, y0), PI / 2.0], [Vector3(x0, 0, y1), -PI / 2.0], [Vector3(x1, 0, y1), 0.0]]
 	for cc in corners:
@@ -1212,8 +1216,6 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary, town: Dictio
 			if f == floors - 1 and f > 0 and (hsh / 19) % 2 == 0:
 				post = "Corner_Exterior_TopDown"
 			put.call(post, Transform3D(Basis.from_scale(Vector3.ONE * VS), c + Vector3(0, tall * f, 0)))
-		if tower:
-			put.call(["Balcony_Simple_Corner", "Balcony_Cross_Corner"][hsh % 2], Transform3D(face, c + Vector3(0, tall * 2, 0)))
 	put.call("Corner_Exterior_TopOnly", Transform3D(Basis.from_scale(Vector3.ONE * VS), Vector3(x0, tall * floors, y0)))
 	_house_roof(put, b, tall * floors, tower, hsh, float(style["pitch"]), int(style["chimney"]))
 	var dress := {}
@@ -1333,7 +1335,6 @@ func _house_stairs(put: Callable, side: Array, tall: float, hsh: int) -> void:
 		put.call(flights[(hsh + k) % flights.size()] if k > 0 else flights[(hsh / 3) % flights.size()], Transform3D(face, at))
 		put.call(rails[(hsh / 5) % rails.size()], Transform3D(face, at))
 	put.call(tops[(hsh / 7) % tops.size()], Transform3D(face, base + dir * (VS * steps) + Vector3(0, tall - VS, 0)))
-	put.call("Balcony_Simple_Straight", Transform3D(Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3.ONE * VS), base + dir * (VS * (steps + 1.5)) - out * (1.0 * VS) + Vector3(0, tall, 0)))
 
 ## A square's dressing, by its settlement's trade (towns.gd TRADES): logs to sit on round the fire, stalls with
 ## goods on their tables in a ring, and the trade's piles at the corners. Out of the server's way: a square is open
