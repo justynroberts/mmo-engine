@@ -1850,8 +1850,9 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 		var arch := door + out * (VS * 6.0)
 		var low := minf(gy.call(arch - side * VS).y, gy.call(arch + side * VS).y)
 		put.call("Wall_Arch", Transform3D(rot * tile, Vector3(arch.x, low - 0.05, arch.z)))
-	# A wooden lean-to beside the path on most houses: one sloping roof of two Roof_Wooden_2x1 (high along its
-	# origin edge, falling ~1.1 over its 1.5 depth) on four timber posts cut to meet it, high side towards the house.
+	# A wooden lean-to beside the path on most houses: one sloping roof of the kit's left and right Roof_Wooden_2x1
+	# halves (each trimmed on its outer end only, so they meet without a doubled edge; high along the origin edge,
+	# falling ~1.1 over the 1.5 depth) on four timber posts cut to meet it, high side towards the house.
 	if hsh % 4 != 3:
 		var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
 		var high := (2.4 + 0.3 * float(hsh % 3)) * VS          # the eaves above the ground at the back
@@ -1867,7 +1868,7 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 			top = maxf(top, (f[0] as Vector3).y + float(f[1]) * VS)
 		var eave := top + high
 		for sx2 in [-1.0, 1.0]:
-			put.call("Roof_Wooden_2x1", Transform3D(roof_b, Vector3(back.x, eave - 1.0 * VS, back.z) + across * (sx2 * 1.1 * VS)))
+			put.call("Roof_Wooden_2x1_L" if sx2 < 0.0 else "Roof_Wooden_2x1_R", Transform3D(roof_b, Vector3(back.x, eave - 1.0 * VS, back.z) + across * (sx2 * VS)))
 		for f in feet:
 			# Corner_Exterior_Wood is a post 3 tall from its foot; scaled to reach the roof's underside there.
 			var foot: Vector3 = f[0]
