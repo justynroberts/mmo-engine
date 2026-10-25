@@ -27,6 +27,7 @@ var meshes := {}             # path -> Mesh, pulled out of the glTF pieces once
 var _built_bodies := 0       # how many KayKit characters were made (for the smoke test)
 const LifeScript := preload("res://themes/fantasy/life.gd")
 const TownsScript := preload("res://themes/fantasy/towns.gd")
+const LandScript := preload("res://themes/fantasy/land.gd")
 var life: Node3D             # birds, deer, stock, chimney smoke, fireflies, and the weather on the ground (life.gd)
 var _life_ms := 0
 var _chimney_at := Vector3.INF # set by _house_roof: where the last house's chimney stands (before its base height)
@@ -36,6 +37,7 @@ var grass: MultiMeshInstance3D  # themes/fantasy/grass.gd, round the player (nul
 var air: Node3D                 # themes/fantasy/air.gd: mist, haze and wisps between the weathers
 var _here := Vector2.ZERO        # where we are, for the air
 var towns = TownsScript.new()     # every settlement's look and trade (towns.gd)
+var land = LandScript.new()       # cold north, wet and wooded ground, fields, road junctions (land.gd)
 var _pal_meshes := {}            # "path#palette" -> a piece with its materials tinted to that palette
 var _pal_mats := {}
 
@@ -43,6 +45,7 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
 	world = p_world
 	towns.survey(world)
+	land.setup(world, towns)
 	_prefetch()
 	# Every palette's tinted materials and washed textures now, while loading, not as the first village comes near;
 	# its copy of each piece over the next frames (_warm).
@@ -54,6 +57,7 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 				if String(f).begins_with(VILLAGE):
 					_warming.append([f, pal])
 	LifeScript.ensure_globals() # before any shader that reads them is made
+	RenderingServer.global_shader_parameter_set("world_cold_band", land.cold_band)
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
@@ -144,18 +148,23 @@ void fragment() {
 	add_child(air)
 	if world.has_heights and not OS.get_cmdline_user_args().has("--no-grass"):
 		grass = preload("res://themes/fantasy/grass.gd").new()
+		grass.land = land
 		grass.setup(world)
 		add_child(grass)
-	# Meadow: two greens, dry patches and worn dirt, all from world position so every client sees the same field.
+	# The ground: meadow in the south giving way to cold heath and frost in the north (world_cold_band), lush by water,
+	# leaf litter under trees, fields by farmsteads, sand and shingle on the shore, rock on slopes and snow up high,
+	# all from world position and the cell's land map (land.gd ground_map) so every client sees the same land.
 	var sh := Shader.new()
 	sh.code = """shader_type spatial;
 uniform float rocky = 0.0; // 1 on crags: rock except in the flattest hollows
-uniform sampler2D road_map : filter_linear, repeat_disable; // a cell's roads: r how much road, g paved (ground_material_at)
-uniform vec2 road_origin;
-uniform float road_on = 0.0;
+uniform sampler2D land_map : filter_linear, repeat_disable; // land.gd ground_map: r road, g paved or field, b wet, a woodland
+uniform vec2 land_origin;
+uniform float land_on = 0.0;
+uniform float sea_level = -1000.0;
 global uniform float world_wet;     // life.gd: how wet the ground is after rain
 global uniform float world_puddles; // standing water, which lasts longer
 global uniform float world_snow;    // snow lying
+global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
 varying vec3 wp;
 varying vec3 wn;
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
@@ -167,32 +176,73 @@ float fbm(vec2 p) { float v = 0.0; float a = 0.5; for (int k = 0; k < 4; k++) { 
 void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; wn = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz); }
 void fragment() {
 	vec2 q = wp.xz;
+	vec4 lm = land_on > 0.5 ? texture(land_map, (q - land_origin) / 128.0) : vec4(0.0);
+	float cold = 1.0 - smoothstep(world_cold_band.x, world_cold_band.y, wp.z + 220.0 * (fbm(q / 300.0) - 0.5));
+	// Meadow: two greens, dry patches and worn dirt.
 	vec3 c = mix(vec3(0.36, 0.56, 0.20), vec3(0.50, 0.66, 0.25), smoothstep(0.3, 0.7, fbm(q / 14.0)));
 	c = mix(c, vec3(0.46, 0.43, 0.24), smoothstep(0.55, 0.75, fbm(q / 90.0)) * 0.5);
 	c = mix(c, vec3(0.44, 0.36, 0.23), smoothstep(0.62, 0.78, fbm(q / 18.0 + 7.0)) * 0.45);
+	// Clover and darker sward in drifts, so the meadow is never one flat green.
+	c = mix(c, vec3(0.30, 0.50, 0.22), smoothstep(0.58, 0.72, fbm(q / 6.0 + 21.0)) * 0.35);
+	// High ground in the warm south: heath and dry gold.
+	float up = smoothstep(17.0, 27.0, wp.y + 4.0 * n(q * 0.05)) * (1.0 - cold);
+	c = mix(c, mix(vec3(0.56, 0.52, 0.29), vec3(0.45, 0.36, 0.31), smoothstep(0.4, 0.65, fbm(q / 20.0 + 5.0))), up * 0.4);
+	// The cold north: grey-green tussock, heather, stony ground and frost.
+	vec3 tun = mix(vec3(0.42, 0.48, 0.37), vec3(0.54, 0.56, 0.44), smoothstep(0.3, 0.7, fbm(q / 16.0)));
+	tun = mix(tun, vec3(0.46, 0.36, 0.38), smoothstep(0.55, 0.72, fbm(q / 22.0 + 3.0)) * 0.55);
+	tun = mix(tun, vec3(0.52, 0.52, 0.50), smoothstep(0.62, 0.8, fbm(q / 9.0 + 11.0)) * 0.5);
+	c = mix(c, tun, cold);
 	c *= 0.94 + 0.12 * fbm(q * 0.6);
-	// Steep ground is bare rock, high ground carries snow, and anything below a river's banks is wet silt.
+	c = mix(c, vec3(0.80, 0.85, 0.90), cold * cold * smoothstep(0.55, 0.72, fbm(q * 0.9 + 4.0)) * 0.3);
+	// By water the grass is lush and dark, and the very edge is mud.
+	float wet = lm.b;
+	c = mix(c, mix(vec3(0.24, 0.45, 0.17), vec3(0.32, 0.41, 0.27), cold), smoothstep(0.05, 0.6, wet) * 0.7);
+	c = mix(c, vec3(0.38, 0.33, 0.24), smoothstep(0.88, 1.0, wet + 0.1 * (n(q * 0.8) - 0.5)) * 0.8);
+	// Under trees: leaf litter and moss (needles and stones in the north).
+	float wood = smoothstep(0.1, 0.7, lm.a + 0.3 * (n(q * 0.5) - 0.5));
+	vec3 litter = mix(vec3(0.31, 0.37, 0.17), vec3(0.40, 0.34, 0.21), smoothstep(0.4, 0.6, fbm(q * 0.8)));
+	litter = mix(litter, vec3(0.36, 0.36, 0.32), cold * 0.6) * (0.88 + 0.24 * h(floor(q * 3.0)));
+	c = mix(c, litter, wood * 0.55);
+	// Fields by farmsteads: strips of wheat, greens, barley and plough, furrowed one way or the other.
+	float field = lm.g * (1.0 - smoothstep(0.0, 0.08, lm.r));
+	float across = lm.g > 0.75 ? q.x : q.y;
+	float along = lm.g > 0.75 ? q.y : q.x;
+	float strip = h(vec2(floor(across / 6.5), floor(along / 45.0)) + 3.1);
+	vec3 crop = strip < 0.35 ? vec3(0.80, 0.67, 0.33) : strip < 0.6 ? vec3(0.37, 0.55, 0.20) : strip < 0.82 ? vec3(0.46, 0.35, 0.23) : vec3(0.64, 0.64, 0.31);
+	crop = mix(crop, crop * vec3(0.85, 0.9, 0.92) + vec3(0.04), cold);
+	crop *= 0.8 + 0.28 * (0.5 + 0.5 * sin(across * 3.4)) + 0.08 * (n(q * 1.3) - 0.5);
+	c = mix(c, crop, smoothstep(0.05, 0.35, field + 0.1 * (n(q * 0.9) - 0.5)) * step(0.02, field));
+	// Steep ground is bare rock.
 	float slope = 1.0 - clamp(wn.y, 0.0, 1.0);
 	vec3 rock = vec3(0.47, 0.45, 0.42) * (0.8 + 0.4 * fbm(q * 0.25 + wp.y * 0.1));
+	rock = mix(rock, rock * vec3(0.92, 0.96, 1.04), cold);
 	c = mix(c, rock, max(smoothstep(0.28, 0.5, slope), rocky * smoothstep(0.04, 0.12, slope + 0.05 * n(q * 0.3))));
+	// The shore: sand in the south, grey shingle in the north, darker where the sea wets it.
+	float beach = 1.0 - smoothstep(sea_level + 0.5, sea_level + 1.4, wp.y + 0.6 * (n(q * 0.3) - 0.5));
+	vec3 sand = mix(vec3(0.79, 0.72, 0.54), vec3(0.56, 0.55, 0.53), cold) * (0.9 + 0.15 * fbm(q * 1.5));
+	sand = mix(sand, sand * 0.72, 1.0 - smoothstep(sea_level + 0.1, sea_level + 0.6, wp.y));
+	c = mix(c, sand, beach * (1.0 - smoothstep(0.35, 0.6, slope)));
 	// Roads: packed earth with a ragged grassy edge in the country, cobbles in the city.
 	float road = 0.0;
-	if (road_on > 0.5) {
-		vec2 rm = texture(road_map, (q - road_origin) / 128.0).rg;
-		road = smoothstep(0.2, 0.6, rm.r + 0.25 * (n(q * 0.7) - 0.5));
+	if (land_on > 0.5) {
+		road = smoothstep(0.2, 0.6, lm.r + 0.25 * (n(q * 0.7) - 0.5));
 		vec3 dirt = vec3(0.52, 0.43, 0.30) * (0.86 + 0.22 * fbm(q * 0.9)) * (0.92 + 0.12 * n(q * 3.0));
+		dirt = mix(dirt, vec3(0.47, 0.44, 0.39) * (0.86 + 0.22 * fbm(q * 0.9)), cold * 0.6);
 		vec2 cq = q * vec2(1.25, 1.6);
 		cq.x += 0.5 * floor(cq.y);
 		vec2 cf = abs(fract(cq) - 0.5);
 		float stone = smoothstep(0.5, 0.38, max(cf.x, cf.y));
 		vec3 cob = mix(vec3(0.27, 0.26, 0.24), vec3(0.55, 0.53, 0.49) * (0.8 + 0.35 * h(floor(cq))), stone);
-		c = mix(c, mix(dirt, cob, smoothstep(0.4, 0.6, rm.g)), road);
+		c = mix(c, mix(dirt, cob, smoothstep(0.4, 0.6, lm.g)), road);
 	}
-	c = mix(c, vec3(0.93, 0.95, 0.98), smoothstep(30.0, 42.0, wp.y + 6.0 * n(q * 0.05)) * (1.0 - smoothstep(0.55, 0.8, slope)));
+	// Snow on high ground, coming down far lower in the north, and lying in drifts on the level up there.
+	float snow_line = mix(30.0, 18.0, cold);
+	c = mix(c, vec3(0.93, 0.95, 0.98), smoothstep(snow_line, snow_line + 12.0, wp.y + 6.0 * n(q * 0.05)) * (1.0 - smoothstep(0.55, 0.8, slope)));
 	// Weather that lies: snow on the level ground (roads trodden through), then rain darkening everything and
 	// shining on the roads, with puddles in the ruts and hollows that outlast it.
 	float lvl = smoothstep(0.75, 0.95, wn.y);
-	float sn = lvl * smoothstep(0.15, 0.5, world_snow * 1.2 + 0.4 * (fbm(q * 0.35) - 0.5)) * (1.0 - 0.5 * road);
+	float drifts = smoothstep(0.85, 1.0, cold) * smoothstep(0.6, 0.72, fbm(q / 14.0 + 2.0)) * 0.6;
+	float sn = lvl * max(smoothstep(0.15, 0.5, world_snow * 1.2 + 0.4 * (fbm(q * 0.35) - 0.5)), drifts) * (1.0 - 0.5 * road);
 	c = mix(c, vec3(0.9, 0.92, 0.96) * (0.95 + 0.05 * n(q * 2.0)), sn);
 	float wk = world_wet * (1.0 - sn);
 	c *= 1.0 - 0.3 * wk * (0.6 + 0.4 * road);
@@ -204,6 +254,7 @@ void fragment() {
 }"""
 	var m := ShaderMaterial.new()
 	m.shader = sh
+	m.set_shader_parameter("sea_level", float(world.sea_level) if world.has_sea else -1000.0)
 	terrain_mat = m
 
 	# A flat sheet well below the hills fills the distance past the streamed terrain, inside the fog.
@@ -293,47 +344,16 @@ func remove_lights(owner) -> void:
 func ground_material() -> Material:
 	return terrain_mat
 
-## Road map texels along a ground cell's edge (2 units each).
-const ROAD_PX := 64
-## A cell with roads in it gets its own copy of the ground material, with a small map of where the roads run: how
-## much road each texel is (1 on it, fading over a unit and a half at the edge) and whether it is paved (the city's
-## streets and avenues, which are the wide ones).
+## A cell with roads, water, trees or fields in it gets its own copy of the ground material, with the land map that
+## land.gd draws for it (refreshed by build_cell once the cell's trees have streamed in).
 func ground_material_at(cx: int, cy: int) -> Material:
-	var segs: Array = world.road_segments(cx, cy)
-	if segs.is_empty():
+	var map := land.ground_map(cx, cy)
+	if map.is_empty():
 		return terrain_mat
-	var n := ROAD_PX
-	var px: float = world.CELL / n
-	var ox: float = cx * world.CELL
-	var oy: float = cy * world.CELL
-	var map := PackedByteArray()
-	map.resize(n * n * 2)
-	for s in segs:
-		var a := Vector2(s[0], s[1])
-		var b := Vector2(s[2], s[3])
-		var hw: float = s[4]
-		var paved := hw >= 3.4
-		var pad := hw + 1.5
-		var i0 := clampi(int((minf(a.x, b.x) - pad - ox) / px), 0, n - 1)
-		var i1 := clampi(int((maxf(a.x, b.x) + pad - ox) / px), 0, n - 1)
-		var j0 := clampi(int((minf(a.y, b.y) - pad - oy) / px), 0, n - 1)
-		var j1 := clampi(int((maxf(a.y, b.y) + pad - oy) / px), 0, n - 1)
-		for j in range(j0, j1 + 1):
-			for i in range(i0, i1 + 1):
-				var p := Vector2(ox + (i + 0.5) * px, oy + (j + 0.5) * px)
-				var v := clampf((hw + 0.75 - Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p)) / 1.5, 0.0, 1.0)
-				if v <= 0.0:
-					continue
-				var at := (j * n + i) * 2
-				var q := int(v * 255.0)
-				if q > map[at]:
-					map[at] = q
-				if paved and q > map[at + 1]:
-					map[at + 1] = q
 	var m := terrain_mat.duplicate() as ShaderMaterial
-	m.set_shader_parameter("road_map", ImageTexture.create_from_image(Image.create_from_data(n, n, false, Image.FORMAT_RG8, map)))
-	m.set_shader_parameter("road_origin", Vector2(ox, oy))
-	m.set_shader_parameter("road_on", 1.0)
+	m.set_shader_parameter("land_map", ImageTexture.create_from_image(Image.create_from_data(land.MAP_N, land.MAP_N, false, Image.FORMAT_RGBA8, map)))
+	m.set_shader_parameter("land_origin", Vector2(cx * world.CELL, cy * world.CELL))
+	m.set_shader_parameter("land_on", 1.0)
 	return m
 
 ## Building blocks from the Medieval Village textures, tiled so each block shows one texture repeat: the eight
@@ -416,15 +436,17 @@ func _daylight_frame(dt: float) -> void:
 	# By day the sun lights the world; by night a dim blue moon from the other side does.
 	var light_dir := sun_dir if sun_dir.y > -0.05 else -sun_dir
 	_sun.transform.basis = Basis.looking_at(-light_dir, Vector3.FORWARD if absf(light_dir.y) > 0.99 else Vector3.UP)
-	var warm := (_clear["sun_color"] as Color).lerp(Color("ffb27a"), dusk * 0.7)
+	# The north's light is thinner and bluer, its haze grey.
+	var chill: float = land.cold_at(_here.y)
+	var warm := (_clear["sun_color"] as Color).lerp(Color("e6eefa"), 0.45 * chill).lerp(Color("ffb27a"), dusk * 0.7)
 	_sun.light_color = warm if sun_dir.y > -0.05 else Color("9db4ff")
 	var sun_energy: float = _clear["sun"] * (0.25 + 0.75 * day) if sun_dir.y > -0.05 else NIGHT_MOON
 	_sun.light_energy = sun_energy * (1.0 - (0.55 + 0.2 * storm) * k)
 	var e := _env
 	e.tonemap_exposure = lerpf(NIGHT_EXPOSURE, 0.95, day) # the whole picture darker at night, the sky with it
-	e.ambient_light_color = Color("1a2238").lerp(_clear["ambient_color"], day)
+	e.ambient_light_color = Color("1a2238").lerp((_clear["ambient_color"] as Color).lerp(Color("a8bad2"), 0.5 * chill), day)
 	e.ambient_light_energy = _clear["ambient"] * (NIGHT_AMBIENT + (1.0 - NIGHT_AMBIENT) * day) * (1.0 - 0.35 * k) + _flash * 1.5
-	var fog_day: Color = (_clear["fog_color"] as Color).lerp(Color("e0a07a"), dusk * 0.35)
+	var fog_day: Color = (_clear["fog_color"] as Color).lerp(Color("c3ccd6"), 0.6 * chill).lerp(Color("e0a07a"), dusk * 0.35)
 	var fog := Color("0a0e17").lerp(fog_day, day)
 	var thick: float = _wx["thick"]
 	e.fog_light_color = fog.lerp(col.darkened(0.2 * (1.0 - day)), 0.6 * k)
@@ -521,21 +543,34 @@ func build_cell(cx: int, cy: int) -> Node3D:
 				_square_dress(o, batch)
 			"city":
 				pass # open ground: the heights already level it
-			"sea", "ford":
-				pass # the sea is drawn once, as a surface (setup); a ford is the road's own ground under the water
+			"sea":
+				pass # the sea is drawn once, as a surface (setup)
+			"ford":
+				_ford(o, cx, cy, node, batch, lights) # the road's own ground under the water, with stepping stones
 			_:
 				if o.get("solid", false):
 					node.add_child(block(o)) # a type this theme does not know: draw it plainly
 	pt = lap("cell objects", pt)
+	_land_dress(cx, cy, node, batch, lights)
+	pt = lap("cell land", pt)
+	# Leaves and needles go grey-green towards the cold north.
+	var chill := Color.WHITE.lerp(Color(0.62, 0.72, 0.72), land.cold_at((cy + 0.5) * world.CELL))
 	for key in batch:
 		var path := String(key).get_slice("#", 0)
 		var fresh := not meshes.has(path)
 		var m := _mesh_pal(path, int(String(key).get_slice("#", 1)) if String(key).contains("#") else 0)
 		pt = lap("cell load" if fresh else "cell palette", pt)
+		var f := path.get_file()
+		var tint := _tint(path) * (chill if path.begins_with(FOREST) and (f.begins_with("Tree_") or f.begins_with("Bush_")) else Color.WHITE)
 		if m:
-			node.add_child(_multi(m, batch[key], _tint(path)))
+			node.add_child(_multi(m, batch[key], tint))
 		pt = lap("cell multi", pt)
 	pt = lap("cell multimesh", pt)
+	# The ground under the cell again, now its trees have streamed in (woodland floor).
+	var gk: int = world.key(cx, cy)
+	if _terrain.has(gk):
+		(_terrain[gk] as MeshInstance3D).material_override = ground_material_at(cx, cy)
+	pt = lap("cell ground map", pt)
 	add_lights(world.key(cx, cy), lights)
 	if life:
 		if chimneys.is_empty():
@@ -625,6 +660,352 @@ func _lantern(at: Vector3) -> Node3D:
 	n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return root
 
+# ------------------------------------------------------------------------------------- the land between (land.gd)
+
+const WOOD_POST := Color(0.36, 0.26, 0.18)
+const WOOD_BOARD := Color(0.55, 0.42, 0.28)
+
+## What the land has between the things the world file names, in one cell: a lantern post and a signpost where
+## country roads meet, stones along the verges, reeds by rivers and lakes, driftwood and shingle on the shore, and
+## fences round the fields. None of it is solid; it is all placed from positions, so every client agrees.
+func _land_dress(cx: int, cy: int, node: Node3D, batch: Dictionary, lights: Array) -> void:
+	var cell := Rect2(cx * world.CELL, cy * world.CELL, world.CELL, world.CELL)
+	var cold: float = land.cold_at(cell.get_center().y)
+	var boxes := []
+	for o in world.in_cell(cx, cy):
+		if o.has("b"):
+			var b: Array = o["b"]
+			boxes.append(Rect2(float(b[0]), float(b[1]), float(b[2]) - float(b[0]), float(b[3]) - float(b[1])).grow(1.0))
+	var free := func(p: Vector2) -> bool:
+		for r in boxes:
+			if (r as Rect2).has_point(p):
+				return false
+		return true
+	var put := func(path: String, xf: Transform3D) -> void:
+		if not batch.has(path):
+			batch[path] = []
+		batch[path].append(xf)
+	# Where country roads end or meet: a lantern on a post in the widest gap between them, and a signpost with an arm
+	# down each road.
+	for j in land.junctions(cx, cy):
+		var p: Vector2 = j[0]
+		var dirs: Array = j[1]
+		var angs := []
+		for d in dirs:
+			angs.append(atan2((d as Vector2).y, (d as Vector2).x))
+		angs.sort()
+		var best := 0.0
+		var mid := 0.0
+		for k in angs.size():
+			var a0: float = angs[k]
+			var a1: float = angs[(k + 1) % angs.size()] + (TAU if k == angs.size() - 1 else 0.0)
+			if a1 - a0 > best:
+				best = a1 - a0
+				mid = (a0 + a1) / 2.0
+		var corner := p + Vector2(cos(mid), sin(mid)) * 5.0
+		if free.call(corner):
+			var lamp := _lamp_post(Vector3(corner.x, height(corner.x, corner.y), corner.y), mid + PI)
+			node.add_child(lamp[0])
+			lights.append([lamp[1], "lantern"])
+		var sign_at := p + Vector2(cos(mid + 0.5), sin(mid + 0.5)) * 6.5
+		if free.call(sign_at):
+			node.add_child(_signpost(Vector3(sign_at.x, height(sign_at.x, sign_at.y), sign_at.y), dirs))
+	# Verge stones and the odd bush along country roads, out of the settlements.
+	for sg in world.road_segments(cx, cy):
+		var a := Vector2(sg[0], sg[1])
+		var b := Vector2(sg[2], sg[3])
+		var hw: float = sg[4]
+		if hw >= 3.4 or a.distance_to(b) < 1.0:
+			continue
+		var dir := (b - a).normalized()
+		var side := Vector2(-dir.y, dir.x)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector2i(roundi(a.x * 4.0), roundi(a.y * 4.0)))
+		var t := rng.randf() * 4.0
+		while t < a.distance_to(b):
+			for sd in [-1.0, 1.0]:
+				var roll := rng.randf()
+				var q: Vector2 = a + dir * t + side * sd * (hw + rng.randf_range(0.5, 1.4))
+				if roll > 0.34 or not cell.has_point(q) or not free.call(q) or not towns.at(q).get("farmstead", false):
+					continue
+				if _on_other_road(q, sg, cx, cy) or (world.has_sea and height(q.x, q.y) < world.sea_level + 0.8):
+					continue
+				var pick: String = BUSHES[rng.randi() % BUSHES.size()] if roll < 0.04 * (1.0 - cold) else SMALL_ROCKS[rng.randi() % SMALL_ROCKS.size()]
+				var sc := rng.randf_range(0.35, 0.6) if pick.begins_with("Bush") else rng.randf_range(0.4, 0.85)
+				put.call(FOREST + pick + ".gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * sc), Vector3(q.x, height(q.x, q.y) - 0.12, q.y)))
+			t += rng.randf_range(3.0, 5.5)
+	_reeds(cell, cold, node)
+	_shore(cell, cold, put)
+	_fences(cx, cy, put)
+	_rubble(cell, free, put)
+
+## Now and then, out in the country, the tumbled stones of something long fallen: low enough to walk over, so it needs
+## no footprint on the server.
+func _rubble(cell: Rect2, free: Callable, put: Callable) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2i(roundi(cell.position.x), roundi(cell.position.y))) + 4242
+	if rng.randf() > 0.12:
+		return
+	var c := cell.position + Vector2(rng.randf_range(16.0, cell.size.x - 16.0), rng.randf_range(16.0, cell.size.y - 16.0))
+	var spot := Rect2(c, Vector2.ZERO).grow(7.0)
+	if not towns.at(c).get("farmstead", false) or land.near_road(spot) or land.wet_at_rect(spot) or not land.fields_in(spot).is_empty():
+		return
+	if (world.has_sea and height(c.x, c.y) < world.sea_level + 1.5) or absf(height(c.x - 6.0, c.y) - height(c.x + 6.0, c.y)) > 2.5:
+		return
+	for k in rng.randi_range(4, 7):
+		var a := rng.randf() * TAU
+		var q := c + Vector2(cos(a), sin(a)) * rng.randf_range(0.0, 6.0)
+		if not free.call(q):
+			continue
+		var path := _dress_path(["d:rubble_large", "d:rubble_half", "d:rubble_half"][rng.randi() % 3])
+		var m := _mesh(path)
+		if m == null:
+			continue
+		var sc := rng.randf_range(0.8, 1.2)
+		put.call(path, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * sc), Vector3(q.x, height(q.x, q.y) - m.get_aabb().position.y * sc - 0.1, q.y)))
+
+## Whether a point is on a road other than segment `sg` (a junction's mouth, where verge stones would sit in the way).
+func _on_other_road(q: Vector2, sg: Array, cx: int, cy: int) -> bool:
+	for o in world.road_segments(cx, cy):
+		if o == sg:
+			continue
+		if Geometry2D.get_closest_point_to_segment(q, Vector2(o[0], o[1]), Vector2(o[2], o[3])).distance_to(q) < float(o[4]) + 0.6:
+			return true
+	return false
+
+## A lantern hung from the arm of a wooden post, the arm towards `face`. Returns [node, where the light is].
+func _lamp_post(at: Vector3, face: float) -> Array:
+	var root := Node3D.new()
+	root.position = at
+	var post := MeshInstance3D.new()
+	var pm := BoxMesh.new()
+	pm.size = Vector3(0.18, 3.0, 0.18)
+	post.mesh = pm
+	post.material_override = _plain_mat(WOOD_POST)
+	post.position.y = 1.5
+	root.add_child(post)
+	var arm := MeshInstance3D.new()
+	var am := BoxMesh.new()
+	am.size = Vector3(1.0, 0.12, 0.12)
+	arm.mesh = am
+	arm.material_override = _plain_mat(WOOD_POST)
+	var out := Vector3(cos(face), 0.0, sin(face))
+	arm.position = Vector3(0, 2.9, 0) + out * 0.45
+	arm.rotation.y = -face
+	root.add_child(arm)
+	var hang := Vector3(0, 2.55, 0) + out * 0.85
+	var l := _lantern(Vector3.ZERO)
+	l.position = hang
+	root.add_child(l)
+	return [root, at + hang]
+
+## A signpost: a post with an arm pointing down each road from the junction (up to three).
+func _signpost(at: Vector3, dirs: Array) -> Node3D:
+	var root := Node3D.new()
+	root.position = at
+	var post := MeshInstance3D.new()
+	var pm := BoxMesh.new()
+	pm.size = Vector3(0.14, 2.3, 0.14)
+	post.mesh = pm
+	post.material_override = _plain_mat(WOOD_POST)
+	post.position.y = 1.15
+	root.add_child(post)
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.95, 0.2, 0.05)
+	for k in mini(dirs.size(), 3):
+		var d: Vector2 = dirs[k]
+		var arm := MeshInstance3D.new()
+		arm.mesh = bm
+		arm.material_override = _plain_mat(WOOD_BOARD)
+		var ang := atan2(d.y, d.x)
+		arm.rotation.y = -ang
+		arm.position = Vector3(d.x * 0.45, 2.05 - 0.3 * k, d.y * 0.45)
+		root.add_child(arm)
+	return root
+
+## A ford: stepping stones across the water along the road, and a lantern post on each bank.
+func _ford(o: Dictionary, cx: int, cy: int, node: Node3D, batch: Dictionary, lights: Array) -> void:
+	var p := Vector2(o["p"][0], o["p"][1])
+	var dir := Vector2(cos(float(o.get("r", 0.0))), sin(float(o.get("r", 0.0))))
+	var best := INF
+	for sg in world.road_segments(cx, cy):
+		var a := Vector2(sg[0], sg[1])
+		var b := Vector2(sg[2], sg[3])
+		var d := Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p)
+		if d < best and a.distance_to(b) > 0.5:
+			best = d
+			dir = (b - a).normalized()
+	var level := -INF
+	var reach := 6.0
+	var near := INF
+	for rv in world.rivers:
+		for pt in rv["pts"]:
+			var d := Vector2(pt[0], pt[1]).distance_to(p)
+			if d < near:
+				near = d
+				level = float(pt[2])
+				reach = float(rv.get("half_width", 5.0)) + 2.0
+	if level == -INF:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = absi(int(o.get("v", 0)))
+	var side := Vector2(-dir.y, dir.x)
+	var t := -reach
+	var k := 0
+	while t <= reach:
+		var q := p + dir * t + side * (0.7 if k % 2 == 0 else -0.7) + side * rng.randf_range(-0.2, 0.2)
+		if height(q.x, q.y) < level - 0.05:
+			var pick: String = FOREST + ["Rock_1_A_Color1", "Rock_1_J_Color1", "Rock_2_A_Color1"][rng.randi() % 3] + ".gltf"
+			if not batch.has(pick):
+				batch[pick] = []
+			var sc := rng.randf_range(0.48, 0.62)
+			batch[pick].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 0.6, sc)), Vector3(q.x, level - 0.12, q.y)))
+		t += 1.25
+		k += 1
+	for sd in [-1.0, 1.0]:
+		var bank: Vector2 = p + dir * sd * (reach + 1.5) + side * 3.6
+		var lamp := _lamp_post(Vector3(bank.x, height(bank.x, bank.y), bank.y), atan2(-side.y, -side.x))
+		node.add_child(lamp[0])
+		lights.append([lamp[1], "lantern"])
+
+var _reed_mesh: ArrayMesh
+var _reed_mats := {}
+## A clump of reeds: seven tapered blades leaning out from the middle, 1 to 1.6 tall.
+func _reed_clump() -> ArrayMesh:
+	if _reed_mesh:
+		return _reed_mesh
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 41
+	for i in 7:
+		var a := TAU * i / 7.0 + rng.randf() * 0.6
+		var lean := Vector3(cos(a), 0, sin(a)) * rng.randf_range(0.1, 0.35)
+		var tall := rng.randf_range(1.0, 1.6)
+		var base := Vector3(cos(a), 0, sin(a)) * rng.randf_range(0.0, 0.18)
+		var w := Vector3(-sin(a), 0, cos(a)) * 0.05
+		var top := base + lean + Vector3(0, tall, 0)
+		for v in [base - w, base + w, top]:
+			st.set_normal(Vector3.UP)
+			st.add_vertex(v)
+	_reed_mesh = st.commit()
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.45, 0.52, 0.25)
+	m.roughness = 1.0
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_reed_mesh.surface_set_material(0, m)
+	return _reed_mesh
+
+## Reeds along the rivers' banks and round the lakes, thinning out in the north (and browner there).
+func _reeds(cell: Rect2, cold: float, node: Node3D) -> void:
+	var xf := []
+	var add := func(q: Vector2, floor_y: float, rng: RandomNumberGenerator) -> void:
+		if not cell.has_point(q) or land.near_road(Rect2(q, Vector2.ZERO).grow(1.5)):
+			return
+		var y := maxf(height(q.x, q.y), floor_y)
+		var sc := rng.randf_range(1.1, 1.7)
+		xf.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * rng.randf_range(0.8, 1.2), sc)), Vector3(q.x, y - 0.05, q.y)))
+	var thin := 0.55 * (1.0 - 0.7 * cold)
+	for rv in world.rivers:
+		var pts: Array = rv["pts"]
+		var hw := float(rv.get("half_width", 5.0))
+		for k in pts.size() - 1:
+			var a := Vector2(pts[k][0], pts[k][1])
+			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+			if not Rect2(a, Vector2.ZERO).expand(b).grow(hw + 3.0).intersects(cell) or a.distance_to(b) < 0.5:
+				continue
+			var dir := (b - a).normalized()
+			var side := Vector2(-dir.y, dir.x)
+			var rng := RandomNumberGenerator.new()
+			rng.seed = hash(Vector2i(roundi(a.x * 4.0), roundi(a.y * 4.0)))
+			var t := 0.0
+			while t < a.distance_to(b):
+				for sd in [-1.0, 1.0]:
+					if rng.randf() < thin:
+						add.call(a + dir * t + side * sd * (hw + rng.randf_range(-0.9, 0.6)), lerpf(float(pts[k][2]), float(pts[k + 1][2]), t / a.distance_to(b)) - 0.7, rng)
+				t += rng.randf_range(1.6, 3.0)
+	for l in world.lakes:
+		var lb: Array = l["b"]
+		var lr := Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1]))
+		if not lr.grow(3.0).intersects(cell):
+			continue
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector2i(roundi(lr.position.x), roundi(lr.position.y)))
+		var corners := [lr.position, Vector2(lr.end.x, lr.position.y), lr.end, Vector2(lr.position.x, lr.end.y)]
+		for i in 4:
+			var a: Vector2 = corners[i]
+			var b: Vector2 = corners[(i + 1) % 4]
+			var inward := (lr.get_center() - (a + b) / 2.0).normalized()
+			var t := 0.0
+			while t < a.distance_to(b):
+				if rng.randf() < thin:
+					add.call(a.lerp(b, t / a.distance_to(b)) + inward * rng.randf_range(-0.4, 1.4), float(l.get("level", 0.0)) - 0.7, rng)
+				t += rng.randf_range(1.6, 3.0)
+	if xf.is_empty():
+		return
+	var mmi := _multi(_reed_clump(), xf)
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var shade := roundi(cold * 4.0) # a few shades from green to the north's winter brown, each made once
+	if shade > 0:
+		if not _reed_mats.has(shade):
+			var rm := (_reed_clump().surface_get_material(0) as StandardMaterial3D).duplicate() as StandardMaterial3D
+			rm.albedo_color = Color(0.45, 0.52, 0.25).lerp(Color(0.58, 0.5, 0.34), shade / 4.0)
+			_reed_mats[shade] = rm
+		mmi.material_override = _reed_mats[shade]
+	node.add_child(mmi)
+
+## The sea's edge: driftwood and the odd stone on the sand, more stones and less wood in the north.
+func _shore(cell: Rect2, cold: float, put: Callable) -> void:
+	if not world.has_sea:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2i(roundi(cell.position.x), roundi(cell.position.y))) + 77
+	var step := 5.0
+	var y := cell.position.y + step * 0.5
+	while y < cell.end.y:
+		var x := cell.position.x + step * 0.5
+		while x < cell.end.x:
+			var q := Vector2(x + rng.randf_range(-2.0, 2.0), y + rng.randf_range(-2.0, 2.0))
+			var hq := height(q.x, q.y)
+			var roll := rng.randf()
+			if hq > world.sea_level - 0.1 and hq < world.sea_level + 1.2:
+				if roll < 0.035 * (1.0 - 0.6 * cold):
+					put.call(RES + ["Wood_Log_A", "Wood_Log_B"][rng.randi() % 2] + ".gltf",
+						Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * Basis(Vector3.FORWARD, rng.randf_range(-0.1, 0.1)).scaled(Vector3.ONE * rng.randf_range(1.0, 1.5)), Vector3(q.x, hq - 0.05, q.y)))
+				elif roll < 0.035 + 0.05 + 0.1 * cold:
+					var sc := rng.randf_range(0.4, 1.0)
+					put.call(FOREST + SMALL_ROCKS[rng.randi() % SMALL_ROCKS.size()] + ".gltf",
+						Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 0.7, sc)), Vector3(q.x, hq - 0.1, q.y)))
+			x += step
+		y += step
+
+## A wooden fence along a field's far side and its two ends (the side by the house is left open), skipping any length
+## a road or water crosses.
+func _fences(cx: int, cy: int, put: Callable) -> void:
+	var piece := VILLAGE + "Prop_WoodenFence_Single.gltf"
+	var m := _mesh(piece)
+	if m == null:
+		return
+	var span := maxf(m.get_aabb().size.x, 0.5) * VS
+	for f in land.fields_of_cell(cx, cy):
+		var r: Rect2 = f[0]
+		var side: int = f[2]
+		var c := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
+		var edges := {0: [c[0], c[1]], 1: [c[1], c[2]], 2: [c[2], c[3]], 3: [c[3], c[0]]} # N, E, S, W
+		var open: int = [2, 0, 1, 3][side] # the edge facing the house: a north field opens south, and so on
+		for e in edges:
+			if e == open:
+				continue
+			var a: Vector2 = edges[e][0]
+			var b: Vector2 = edges[e][1]
+			var dir := (b - a).normalized()
+			var n := int(a.distance_to(b) / span)
+			for k in n:
+				var q := a + dir * (span * (k + 0.5))
+				if land.near_road(Rect2(q, Vector2.ZERO).grow(0.8)) or land.wet_at_rect(Rect2(q, Vector2.ZERO).grow(0.8)):
+					continue
+				put.call(piece, Transform3D(Basis(Vector3.UP, -atan2(dir.y, dir.x)).scaled(Vector3.ONE * VS), Vector3(q.x, height(q.x, q.y) - 0.05, q.y)))
+
 var _plain_mats := {}
 func _plain_mat(c: Color) -> StandardMaterial3D:
 	if not _plain_mats.has(c):
@@ -643,8 +1024,12 @@ func _prop(o: Dictionary, batch: Dictionary) -> void:
 	var s := float(o.get("s", 1.0))
 	var turn := Basis(Vector3.UP, float(o.get("r", 0.0)))
 	var path := ""
+	var cold: float = land.cold_at(y)
 	match t:
-		"tree": path = FOREST + TREES[v % TREES.size()] + ".gltf"
+		"tree":
+			# Pines take over from the broadleaves going north.
+			var pine := cold > 0.3 and float(v % 97) / 97.0 < cold
+			path = FOREST + (PINES[v % PINES.size()] if pine else TREES[v % TREES.size()]) + ".gltf"
 		"tree_bare": path = FOREST + BARE_TREES[v % BARE_TREES.size()] + ".gltf"
 		"bush": path = FOREST + BUSHES[v % BUSHES.size()] + ".gltf"
 		"rock": path = FOREST + SMALL_ROCKS[v % SMALL_ROCKS.size()] + ".gltf"
@@ -658,6 +1043,19 @@ func _prop(o: Dictionary, batch: Dictionary) -> void:
 	if not batch.has(path):
 		batch[path] = []
 	batch[path].append(Transform3D(turn.scaled(Vector3.ONE * s), Vector3(x, height(x, y) - 0.15, y)))
+	# Undergrowth round trees out in the country: bushes, and stones in the north.
+	if t == "tree" and towns.at(Vector2(x, y)).get("farmstead", false):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = v * 31 + 5
+		for k in v % 3:
+			var a := rng.randf() * TAU
+			var at := Vector2(x, y) + Vector2(cos(a), sin(a)) * rng.randf_range(1.6, 3.2) * s
+			var stony := rng.randf() < 0.25 + 0.6 * cold
+			var under: String = FOREST + (SMALL_ROCKS[rng.randi() % SMALL_ROCKS.size()] if stony else BUSHES[rng.randi() % BUSHES.size()]) + ".gltf"
+			if not batch.has(under):
+				batch[under] = []
+			var us := rng.randf_range(0.5, 0.85) if stony else rng.randf_range(0.4, 0.75)
+			batch[under].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * us), Vector3(at.x, height(at.x, at.y) - 0.15, at.y)))
 	# Now and then a felled log lies by a tree, and a woodcutter's axe in a stump.
 	if t == "tree" and v % 23 == 0:
 		var a := float(v % 628) / 100.0
@@ -875,6 +1273,9 @@ const ROCK_TINT := Color(0.72, 0.69, 0.64)
 
 ## Every tree, bush and rock in the KayKit Forest pack (the big rocks are kept for crags and mountains).
 const TREES := ["Tree_1_A_Color1", "Tree_1_B_Color1", "Tree_1_C_Color1", "Tree_2_A_Color1", "Tree_2_B_Color1", "Tree_2_C_Color1", "Tree_2_D_Color1", "Tree_2_E_Color1", "Tree_3_A_Color1", "Tree_3_B_Color1", "Tree_3_C_Color1", "Tree_4_A_Color1", "Tree_4_B_Color1", "Tree_4_C_Color1"]
+
+## The pines among TREES, which take over going north.
+const PINES := ["Tree_4_A_Color1", "Tree_4_B_Color1", "Tree_4_C_Color1"]
 
 const BARE_TREES := ["Tree_Bare_1_A_Color1", "Tree_Bare_1_B_Color1", "Tree_Bare_1_C_Color1", "Tree_Bare_2_A_Color1", "Tree_Bare_2_B_Color1", "Tree_Bare_2_C_Color1"]
 
@@ -1366,6 +1767,13 @@ func _square_dress(o: Dictionary, batch: Dictionary) -> void:
 		for g in 2:
 			var along := Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * (0.5 if g == 0 else -0.5)
 			_dress(dress, String(goods[(k * 2 + g) % goods.size()]), 0.8, base + Vector3(along.x, 1.2, along.y), face + g)
+		# A candle or a couple of bottles at the end of the table.
+		var end := Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * 1.1
+		if k % 2 == 0:
+			_dress(dress, "d:candle_triple", 0.9, base + Vector3(end.x, 1.2, end.y), face)
+		else:
+			_dress(dress, "d:bottle_A_brown", 0.9, base + Vector3(end.x, 1.2, end.y), face)
+			_dress(dress, "d:bottle_B_green", 0.9, base + Vector3(end.x * 0.8 + 0.15, 1.2, end.y * 0.8), face + 1.0)
 		var behind := c + Vector2(cos(a), sin(a)) * (ring + 2.0)
 		_dress(dress, ["d:crates_stacked", "d:barrel_small", "d:box_small", "d:keg"][k % 4], 1.0, on_ground.call(behind), rng.randf() * TAU)
 		_dress(dress, "d:stool", 1.1, on_ground.call(c + Vector2(cos(a), sin(a)) * (ring - 1.6)), face)

@@ -66,6 +66,8 @@ static func ensure_globals() -> void:
 	Engine.set_meta("life_globals", true)
 	for n in ["world_wet", "world_puddles", "world_snow"]:
 		RenderingServer.global_shader_parameter_add(n, RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
+	# land.gd: the band of latitude where the north turns cold (set by the theme once it knows the world).
+	RenderingServer.global_shader_parameter_add("world_cold_band", RenderingServer.GLOBAL_VAR_TYPE_VEC2, Vector2(-1e9, -1e9))
 
 var _placing: Array = []    # what is left to place after a survey, one a frame
 

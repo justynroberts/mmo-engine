@@ -14,6 +14,7 @@ const MAP_SIZE := 128.0    # world units the map covers (the patch and a margin 
 const MAP_STEP := 16.0     # redraw the map when we are this far from its centre
 
 var world: RefCounted
+var land: RefCounted            # land.gd: no grass grows on the fields
 var _mat: ShaderMaterial
 var _img: Image
 var _tex: ImageTexture
@@ -35,13 +36,17 @@ uniform vec2 map_origin;
 uniform float map_size = 96.0;
 uniform float wind = 0.3;
 uniform float sea_level = -1000.0;
+global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
 varying vec3 wp;
 varying float tip;
+varying float cold;
+varying float flower; // 0 a plain blade, else which flower its tip carries (1..5)
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 float n(vec2 p) {
 	vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
 	return mix(mix(h(i), h(i + vec2(1, 0)), u.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), u.x), u.y);
 }
+float fbm(vec2 p) { float v = 0.0; float a = 0.5; for (int k = 0; k < 4; k++) { v += a * n(p); p *= 2.03; a *= 0.5; } return v; }
 vec2 at(vec2 p) { return texture(ground, (p - map_origin) / map_size).rg; }
 void vertex() {
 	vec3 o = MODEL_MATRIX[3].xyz;            // where the blade sits in the patch
@@ -51,9 +56,11 @@ void vertex() {
 	vec2 g = at(p);
 	float e = 2.0;
 	float slope = abs(at(p + vec2(e, 0)).r - at(p - vec2(e, 0)).r) + abs(at(p + vec2(0, e)).r - at(p - vec2(0, e)).r);
+	cold = 1.0 - smoothstep(world_cold_band.x, world_cold_band.y, p.y + 220.0 * (fbm(p / 300.0) - 0.5)); // as the ground
 	float grow = g.y;
 	grow *= 1.0 - smoothstep(1.2, 2.0, slope);              // steep ground is rock
-	grow *= 1.0 - smoothstep(26.0, 32.0, g.x);              // high ground is snow
+	float snow_line = mix(26.0, 16.0, cold);
+	grow *= 1.0 - smoothstep(snow_line, snow_line + 6.0, g.x); // high ground is snow, lower in the north
 	grow *= step(sea_level + 0.4, g.x);                     // nothing on the beach or under the sea
 	grow *= 1.0 - smoothstep(0.55, 1.0, length(rel) / (patch_size * 0.5)); // thin out to the edge
 	grow *= smoothstep(0.15, 0.55, n(p * 0.21) + 0.25);     // clumps, with bare patches between
@@ -61,7 +68,11 @@ void vertex() {
 	// Some ground is grazed short and some is left long: blade height wanders over tens of units, from a lawn's
 	// stubble to knee-high meadow, so no two fields look the same.
 	float lush = n(p * 0.018) * 0.65 + n(p * 0.06 + 13.0) * 0.35;
-	off.y *= mix(0.3, 1.0, smoothstep(0.3, 0.75, lush));
+	off.y *= mix(0.3, 1.0, smoothstep(0.3, 0.75, lush)) * mix(1.0, 0.65, cold); // the north's tussock is short
+	// Wildflowers: a few blades in the warm meadows carry a flower, thick in some drifts and absent in others.
+	float drift = smoothstep(0.5, 0.75, n(p * 0.045 + 7.0));
+	flower = step(1.0 - 0.06 * drift * (1.0 - cold), h(floor(p * 9.0))) * (1.0 + floor(h(floor(p * 9.0) + 5.3) * 5.0));
+	off.y *= 1.0 + 0.25 * step(0.5, flower);
 	// Wind: a gust rolling across the field, more at the tips. Our feet push the blades aside.
 	float gust = sin(TIME * 1.7 + dot(p, vec2(0.21, 0.13))) * 0.5 + sin(TIME * 3.1 + p.x * 0.7) * 0.15;
 	vec3 bend = vec3(0.3, 0.0, 0.18) * gust * (0.15 + wind) * tip * tip;
@@ -79,6 +90,13 @@ void fragment() {
 	vec3 base = mix(vec3(0.31, 0.49, 0.18), vec3(0.42, 0.58, 0.22), k);
 	vec3 top = mix(vec3(0.45, 0.63, 0.24), vec3(0.55, 0.68, 0.28), k);
 	vec3 c = mix(base, top, tip) * (0.9 + 0.2 * h(floor(q * 3.0)));
+	// The north: grey-green tussock with frosted tips.
+	vec3 cb = mix(vec3(0.36, 0.42, 0.30), vec3(0.45, 0.47, 0.36), k);
+	vec3 ct = mix(vec3(0.58, 0.58, 0.46), vec3(0.80, 0.84, 0.86), smoothstep(0.55, 0.95, cold) * 0.7);
+	c = mix(c, mix(cb, ct, tip) * (0.9 + 0.2 * h(floor(q * 3.0))), cold);
+	// A flower at the tip: buttercup, daisy, clover, poppy or cornflower.
+	vec3 fc = flower < 1.5 ? vec3(0.96, 0.82, 0.22) : flower < 2.5 ? vec3(0.96, 0.95, 0.90) : flower < 3.5 ? vec3(0.70, 0.45, 0.78) : flower < 4.5 ? vec3(0.88, 0.22, 0.18) : vec3(0.40, 0.55, 0.92);
+	c = mix(c, fc, step(0.5, flower) * smoothstep(0.7, 0.95, tip));
 	ALBEDO = pow(c, vec3(2.2));
 	ROUGHNESS = 1.0;
 	NORMAL = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz); // both sides lit as the ground is: no dark backs
@@ -180,6 +198,9 @@ func _gather(center: Vector2) -> void:
 			var hw := float(r.get("half_width", 5.0)) + 1.5
 			if Rect2(a, Vector2.ZERO).expand(b).grow(hw).intersects(area):
 				_segs.append([a, b, hw])
+	if land:
+		for f in land.fields_in(area):
+			_boxes.append(f[0])
 	_lakes = []
 	for l in world.lakes:
 		var lb: Array = l["b"]
