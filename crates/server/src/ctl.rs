@@ -988,7 +988,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
         }
         Cmd::God(r) => {
             let Some(s) = c.sim.ents.resolve(r.id) else { return err(404, "no such entity") };
-            c.sim.ents.god[s] = r.on;
+            c.sim.set_god(s, r.on);
             (200, json!({ "ok": true, "id": r.id, "god": r.on }).to_string())
         }
         Cmd::Release { id } => {

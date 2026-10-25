@@ -1992,13 +1992,25 @@ impl Sim {
         }
     }
 
+    /// God mode on or off. Off puts speed back to its default (and off any mount), since god mode held it at the top.
+    pub fn set_god(&mut self, s: usize, on: bool) {
+        if self.ents.god[s] && !on {
+            if let Some(a) = self.speed_attr {
+                self.ents.attrs[a][s] = self.defs.attrs[a].default;
+            }
+            self.mounted[s] = 0.0;
+        }
+        self.ents.god[s] = on;
+    }
+
     fn system_rules(&mut self) {
         // God mode first, so whatever this tick took is restored before the respawn rule can see a zero.
         for s in 0..self.ents.high {
             if self.ents.alive[s] && self.ents.god[s] {
                 for (a, def) in self.defs.attrs.iter().enumerate() {
-                    // Not the reserved ones the server keeps itself (a jump, a hold, speed, level, a light).
-                    let reserved = [proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::SPEED_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR, proto::realm::FACTION_ATTR, proto::game::CLASS_ATTR];
+                    // Not the reserved ones the server keeps itself (a jump, a hold, level, a light). Speed is pinned
+                    // at its top too, so a god gets round the world fast (clients predict from the replicated value).
+                    let reserved = [proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR, proto::realm::FACTION_ATTR, proto::game::CLASS_ATTR];
                     if !reserved.contains(&def.name.as_str()) {
                         self.ents.attrs[a][s] = def.max;
                     }
@@ -2491,6 +2503,28 @@ mod tests {
         s.ents.despawn(b);
         let c = s.spawn(1).unwrap();
         assert!(!s.ents.god[c]);
+    }
+
+    #[test]
+    fn a_god_runs_at_top_speed_until_god_mode_is_off() {
+        use proto::game::{AttrFile, OnZeroFile};
+        let mut g = proto::game::GameFile::default_game();
+        g.attrs.push(AttrFile { name: "speed".into(), min: 0.5, max: 8.0, default: 1.0, bits: 8, replicated: false, regen_per_sec: 0.0, on_zero: OnZeroFile::None });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(4096.0, 1, vec![]), 64, 20, 1);
+        let sp = s.defs.attrs.iter().position(|a| a.name == "speed").unwrap();
+        let a = s.spawn(0).unwrap();
+        place(&mut s, a, 100.0, 100.0);
+        s.set_god(a, true);
+        s.step(&[]);
+        assert_eq!(s.ents.attrs[sp][a], 8.0);
+        s.ents.dir_x[a] = 127;
+        let x0 = s.ents.x[a];
+        s.step(&[]);
+        let per_tick = s.ents.speed[a] * 8.0 * s.dt;
+        assert!((s.ents.x[a] - x0 - per_tick).abs() < 1e-3, "moved {} not {}", s.ents.x[a] - x0, per_tick);
+        s.set_god(a, false);
+        s.step(&[]);
+        assert_eq!(s.ents.attrs[sp][a], 1.0);
     }
 
     #[test]
