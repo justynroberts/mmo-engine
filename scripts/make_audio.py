@@ -10,9 +10,16 @@ serial, so rewriting an unchanged sound still changes its bytes. NAMEs keep only
 of them, e.g. `scripts/make_audio.py cast_ impact_ sfx/heal sfx/held` or `--force sfx/cast_fire`. OUT_DIR must exist.
 Spell sounds each have their own seed, so they come out the same whatever else is made alongside them.
 
-ambience/  seamless loops the client blends by what is round the player, or a place's `sound`
-           (shore.ogg is a CC0 recording, not made here: see godot/sounds/ambience/CREDITS.md)
-sfx/       short one-shots (several takes of the common ones: name_1, name_2, ...)
+ambience/  seamless loops the client blends by what is round the player, or a place's `sound`. Every one is now a
+           real recording (CC0 or CC-BY, see godot/sounds/ambience/CREDITS.md), not made here: sea, shore, river,
+           forest, night, wind, rain, fire, town, market, crypt, holy and battle. They are in RECORDED and are never
+           written, not even with --force; the synthesised versions below are kept only to keep the shared random
+           stream (and so every other sound) the same.
+sfx/       short one-shots (several takes of the common ones: name_1, name_2, ...). Only the spell sounds (cast_*,
+           impact_*, heal, held) are still made here. The rest are real recordings (CC0 or CC-BY, see
+           godot/sounds/sfx/CREDITS.md), in RECORDED and never written, not even with --force: step_grass_1-6,
+           step_road_1-4, step_stone_1-6, step_water_1-6, swing_1-3, hit_1-4, hurt, pickup, drop, place, break,
+           horn, chime, splash and click (and the amb_* incidentals, which this script never made).
 music/     seamless pieces in the old Irish modes, one per mood, chosen by place `music` or the moment
 """
 import os
@@ -27,6 +34,12 @@ ARGS = [a for a in sys.argv[1:] if a != '--force']
 FORCE = len(ARGS) < len(sys.argv) - 1
 OUT = ARGS.pop(0) if ARGS and os.path.isdir(ARGS[0]) else os.path.join(os.path.dirname(__file__), '..', 'godot', 'sounds')
 ONLY = ARGS  # path fragments: make only the files whose path contains one
+# Real recordings (godot/sounds/ambience/CREDITS.md): never written, even with --force.
+RECORDED = {f'ambience/{n}.ogg' for n in ('sea', 'shore', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town',
+                                          'market', 'crypt', 'holy', 'battle')}
+RECORDED |= {f'sfx/{n}.ogg' for n in ('hurt', 'pickup', 'drop', 'place', 'break', 'horn', 'chime', 'splash', 'click')}
+RECORDED |= {f'sfx/{n}_{i}.ogg' for n, k in (('step_grass', 6), ('step_road', 4), ('step_stone', 6), ('step_water', 6),
+                                             ('swing', 3), ('hit', 4)) for i in range(1, k + 1)}
 SR = 32000  # ambience and effects
 MR = 44100  # music
 
@@ -1082,7 +1095,8 @@ if __name__ == '__main__':
     jobs.append(('sfx/heal.ogg', seeded(4000, heal), SR, 3, True))
     jobs.append(('sfx/held.ogg', seeded(4001, held), SR, 3, True))
 
-    want = [(not ONLY or any(o in p for o in ONLY)) and (FORCE or not os.path.exists(os.path.join(OUT, p))) for p, *_ in jobs]
+    want = [(not ONLY or any(o in p for o in ONLY)) and (FORCE or not os.path.exists(os.path.join(OUT, p)))
+            and p not in RECORDED for p, *_ in jobs]
     last_shared = max((i for i, (w, j) in enumerate(zip(want, jobs)) if w and not j[4]), default=-1)
     for i, (path, fn, sr, q, own) in enumerate(jobs):
         if want[i]:

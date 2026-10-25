@@ -1,7 +1,44 @@
 # Effects credits
 
-Every effect here is synthesised by `scripts/make_audio.py` (same licence as this repository) except the incidental
-recordings below, `amb_<name>_<n>.ogg`, which `scripts/sound.gd` plays now and then in towns and by farms.
+The spell sounds (`cast_*`, `impact_*`, `heal`, `held`) are synthesised by `scripts/make_audio.py` (same licence as
+this repository). Everything else here is a recording: the one-shot effects in the first table and the incidentals,
+`amb_<name>_<n>.ogg`, which `scripts/sound.gd` plays now and then in towns and by farms, in the second.
+`make_audio.py` lists the recorded effects in `RECORDED` and never overwrites them.
+
+## Effects
+
+Each take is one event cut from the source (inside the seconds given, trimmed to the sound), high-passed at 50 Hz
+(120 Hz for water), faded in 3 ms and out with a cosine over the last 0.06-0.6 s, mixed to mono and levelled to the
+momentary loudness (EBU R128, 400 ms) of the synthesised sound it replaced, every take of a family to the same
+loudness, peaks at or under -1 dBFS (a look-ahead limiter takes off at most 6 dB on transients), encoded as Ogg Vorbis
+44.1 kHz quality 4. Grass, road and stone steps are low-passed at 9, 10 and 12 kHz, water steps at 8 kHz with light FFT
+denoise (ffmpeg `afftdn`), the splash at 10 kHz. Freesound sources were taken from the site's high-quality previews.
+Downloaded 2026-10-25.
+
+| File | Excerpt | Title | Author | Source | Licence |
+|---|---|---|---|---|---|
+| `step_grass_1..6.ogg` | the six steps, 0.0-4.1 s | Hiking Boot Footsteps on Grass | Fission9 | <https://freesound.org/people/Fission9/sounds/521587/> | CC0 1.0 |
+| `step_road_1..4.ogg` | the four steps, 0.0-2.7 s | Hiking Boot Footsteps on Gravel | Fission9 | <https://freesound.org/people/Fission9/sounds/521588/> | CC0 1.0 |
+| `step_stone_1..6.ogg` | the six steps, 0.0-3.4 s | Hiking Boot Footsteps on Stone | Fission9 | <https://freesound.org/people/Fission9/sounds/521590/> | CC0 1.0 |
+| `step_water_1..6.ogg` | 0.42, 3.92, 5.62, 9.3, 10.27, 11.04 s (0.45 s each) | Water Wading.wav | Motion_S | <https://freesound.org/people/Motion_S/sounds/221764/> | CC BY 4.0 (<https://creativecommons.org/licenses/by/4.0/>) |
+| `swing_1.ogg` | whole | Sword Swing 2 | Nomagician | <https://freesound.org/people/Nomagician/sounds/840715/> | CC0 1.0 |
+| `swing_2.ogg` | whole | Sword Swing 1 | Nomagician | <https://freesound.org/people/Nomagician/sounds/840716/> | CC0 1.0 |
+| `swing_3.ogg` | whole | Sword Swing 3 | Nomagician | <https://freesound.org/people/Nomagician/sounds/840717/> | CC0 1.0 |
+| `hit_1..4.ogg` | whole | `impactPunch_heavy_000`, `_001`, `_003`, `_004` from Impact Sounds | Kenney | <https://kenney.nl/assets/impact-sounds> | CC0 1.0 |
+| `hurt.ogg` | whole | Voice_AdultMale_PainGrunts_03.wav | MrFossy | <https://freesound.org/people/MrFossy/sounds/547201/> | CC0 1.0 |
+| `pickup.ogg` | whole | `handleSmallLeather` from RPG Audio | Kenney | <https://kenney.nl/assets/rpg-audio> | CC0 1.0 |
+| `drop.ogg` | whole | `dropLeather` from RPG Audio | Kenney | <https://kenney.nl/assets/rpg-audio> | CC0 1.0 |
+| `place.ogg` | 5.3-5.85 s | two large cobblestone blocks | jobel0092 | <https://freesound.org/people/jobel0092/sounds/268055/> | CC0 1.0 |
+| `break.ogg` | 0.0-1.0 s | crate_break4 | K-Forces | <https://freesound.org/people/K-Forces/sounds/856631/> | CC0 1.0 |
+| `horn.ogg` | 0.1-3.9 s (the first blast) | medieval viking horn | Artiom_Constantinov | <https://freesound.org/people/Artiom_Constantinov/sounds/856540/> | CC0 1.0 |
+| `chime.ogg` | 0.4-2.4 s | Small Bell | NachtmahrTV | <https://freesound.org/people/NachtmahrTV/sounds/553214/> | CC0 1.0 |
+| `splash.ogg` | 5.5-6.1 s | Splashing Stomps Impacts Shallow Water | ChristopherJngs | <https://freesound.org/people/ChristopherJngs/sounds/861370/> | CC0 1.0 |
+| `click.ogg` | the first click | `metalClick` from RPG Audio | Kenney | <https://kenney.nl/assets/rpg-audio> | CC0 1.0 |
+
+The CC BY recording (`step_water_1..6`) needs this attribution wherever the game's credits are shown:
+"Water Wading" by Motion_S (CC BY 4.0).
+
+## Incidentals
 
 Each is a short excerpt of the source (the seconds given), high-passed at 70 Hz, faded in 12 ms and out over the last
 fifth (at most 0.35 s), mixed to mono, levelled to about -24 LUFS integrated with peaks at or under -6 dBFS, and

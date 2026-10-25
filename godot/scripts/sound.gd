@@ -14,12 +14,12 @@ const AMBIENCE := ["sea", "shore", "river", "forest", "night", "wind", "rain", "
 	"battle"]
 const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city"]
 ## How loud each layer is at full strength, in dB, so they sit together.
-const AMB_DB := {"sea": -4.0, "shore": -3.0, "river": -6.0, "forest": -7.0, "night": -8.0, "wind": -16.0, "rain": -5.0,
-	"fire": -6.0, "town": -8.0, "market": -6.0, "crypt": -5.0, "holy": -7.0, "battle": -8.0}
+const AMB_DB := {"sea": -11.0, "shore": -10.0, "river": -12.0, "forest": -9.0, "night": -8.0, "wind": -16.0, "rain": -10.0,
+	"fire": -6.0, "town": -15.0, "market": -11.0, "crypt": -5.0, "holy": -9.0, "battle": -10.0}
 const MUSIC_DB := -13.0
 ## Moods that play louder (or softer) than MUSIC_DB, in dB: a fight should be heard over the din.
 const MUSIC_MOOD_DB := {"battle": 6.0}
-const SFX_DB := -4.0
+const SFX_DB := -8.0
 const FADE := 0.6          # ambience: share of the way to what is wanted, per second
 const MUSIC_FADE := 5.0    # seconds to cross over when the mood changes
 const TRACK_FADE := 4.0    # seconds of overlap when one piece of a mood runs into the next
