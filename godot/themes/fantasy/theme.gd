@@ -44,8 +44,9 @@ var _pal_mats := {}
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
 	world = p_world
-	towns.survey(world)
 	land.setup(world, towns)
+	towns.cold_at = land.cold_at
+	towns.survey(world)
 	_prefetch()
 	# Every palette's tinted materials and washed textures now, while loading, not as the first village comes near;
 	# its copy of each piece over the next frames (_warm).
@@ -906,24 +907,22 @@ func _reeds(cell: Rect2, cold: float, node: Node3D) -> void:
 		var sc := rng.randf_range(1.1, 1.7)
 		xf.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * rng.randf_range(0.8, 1.2), sc)), Vector3(q.x, y - 0.05, q.y)))
 	var thin := 0.55 * (1.0 - 0.7 * cold)
-	for rv in world.rivers:
-		var pts: Array = rv["pts"]
-		var hw := float(rv.get("half_width", 5.0))
-		for k in pts.size() - 1:
-			var a := Vector2(pts[k][0], pts[k][1])
-			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
-			if not Rect2(a, Vector2.ZERO).expand(b).grow(hw + 3.0).intersects(cell) or a.distance_to(b) < 0.5:
-				continue
-			var dir := (b - a).normalized()
-			var side := Vector2(-dir.y, dir.x)
-			var rng := RandomNumberGenerator.new()
-			rng.seed = hash(Vector2i(roundi(a.x * 4.0), roundi(a.y * 4.0)))
-			var t := 0.0
-			while t < a.distance_to(b):
-				for sd in [-1.0, 1.0]:
-					if rng.randf() < thin:
-						add.call(a + dir * t + side * sd * (hw + rng.randf_range(-0.9, 0.6)), lerpf(float(pts[k][2]), float(pts[k + 1][2]), t / a.distance_to(b)) - 0.7, rng)
-				t += rng.randf_range(1.6, 3.0)
+	for sg in land.river_segments(int(floor(cell.position.x / world.CELL)), int(floor(cell.position.y / world.CELL))):
+		var a: Vector2 = sg[0]
+		var b: Vector2 = sg[1]
+		var hw: float = sg[2]
+		if not Rect2(a, Vector2.ZERO).expand(b).grow(hw + 3.0).intersects(cell) or a.distance_to(b) < 0.5:
+			continue
+		var dir := (b - a).normalized()
+		var side := Vector2(-dir.y, dir.x)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector2i(roundi(a.x * 4.0), roundi(a.y * 4.0)))
+		var t := 0.0
+		while t < a.distance_to(b):
+			for sd in [-1.0, 1.0]:
+				if rng.randf() < thin:
+					add.call(a + dir * t + side * sd * (hw + rng.randf_range(-0.9, 0.6)), lerpf(float(sg[3]), float(sg[4]), t / a.distance_to(b)) - 0.7, rng)
+			t += rng.randf_range(1.6, 3.0)
 	for l in world.lakes:
 		var lb: Array = l["b"]
 		var lr := Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1]))
@@ -957,6 +956,15 @@ func _reeds(cell: Rect2, cold: float, node: Node3D) -> void:
 ## The sea's edge: driftwood and the odd stone on the sand, more stones and less wood in the north.
 func _shore(cell: Rect2, cold: float, put: Callable) -> void:
 	if not world.has_sea:
+		return
+	# Most cells are nowhere near the sea: a coarse look first.
+	var near_sea := false
+	for i in 5:
+		for j in 5:
+			var p := cell.position + Vector2(i + 0.5, j + 0.5) * cell.size.x / 5.0
+			if height(p.x, p.y) < world.sea_level + 4.0:
+				near_sea = true
+	if not near_sea:
 		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector2i(roundi(cell.position.x), roundi(cell.position.y))) + 77
@@ -1164,6 +1172,10 @@ func weather_drawn() -> String:
 ## A zone up close: fog that fills the place (volumetric, so lights and the sun shine through it), glowing faintly in
 ## its colour, inside the mist wall the base theme draws for seeing it from afar.
 func zone_mist(z: Dictionary) -> Node3D:
+	# A snowy region (the north's) is weather over open country, not a place apart: no wall of mist round it and no
+	# fog volume over it; walking in, the snow and its haze are the weather's own.
+	if weather_kind({"name": z.get("weather", "")}) == "snow":
+		return Node3D.new()
 	var n := super.zone_mist(z)
 	var r := float(z["r"])
 	var h := float(z.get("height", 30.0))

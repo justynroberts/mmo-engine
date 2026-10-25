@@ -277,9 +277,10 @@ static func weather_kind(w: Dictionary) -> String:
 	if w.is_empty():
 		return ""
 	var n := String(w.get("name", "")).to_lower()
-	# In this order, so a sandstorm is dust and a snowstorm is snow, not a thunderstorm.
-	var words := {"snow": ["snow", "blizzard", "sleet", "frost"], "dust": ["dust", "sand", "ash"],
-			"fog": ["fog", "mist", "haze", "smog"], "storm": ["storm", "thunder", "lightning", "tempest"]}
+	# In this order, so a sandstorm is dust and a snowstorm is snow, not a thunderstorm. The Irish words too, since a
+	# game may name its weather in Irish (sneachta snow, sioc frost, ceo/ceobhrán fog and mist, stoirm storm).
+	var words := {"snow": ["snow", "blizzard", "sleet", "frost", "sneachta", "sioc"], "dust": ["dust", "sand", "ash", "deannach"],
+			"fog": ["fog", "mist", "haze", "smog", "ceo", "ceobhr"], "storm": ["storm", "thunder", "lightning", "tempest", "stoirm", "toirn"]}
 	for kind in words:
 		for word in words[kind]:
 			if n.contains(word):

@@ -66,6 +66,9 @@ const TRADES := {
 
 var list: Array = []   # [{c, r, v, trade, pal, style}], the city's squares as one
 var _city := Rect2()
+## land.gd cold_at, set by the theme before survey: how cold it is at a latitude, for the north's palettes.
+var cold_at := Callable()
+const COLD_PALETTES := [1, 6, 3] # slate, charcoal, moss
 var _country := {}     # stretch of country key -> farmstead character
 
 ## Look the world over once: its squares, and what is round each.
@@ -151,6 +154,8 @@ func _make(c: Vector2, r: float, v: int, trade: String, _world) -> Dictionary:
 	if trade == "fishing":
 		style["floors"] = [1, 2]
 	var pal := rng.randi() % PALETTES.size()
+	if cold_at.is_valid() and float(cold_at.call(c.y)) > 0.55:
+		pal = COLD_PALETTES[pal % COLD_PALETTES.size()] # the north builds in slate and dark stone, under moss
 	return {"c": c, "r": r, "v": v, "trade": trade, "pal": pal, "style": style,
 		"describe": "%s village, %s" % [trade, PALETTES[pal]["name"]] if r > 0.0 else "farmstead"}
 

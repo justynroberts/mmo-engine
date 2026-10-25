@@ -17,6 +17,7 @@ var towns: RefCounted
 var cold_band := Vector2(-1e9, -1e9)
 var _fields := {}                 # cell key -> fields_of_cell, for the farmhouses in it
 var _junctions := {}              # cell key -> [[Vector2, [unit directions...]], ...] where roads end or meet
+var _river_segs := {}             # cell key -> [[a, b, half width, level at a, level at b], ...] reaching near it
 
 func setup(p_world: RefCounted, p_towns: RefCounted) -> void:
 	world = p_world
@@ -25,6 +26,28 @@ func setup(p_world: RefCounted, p_towns: RefCounted) -> void:
 	if world.has_heights:
 		cold_band = Vector2(ext.position.y + ext.size.y * 0.2, ext.position.y + ext.size.y * 0.48)
 	_find_junctions()
+	_index_rivers()
+
+## Every river segment, by the cells it comes within WET_REACH of, so nothing scans every river for one spot.
+func _index_rivers() -> void:
+	for rv in world.rivers:
+		var pts: Array = rv["pts"]
+		var hw := float(rv.get("half_width", 5.0))
+		for k in pts.size() - 1:
+			var a := Vector2(pts[k][0], pts[k][1])
+			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+			var box := Rect2(a, Vector2.ZERO).expand(b).grow(hw + WET_REACH + 1.0)
+			var seg := [a, b, hw, float(pts[k][2]), float(pts[k + 1][2])]
+			for cx in range(int(floor(box.position.x / world.CELL)), int(floor(box.end.x / world.CELL)) + 1):
+				for cy in range(int(floor(box.position.y / world.CELL)), int(floor(box.end.y / world.CELL)) + 1):
+					var ck: Variant = world.key(cx, cy)
+					if not _river_segs.has(ck):
+						_river_segs[ck] = []
+					_river_segs[ck].append(seg)
+
+## The river segments near a cell: [[a, b, half width, level at a, level at b], ...].
+func river_segments(cx: int, cy: int) -> Array:
+	return _river_segs.get(world.key(cx, cy), [])
 
 ## 1 in the far north, 0 from the middle of the map south (the shader adds a ragged edge to the same band).
 func cold_at(y: float) -> float:
@@ -168,14 +191,12 @@ func wet_at_rect(r: Rect2) -> bool:
 		var lb: Array = l["b"]
 		if Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1])).intersects(r):
 			return true
-	for rv in world.rivers:
-		var pts: Array = rv["pts"]
-		var g := r.grow(float(rv.get("half_width", 5.0)))
-		for k in pts.size() - 1:
-			var a := Vector2(pts[k][0], pts[k][1])
-			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
-			if g.has_point(a) or g.has_point(b) or _seg_hits_rect(a, b, g):
-				return true
+	for cx in range(int(floor(r.position.x / world.CELL)), int(floor(r.end.x / world.CELL)) + 1):
+		for cy in range(int(floor(r.position.y / world.CELL)), int(floor(r.end.y / world.CELL)) + 1):
+			for sg in river_segments(cx, cy):
+				var g := r.grow(float(sg[2]))
+				if g.has_point(sg[0]) or g.has_point(sg[1]) or _seg_hits_rect(sg[0], sg[1], g):
+					return true
 	return false
 
 static func _seg_hits_rect(a: Vector2, b: Vector2, r: Rect2) -> bool:
@@ -239,17 +260,15 @@ func ground_map(cx: int, cy: int) -> PackedByteArray:
 				if map[at] == 0 and r.has_point(Vector2(ox + (i + 0.5) * px, oy + (j + 0.5) * px)):
 					map[at + 1] = int(along * 255.0)
 	# Wet ground along rivers and round lakes (b).
-	for rv in world.rivers:
-		var pts: Array = rv["pts"]
-		var hw := float(rv.get("half_width", 5.0))
-		for k in pts.size() - 1:
-			var a := Vector2(pts[k][0], pts[k][1])
-			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
-			var box := Rect2(a, Vector2.ZERO).expand(b).grow(hw + WET_REACH)
-			if not box.intersects(cell):
-				continue
-			any = true
-			stamp.call(box, 2, func(p: Vector2) -> float: return 1.0 - (Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p) - hw) / WET_REACH)
+	for sg in river_segments(cx, cy):
+		var a: Vector2 = sg[0]
+		var b: Vector2 = sg[1]
+		var hw: float = sg[2]
+		var box := Rect2(a, Vector2.ZERO).expand(b).grow(hw + WET_REACH)
+		if not box.intersects(cell):
+			continue
+		any = true
+		stamp.call(box, 2, func(p: Vector2) -> float: return 1.0 - (Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p) - hw) / WET_REACH)
 	for l in world.lakes:
 		var lb: Array = l["b"]
 		var lr := Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1]))

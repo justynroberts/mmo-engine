@@ -1947,7 +1947,9 @@ func _where() -> void:
 ## their effects). Called every frame; only a change reaches the theme.
 func _show_weather() -> void:
 	var z: Dictionary = theme.zone_at(me_pos)
-	var name := String(z.get("name", ""))
+	# Zones that share a name but for a number on the end ("snow 1", "snow 2") are one zone in pieces: crossing from
+	# one to the next is not walking into anything new.
+	var name := String(z.get("name", "")).rstrip("0123456789").strip_edges()
 	if name != _in_zone:
 		if name != "":
 			hud.say("[color=%s]You walk into the %s.[/color]" % [str(z.get("color", "#9fe8e0")), name])
