@@ -27,7 +27,7 @@ const FallenScript := preload("res://scripts/fallen.gd")
 ## Logged out (the menu): the scene reloads to the join screen, even when started with --host.
 static var _logged_out := false
 ## The title theme: it plays over the join and loading screens and fades as the world appears.
-const TITLE_THEME := "res://sounds/theme/eirigh_linn.ogg" # Éirigh Linn; ar_aghaidh.ogg is kept for later
+const TITLE_THEME := "res://sounds/theme/wake_softly.ogg" # Hibernia, Wake Softly; hibernia.ogg, eirigh_linn.ogg and ar_aghaidh.ogg are kept for later
 ## The keys for the spell bar, in order.
 const SPELL_KEYS := [KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P, KEY_Z, KEY_C, KEY_H, KEY_K, KEY_COMMA]
 const HOLD_WORDS := ["", "You are mesmerised.", "You are stunned.", "You are rooted to the spot."]

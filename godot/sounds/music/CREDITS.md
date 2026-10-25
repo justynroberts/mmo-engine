@@ -13,7 +13,9 @@ fades; the music itself is unchanged.
 | `explore_3.ogg` | Mist over the Isles (take 2) | made for this game by the project owner with Suno | owned by the project |
 | `eerie_5.ogg` | Cavernous Dissonance | made for this game by the project owner with Suno | owned by the project |
 | `battle_5.ogg` | Modal March | made for this game by the project owner with Suno | owned by the project |
-| `../theme/eirigh_linn.ogg` | Éirigh Linn (main title theme) | made for this game by the project owner | owned by the project |
+| `../theme/wake_softly.ogg` | Hibernia, Wake Softly (main title theme; 4 min 2 s, the silence at each end trimmed, its last 2 s faded, raised 1.1 dB to -15 LUFS) | made for this game by the project owner | owned by the project |
+| `../theme/hibernia.ogg` | Hibernia (a previous title theme, kept for later; not played; its last 1.85 s faded, raised 1.7 dB to -15 LUFS) | made for this game by the project owner | owned by the project |
+| `../theme/eirigh_linn.ogg` | Éirigh Linn (the previous title theme, kept for later; not played) | made for this game by the project owner | owned by the project |
 | `../theme/ar_aghaidh.ogg` | Ar Aghaidh (the old title theme, kept for later; not played) | made for this game by the project owner with Suno | owned by the project |
 | `holy_5.ogg` | Ceremonial Build (take 1), mastered 3 dB under the others to sit back | made for this game by the project owner | owned by the project |
 | `city_2.ogg` | Ceremonial Build (take 2), mastered 3 dB under the others to sit back | made for this game by the project owner | owned by the project |
