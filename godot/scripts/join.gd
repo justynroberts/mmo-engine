@@ -147,6 +147,11 @@ void fragment() {
 	// A slow push in and back, centred a little above the middle.
 	float zoom = 1.0 + 0.035 * (0.5 - 0.5 * cos(TIME * 0.05));
 	vec2 uv = (UV - vec2(0.5, 0.45)) / zoom + vec2(0.5, 0.45);
+	// Heat haze: the air round the sun wavers, most near it.
+	vec2 d0 = (uv - sun) * vec2(aspect, 1.0);
+	float near_sun = exp(-length(d0) * 7.0);
+	vec2 haze = vec2(noise(uv * 38.0 + vec2(0.0, TIME * 1.6)), noise(uv * 38.0 + vec2(5.2, TIME * 1.3))) - 0.5;
+	uv += haze * 0.0045 * near_sun;
 	vec4 c = texture(TEXTURE, uv);
 
 	// Rays out of the sun: a fan of soft beams that slowly turns, each brightening and fading on its own.
@@ -156,11 +161,19 @@ void fragment() {
 	float beams = 0.0;
 	beams += pow(0.5 + 0.5 * sin(ang * 14.0 + TIME * 0.18), 6.0) * (0.6 + 0.4 * sin(TIME * 0.7 + ang * 3.0));
 	beams += pow(0.5 + 0.5 * sin(ang * 23.0 - TIME * 0.11 + 1.3), 8.0) * (0.6 + 0.4 * sin(TIME * 0.45 - ang * 5.0));
+	// A brighter beam sweeps slowly round through the others.
+	float sweep = pow(0.5 + 0.5 * cos(ang - TIME * 0.13), 40.0) + pow(0.5 + 0.5 * cos(ang + 2.4 - TIME * 0.09), 60.0) * 0.7;
 	// They reach across the sky and fade out over the land, so the castle and the sea keep their own light.
 	float reach = exp(-r * 3.2) * smoothstep(0.03, 0.14, r) * (1.0 - smoothstep(0.24, 0.42, uv.y));
-	float glow = exp(-r * 10.0) * (0.85 + 0.15 * sin(TIME * 0.9));
+	// The sun shimmers: an uneven flicker on top of a slow breath, never the same twice.
+	float flicker = 0.82 + 0.1 * sin(TIME * 0.9) + 0.08 * (noise(vec2(TIME * 3.1, 0.0)) - 0.5) * 2.0 + 0.05 * sin(TIME * 7.3 + noise(vec2(TIME, 4.0)) * 6.0);
+	float glow = exp(-r * 10.0) * flicker;
+	float core = exp(-r * 38.0) * (0.9 + 0.25 * noise(vec2(TIME * 5.0, 2.0)));
+	// A corona of fine glints that twinkle as they turn.
+	float fine = pow(0.5 + 0.5 * sin(ang * 61.0 + TIME * 0.6 + noise(vec2(ang * 9.0, TIME * 2.0)) * 3.0), 18.0);
+	float twinkle = fine * smoothstep(0.015, 0.05, r) * exp(-r * 9.0) * (0.5 + 0.5 * noise(vec2(ang * 30.0, TIME * 4.0)));
 	vec3 warm = vec3(1.0, 0.8, 0.5);
-	c.rgb += warm * (beams * reach * 0.16 + glow * 0.14);
+	c.rgb += warm * (beams * reach * 0.18 + sweep * reach * 0.14 + glow * 0.16 + twinkle * 0.35) + vec3(1.0, 0.95, 0.85) * core * 0.35;
 
 	// Mist: two layers drifting at different speeds through the middle distance, thinner high and low.
 	float band = smoothstep(0.22, 0.38, uv.y) * (1.0 - smoothstep(0.52, 0.72, uv.y));
