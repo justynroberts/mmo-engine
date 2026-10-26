@@ -212,11 +212,11 @@ static func fade_rect(from: float) -> TextureRect:
 	return r
 
 func _answers(server: String) -> bool:
-	var web := server if ":" in server else "%s:7790" % server
+	var web := HUD.web_base(server)
 	var r := HTTPRequest.new()
 	r.timeout = 1.5
 	add_child(r)
-	if r.request("http://%s/play/info" % web) != OK:
+	if r.request("%s/play/info" % web) != OK:
 		r.queue_free()
 		return false
 	var res: Array = await r.request_completed
@@ -236,8 +236,7 @@ static func version() -> String:
 	return FileAccess.get_file_as_string(VERSION_FILE).strip_edges() if FileAccess.file_exists(VERSION_FILE) else ""
 
 func _web(server: String) -> String:
-	var s := server.strip_edges().trim_prefix("http://").trim_suffix("/")
-	return s if ":" in s else "%s:7790" % s
+	return HUD.web_base(server)
 
 ## Ask the server for the newest client; offer it when it is newer than this one (versions are dates, so they
 ## sort as text). Only a packaged app updates itself.
@@ -249,7 +248,7 @@ func _check_update() -> void:
 	var r := HTTPRequest.new()
 	r.timeout = 3.0
 	add_child(r)
-	if r.request("http://%s/play/client" % _web(server_in.text)) != OK:
+	if r.request("%s/play/client" % _web(server_in.text)) != OK:
 		r.queue_free()
 		return
 	var res: Array = await r.request_completed
@@ -274,7 +273,7 @@ func _start_update() -> void:
 	_dl.timeout = 600.0
 	add_child(_dl)
 	_dl.request_completed.connect(_downloaded)
-	if _dl.request("http://%s/play/client/mac.zip" % _web(server_in.text)) != OK:
+	if _dl.request("%s/play/client/mac.zip" % _web(server_in.text)) != OK:
 		_update_failed("could not start the download")
 
 func _process(_delta: float) -> void:
@@ -349,7 +348,7 @@ func _field(e: LineEdit) -> LineEdit:
 	return e
 
 func _go() -> void:
-	var server := server_in.text.strip_edges().trim_prefix("http://").trim_suffix("/")
+	var server := server_in.text.strip_edges().trim_suffix("/")
 	var who := name_in.text.strip_edges()
 	if server == "":
 		note.text = "Which server? Ask whoever runs it for its address."

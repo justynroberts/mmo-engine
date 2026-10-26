@@ -35,6 +35,22 @@ static var ITEM_TITLES := {}
 static func esc(text: String) -> String:
 	return text.replace("[", "[lb]")
 
+## The base URL of a server's web side from what a player typed: "host:port" and bare IPs or localhost are plain
+## http (port 7790 if none), a bare domain name is https on 443 (a server behind a TLS proxy), and a given
+## http:// or https:// is kept.
+static func web_base(server: String) -> String:
+	var s := server.strip_edges().trim_suffix("/")
+	if s.begins_with("http://") or s.begins_with("https://"):
+		return s
+	if ":" in s:
+		return "http://" + s
+	var local := s == "localhost" or s.is_valid_ip_address() or not "." in s
+	return ("http://%s:7790" if local else "https://%s") % s
+
+## The host a server's UDP game port is on, from the same text.
+static func game_host(server: String) -> String:
+	return server.strip_edges().trim_prefix("http://").trim_prefix("https://").get_slice("/", 0).get_slice(":", 0)
+
 ## What players call an item: its title, else its name.
 static func item(name: String) -> String:
 	return String(ITEM_TITLES.get(name, name))

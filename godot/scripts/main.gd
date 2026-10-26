@@ -325,9 +325,9 @@ func _ask_join(why: String) -> void:
 	join.fail(why)
 	join.chosen.connect(func(server: String, who: String):
 		join = null
-		# "host" alone means the usual web port; the game's UDP port comes from /play/info.
-		args["web"] = server if ":" in server else "%s:7790" % server
-		args["host"] = server.get_slice(":", 0)
+		# "host" alone means the usual web port (https for a domain); the game's UDP port comes from /play/info.
+		args["web"] = HudScript.web_base(server)
+		args["host"] = HudScript.game_host(server)
 		args["name"] = who
 		args["joined"] = true
 		_start())
@@ -347,6 +347,10 @@ func _parse_args() -> Dictionary:
 	return a
 
 # ---------------------------------------------------------------- start up
+
+## The web side's base URL: a command line's --web host:port is plain http, as before.
+func _web_url() -> String:
+	return HudScript.web_base(String(args["web"]))
 
 func _fetch(url: String) -> String:
 	var r := HTTPRequest.new()
@@ -392,11 +396,11 @@ func _start() -> void:
 	if not smoke and not args.has("shot"):
 		_loading = true
 		hud.loading(0.02, _quip("server"))
-	info_text = await _fetch("http://%s/play/info" % args["web"])
+	info_text = await _fetch("%s/play/info" % _web_url())
 	if _loading:
 		hud.loading(0.1, _quip("world"))
 	if info_text == "":
-		return _fail("could not reach http://%s/play/info" % args["web"])
+		return _fail("could not reach %s/play/info" % _web_url())
 	info = JSON.parse_string(info_text)
 	if args.has("joined"):
 		args["udp"] = str(int(info.get("udp_port", 7777)))
@@ -409,10 +413,10 @@ func _start() -> void:
 		var wi: Dictionary = info["world"]
 		world_parts = bool(wi.get("parts", false))
 		world_ver = String(wi.get("ver", ""))
-		var text := await _fetch("http://%s/play/world%s" % [args["web"], "/head" if world_parts else ""])
+		var text := await _fetch("%s/play/world%s" % [_web_url(), "/head" if world_parts else ""])
 		world = WorldData.from_file(text) if text != "" else null
 		if world == null:
-			return _fail("could not read the world file at http://%s/play/world" % args["web"])
+			return _fail("could not read the world file at %s/play/world" % _web_url())
 	else:
 		world = WorldData.from_boxes(float(info.get("world_size", 1024)), boxes)
 		world_from_boxes = true
@@ -1001,7 +1005,7 @@ func _poll_names(delta: float, list: Array) -> void:
 	var ids: Array = _names_want.keys().slice(0, 256)
 	for id in ids:
 		_names_want.erase(id)
-	var text := await _fetch("http://%s/play/names?ids=%s" % [args["web"], ",".join(ids.map(func(i): return str(i)))])
+	var text := await _fetch("%s/play/names?ids=%s" % [_web_url(), ",".join(ids.map(func(i): return str(i)))])
 	_names_busy = false
 	var got = JSON.parse_string(text) if text != "" else null
 	if got is Dictionary:
@@ -1023,7 +1027,7 @@ func _poll_tiles(delta: float) -> void:
 		_walls_ready = _was_in
 		return
 	tiles_busy = true
-	var res := await _fetch_raw("http://%s%s" % [args["web"], path])
+	var res := await _fetch_raw("%s%s" % [_web_url(), path])
 	tiles_busy = false
 	if int(res[0]) == 200 and net.put_tiles(res[1]):
 		if world_from_boxes:
@@ -1031,7 +1035,7 @@ func _poll_tiles(delta: float) -> void:
 		return
 	if int(res[0]) == 200 or int(res[0]) == 409:
 		# The walls changed on the server: start again from a fresh /play/info.
-		var text := await _fetch("http://%s/play/info" % args["web"])
+		var text := await _fetch("%s/play/info" % _web_url())
 		if text != "":
 			net.set_walls(text)
 	else:
@@ -1059,7 +1063,7 @@ func _poll_world(delta: float) -> void:
 	if want.is_empty():
 		return
 	world_busy = true
-	var text := await _fetch("http://%s/play/world/tiles?v=%s&c=%s" % [args["web"], world_ver, ";".join(want)])
+	var text := await _fetch("%s/play/world/tiles?v=%s&c=%s" % [_web_url(), world_ver, ";".join(want)])
 	world_busy = false
 	var d = JSON.parse_string(text) if text != "" else null
 	if not d is Dictionary:
@@ -1105,7 +1109,7 @@ func _poll_blocks(delta: float) -> void:
 		await _poll_block_regions()
 		blocks_busy = false
 		return
-	var text := await _fetch("http://%s/play/blocks?since=%d" % [args["web"], blocks_ver])
+	var text := await _fetch("%s/play/blocks?since=%d" % [_web_url(), blocks_ver])
 	blocks_busy = false
 	var d = JSON.parse_string(text) if text != "" else null
 	if not d is Dictionary:
@@ -1146,7 +1150,7 @@ func _poll_block_regions() -> void:
 			if rx + dx >= 0 and ry + dy >= 0:
 				var rk := (ry + dy) << 16 | (rx + dx)
 				ask.append("%d,%d,%d" % [rx + dx, ry + dy, int(block_regions.get(rk, 0))])
-	var got: Array = await _fetch_raw("http://%s/play/blocks/r?c=%s" % [args["web"], ";".join(ask)])
+	var got: Array = await _fetch_raw("%s/play/blocks/r?c=%s" % [_web_url(), ";".join(ask)])
 	if int(got[0]) == 404:
 		block_by_region = false # an older server: everything at once, as before
 		blocks_poll = 0.0
@@ -1770,7 +1774,7 @@ func _weather(delta: float) -> void:
 	if weather_poll > 0.0:
 		return
 	weather_poll = 5.0
-	var text := await _fetch("http://%s/play/info" % args["web"])
+	var text := await _fetch("%s/play/info" % _web_url())
 	var fresh = JSON.parse_string(text) if text != "" else null
 	if fresh is Dictionary and str(fresh.get("content_hash", "")) == str(info.get("content_hash", "")):
 		var w = fresh.get("weather")
