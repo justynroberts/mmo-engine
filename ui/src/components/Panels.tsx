@@ -51,6 +51,10 @@ export function EntityPanel({
             </div>
             <p className="text-fg-2">
               x {(row[1] ?? 0).toFixed(1)} · y {(row[2] ?? 0).toFixed(1)}
+              {(() => {
+                const l = s.looping?.find((p) => p.id === row[0])
+                return l ? <span title="Seconds over old ground and repeated deeds that earned no experience"> · looping {l.stale}</span> : null
+              })()}
             </p>
             <dl className="pt-1">
               {s.attrs.map((name, i) => {

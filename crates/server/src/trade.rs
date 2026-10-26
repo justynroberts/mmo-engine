@@ -7,7 +7,7 @@
 //! client only says which item and whom.
 
 use crate::sim::{Sim, DRIVEN};
-use proto::game::{GEAR_SLOTS, INV_SLOTS, TALK_RANGE};
+use proto::game::{GEAR_SLOTS, INV_SLOTS};
 
 impl Sim {
     fn bump_gear(&mut self, s: usize) {
@@ -19,7 +19,7 @@ impl Sim {
         let t = self.ents.resolve(target)?;
         let (dx, dy) = (self.ents.x[t] - self.ents.x[s], self.ents.y[t] - self.ents.y[s]);
         let shop = self.archs.get(self.ents.arch[t] as usize).is_some_and(|a| !a.shop.is_empty());
-        (shop && dx * dx + dy * dy <= TALK_RANGE * TALK_RANGE && self.ents.owner[s] < DRIVEN).then_some(t)
+        (shop && dx * dx + dy * dy <= self.rules.talk_reach * self.rules.talk_reach && self.ents.owner[s] < DRIVEN).then_some(t)
     }
 
     /// How much money a player carries.
@@ -63,7 +63,7 @@ impl Sim {
             return false;
         }
         self.pay(s, price as u32);
-        self.tells.push((s, format!("Bought {} for {price}.", self.items[item].name)));
+        self.tells.push((s, format!("Bought {} for {price}.", self.items[item].shown())));
         true
     }
 
@@ -86,7 +86,7 @@ impl Sim {
         self.inv[s][i as usize] = if count <= 1 { (0, 0) } else { (tag, count - 1) };
         self.inv_ver[s] = self.inv_ver[s].wrapping_add(1);
         self.give_or_drop(s, c, value as u32);
-        self.tells.push((s, format!("Sold {} for {value}.", self.items[tag as usize - 1].name)));
+        self.tells.push((s, format!("Sold {} for {value}.", self.items[tag as usize - 1].shown())));
         true
     }
 
@@ -192,7 +192,7 @@ mod tests {
     use proto::world::World;
 
     fn item(name: &str, value: u16) -> ItemDef {
-        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value, equip: None, mount: 0.0, rarity: Default::default() }
+        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn a_party_forms_shares_a_kill_and_ends_when_one_is_left() {
         let mut g = GameFile::default_game();
-        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
+        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
         g.archetypes[0].xp = 30;
         let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
         let [a, b] = [0, 1].map(|o| s.spawn(o).unwrap());

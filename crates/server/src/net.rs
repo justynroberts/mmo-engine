@@ -648,10 +648,11 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
     let Some(Some(c)) = clients.slab.get_mut(sid as usize) else { return };
     c.proven = true;
     let id = c.id;
+    let slot = c.slot;
     if id == GUEST {
+        sim.give_starter(slot); // nothing of a guest's is kept, so each visit starts afresh
         return;
     }
-    let slot = c.slot;
     sim.set_account(slot, Some(&proto::secure::account_tag(&id)));
     // Signing in again while the old session is still here (logged out a moment ago, not yet timed out): take
     // the character from it as it is now, rather than from a save the writer may not have finished.
@@ -702,8 +703,11 @@ fn prove(sim: &mut Sim, clients: &mut Clients, stats: &mut NetStats, store: Opti
                     }
                     return;
                 }
+                sim.give_starter(slot);
             }
         }
+    } else {
+        sim.give_starter(slot); // no database: nobody's bag is kept, so everyone starts afresh
     }
     // Their claimed name came back with their character; anyone else goes by the name their account tag gives.
     match sim.ents.name[slot].clone() {
@@ -851,21 +855,18 @@ pub fn save_all(sim: &Sim, clients: &Clients, store: Option<&Store>) {
     store.save_world(&sim.bot_records());
 }
 
-/// Radius within which `say` is heard.
-pub const SAY_RADIUS: f32 = 64.0;
-/// How far a bot's passing remark carries (`Act::Chat`): only to those walking by.
-pub const NEARBY_RADIUS: f32 = 24.0;
 
 /// Deliver one line from an entity to everyone who should hear it, and log it.
 pub fn say_from(sim: &Sim, clients: &mut Clients, slot: usize, channel: u8, text: &str) {
     let from = sim.ents.id_of(slot);
     let (sx, sy) = (sim.ents.x[slot], sim.ents.y[slot]);
-    let r2 = SAY_RADIUS * SAY_RADIUS;
+    let r2 = sim.rules.say_reach * sim.rules.say_reach;
+    let shout = sim.rules.shout_reach * sim.rules.shout_reach;
     for c in clients.slab.iter_mut().flatten() {
-        let heard = channel == proto::chat::channel::SHOUT || {
-            let (dx, dy) = (sim.ents.x[c.slot] - sx, sim.ents.y[c.slot] - sy);
-            dx * dx + dy * dy <= r2
-        };
+        let (dx, dy) = (sim.ents.x[c.slot] - sx, sim.ents.y[c.slot] - sy);
+        let d2 = dx * dx + dy * dy;
+        // A shout carries its own reach, or (0) the whole world.
+        let heard = if channel == proto::chat::channel::SHOUT { shout == 0.0 || d2 <= shout } else { d2 <= r2 };
         if heard {
             c.chat.deliver(from, channel, text);
         }
@@ -894,6 +895,11 @@ pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
     }
     let events = std::mem::take(&mut clients.chat_in);
     for (slot, ch, text) in &events {
+        // Something new said shows a player is there (the same line over and over does not).
+        let line: Vec<u64> = std::iter::once(5).chain(text.trim().to_lowercase().bytes().map(u64::from)).collect();
+        if *ch != proto::chat::channel::NAME {
+            sim.lived_once(*slot, crate::life::Deed::Say, crate::life::key(&line));
+        }
         // A "/" line is a command (a whisper, a party), not something said aloud.
         if text.starts_with('/') && *ch != proto::chat::channel::NAME {
             crate::social::command(sim, clients, *slot, text);
@@ -927,7 +933,7 @@ pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
             let (sx, sy) = (sim.ents.x[slot], sim.ents.y[slot]);
             for c in clients.slab.iter_mut().flatten() {
                 let (dx, dy) = (sim.ents.x[c.slot] - sx, sim.ents.y[c.slot] - sy);
-                if dx * dx + dy * dy <= NEARBY_RADIUS * NEARBY_RADIUS {
+                if dx * dx + dy * dy <= sim.rules.remark_reach * sim.rules.remark_reach {
                     c.chat.deliver(from, proto::chat::channel::NEARBY, &text);
                 }
             }
@@ -1460,7 +1466,7 @@ mod tests {
         // client "level 1" then would make it celebrate the saved level as a level up at every sign-in.
         let (mut sim, mut clients, mut peers, sink, out) = fixture(4, 256);
         sink.set_nonblocking(true).unwrap();
-        sim.levels = Some(proto::game::LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
+        sim.levels = Some(proto::game::LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
         let mut lanes = vec![Worker::new(out.as_raw_fd())];
         let mut progress = |sim: &Sim, clients: &mut Clients| {
             build_snapshots(sim, clients, &mut lanes, None);
@@ -1522,8 +1528,9 @@ mod tests {
             sim.ents.y[s] = y;
         };
         place(&mut sim, slots[0], 100.0, 100.0);
-        place(&mut sim, slots[1], 100.0 + SAY_RADIUS - 1.0, 100.0);
-        place(&mut sim, slots[2], 100.0 + SAY_RADIUS + 1.0, 100.0);
+        let say = sim.rules.say_reach;
+        place(&mut sim, slots[1], 100.0 + say - 1.0, 100.0);
+        place(&mut sim, slots[2], 100.0 + say + 1.0, 100.0);
         say_from(&sim, &mut clients, slots[0], proto::chat::channel::SAY, "psst");
         let pending: Vec<usize> = clients.slab.iter().flatten().map(|c| c.chat.pending()).collect();
         assert_eq!(pending, [1, 1, 0], "speaker and the near listener hear it, the far one does not");

@@ -10,6 +10,10 @@ export function rewriteRealmRefs(g: GameFile, kind: RefKind, from: string, to: s
   const next: GameFile = { ...g }
   const swap = (name: string) => (name === from ? to : name)
   if (kind === 'item') {
+    if (g.starter) {
+      next.starter = g.starter.flatMap((s) => (s.item !== from ? [s] : to === null ? [] : [{ ...s, item: to }]))
+      if (next.starter.length === 0) delete next.starter
+    }
     if (g.loot) {
       next.loot = g.loot
         .map((t) => ({ ...t, entries: t.entries.flatMap((e) => (e.item !== from ? [e] : to === null ? [] : [{ ...e, item: to }])) }))

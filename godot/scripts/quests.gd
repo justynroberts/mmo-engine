@@ -150,7 +150,7 @@ func _reward_text(q: Dictionary) -> String:
 	if int(q.get("xp", 0)) > 0:
 		r.append("%d experience" % int(q["xp"]))
 	for it in q.get("reward", []):
-		r.append("%d %s" % [int(it["count"]), it["item"]])
+		r.append("%d %s" % [int(it["count"]), HUD.item(String(it["item"]))])
 	return ("Reward: " + ", ".join(r)) if not r.is_empty() else ""
 
 ## What to do next on a quest of ours, in a few words.

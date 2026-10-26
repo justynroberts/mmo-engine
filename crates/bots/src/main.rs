@@ -488,7 +488,10 @@ fn main() {
                                     match proto::chat::decode_batch(inner) {
                                         Some((ack, msgs)) => {
                                             for m in b.chat.on_batch(ack, msgs) {
-                                                if m.text.is_empty() || m.from == 0 && m.channel > 1 {
+                                                // The server speaks (from 0) on say (its tells), banners, trade and
+                                                // auction; a channel past the last one is wrong whoever sent it.
+                                                let server_ok = matches!(m.channel, 0 | 3 | 9 | 10);
+                                                if m.text.is_empty() || m.channel > proto::chat::channel::EMOTE || m.from == 0 && !server_ok {
                                                     tot.chat_bad += 1;
                                                 }
                                                 tot.chat_rx += 1;
@@ -526,6 +529,13 @@ fn main() {
                                     }
                                     Some(&kind::CASTS) => {
                                         if wire::decode_casts(inner).is_none() {
+                                            tot.decode_err += 1;
+                                        }
+                                        continue;
+                                    }
+                                    // Who it is fighting: only checked to decode.
+                                    Some(&kind::ENCOUNTER) => {
+                                        if wire::decode_encounter(inner).is_none() {
                                             tot.decode_err += 1;
                                         }
                                         continue;

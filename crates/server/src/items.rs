@@ -4,16 +4,12 @@
 //! and is told what its bag and its surroundings look like; it never says what it has.
 
 use crate::sim::{Sim, DRIVEN, NO_ARCH};
-use proto::game::{ItemRt, ACT_DROP, ACT_PICKUP, ACT_USE, INV_SLOTS, PICKUP_RANGE, QUICK_SLOTS};
+use proto::game::{ItemRt, ACT_DROP, ACT_PICKUP, ACT_USE, INV_SLOTS, QUICK_SLOTS};
 
 /// One bag slot: (item index + 1, count). Item 0 means the slot is empty.
 pub type Bag = [(u8, u8); INV_SLOTS];
 
 pub const GROUND_CAP: usize = 1000;
-/// How long something lies there before it fades away.
-pub const GROUND_LIFE_SECS: u32 = 300;
-/// Ticks between item actions by one character, so a held key cannot flood.
-pub const ITEM_CD_TICKS: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroundItem {
@@ -146,14 +142,16 @@ impl Sim {
         if self.tick < self.item_cd[slot] {
             return true;
         }
-        let ok = match kind {
-            0 => self.use_slot(slot, (action - ACT_USE) as usize),
-            1 => self.drop_slot(slot, (action - ACT_DROP) as usize),
-            _ => self.pick_up(slot, target),
+        let held = |s: &Self, i: u8| s.inv[slot].get(i as usize).map_or(0, |t| t.0 as usize);
+        // What was used, dropped or picked up, so dropping a thing and picking it up again is one deed.
+        let done = match kind {
+            0 => (held(self, action - ACT_USE), self.use_slot(slot, (action - ACT_USE) as usize)),
+            1 => (held(self, action - ACT_DROP), self.drop_slot(slot, (action - ACT_DROP) as usize)),
+            _ => self.pick_up(slot, target).map_or((0, false), |item| (item + 1, true)),
         };
-        if ok {
-            self.item_cd[slot] = self.tick + ITEM_CD_TICKS;
-            self.lived(slot, crate::life::Deed::Deed);
+        if done.1 {
+            self.item_cd[slot] = self.tick + proto::rules::Rules::ticks(self.rules.item_cooldown_secs, self.tick_hz);
+            self.lived_once(slot, crate::life::Deed::Deed, crate::life::key(&[4, done.0 as u64]));
         }
         true
     }
@@ -172,6 +170,7 @@ impl Sim {
             }
             self.inv[slot][i] = if count <= 1 { (0, 0) } else { (tag, count - 1) };
             self.bump_inv(slot);
+            self.lived(slot, crate::life::Deed::Plant);
             if let Some(c) = self.realm.crops.iter().find(|c| c.seed == tag as usize - 1) {
                 let mins = (c.grow_secs / 60.0).ceil().max(1.0) as u32;
                 self.tells.push((slot, format!("Planted. Ripe in about {mins} minutes; break it in build mode to bring it in.")));
@@ -214,7 +213,8 @@ impl Sim {
         true
     }
 
-    fn pick_up(&mut self, slot: usize, target: u32) -> bool {
+    /// The nearest thing on the ground in reach (or the one asked for) into the bag: the item taken, if any was.
+    fn pick_up(&mut self, slot: usize, target: u32) -> Option<usize> {
         let (px, py) = (self.ents.x[slot], self.ents.y[slot]);
         let mut best: Option<(f32, usize)> = None;
         for (k, g) in self.ground.iter().enumerate() {
@@ -222,27 +222,27 @@ impl Sim {
             if target != 0 && g.id != target {
                 continue;
             }
-            if d2 <= PICKUP_RANGE * PICKUP_RANGE && best.is_none_or(|(b, _)| d2 < b) {
+            if d2 <= self.rules.pickup_reach * self.rules.pickup_reach && best.is_none_or(|(b, _)| d2 < b) {
                 best = Some((d2, k));
             }
         }
-        let Some((_, k)) = best else { return false };
+        let Some((_, k)) = best else { return None };
         let (item, count) = (self.ground[k].item as usize, self.ground[k].count as u32);
         let left = self.give(slot, item, count);
         if left == count {
-            return false; // bag full
+            return None; // bag full
         }
         if left == 0 {
             self.ground.swap_remove(k);
         } else {
             self.ground[k].count = left as u8;
         }
-        true
+        Some(item)
     }
 
     /// Let go of things that have lain about too long.
     pub fn expire_ground(&mut self) {
-        let life = GROUND_LIFE_SECS * self.tick_hz;
+        let life = proto::rules::Rules::ticks(self.rules.ground_item_secs, self.tick_hz);
         let now = self.tick;
         if self.ground.iter().any(|g| now.wrapping_sub(g.born) > life) {
             self.ground.retain(|g| now.wrapping_sub(g.born) <= life);
@@ -321,8 +321,8 @@ mod tests {
     fn sim_with_items() -> Sim {
         let mut g = GameFile::default_game();
         g.items = vec![
-            proto::game::ItemDef { name: "medkit".into(), color: "#ff4466".into(), stack_max: 3, uses: vec![proto::game::UseEffect { attr: "health".into(), delta: 40.0 }], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() },
-            proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() },
+            proto::game::ItemDef { name: "medkit".into(), color: "#ff4466".into(), stack_max: 3, uses: vec![proto::game::UseEffect { attr: "health".into(), delta: 40.0 }], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None },
+            proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None },
         ];
         for a in &mut g.archetypes {
             a.drops.clear();
@@ -333,7 +333,7 @@ mod tests {
 
     fn act(s: &mut Sim, slot: usize, a: u8) {
         s.step(&[PendingAction { slot, action: a, target: 0, arg: 0 }]);
-        for _ in 0..ITEM_CD_TICKS {
+        for _ in 0..proto::rules::Rules::ticks(s.rules.item_cooldown_secs, s.tick_hz) {
             s.step(&[]);
         }
     }
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(s.inv[p][0], (2, 2), "the one asked for, not the nearest");
         assert_eq!(s.ground.len(), 1);
         // A pile out of reach is not taken, even when named.
-        for _ in 0..ITEM_CD_TICKS {
+        for _ in 0..proto::rules::Rules::ticks(s.rules.item_cooldown_secs, s.tick_hz) {
             s.step(&[]);
         }
         s.put_ground(140.0, 100.0, 1, 1);
@@ -425,7 +425,7 @@ mod tests {
     fn items_fade_and_the_ground_is_capped() {
         let mut s = sim_with_items();
         s.put_ground(1.0, 1.0, 0, 1);
-        s.tick += GROUND_LIFE_SECS * 20 + 1;
+        s.tick += proto::rules::Rules::ticks(s.rules.ground_item_secs, s.tick_hz) + 1;
         s.expire_ground();
         assert!(s.ground.is_empty());
         for _ in 0..GROUND_CAP + 50 {
@@ -452,7 +452,7 @@ mod tests {
         for a in &mut g.archetypes {
             a.drops.clear();
         }
-        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 4, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() }];
+        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 4, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }];
         s.put_ground(5.0, 5.0, 0, 1);
         s.put_ground(6.0, 6.0, 1, 3);
         s.set_items(g.build().unwrap().items);
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn a_bot_that_falls_leaves_its_drops_at_its_feet() {
         let mut g = GameFile::default_game();
-        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() }];
+        g.items = vec![proto::game::ItemDef { name: "scrap".into(), color: "#aaaaaa".into(), stack_max: 10, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }];
         for a in &mut g.archetypes {
             a.drops.clear();
         }

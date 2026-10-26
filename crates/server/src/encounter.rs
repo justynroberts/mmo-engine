@@ -2,10 +2,10 @@
 //! onto that player; from then on its rules aim at them (past its sight, whoever else is nearer), and a bot with an
 //! attack fights back whatever its rules say, unless a rule tells it to flee. The lock breaks when one of them
 //! falls, when the player gets further away than the bot's `leash`, reaches a safe place, or when no blow has
-//! passed between them for `GIVE_UP_SECS`: the bot gives up and goes back to its rules.
+//! passed between them for `Rules::chase_give_up_secs`: the bot gives up and goes back to its rules.
 //!
 //! Two players who come to blows (pvp) are in a fight with each other until one of them falls or neither has
-//! landed a blow on the other for `PVP_QUIET_SECS`. Nobody chases anybody there: it only says who is fighting.
+//! landed a blow on the other for `Rules::pvp_quiet_secs`. Nobody chases anybody there: it only says who is fighting.
 //!
 //! Each player is told who is in a fight with them, bots and players (`wire::kind::ENCOUNTER`), which is what
 //! clients play the battle music on.
@@ -13,10 +13,6 @@
 use crate::sim::{Sim, DRIVEN, NONE};
 use proto::wire::MAX_PURSUERS;
 
-/// A chase with no blow landing either way ends after this long.
-pub const GIVE_UP_SECS: u32 = 10;
-/// Two players are out of their fight once neither has landed a blow on the other for this long.
-pub const PVP_QUIET_SECS: u32 = 8;
 
 impl Sim {
     fn is_player(&self, s: usize) -> bool {
@@ -123,8 +119,8 @@ impl Sim {
     /// Once a second: bots give up a chase that has got away from them, or gone quiet, or reached a safe place;
     /// players fall out of fights with players that have gone quiet; players stop hearing of those that have gone.
     pub fn system_encounters(&mut self) {
-        let quiet = GIVE_UP_SECS * self.tick_hz;
-        let calm = PVP_QUIET_SECS * self.tick_hz;
+        let quiet = proto::rules::Rules::ticks(self.rules.chase_give_up_secs, self.tick_hz);
+        let calm = proto::rules::Rules::ticks(self.rules.pvp_quiet_secs, self.tick_hz);
         for p in 0..self.ents.high {
             if self.rivals[p].is_empty() {
                 continue;
@@ -169,7 +165,7 @@ impl Sim {
             };
             if let Some(why) = why {
                 if let Some(arch) = self.archs.get(self.ents.arch[b] as usize) {
-                    self.tells.push((p, format!("The {} {why}.", proto::names::bot(&arch.name))));
+                    self.tells.push((p, format!("The {} {why}.", arch.shown())));
                 }
                 self.release(b);
             }
@@ -261,7 +257,7 @@ mod tests {
         // Nothing landing for a while.
         let (mut s, me, d) = fight();
         s.engage(d, me);
-        s.tick += super::GIVE_UP_SECS * s.tick_hz + 1;
+        s.tick += proto::rules::Rules::ticks(s.rules.chase_give_up_secs, s.tick_hz) + 1;
         s.system_encounters();
         assert_eq!((s.foe[d], s.pursuers[me].len()), (None, 0));
     }
@@ -274,11 +270,11 @@ mod tests {
         s.engage(b, a); // a hit b
         assert_eq!((s.fighting(a), s.fighting(b)), (vec![bid], vec![aid]), "both are in it, whoever struck");
         // Blows keep it going; once neither lands one for a while, it is over for both.
-        s.tick += super::PVP_QUIET_SECS * s.tick_hz;
+        s.tick += proto::rules::Rules::ticks(s.rules.pvp_quiet_secs, s.tick_hz);
         s.engage(a, b);
         s.system_encounters();
         assert_eq!(s.fighting(a), vec![bid], "a blow just now");
-        s.tick += super::PVP_QUIET_SECS * s.tick_hz + 1;
+        s.tick += proto::rules::Rules::ticks(s.rules.pvp_quiet_secs, s.tick_hz) + 1;
         s.system_encounters();
         assert!(s.fighting(a).is_empty() && s.fighting(b).is_empty());
         assert!(s.tells.iter().any(|t| t.0 == a && t.1.contains("break off")), "{:?}", s.tells);

@@ -19,14 +19,11 @@ use serde::{Deserialize, Serialize};
 use crate::net::Clients;
 use crate::sim::{Sim, DRIVEN, NONE};
 
-/// Most players in a guild, and most guilds.
-pub const GUILD_MAX: usize = 200;
+/// Most guilds (how many in one is `Rules::guild_size`).
 pub const GUILDS_MAX: usize = 500;
 /// Most plots in a world, and growing crops.
 pub const PLOTS_MAX: usize = 20_000;
 pub const CROPS_MAX: usize = 50_000;
-/// How long a dungeon run waits with nobody in it before it closes, in seconds.
-pub const RUN_IDLE_SECS: u32 = 30;
 /// How far past a dungeon place's edge a player still counts as inside (so stepping on the edge does not flicker).
 pub const DUNGEON_SLACK: f32 = 1.5;
 
@@ -62,6 +59,9 @@ pub struct Plot {
     /// The owner's account tag.
     pub owner: String,
     pub area: Rect,
+    /// What its owner calls it (`/plot name`): told to those who walk in, listed by `/plots`, found by `/visit`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
 }
 
 /// A crop in the ground: which, and how long until it is ripe (0 once it is).
@@ -113,6 +113,8 @@ pub struct State {
     pub faction: Vec<u8>,
     pub phase: Vec<u32>,
     pub guild_invite: Vec<u16>,
+    /// Per slot: the name of the named plot they were last seen in ("" for none), to tell them when they walk in.
+    pub plot_here: Vec<String>,
     pub guilds: Vec<Guild>,
     pub plots: Vec<Plot>,
     /// Growing and ripe crops: (column key, layer) -> (crop name, tick it ripens).
@@ -125,13 +127,14 @@ pub struct State {
 
 impl State {
     pub fn new(cap: usize) -> State {
-        State { faction: vec![0; cap], phase: vec![0; cap], guild_invite: vec![0; cap], ..Default::default() }
+        State { faction: vec![0; cap], phase: vec![0; cap], guild_invite: vec![0; cap], plot_here: vec![String::new(); cap], ..Default::default() }
     }
 
     pub fn reset(&mut self, slot: usize) {
         self.faction[slot] = 0;
         self.phase[slot] = 0;
         self.guild_invite[slot] = 0;
+        self.plot_here[slot].clear();
     }
 
     /// The guild an account belongs to.
@@ -206,7 +209,7 @@ impl Sim {
             self.put_ground(x + jx, y + jy, item, n.min(99) as u8);
             let rarity = self.items[item].rarity;
             if rarity >= proto::realm::Rarity::Rare {
-                let line = format!("A {} {} falls from the {}!", rarity.title(), self.items[item].name, self.name_of(slot));
+                let line = format!("A {} {} falls from the {}!", rarity.title(), self.items[item].shown(), self.name_of(slot));
                 let r2 = self.defs.interest_radius * self.defs.interest_radius;
                 for p in 0..self.ents.high {
                     if self.is_live_player(p) && (self.ents.x[p] - x).powi(2) + (self.ents.y[p] - y).powi(2) <= r2 {
@@ -265,6 +268,7 @@ impl Sim {
         self.rs.dirty = true;
         let Some(c) = self.realm.crops.iter().find(|c| c.name == name).cloned() else { return };
         if kind == RIPE {
+            self.lived(s, crate::life::Deed::Harvest);
             let n = c.min as u32 + self.rng.next_u32() % ((c.max - c.min) as u32 + 1);
             self.give_or_drop(s, c.yields, n);
         } else if kind == SPROUT {
@@ -300,6 +304,27 @@ impl Sim {
             }
         }
         self.system_dungeons();
+        self.system_plot_names();
+    }
+
+    /// Once a second: a player who walks into a named plot is told whose land it is.
+    fn system_plot_names(&mut self) {
+        if self.rs.plots.iter().all(|p| p.name.is_empty()) && self.rs.plot_here.iter().all(|n| n.is_empty()) {
+            return;
+        }
+        for s in 0..self.ents.high {
+            if !self.is_live_player(s) {
+                continue;
+            }
+            let (cx, cy) = ((self.ents.x[s] / BLOCK) as u32, (self.ents.y[s] / BLOCK) as u32);
+            let name = self.rs.plots.iter().find(|p| !p.name.is_empty() && p.area.has(cx, cy)).map_or("", |p| p.name.as_str());
+            if name != self.rs.plot_here[s] {
+                if !name.is_empty() {
+                    self.tells.push((s, format!("You walk into {name}.")));
+                }
+                self.rs.plot_here[s] = name.to_string();
+            }
+        }
     }
 
     fn system_dungeons(&mut self) {
@@ -329,7 +354,7 @@ impl Sim {
             }
         }
         // Each run: a player still in it keeps it open; all its monsters down clears it; long empty closes it.
-        let idle = RUN_IDLE_SECS * self.tick_hz;
+        let idle = proto::rules::Rules::ticks(self.rules.dungeon_idle_secs, self.tick_hz);
         let mut i = 0;
         while i < self.rs.runs.len() {
             let phase = self.rs.runs[i].phase;
@@ -433,7 +458,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -443,7 +468,9 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "class" => class(sim, clients, slot, &rest),
         "claim" => claim(sim, clients, slot),
         "unclaim" => unclaim(sim, clients, slot),
-        "plot" => plot(sim, clients, slot),
+        "plot" => plot(sim, clients, slot, &rest),
+        "plots" => plots(sim, clients, slot),
+        "visit" => visit(sim, clients, slot, &rest),
         "guild" => guild(sim, clients, slot, &rest),
         "g" => guild_say(sim, clients, slot, &rest),
         "craft" => craft(sim, clients, slot, &rest),
@@ -463,7 +490,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                     .recipes
                     .iter()
                     .map(|r| {
-                        let needs: Vec<String> = r.needs.iter().map(|&(i, n)| format!("{n} {}", sim.items[i].name)).collect();
+                        let needs: Vec<String> = r.needs.iter().map(|&(i, n)| format!("{n} {}", sim.items[i].shown())).collect();
                         format!("{} ({})", r.name, needs.join(", "))
                     })
                     .collect();
@@ -534,22 +561,14 @@ fn claim(sim: &mut Sim, clients: &mut Clients, slot: usize) {
         return say(clients, slot, "No more land can be claimed.");
     }
     let (cx, cy) = here(sim, slot);
-    let half = rules.size as u32 / 2;
-    let edge = (sim.world.size / BLOCK) as u32;
-    let area = Rect { x0: cx.saturating_sub(half), y0: cy.saturating_sub(half), x1: (cx.saturating_sub(half) + rules.size as u32).min(edge), y1: (cy.saturating_sub(half) + rules.size as u32).min(edge) };
-    if sim.rs.plots.iter().any(|p| p.area.meets(&area)) {
-        return say(clients, slot, "That overlaps land someone holds.");
+    let area = square(sim, cx, cy, rules.size);
+    if let Err(why) = free_land(sim, &area, None) {
+        return say(clients, slot, why);
     }
-    // Not over a safe place (a town belongs to everyone).
-    let town = sim.places.iter().any(|p| {
-        let (px, py) = (p.x / BLOCK, p.y / BLOCK);
-        let r = p.r / BLOCK;
-        p.safe && px + r > area.x0 as f32 && px - r < area.x1 as f32 && py + r > area.y0 as f32 && py - r < area.y1 as f32
-    });
-    if town {
-        return say(clients, slot, "Nobody may claim land in a town.");
+    if let Err(why) = pay(sim, slot, rules.cost) {
+        return say(clients, slot, &why);
     }
-    sim.rs.plots.push(Plot { owner: me, area });
+    sim.rs.plots.push(Plot { owner: me, area, name: String::new() });
     sim.rs.dirty = true;
     say(clients, slot, &format!("This land is yours: {} by {} blocks. Only you and your guild may build here.", area.x1 - area.x0, area.y1 - area.y0));
 }
@@ -567,17 +586,136 @@ fn unclaim(sim: &mut Sim, clients: &mut Clients, slot: usize) {
     }
 }
 
-fn plot(sim: &mut Sim, clients: &mut Clients, slot: usize) {
+/// A square of `size` blocks about (cx, cy), inside the world.
+fn square(sim: &Sim, cx: u32, cy: u32, size: u16) -> Rect {
+    let half = size as u32 / 2;
+    let edge = (sim.world.size / BLOCK) as u32;
+    let (x0, y0) = (cx.saturating_sub(half), cy.saturating_sub(half));
+    Rect { x0, y0, x1: (x0 + size as u32).min(edge), y1: (y0 + size as u32).min(edge) }
+}
+
+/// Whether land may be held: nobody else's (plot `except` aside, the one growing) and no town (a safe place belongs
+/// to everyone).
+fn free_land(sim: &Sim, area: &Rect, except: Option<usize>) -> Result<(), &'static str> {
+    if sim.rs.plots.iter().enumerate().any(|(i, p)| Some(i) != except && p.area.meets(area)) {
+        return Err("That overlaps land someone holds.");
+    }
+    let town = sim.places.iter().any(|p| {
+        let (px, py) = (p.x / BLOCK, p.y / BLOCK);
+        let r = p.r / BLOCK;
+        p.safe && px + r > area.x0 as f32 && px - r < area.x1 as f32 && py + r > area.y0 as f32 && py - r < area.y1 as f32
+    });
+    if town {
+        return Err("Nobody may claim land in a town.");
+    }
+    Ok(())
+}
+
+/// Take a price in the game's currency from a player's bag (nothing to pay in a game without one, or at 0).
+fn pay(sim: &mut Sim, slot: usize, cost: u32) -> Result<(), String> {
+    let Some(c) = sim.currency.filter(|_| cost > 0 && !sim.ents.god[slot]) else { return Ok(()) };
+    if !crate::market::take(&mut sim.inv[slot], c as u8 + 1, cost) {
+        return Err(format!("That costs {cost} {}, and you have not got it.", sim.items[c].shown()));
+    }
+    sim.inv_ver[slot] = sim.inv_ver[slot].wrapping_add(1);
+    Ok(())
+}
+
+/// The plot of yours you stand in.
+fn my_plot_here(sim: &Sim, slot: usize) -> Option<usize> {
     let (cx, cy) = here(sim, slot);
-    let line = match sim.rs.plots.iter().find(|p| p.area.has(cx, cy)) {
-        None => "Nobody holds this land.".to_string(),
-        Some(p) if Some(&p.owner) == sim.tag_of(slot).as_ref() => "This land is yours.".to_string(),
-        Some(p) => {
-            let guild = sim.rs.guild_of(&p.owner).map(|g| format!(" (of {})", sim.rs.guilds[g].name)).unwrap_or_default();
-            format!("This land is held by another{guild}.")
+    let me = sim.tag_of(slot)?;
+    sim.rs.plots.iter().position(|p| p.area.has(cx, cy) && p.owner == me)
+}
+
+/// `/plot` says whose land this is; `/plot grow` buys the next size up; `/plot name Words` names yours.
+fn plot(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
+    let (sub, arg) = split(rest);
+    match sub.as_str() {
+        "grow" => {
+            let Some(i) = my_plot_here(sim, slot) else { return say(clients, slot, "Stand on your own land to grow it.") };
+            let a = sim.rs.plots[i].area;
+            let now = (a.x1 - a.x0).max(a.y1 - a.y0);
+            let Some(next) = sim.realm.plots.as_ref().and_then(|r| r.sizes.iter().find(|s| s.size as u32 > now).copied()) else {
+                return say(clients, slot, "Your land is as big as land comes.");
+            };
+            let area = square(sim, (a.x0 + a.x1) / 2, (a.y0 + a.y1) / 2, next.size);
+            if sim.levels.is_some() && sim.ents.level[slot] < next.level && !sim.ents.god[slot] {
+                return say(clients, slot, &format!("Land that big wants a level {} holder.", next.level));
+            }
+            if let Err(why) = free_land(sim, &area, Some(i)) {
+                return say(clients, slot, why);
+            }
+            if let Err(why) = pay(sim, slot, next.cost) {
+                return say(clients, slot, &why);
+            }
+            sim.rs.plots[i].area = area;
+            sim.rs.dirty = true;
+            say(clients, slot, &format!("Your land grows to {} by {} blocks.", area.x1 - area.x0, area.y1 - area.y0));
         }
+        "name" => {
+            let Some(i) = my_plot_here(sim, slot) else { return say(clients, slot, "Stand on your own land to name it.") };
+            let name: String = arg.chars().filter(|c| !c.is_control()).take(32).collect::<String>().trim().to_string();
+            if !name.is_empty() && sim.rs.plots.iter().enumerate().any(|(k, p)| k != i && p.name.eq_ignore_ascii_case(&name)) {
+                return say(clients, slot, "Another holding has that name.");
+            }
+            let line = if name.is_empty() { "Your land has no name now.".to_string() } else { format!("Your land is {name}.") };
+            sim.rs.plots[i].name = name;
+            sim.rs.dirty = true;
+            say(clients, slot, &line);
+        }
+        _ => {
+            let (cx, cy) = here(sim, slot);
+            let line = match sim.rs.plots.iter().find(|p| p.area.has(cx, cy)) {
+                None => "Nobody holds this land.".to_string(),
+                Some(p) if Some(&p.owner) == sim.tag_of(slot).as_ref() => {
+                    let called = if p.name.is_empty() { " /plot name Words to name it.".to_string() } else { format!(" It is {}.", p.name) };
+                    format!("This land is yours, {} by {} blocks.{called}", p.area.x1 - p.area.x0, p.area.y1 - p.area.y0)
+                }
+                Some(p) => {
+                    let guild = sim.rs.guild_of(&p.owner).map(|g| format!(" (of {})", sim.rs.guilds[g].name)).unwrap_or_default();
+                    let called = if p.name.is_empty() { String::new() } else { format!(": {}", p.name) };
+                    format!("This land is held by another{guild}{called}.")
+                }
+            };
+            say(clients, slot, &line);
+        }
+    }
+}
+
+/// `/plots`: the named holdings, nearest first.
+fn plots(sim: &mut Sim, clients: &mut Clients, slot: usize) {
+    let (cx, cy) = here(sim, slot);
+    let mut named: Vec<(u32, &str)> = sim.rs.plots.iter().filter(|p| !p.name.is_empty()).map(|p| (cx.abs_diff((p.area.x0 + p.area.x1) / 2) + cy.abs_diff((p.area.y0 + p.area.y1) / 2), p.name.as_str())).collect();
+    named.sort();
+    let n = named.len();
+    let list: Vec<&str> = named.iter().take(30).map(|&(_, name)| name).collect();
+    let line = if n == 0 { "No holding has a name yet.".to_string() } else { format!("{n} named holdings: {}. /visit Name", list.join(", ")) };
+    say(clients, slot, &line);
+}
+
+/// `/visit Name`: which way a named holding lies, and how far.
+fn visit(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
+    let want = rest.trim();
+    let Some(p) = sim.rs.plots.iter().find(|p| !p.name.is_empty() && p.name.eq_ignore_ascii_case(want)) else {
+        return say(clients, slot, "No holding of that name. /plots lists them.");
+    };
+    let (tx, ty) = ((p.area.x0 + p.area.x1) as f32 * BLOCK / 2.0, (p.area.y0 + p.area.y1) as f32 * BLOCK / 2.0);
+    let (dx, dy) = (tx - sim.ents.x[slot], ty - sim.ents.y[slot]);
+    let d = dx.hypot(dy);
+    let line = if p.area.has(here(sim, slot).0, here(sim, slot).1) {
+        format!("You are in {}.", p.name)
+    } else {
+        format!("{} lies {:.0} to the {}, at {:.0}, {:.0}.", p.name, d, compass(dx, dy), tx, ty)
     };
     say(clients, slot, &line);
+}
+
+/// One of eight directions (y grows south).
+fn compass(dx: f32, dy: f32) -> &'static str {
+    const NAMES: [&str; 8] = ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"];
+    let k = ((dy.atan2(dx) / std::f32::consts::FRAC_PI_4).round() as i32).rem_euclid(8);
+    NAMES[k as usize]
 }
 
 /// A player by display name, ignoring case.
@@ -622,7 +760,7 @@ fn guild(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
             if sim.rs.guild_of(&their).is_some() {
                 return say(clients, slot, &format!("{} is in a guild already.", sim.name_of(to)));
             }
-            if sim.rs.guilds[g].members.len() >= GUILD_MAX {
+            if sim.rs.guilds[g].members.len() >= sim.rules.guild_size as usize {
                 return say(clients, slot, "Your guild is full.");
             }
             sim.rs.guild_invite[to] = g as u16 + 1;
@@ -722,7 +860,7 @@ fn craft(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
     }
     let have = |item: usize| sim.inv[slot].iter().filter(|b| b.0 as usize == item + 1).map(|b| b.1 as u32).sum::<u32>();
     if let Some(&(item, n)) = r.needs.iter().find(|&&(item, n)| have(item) < n as u32) {
-        return say(clients, slot, &format!("You need {n} {}.", sim.items[item].name));
+        return say(clients, slot, &format!("You need {n} {}.", sim.items[item].shown()));
     }
     for &(item, n) in &r.needs {
         let mut left = n as u32;
@@ -840,7 +978,7 @@ mod tests {
 
     #[test]
     fn plots_keep_strangers_out_but_let_the_guild_in() {
-        let mut s = sim_with(|g| g.plots = Some(PlotRules { size: 8, per_player: 1 }));
+        let mut s = sim_with(|g| g.plots = Some(PlotRules { size: 8, per_player: 1, cost: 0, sizes: vec![] }));
         let (owner, mate, stranger) = (player(&mut s, 100.0, 100.0, "own"), player(&mut s, 100.0, 100.0, "mate"), player(&mut s, 100.0, 100.0, "far"));
         let mut clients = Clients::default();
         claim(&mut s, &mut clients, owner);
@@ -863,6 +1001,41 @@ mod tests {
         assert!(!act(&mut s, stranger, ACT_BUILD));
         assert!(act(&mut s, owner, ACT_BUILD));
         assert!(!act(&mut s, stranger, ACT_BREAK));
+    }
+
+    #[test]
+    fn land_costs_coin_grows_bigger_takes_a_name_and_greets_whoever_walks_in() {
+        let mut s = sim_with(|g| {
+            g.items.push(proto::game::ItemDef { name: "silver".into(), uses: vec![], stack_max: 50, ..g.items[0].clone() });
+            g.currency = Some("silver".into());
+            g.plots = Some(PlotRules { size: 8, per_player: 1, cost: 5, sizes: vec![proto::realm::PlotSize { size: 16, cost: 10, level: 0 }] });
+        });
+        let silver = s.items.iter().position(|i| i.name == "silver").unwrap();
+        let coin = |s: &Sim, p: usize| s.inv[p].iter().filter(|t| t.0 as usize == silver + 1).map(|t| t.1 as u32).sum::<u32>();
+        let (owner, walker) = (player(&mut s, 100.0, 100.0, "own"), player(&mut s, 400.0, 400.0, "walk"));
+        let mut clients = Clients::default();
+        claim(&mut s, &mut clients, owner);
+        assert!(s.rs.plots.is_empty(), "no coin, no land");
+        s.give(owner, silver, 20);
+        claim(&mut s, &mut clients, owner);
+        assert_eq!((s.rs.plots.len(), coin(&s, owner)), (1, 15));
+        plot(&mut s, &mut clients, owner, "grow");
+        let a = s.rs.plots[0].area;
+        assert_eq!((a.x1 - a.x0, coin(&s, owner)), (16, 5), "the next size up, paid for");
+        plot(&mut s, &mut clients, owner, "grow");
+        assert_eq!((s.rs.plots[0].area, coin(&s, owner)), (a, 5), "no bigger size: nothing changes");
+        plot(&mut s, &mut clients, owner, "name The Old Mill");
+        assert_eq!(s.rs.plots[0].name, "The Old Mill");
+        s.system_plot_names();
+        assert!(s.tells.iter().any(|(who, t)| *who == owner && t == "You walk into The Old Mill."));
+        assert!(!s.tells.iter().any(|(who, _)| *who == walker));
+        s.ents.x[walker] = 100.0;
+        s.ents.y[walker] = 100.0;
+        s.tells.clear();
+        s.system_plot_names();
+        s.system_plot_names();
+        assert_eq!(s.tells.iter().filter(|(who, _)| *who == walker).count(), 1, "told once, on the way in");
+        assert_eq!((compass(1.0, 0.0), compass(0.0, -1.0), compass(-1.0, 1.0)), ("east", "north", "south-west"));
     }
 
     #[test]
@@ -968,7 +1141,7 @@ mod tests {
         s.system_realm();
         assert_eq!(s.rs.phase[a], 0);
         s.ents.x[b] = 100.0;
-        s.tick += RUN_IDLE_SECS * 20 + 1;
+        s.tick += proto::rules::Rules::ticks(s.rules.dungeon_idle_secs, s.tick_hz) + 1;
         s.system_realm();
         assert!(s.rs.runs.is_empty());
         assert!(theirs.iter().all(|&m| !s.ents.alive[m]), "its monsters went with it");

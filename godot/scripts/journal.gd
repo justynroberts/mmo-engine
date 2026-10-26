@@ -78,7 +78,7 @@ func _build_journal() -> void:
 	var gap := Control.new()
 	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(gap)
-	head.add_child(_text("F2 or Esc to close", 12, HUD.MUTED))
+	head.add_child(_text("K, F2 or Esc to close", 12, HUD.MUTED))
 	v.add_child(head)
 	_gear_row.add_theme_constant_override("separation", 14)
 	v.add_child(_gear_row)
@@ -141,7 +141,7 @@ func set_gear(g: Dictionary) -> void:
 		if name == "":
 			continue
 		any = true
-		_gear_row.add_child(_text("%s: %s" % [slot.capitalize(), name], 14))
+		_gear_row.add_child(_text("%s: %s" % [slot.capitalize(), HUD.item(name)], 14))
 		_gear_row.add_child(_button("Take off", func(): unequip.emit(k), 76))
 	if not any:
 		_gear_row.add_child(_text("nothing (use a weapon, armour or a trinket from your bag to put it on)", 13, HUD.MUTED))

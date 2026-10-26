@@ -117,8 +117,9 @@ fn d_grow() -> f32 {
     300.0
 }
 
-/// Land: `/claim` takes a square of `size` blocks on a side centred where you stand, and only you (and your guild)
-/// may build or break inside it. `/unclaim` gives it up.
+/// Land: `/claim` takes a square of `size` blocks on a side centred where you stand, for `cost` of the game's
+/// currency, and only you (and your guild) may build or break inside it. `/plot grow` buys the next of `sizes`, a
+/// bigger square about the same centre; `/unclaim` gives it up (nothing is paid back).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PlotRules {
@@ -126,6 +127,22 @@ pub struct PlotRules {
     pub size: u16,
     #[serde(default = "d_one_u8")]
     pub per_player: u8,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub cost: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sizes: Vec<PlotSize>,
+}
+
+/// A bigger plot to grow into, and what growing to it costs.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PlotSize {
+    pub size: u16,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub cost: u32,
+    /// The level a player must have reached to grow to it (0 for any).
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
 }
 
 fn d_plot_size() -> u16 {
@@ -160,6 +177,10 @@ fn d_one_u8() -> u8 {
 
 fn d_one_u32() -> u32 {
     1
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }
 
 fn is_zero_u32(v: &u32) -> bool {
@@ -348,6 +369,16 @@ impl GameFile {
         if let Some(p) = &self.plots {
             if !(4..=128).contains(&p.size) || p.per_player == 0 || p.per_player > 8 {
                 return Err("plots: size must be 4..128 and per_player 1..8".into());
+            }
+            let mut last = p.size;
+            for s in &p.sizes {
+                if s.size <= last || s.size > 128 {
+                    return Err("plots: each of sizes must be bigger than the one before (and size), up to 128".into());
+                }
+                last = s.size;
+            }
+            if p.sizes.len() > 8 || p.cost > 1_000_000 || p.sizes.iter().any(|s| s.cost > 1_000_000) {
+                return Err("plots: at most 8 sizes, and costs up to 1000000".into());
             }
         }
 

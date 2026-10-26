@@ -354,10 +354,30 @@ pub const MAX_TITLE: usize = 40;
 pub const MAX_ROUTES: usize = 64;
 pub const MAX_ROUTE_POINTS: usize = 64;
 
+/// Where a fallen bot comes back.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RespawnAt {
+    #[default]
+    Anywhere,
+    Home,
+    Here,
+}
+
+impl RespawnAt {
+    pub fn is_anywhere(&self) -> bool {
+        *self == RespawnAt::Anywhere
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Archetype {
     pub name: String,
+    /// What players see it called (absent: its name, each word capitalised), so a type can keep a short name in
+    /// the file and go by something else in the world, "Trader" for "ceannai".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
     #[serde(default = "d_color")]
     pub color: String,
     /// How many to spawn when the game file is applied.
@@ -397,6 +417,12 @@ pub struct Archetype {
     /// Seconds one lasts before it is gone of itself (0 for as long as it lives): a fire burns down, a fair ends.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub lasts_secs: u32,
+    /// Seconds one that falls stays gone before it comes back (0, at once).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub respawn_secs: f32,
+    /// Where it comes back: anywhere free (the default), in its home place, or where it fell (a quarry, a tree).
+    #[serde(default, skip_serializing_if = "RespawnAt::is_anywhere")]
+    pub respawn_at: RespawnAt,
     /// How far a player it is fighting may get before it gives up the chase, in world units. 0 (absent) means
     /// three times its sight, and at least `MIN_LEASH`.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -492,6 +518,46 @@ pub struct GameFile {
     pub plots: Option<crate::realm::PlotRules>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dungeons: Vec<crate::realm::DungeonDef>,
+    /// Tuning numbers: reaches, timers, sizes (`rules.rs`). Not in the content hash: edits apply live.
+    #[serde(default, skip_serializing_if = "crate::rules::Rules::is_default")]
+    pub rules: crate::rules::Rules,
+    /// What a new character starts with in their bag (a guest, each time they come). Not in the content hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub starter: Vec<crate::realm::Stack>,
+    /// "/" commands that act something out for those nearby (`/wave`, `/bow Name`). Not in the content hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emotes: Vec<Emote>,
+}
+
+/// An emote: `/cmd` says `text` to everyone in `say_reach`, or `at` when a name follows (`/wave Bob`); `{name}` is
+/// who acts it, `{target}` who it is at. `anim` is a clip the client plays on the one who acts it, if their model
+/// has one by that name (chat channel `EMOTE`, "anim|line").
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Emote {
+    pub cmd: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub at: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub anim: String,
+    /// Held until they move (`/sit`, `/sleep`): shown in `POSE_ATTR`, so clients keep playing `anim` and those who
+    /// come by later see it too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stays: bool,
+}
+
+/// If the game file has an attribute of this name, the server keeps it at the held emote a player is in (its index
+/// + 1, 0 for none: `Emote::stays`), until they move. Make it replicated and clients draw who is sitting.
+
+impl Emote {
+    /// The line for `who` (and `target`, when one was named and the emote has an `at` line).
+    pub fn line(&self, who: &str, target: Option<&str>) -> String {
+        match target.filter(|_| !self.at.is_empty()) {
+            Some(t) => self.at.replace("{name}", who).replace("{target}", t),
+            None => self.text.replace("{name}", who),
+        }
+    }
 }
 
 /// How much may be built: blocks per player (by account; guests' blocks belong to nobody and count only against
@@ -610,11 +676,26 @@ pub struct LevelsFile {
     /// Life experience: a little for everything a player does.
     #[serde(default)]
     pub life: LifeXp,
+    /// What reaching a level gives, besides being stronger: items (coin is an item too) and a line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rewards: Vec<LevelReward>,
+}
+
+/// Reaching `level` gives `items` (into the bag; what does not fit lands at their feet) and says `text`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LevelReward {
+    pub level: u8,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<crate::realm::Stack>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 /// Life experience: a trickle of experience for living in the world, not only for fighting. Each is experience
 /// per deed (fractions add up); 0 turns that one off. It is banked and paid every ten seconds, at most `per_min`
-/// a minute, so walking in circles or swinging at the air is worth something, but not much.
+/// a minute, so a busy spell is worth something, but not much; and only new ground and new deeds pay (`trail`, `repeat`),
+/// so a macro pacing a loop or repeating one action earns nothing.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct LifeXp {
@@ -627,12 +708,26 @@ pub struct LifeXp {
     /// For everything else done: an item used or picked up, something bought or sold, a word with someone, a quest
     /// taken.
     pub deed: f32,
+    /// For each seed planted, and each ripe crop brought in.
+    pub plant: f32,
+    pub harvest: f32,
+    /// For each minute in the world while awake (moved or did something in the last five), however it was spent,
+    /// and more for each such minute with another player within speaking reach (`rules.say_reach`).
+    pub minute: f32,
+    pub company: f32,
     pub per_min: u32,
+    /// Ground a player remembers having walked, in 32-unit cells: walking pays, and keeps them awake, only while
+    /// it reaches cells not among the last `trail`, so pacing, circling or an input held against a wall earns
+    /// nothing once the loop is learnt. 0 turns this off.
+    pub trail: u16,
+    /// Deeds a player remembers having done (the same block built and broken, the same item dropped and picked
+    /// up, the same line said): one among the last `repeat` pays nothing and does not wake them. 0 turns this off.
+    pub repeat: u8,
 }
 
 impl Default for LifeXp {
     fn default() -> Self {
-        LifeXp { walk: 1.5, act: 0.5, build: 0.5, deed: 1.0, per_min: 30 }
+        LifeXp { walk: 1.5, act: 0.5, build: 0.5, deed: 1.0, plant: 1.0, harvest: 3.0, minute: 1.0, company: 1.0, per_min: 30, trail: 64, repeat: 8 }
     }
 }
 
@@ -661,7 +756,7 @@ mod level_tests {
 
     #[test]
     fn the_curve_climbs_and_stops_at_the_cap() {
-        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10, life: Default::default() };
+        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10, life: Default::default(), rewards: vec![] };
         assert_eq!((l.xp_for(1), l.xp_for(2)), (0, 100));
         assert!((2..=20).all(|v| l.xp_for(v) > l.xp_for(v - 1)));
         assert_eq!((l.level_of(0), l.level_of(99), l.level_of(100), l.level_of(u32::MAX)), (1, 1, 2, 20));
@@ -762,6 +857,9 @@ pub mod trade_op {
 }
 /// The auction house (`auction_op` in the high byte of `arg`; only at a market).
 pub const ACT_AUCTION: u8 = 242;
+/// Hail a bot (H): `target` is its id, or 0 for the nearest that will stop within `rules.hail_reach`. One that
+/// does not fight stands still for `rules.hail_secs` (`Sim::hail`).
+pub const ACT_HAIL: u8 = 243;
 pub mod auction_op {
     /// A page (`arg & 0xff`) of listings, of item tag `target` (0: everything).
     pub const BROWSE: u8 = 0;
@@ -782,8 +880,6 @@ pub const ACT_TALK: u8 = 232;
 pub const ACT_ACCEPT: u8 = 233;
 /// Give up a quest (`arg`, its index).
 pub const ACT_ABANDON: u8 = 234;
-/// How near a player must be to talk to a bot.
-pub const TALK_RANGE: f32 = 8.0;
 pub const MAX_QUESTS: usize = 512;
 /// How many quests a player may have in hand (taken, not yet handed in) at once.
 pub const MAX_HELD_QUESTS: usize = 25;
@@ -883,6 +979,15 @@ pub const SOIL: u8 = 14;
 /// second.
 pub const SPROUT: u8 = 15;
 pub const RIPE: u8 = 16;
+/// What the materials are called, by number (an item's `block` names one). Same order as the clients' lists.
+pub const BLOCK_NAMES: [&str; BLOCK_KINDS as usize] = [
+    "stone", "timber", "red brick", "plaster", "brick", "rough brick", "roof tiles", "iron", "glass", "slate", "mossy stone", "sandstone", "lamp", "fire", "soil", "sprout", "ripe crop",
+];
+
+/// A buildable material by name (any case), or None for an unknown one or a crop.
+pub fn material(name: &str) -> Option<u8> {
+    BLOCK_NAMES.iter().position(|n| n.eq_ignore_ascii_case(name.trim())).map(|k| k as u8).filter(|&k| k < SPROUT)
+}
 
 /// The target of a build or break: the column's cell.
 pub fn build_target(cx: u32, cy: u32) -> u32 {
@@ -915,12 +1020,8 @@ pub fn block_kind(c: u8) -> Option<u8> {
 pub const AIRBORNE_ATTR: &str = "airborne";
 /// If the game file has an attribute of this name, it says whether a player's light is on (its max) or out (its
 /// min), set by `ACT_LIGHT`. Make it replicated and clients hide an unlit player's name in the dark; at night bots
-/// see an unlit player only at `SNEAK_SIGHT` of their range. That is sneaking.
+/// see an unlit player only at `Rules::sneak_sight` of their range. That is sneaking.
 pub const LIT_ATTR: &str = "lit";
-/// How far bots see an unlit player at night, as a share of their sight.
-pub const SNEAK_SIGHT: f32 = 0.35;
-/// How close you must be to pick something up, in world units.
-pub const PICKUP_RANGE: f32 = 3.0;
 
 /// A change to one of the user's attributes when an item is used.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -935,6 +1036,10 @@ pub struct UseEffect {
 #[serde(deny_unknown_fields)]
 pub struct ItemDef {
     pub name: String,
+    /// What players see it called (absent: its name), so the file can keep "siol coirce" and the bag show
+    /// "Oat seed".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
     #[serde(default = "d_item_color")]
     pub color: String,
     /// How many share a slot (1..99).
@@ -959,6 +1064,10 @@ pub struct ItemDef {
     /// How rare it is: clients colour it by this, and a drop of a rare one or better is announced.
     #[serde(default, skip_serializing_if = "crate::realm::Rarity::is_common")]
     pub rarity: crate::realm::Rarity,
+    /// A block of this material (`BLOCK_NAMES`): building one uses one up, and breaking your own gives it back. A
+    /// material no item is a block of costs nothing to build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
 }
 
 fn is_zero_u16(v: &u16) -> bool {
@@ -1033,6 +1142,8 @@ pub struct ClassRt {
 }
 
 pub const MAX_CLASSES: usize = 15;
+pub const POSE_ATTR: &str = "pose";
+
 /// The reserved attribute that shows a player's class: its index + 1, 0 for none (and for every bot), so a client
 /// can draw players by class and tell them from bots.
 pub const CLASS_ATTR: &str = "class";
@@ -1085,6 +1196,17 @@ pub struct ItemRt {
     pub equip: Option<EquipFile>,
     pub mount: f32,
     pub rarity: crate::realm::Rarity,
+    /// The material this is a block of.
+    pub block: Option<u8>,
+    /// `ItemDef::title`, empty when it has none (`shown`).
+    pub title: String,
+}
+
+impl ItemRt {
+    /// What players call it.
+    pub fn shown(&self) -> &str {
+        if self.title.is_empty() { &self.name } else { &self.title }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1353,6 +1475,8 @@ impl Default for EventDef {
 #[derive(Clone, Debug)]
 pub struct ArchRt {
     pub name: String,
+    /// `Archetype::title`, empty when it has none (`shown`).
+    pub title: String,
     pub color: String,
     pub count: u32,
     pub behaviour: Behaviour,
@@ -1371,12 +1495,26 @@ pub struct ArchRt {
     /// (item index, price)
     pub shop: Vec<(usize, u16)>,
     pub lasts_secs: u32,
+    pub respawn_secs: f32,
+    pub respawn_at: RespawnAt,
     /// How far a player it is fighting may get before it gives up (`Archetype::leash`, the default filled in).
     pub leash: f32,
     /// Its faction's index in `Game::factions`.
     pub faction: Option<usize>,
     /// Its loot table (`Realm::loot`).
     pub loot: Option<usize>,
+}
+
+impl ArchRt {
+    /// What players call it.
+    pub fn shown(&self) -> String {
+        if self.title.is_empty() { crate::names::bot(&self.name) } else { self.title.clone() }
+    }
+}
+
+/// What players call the bot type named `name` among `archs` (its name capitalised if there is none).
+pub fn shown_kind(archs: &[ArchRt], name: &str) -> String {
+    archs.iter().find(|a| a.name == name).map_or_else(|| crate::names::bot(name), ArchRt::shown)
 }
 
 #[derive(Clone, Debug)]
@@ -1431,6 +1569,10 @@ pub struct Game {
     pub factions: Vec<FactionFile>,
     /// Loot tables, recipes, crops, plots and dungeons, resolved (`realm.rs`).
     pub realm: crate::realm::Realm,
+    pub rules: crate::rules::Rules,
+    /// The starter kit, as (item index, count).
+    pub starter: Vec<(usize, u8)>,
+    pub emotes: Vec<Emote>,
 }
 
 /// Most walls a game file may place.
@@ -1438,7 +1580,7 @@ pub const MAX_WALLS: usize = 2000;
 
 /// A usable item with the given effects (none makes it a keepsake or trade good).
 fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
-    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() }
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }
 }
 
 /// What the sample bots leave behind.
@@ -1488,6 +1630,7 @@ impl GameFile {
         };
         let bot = |name: &str, color: &str, count, behaviour, speed_mult: f32, attack: Option<&str>| Archetype {
             name: name.into(),
+            title: String::new(),
             color: color.into(),
             count,
             behaviour,
@@ -1502,6 +1645,8 @@ impl GameFile {
             level: 0,
             shop: Vec::new(),
             lasts_secs: 0,
+            respawn_secs: 0.0,
+            respawn_at: RespawnAt::Anywhere,
             leash: 0.0,
             faction: None,
             loot: None,
@@ -1565,6 +1710,9 @@ impl GameFile {
             crops: Vec::new(),
             plots: None,
             dungeons: Vec::new(),
+            rules: Default::default(),
+            starter: Vec::new(),
+            emotes: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -1611,6 +1759,7 @@ impl GameFile {
                 Err(format!("{what} must be a finite number"))
             }
         }
+        self.rules.check()?;
         if !(self.move_speed > 0.0 && self.move_speed <= 1000.0) {
             return Err("move_speed must be in (0, 1000]".into());
         }
@@ -1845,6 +1994,9 @@ impl GameFile {
         }
         for it in &self.items {
             let ctx = format!("item '{}'", it.name);
+            if it.title.len() > 32 || it.title.trim() != it.title {
+                return Err(format!("{ctx}: a title is at most 32 characters, no leading or trailing spaces"));
+            }
             if it.name.trim().is_empty() || it.name.len() > 32 || it.name.trim() != it.name || !item_names.insert(it.name.clone()) {
                 return Err(format!("item names must be unique, 1..32 characters, no edge spaces ('{}')", it.name));
             }
@@ -1874,6 +2026,16 @@ impl GameFile {
             if !(it.mount.is_finite() && (0.0..=4.0).contains(&it.mount)) {
                 return Err(format!("item '{}': mount is 0..4", it.name));
             }
+            let block = match &it.block {
+                None => None,
+                Some(m) => {
+                    let k = material(m).ok_or_else(|| format!("{ctx}: block '{m}' is not a material ({})", BLOCK_NAMES[..SPROUT as usize].join(", ")))?;
+                    if items.iter().any(|x| x.block == Some(k)) {
+                        return Err(format!("{ctx}: another item is already a block of {}", BLOCK_NAMES[k as usize]));
+                    }
+                    Some(k)
+                }
+            };
             items.push(ItemRt {
                 name: it.name.clone(),
                 color: it.color.clone(),
@@ -1884,6 +2046,8 @@ impl GameFile {
                 equip: it.equip.clone(),
                 mount: it.mount,
                 rarity: it.rarity,
+                block,
+                title: it.title.clone(),
             });
         }
         let mut seen = HashSet::new();
@@ -1892,6 +2056,12 @@ impl GameFile {
             let ctx = format!("archetype '{}'", a.name);
             if a.name.is_empty() || a.name.len() > 32 || !seen.insert(a.name.clone()) {
                 return Err(format!("archetype names must be unique, 1..32 characters ('{}')", a.name));
+            }
+            if a.title.len() > 32 || a.title.trim() != a.title {
+                return Err(format!("{ctx}: a title is at most 32 characters, no leading or trailing spaces"));
+            }
+            if !(a.respawn_secs.is_finite() && (0.0..=86_400.0).contains(&a.respawn_secs)) {
+                return Err(format!("{ctx}: respawn_secs is 0..86400"));
             }
             let c = a.color.as_bytes();
             if !(c.len() == 7 && c[0] == b'#' && c[1..].iter().all(|b| b.is_ascii_hexdigit())) {
@@ -2050,6 +2220,7 @@ impl GameFile {
                 rules,
                 reach,
                 name: a.name.clone(),
+                title: a.title.clone(),
                 color: a.color.clone(),
                 count: a.count,
                 behaviour: a.behaviour,
@@ -2060,6 +2231,8 @@ impl GameFile {
                 xp: a.xp,
                 level: a.level.clamp(1, MAX_LEVEL),
                 lasts_secs: a.lasts_secs,
+                respawn_secs: a.respawn_secs,
+                respawn_at: a.respawn_at,
                 shop: a
                     .shop
                     .iter()
@@ -2120,14 +2293,61 @@ impl GameFile {
                 (l.life.act, "life.act", 0.0, 1000.0),
                 (l.life.build, "life.build", 0.0, 1000.0),
                 (l.life.deed, "life.deed", 0.0, 1000.0),
+                (l.life.plant, "life.plant", 0.0, 1000.0),
+                (l.life.harvest, "life.harvest", 0.0, 1000.0),
+                (l.life.minute, "life.minute", 0.0, 1000.0),
+                (l.life.company, "life.company", 0.0, 1000.0),
             ] {
                 if !(v.is_finite() && (lo..=hi).contains(&v)) {
                     return Err(format!("levels.{what} must be {lo}..{hi}"));
                 }
             }
+            if l.life.trail > 1024 || l.life.repeat > 64 {
+                return Err("levels.life: trail at most 1024 cells, repeat at most 64 deeds".into());
+            }
+            if l.rewards.len() > MAX_LEVEL as usize {
+                return Err(format!("levels.rewards: at most {MAX_LEVEL}"));
+            }
+            for r in &l.rewards {
+                if r.level < 2 || r.level > l.cap || r.items.len() > INV_SLOTS || r.text.len() > 200 {
+                    return Err(format!("levels.rewards: level {} must be 2..cap, with at most {INV_SLOTS} stacks and a short line", r.level));
+                }
+                for s in &r.items {
+                    if s.count == 0 || !self.items.iter().any(|i| i.name == s.item) {
+                        return Err(format!("levels.rewards: level {}: '{}' is not an item (or its count is 0)", r.level, s.item));
+                    }
+                }
+            }
         }
         let realm = self.realm()?;
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm })
+        if self.starter.len() > INV_SLOTS {
+            return Err(format!("starter: at most {INV_SLOTS} stacks"));
+        }
+        let starter = self
+            .starter
+            .iter()
+            .map(|s| match self.items.iter().position(|i| i.name == s.item) {
+                Some(k) if s.count >= 1 => Ok((k, s.count)),
+                Some(_) => Err(format!("starter: count of '{}' must be at least 1", s.item)),
+                None => Err(format!("starter: '{}' is not an item", s.item)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if self.emotes.len() > 200 {
+            return Err("emotes: at most 200".into());
+        }
+        let mut cmds = std::collections::HashSet::new();
+        for e in &self.emotes {
+            if e.cmd.is_empty() || e.cmd.len() > 16 || !e.cmd.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+                return Err(format!("emotes: '{}' must be 1..16 lowercase letters or digits", e.cmd));
+            }
+            if !cmds.insert(e.cmd.as_str()) {
+                return Err(format!("emotes: '/{}' twice", e.cmd));
+            }
+            if e.text.trim().is_empty() || e.text.len() > 100 || e.at.len() > 100 || e.anim.len() > 32 || e.anim.contains('|') {
+                return Err(format!("emotes: '/{}' needs a text (at most 100), an at line of at most 100 and a short anim", e.cmd));
+            }
+        }
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, emotes: self.emotes.clone() })
     }
 
     /// Factions: names unique, numbers in range, and what they hate there.
@@ -2608,10 +2828,55 @@ mod tests {
         .unwrap();
         assert!(old.build().is_ok());
         let mut more = ok.clone();
-        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default() });
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None });
         assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
         g.items.clear();
         assert!(g.build().is_err(), "drops of items that no longer exist are caught");
+    }
+
+    #[test]
+    fn emotes_have_plain_unique_commands_and_fill_in_names() {
+        let mut g = GameFile::default_game();
+        let wave = Emote { cmd: "wave".into(), text: "{name} waves.".into(), at: "{name} waves at {target}.".into(), anim: "wave".into(), stays: false };
+        g.emotes = vec![wave.clone(), Emote { cmd: "nod".into(), text: "{name} nods.".into(), at: String::new(), anim: String::new(), stays: false }];
+        let game = g.build().unwrap();
+        assert_eq!(game.emotes[0].line("Aoife", Some("Bran")), "Aoife waves at Bran.");
+        assert_eq!(game.emotes[1].line("Aoife", Some("Bran")), "Aoife nods.", "no at line: the plain one");
+        g.emotes.push(wave);
+        assert!(g.build().unwrap_err().contains("twice"));
+        g.emotes.pop();
+        g.emotes[1].cmd = "Nod!".into();
+        assert!(g.build().is_err());
+    }
+
+    #[test]
+    fn the_starter_kit_names_items_and_bot_respawns_are_checked() {
+        let mut g = GameFile::default_game();
+        let first = g.items[0].name.clone();
+        g.starter = vec![crate::realm::Stack { item: first, count: 3 }];
+        assert_eq!(g.build().unwrap().starter, vec![(0, 3)]);
+        g.starter[0].item = "nothing at all".into();
+        assert!(g.build().unwrap_err().contains("starter"));
+        g.starter.clear();
+        g.archetypes[0].respawn_secs = -1.0;
+        assert!(g.build().is_err());
+        let a: Archetype = serde_json::from_str(r#"{"name": "rock", "respawn_secs": 60, "respawn_at": "here"}"#).unwrap();
+        assert_eq!((a.respawn_secs, a.respawn_at), (60.0, RespawnAt::Here));
+    }
+
+    #[test]
+    fn an_item_may_be_a_block_of_one_material_and_each_material_of_one_item() {
+        assert_eq!(BLOCK_NAMES.len(), BLOCK_KINDS as usize);
+        assert_eq!((material("Red Brick"), material("soil"), material("sprout"), material("mud")), (Some(2), Some(SOIL), None, None));
+        let mut g = GameFile::default_game();
+        assert!(!g.to_json().contains("\"block\""), "items without one write no block, so old files round-trip");
+        g.items[0].block = Some("stone".into());
+        let built = g.build().unwrap();
+        assert_eq!(built.items[0].block, Some(0));
+        g.items[1].block = Some("Stone".into());
+        assert!(g.build().unwrap_err().contains("already a block of stone"));
+        g.items[1].block = Some("ripe crop".into());
+        assert!(g.build().is_err(), "crops come from seeds");
     }
 
     #[test]

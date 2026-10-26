@@ -60,7 +60,7 @@ export default function Play() {
   const play = (inf: PlayInfo, id: Uint8Array | null, url: string): GameClient => {
     const names = shared.current.names
     const add = (m: ChatMsg, self: number) =>
-      setLines((l) => [...l.slice(-30), { key: lineKey.current++, from: m.from, who: m.from === 0 ? 'server' : m.from === self ? 'you' : names.name(m.from), text: m.text, shout: m.channel === 1, banner: m.from === 0 && m.channel === channel.BANNER }])
+      setLines((l) => [...l.slice(-30), { key: lineKey.current++, from: m.from, who: m.from === 0 ? 'server' : m.from === self ? 'you' : names.name(m.from), text: m.channel === channel.EMOTE ? m.text.slice(m.text.indexOf('|') + 1) : m.text, shout: m.channel === 1, banner: m.from === 0 && m.channel === channel.BANNER }])
     const c: GameClient = new GameClient(inf, id, url, {
       onStatus: (s, detail) => setStatus({ s, detail }),
       onChat: (m) => add(m, c.entity),

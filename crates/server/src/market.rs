@@ -12,22 +12,16 @@ use serde::{Deserialize, Serialize};
 use crate::items::Bag;
 use crate::sim::{Sim, DRIVEN};
 use proto::chat::channel;
-use proto::game::{auction_op, bag_op, trade_op, BANK_SLOTS, INV_SLOTS, TALK_RANGE};
+use proto::game::{auction_op, bag_op, trade_op, BANK_SLOTS, INV_SLOTS};
 
-/// How near two players must be to start a trade, and how far apart before it is called off.
-pub const TRADE_REACH: f32 = 12.0;
-pub const TRADE_BREAK: f32 = 24.0;
 /// Most stacks one side may put into a trade (the state line must fit a chat line).
 pub const TRADE_STACKS: usize = 6;
-/// How long a listing stays up, most listings per seller and in all, and the dearest price.
-pub const LISTING_SECS: u64 = 48 * 3600;
-pub const LISTINGS_PER_SELLER: usize = 12;
+/// Most listings in all, and the dearest price. How long one stays up, how many per seller, the trade and market
+/// reaches are `GameFile::rules`.
 pub const LISTINGS_MAX: usize = 5000;
 pub const PRICE_MAX: u32 = 999_999;
 /// Listings sent per page when browsing.
 pub const PAGE: usize = 8;
-/// How near a merchant counts as being at a market (the bank and the auction house are there and in safe places).
-pub const MARKET_REACH: f32 = TALK_RANGE * 2.0;
 
 /// A bank: kept like a bag, by slot.
 pub type Vault = [(u8, u8); BANK_SLOTS];
@@ -163,7 +157,7 @@ impl Sim {
         (0..self.ents.high).any(|t| {
             self.ents.alive[t]
                 && self.archs.get(self.ents.arch[t] as usize).is_some_and(|a| !a.shop.is_empty())
-                && (self.ents.x[t] - x).powi(2) + (self.ents.y[t] - y).powi(2) <= MARKET_REACH * MARKET_REACH
+                && (self.ents.x[t] - x).powi(2) + (self.ents.y[t] - y).powi(2) <= self.rules.market_reach * self.rules.market_reach
         })
     }
 
@@ -351,7 +345,7 @@ impl Sim {
             return false;
         }
         let d2 = (self.ents.x[t] - self.ents.x[s]).powi(2) + (self.ents.y[t] - self.ents.y[s]).powi(2);
-        if d2 > TRADE_REACH * TRADE_REACH {
+        if d2 > self.rules.trade_reach * self.rules.trade_reach {
             self.tells.push((s, "Too far away to trade.".into()));
             return false;
         }
@@ -458,7 +452,7 @@ impl Sim {
             let (a, b) = (self.ents.resolve(t.who[0]), self.ents.resolve(t.who[1]));
             let apart = match (a, b) {
                 (Some(a), Some(b)) => {
-                    !self.live_player(a) || !self.live_player(b) || (self.ents.x[a] - self.ents.x[b]).powi(2) + (self.ents.y[a] - self.ents.y[b]).powi(2) > TRADE_BREAK * TRADE_BREAK
+                    !self.live_player(a) || !self.live_player(b) || (self.ents.x[a] - self.ents.x[b]).powi(2) + (self.ents.y[a] - self.ents.y[b]).powi(2) > self.rules.trade_break * self.rules.trade_break
                 }
                 _ => true,
             };
@@ -525,8 +519,8 @@ impl Sim {
             self.tells.push((s, format!("A price must be 1 to {PRICE_MAX}.")));
             return false;
         }
-        if self.market.listings.iter().filter(|l| l.seller == me).count() >= LISTINGS_PER_SELLER || self.market.listings.len() >= LISTINGS_MAX {
-            self.tells.push((s, format!("You have as many things up for sale as you may ({LISTINGS_PER_SELLER}).")));
+        if self.market.listings.iter().filter(|l| l.seller == me).count() >= self.rules.listings_per_seller as usize || self.market.listings.len() >= LISTINGS_MAX {
+            self.tells.push((s, format!("You have as many things up for sale as you may ({}).", self.rules.listings_per_seller)));
             return false;
         }
         let item = self.items[tag as usize - 1].name.clone();
@@ -535,7 +529,7 @@ impl Sim {
         let id = self.market.next_id;
         self.market.next_id = self.market.next_id.wrapping_add(1).max(1);
         let seller_name = self.name_of(s).to_string();
-        self.market.listings.push(Listing { id, seller: me.to_string(), seller_name, item: item.clone(), count: n, price, ends: unix_now() + LISTING_SECS });
+        self.market.listings.push(Listing { id, seller: me.to_string(), seller_name, item: item.clone(), count: n, price, ends: unix_now() + (self.rules.listing_hours * 3600.0) as u64 });
         self.rs.dirty = true;
         self.tells.push((s, format!("{n} {item} put up for {price}.")));
         self.send_listings(s, me, 0, 0, true);
@@ -630,7 +624,7 @@ impl Sim {
                 let n = self.market.post[k].count;
                 let left = self.give(s, i, n);
                 if left < n {
-                    self.tells.push((s, format!("A runner from the auction house brings you {} {}.", n - left, self.items[i].name)));
+                    self.tells.push((s, format!("A runner from the auction house brings you {} {}.", n - left, self.items[i].shown())));
                     self.rs.dirty = true;
                 }
                 if left == 0 {
@@ -666,7 +660,7 @@ mod tests {
     use proto::world::World;
 
     fn item(name: &str, stack: u8) -> ItemDef {
-        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: stack, uses: vec![], consume: true, value: 1, equip: None, mount: 0.0, rarity: Default::default() }
+        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: stack, uses: vec![], consume: true, value: 1, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }
     }
 
     fn town() -> proto::game::Place {

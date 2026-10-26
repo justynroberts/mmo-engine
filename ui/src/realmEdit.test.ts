@@ -27,6 +27,13 @@ function game(): GameFile {
 }
 
 describe('realm references', () => {
+  it('rename and drop starter kit items', () => {
+    const g = { ...game(), starter: [{ item: 'ore', count: 5 }, { item: 'seed', count: 2 }] }
+    expect(renameItem(g, 0, 'iron ore').starter).toEqual([{ item: 'iron ore', count: 5 }, { item: 'seed', count: 2 }])
+    expect(removeItem(g, 2).starter).toEqual([{ item: 'ore', count: 5 }])
+    expect(removeItem(removeItem(g, 2), 0).starter).toBeUndefined()
+  })
+
   it('follow a renamed item everywhere', () => {
     const g = renameItem(game(), 1, 'ember blade')
     expect(g.loot![0]!.entries[0]!.item).toBe('ember blade')

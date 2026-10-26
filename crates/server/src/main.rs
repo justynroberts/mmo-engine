@@ -9,6 +9,7 @@ mod ctl;
 mod director;
 mod encounter;
 mod factions;
+mod hail;
 mod items;
 mod life;
 mod market;

@@ -6,7 +6,7 @@
 //! scrambles anyone's quests.
 
 use crate::sim::{Sim, DRIVEN};
-use proto::game::{QuestStep, TALK_RANGE};
+use proto::game::QuestStep;
 use proto::wire::{QUEST_ACTIVE, QUEST_DONE, QUEST_READY};
 
 /// One of a player's quests: on which step, how far into it, and whether it is ready to hand in or done.
@@ -18,8 +18,6 @@ pub struct QuestRun {
     pub state: u8,
 }
 
-/// How near another player must be to a bot that falls to share a "beat N of them" step.
-pub const SHARE_RANGE: f32 = 40.0;
 
 impl Sim {
     fn quest(&self, name: &str) -> Option<(usize, &proto::game::QuestFile)> {
@@ -73,7 +71,7 @@ impl Sim {
     pub fn talk(&mut self, s: usize, target: u32) -> bool {
         let Some(t) = self.ents.resolve(target) else { return false };
         let (dx, dy) = (self.ents.x[t] - self.ents.x[s], self.ents.y[t] - self.ents.y[s]);
-        if dx * dx + dy * dy > TALK_RANGE * TALK_RANGE || self.ents.owner[s] >= DRIVEN {
+        if dx * dx + dy * dy > self.rules.talk_reach * self.rules.talk_reach || self.ents.owner[s] >= DRIVEN {
             return false;
         }
         let Some(arch) = self.archs.get(self.ents.arch[t] as usize).map(|a| a.name.clone()) else { return false };
@@ -81,6 +79,7 @@ impl Sim {
             self.tells.push((s, why));
             return true;
         }
+        self.hold_for(t, s); // it stands while you talk
         // A step that is just talking to one of these.
         let mut moved = false;
         for i in 0..self.ents.quests[s].len() {
@@ -140,7 +139,7 @@ impl Sim {
             if let Some(k) = offer {
                 self.ents.offer[s] = k as u16;
             } else {
-                self.tells.push((s, format!("{} has nothing for you now.", proto::names::bot(&arch))));
+                self.tells.push((s, format!("{} has nothing for you now.", proto::game::shown_kind(&self.archs, &arch))));
             }
         }
         self.bump_quests(s);
@@ -191,7 +190,7 @@ impl Sim {
         run.count = 0;
         if run.step as usize >= n {
             run.state = QUEST_READY;
-            self.tells.push((s, format!("{title}: done. Go back to the {}.", proto::names::bot(&back))));
+            self.tells.push((s, format!("{title}: done. Go back to the {}.", proto::game::shown_kind(&self.archs, &back))));
         }
         self.bump_quests(s);
         self.check_now(s, i);
@@ -229,7 +228,7 @@ impl Sim {
         if self.quests.is_empty() {
             return;
         }
-        let r2 = SHARE_RANGE * SHARE_RANGE;
+        let r2 = self.rules.quest_share_reach * self.rules.quest_share_reach;
         let mut players: Vec<usize> = who.to_vec();
         for s in 0..self.ents.high {
             if self.ents.alive[s] && self.ents.owner[s] < DRIVEN && (self.ents.x[s] - x).powi(2) + (self.ents.y[s] - y).powi(2) <= r2 && !players.contains(&s) {
@@ -293,7 +292,7 @@ mod tests {
     #[test]
     fn a_quest_is_offered_taken_shared_done_and_handed_in() {
         let mut g = GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default() });
+        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
         let plaza = g.places.iter().find(|p| p.name == "plaza").unwrap().clone();
         g.quests.push(QuestFile {
             name: "cull".into(),

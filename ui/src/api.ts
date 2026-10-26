@@ -76,6 +76,13 @@ export interface Levels {
   discover_xp?: number
   /** Life experience: a little for everything a player does, banked and paid every ten seconds. */
   life?: LifeXp
+  /** What reaching a level gives: items (coin is an item) and a line. Levels 2..cap. */
+  rewards?: LevelReward[]
+}
+export interface LevelReward {
+  level: number
+  items?: QuestItem[]
+  text?: string
 }
 /** Experience per deed (fractions add up; 0 turns one off), at most per_min a minute. Absent: the defaults. */
 export interface LifeXp {
@@ -87,8 +94,18 @@ export interface LifeXp {
   build?: number
   /** For an item used or picked up, a trade, a word with someone, a quest taken (1). */
   deed?: number
+  /** For each seed planted (1), and each ripe crop brought in (3). */
+  plant?: number
+  harvest?: number
+  /** For each minute in the world while awake (1), and more for each such minute near another player (1). */
+  minute?: number
+  company?: number
   /** The most it pays in a minute (30). */
   per_min?: number
+  /** Against macros: walking pays only into ground not among the last `trail` 32-unit cells walked (64), and a
+   * deed the same as one of the last `repeat` (8) pays nothing. 0 turns either off. */
+  trail?: number
+  repeat?: number
 }
 /** An item and how many (a quest reward). count 1..255. */
 export interface QuestItem {
@@ -209,6 +226,8 @@ export interface UseEffect {
 }
 export interface ItemDef {
   name: string
+  /** What players see it called (absent: its name), e.g. "Oat seed". At most 32 characters. */
+  title?: string
   color: string
   stack_max: number
   uses: UseEffect[]
@@ -221,7 +240,13 @@ export interface ItemDef {
   mount?: number
   /** How rare it is (absent: common). A drop of a rare one or better is announced. */
   rarity?: Rarity
+  /** A block of this material (one of MATERIALS): building one uses one up, and breaking your own gives it back.
+   *  At most one item per material; a material no item is a block of costs nothing to build. Gods build free. */
+  block?: string
 }
+
+/** The block materials a player can build, by number (proto::game::BLOCK_NAMES up to the crops). */
+export const MATERIALS = ['stone', 'timber', 'red brick', 'plaster', 'brick', 'rough brick', 'roof tiles', 'iron', 'glass', 'slate', 'mossy stone', 'sandstone', 'lamp', 'fire', 'soil']
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 export const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary']
@@ -263,10 +288,13 @@ export interface CropDef {
   max?: number
   grow_secs?: number
 }
-/** Land players claim with /claim: `size` blocks on a side, `per_player` each. */
+/** Land players claim with /claim: `size` blocks on a side, `per_player` each, for `cost` coin. `/plot grow` buys
+ *  the next of `sizes` (each bigger than the one before). */
 export interface PlotRules {
   size?: number
   per_player?: number
+  cost?: number
+  sizes?: { size: number; cost?: number; level?: number }[]
 }
 /** A place that gives each party its own copy of these monsters. */
 export interface DungeonDef {
@@ -298,6 +326,8 @@ export interface DropDef {
 
 export interface Archetype {
   name: string
+  /** What players see it called (absent: its name, capitalised), e.g. "Trader". At most 32 characters. */
+  title?: string
   color: string
   count: number
   behaviour: Behaviour
@@ -316,6 +346,10 @@ export interface Archetype {
   shop?: ShopItem[]
   /** Seconds one lasts before it is gone of itself (absent for as long as it lives): a fire burns down. */
   lasts_secs?: number
+  /** Seconds one that falls stays gone before it comes back (absent: at once). */
+  respawn_secs?: number
+  /** Where it comes back: anywhere free (absent), its home place, or where it fell (a quarry, a tree). */
+  respawn_at?: 'anywhere' | 'home' | 'here'
   /** Encounters: the first blow between it and a player locks it on that player, whom it then chases past its
    * sight and fights back (unless a rule says flee) until one falls, or the player gets this far away (world
    * units), reaches a safe place, or no blow lands for 10 seconds. Absent or 0: three times its sight, at least
@@ -449,6 +483,13 @@ export interface GameFile {
   currency?: string
   /** Limits on building (blocks per player and per 256-unit region; 0 for none). Not in the content hash. */
   building?: { per_player: number; per_region: number }
+  /** Tuning numbers (reaches in world units, times in seconds). Every field is optional and defaults to RULE_DEFAULTS.
+   *  Not in the content hash: edits apply live. */
+  rules?: Partial<Rules>
+  /** What a new character starts with in their bag (a guest, each visit): item names and counts. Not in the hash. */
+  starter?: { item: string; count?: number }[]
+  /** "/" commands that act something out nearby. Not in the hash. */
+  emotes?: Emote[]
   factions?: FactionFile[]
   /** Loot tables, crafting, farming, land and dungeons. All apply live. */
   loot?: LootTable[]
@@ -516,6 +557,8 @@ export interface State {
   shown: number
   /** Players' display names by entity id (bots go by their type). */
   names?: Record<string, string>
+  /** Players whose life experience was let go for going over old ground or repeating a deed, most first. */
+  looping?: { id: number; name: string; stale: number; xp: number }[]
   director?: DirectorState
   /** Blocks built by players: `ver` changes whenever they do (refetch /api/blocks). */
   blocks?: { ver: number; total: number }
@@ -596,4 +639,104 @@ export interface ChatLog {
   tick: number
   /** [tick, speaker id, channel (0 say, 1 shout), text, the speaker's name now ("" if gone)] */
   lines: [number, number, number, string, string?][]
+}
+
+/** `/cmd` says `text` to those nearby, or `at` when a name follows; `{name}` is who acts it, `{target}` who it is at.
+ *  `anim` is a clip played on them, if their model has one of that name. */
+export interface Emote {
+  cmd: string
+  text: string
+  at?: string
+  anim?: string
+  /** Held until they move (sitting): needs a replicated `pose` attribute for others to see it. */
+  stays?: boolean
+}
+
+/** The game's tuning numbers (proto::rules::Rules). */
+export interface Rules {
+  /** Talk to a bot, take its quests, use its shop. */
+  talk_reach: number
+  /** Pick up a pile. */
+  pickup_reach: number
+  /** The pause after any action before the next. */
+  global_cooldown_secs: number
+  /** Between using two items. */
+  item_cooldown_secs: number
+  /** How long a dropped item or loot pile lies before it fades. */
+  ground_item_secs: number
+  /** How well a bot sees an unlit player at night, as a share of its sight (0..1). */
+  sneak_sight: number
+  /** A bot gives up a chase after this long with no blows. */
+  chase_give_up_secs: number
+  /** A fight between players is over after this long with no blows. */
+  pvp_quiet_secs: number
+  /** Hurting a bot this recently still earns credit when it falls. */
+  kill_credit_secs: number
+  /** Most players in a party (at least 2). */
+  party_size: number
+  /** Party mates this near a kill share its experience. */
+  party_share_reach: number
+  /** Other players this near a kill share its quest credit. */
+  quest_share_reach: number
+  /** How far a spoken line carries. */
+  say_reach: number
+  /** How far a shout carries; 0 is the whole world. */
+  shout_reach: number
+  /** How far a bot's passing remark carries. */
+  remark_reach: number
+  /** Least time between two lines from one bot. */
+  bot_say_secs: number
+  /** Most members in a guild (at least 2). */
+  guild_size: number
+  /** An empty dungeon run closes after this long. */
+  dungeon_idle_secs: number
+  /** Start a trade this near; it is called off past trade_break. */
+  trade_reach: number
+  trade_break: number
+  /** This near a merchant counts as at a market (bank, auction house). */
+  market_reach: number
+  /** How long an auction listing stays up, in hours. */
+  listing_hours: number
+  listings_per_seller: number
+  /** What falling costs: a share (%) of the experience earned into the level, of the coin in the bag (gone), the
+   *  chance (%) each other bag stack is left where they fell, and seconds before rising. All 0 by default. */
+  fall_xp_loss_pct: number
+  fall_coin_loss_pct: number
+  fall_drop_pct: number
+  rise_delay_secs: number
+  /** How near you hail a bot (H), and how long one that does not fight then stands still for you. */
+  hail_reach: number
+  hail_secs: number
+}
+
+export const RULE_DEFAULTS: Rules = {
+  talk_reach: 8,
+  pickup_reach: 3,
+  global_cooldown_secs: 0.5,
+  item_cooldown_secs: 0.25,
+  ground_item_secs: 300,
+  sneak_sight: 0.35,
+  chase_give_up_secs: 10,
+  pvp_quiet_secs: 8,
+  kill_credit_secs: 30,
+  party_size: 5,
+  party_share_reach: 80,
+  quest_share_reach: 40,
+  say_reach: 64,
+  shout_reach: 0,
+  remark_reach: 24,
+  bot_say_secs: 6,
+  guild_size: 200,
+  dungeon_idle_secs: 30,
+  trade_reach: 12,
+  trade_break: 24,
+  market_reach: 16,
+  listing_hours: 48,
+  listings_per_seller: 12,
+  fall_xp_loss_pct: 0,
+  fall_coin_loss_pct: 0,
+  fall_drop_pct: 0,
+  rise_delay_secs: 0,
+  hail_reach: 30,
+  hail_secs: 30,
 }

@@ -258,9 +258,9 @@ fn hs_classes(sim: &Sim) -> serde_json::Value {
 
 /// What clients are told about a quest: its words, who gives and takes it (as their bots are named), and each
 /// step in words with how many it needs.
-fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place]) -> serde_json::Value {
+fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: &[proto::game::ArchRt], items: &[proto::game::ItemRt]) -> serde_json::Value {
     use proto::game::QuestStep;
-    let bot = |a: &str| proto::names::bot(a).to_string();
+    let bot = |a: &str| proto::game::shown_kind(archs, a);
     let steps: Vec<serde_json::Value> = q
         .steps
         .iter()
@@ -271,7 +271,7 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place]) -> serd
                     let p = places.iter().find(|p| &p.name == place);
                     format!("Go to {}", p.filter(|p| !p.title.is_empty()).map_or(place.as_str(), |p| p.title.as_str()))
                 }
-                QuestStep::Collect { item, count } => format!("Bring {count} {item}"),
+                QuestStep::Collect { item, count } => format!("Bring {count} {}", items.iter().find(|i| &i.name == item).map_or(item.as_str(), |i| i.shown())),
                 QuestStep::Talk { archetype } => format!("Speak to the {}", bot(archetype)),
             };
             let mut v = json!({"text": text, "need": st.need()});
@@ -349,7 +349,10 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // Players may harm each other outside places marked safe.
         "pvp": sim.pvp,
         // Quests, for a client to show: who gives them (by the name its bots go by), what to do, what they give.
-        "quests": sim.quests.iter().map(|q| quest_info(q, &sim.places)).collect::<Vec<_>>(),
+        "quests": sim.quests.iter().map(|q| quest_info(q, &sim.places, &sim.archs, &sim.items)).collect::<Vec<_>>(),
+        // Tuning numbers a client needs too (talk and pickup reach, the pause after an action), all of them.
+        "rules": sim.rules,
+        "emotes": sim.emotes.iter().map(|e| (e.cmd.as_str(), e.anim.as_str())).collect::<Vec<_>>(),
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,
@@ -373,14 +376,17 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "world": hs.world.as_ref().map(|w| json!({ "ver": format!("{:016x}", w.ver), "bytes": w.bytes.len(), "parts": true, "head_bytes": w.head.len(), "points": w.point_count, "tile": proto::tiles::TILE })),
         "items": sim.items.iter().map(|i| {
             let mut v = json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty() || i.equip.is_some() || i.mount > 0.0});
+            if !i.title.is_empty() { v["title"] = json!(i.title); }
             if i.value > 0 { v["value"] = json!(i.value); }
             if let Some(e) = &i.equip { v["equip"] = json!({"slot": e.slot as u8, "might": e.might, "toughness": e.toughness}); }
             if i.mount > 0.0 { v["mount"] = json!(i.mount); }
             if !i.rarity.is_common() { v["rarity"] = json!(i.rarity.title()); }
+            // A block of this material (by number): building one uses one up.
+            if let Some(k) = i.block { v["block"] = json!(k); }
             v
         }).collect::<Vec<_>>(),
         // Where each kind of bot lives (by the name its bots go by), for a map to mark quest givers and traders.
-        "homes": sim.archs.iter().filter_map(|a| a.home.and_then(|h| sim.places.get(h)).map(|p| (proto::names::bot(&a.name).to_string(), json!([p.x, p.y, p.r])))).collect::<serde_json::Map<String, serde_json::Value>>(),
+        "homes": sim.archs.iter().filter_map(|a| a.home.and_then(|h| sim.places.get(h)).map(|p| (a.shown(), json!([p.x, p.y, p.r])))).collect::<serde_json::Map<String, serde_json::Value>>(),
         // Classes a player chooses from, with what each may cast.
         "classes": hs_classes(sim),
         // Sides, what can be made and grown, and whether land can be claimed (all reached by "/" commands).
@@ -393,7 +399,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         },
         // Money, and what each merchant sells (by the name its bots go by).
         "currency": sim.currency.map(|c| sim.items[c].name.clone()),
-        "shops": sim.archs.iter().filter(|a| !a.shop.is_empty()).map(|a| (proto::names::bot(&a.name).to_string(),
+        "shops": sim.archs.iter().filter(|a| !a.shop.is_empty()).map(|a| (a.shown(),
             json!(a.shop.iter().map(|&(k, p)| json!({"item": sim.items[k].name, "price": p})).collect::<Vec<_>>()))).collect::<serde_json::Map<String, serde_json::Value>>(),
         "weather": sim.weather.as_ref().map(|w| json!({"name": w.name, "color": w.color, "intensity": w.intensity})),
         // The schedule, not the time: clients work the phase out from their own clocks (proto::daylight), and
@@ -1114,6 +1120,9 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.places = game.places;
         c.sim.pvp = game.pvp;
         c.sim.building = game.building;
+        c.sim.rules = game.rules;
+        c.sim.starter = game.starter;
+        c.sim.emotes = game.emotes;
         c.sim.levels = game.levels;
         // Quests are kept by name: everyone's are sent again, as indices may have moved.
         c.sim.quests = game.quests;
@@ -1254,6 +1263,11 @@ fn state_json(c: &Ctl, limit: usize) -> String {
         .filter(|&slot| s.ents.alive[slot] && s.ents.name[slot].is_some())
         .map(|slot| (s.ents.id_of(slot).to_string(), json!(&*s.name_of(slot))))
         .collect();
-    let _ = write!(o, r#"],"shown":{shown},"names":{}}}"#, serde_json::Value::Object(players));
+    // Players whose experience was let go for going over old ground or repeating one deed (a macro, or idling
+    // in a loop), most first: the seconds and deeds that did not pay.
+    let mut looping: Vec<(u32, usize)> = (0..s.ents.high).filter(|&slot| s.ents.alive[slot] && s.ents.owner[slot] < DRIVEN && s.life_stale[slot] > 0).map(|slot| (s.life_stale[slot], slot)).collect();
+    looping.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    let looping: Vec<serde_json::Value> = looping.iter().take(50).map(|&(n, slot)| json!({"id": s.ents.id_of(slot), "name": &*s.name_of(slot), "stale": n, "xp": s.ents.xp[slot]})).collect();
+    let _ = write!(o, r#"],"shown":{shown},"names":{},"looping":{}}}"#, serde_json::Value::Object(players), json!(looping));
     o
 }

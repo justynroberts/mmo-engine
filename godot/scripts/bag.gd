@@ -80,7 +80,7 @@ func _ready() -> void:
 	_buttons.add_theme_constant_override("separation", 8)
 	v.add_child(_buttons)
 	var hint := Label.new()
-	hint.text = "Click a thing, then a slot to move it there. Right click uses it. F4 or Esc to close."
+	hint.text = "Click a thing, then a slot to move it there. Right click uses it. I, F4 or Esc to close."
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", HUD.MUTED)
 	v.add_child(hint)
@@ -127,8 +127,8 @@ func refresh(bag: Array) -> void:
 		if i < SLOTS and name == _currency and name != "":
 			money += n
 		var b := _slots[i]
-		b.text = "" if name == "" else ("%s\n%d" % [name, n] if n > 1 else name)
-		b.tooltip_text = name
+		b.text = "" if name == "" else ("%s\n%d" % [HUD.item(name), n] if n > 1 else HUD.item(name))
+		b.tooltip_text = HUD.item(name)
 		var s := StyleBoxFlat.new()
 		s.bg_color = Color(0.09, 0.09, 0.1, 0.95) if name == "" else Color(d.get("color", "#888888")).darkened(0.62)
 		s.border_color = HUD.ACCENT if at == _picked else Color(1, 1, 1, 0.08)
@@ -137,7 +137,7 @@ func refresh(bag: Array) -> void:
 		for k in ["normal", "hover", "pressed"]:
 			b.add_theme_stylebox_override(k, s)
 		b.add_theme_color_override("font_color", HUD.TEXT)
-	_money.text = "%d %s" % [money, _currency] if _currency != "" else ""
+	_money.text = "%d %s" % [money, HUD.item(_currency)] if _currency != "" else ""
 	_show_picked()
 
 func _entry(at: int) -> Dictionary:

@@ -29,7 +29,12 @@ static var _logged_out := false
 ## The title theme: it plays over the join and loading screens and fades as the world appears.
 const TITLE_THEME := "res://sounds/theme/wake_softly.ogg" # Hibernia, Wake Softly; hibernia.ogg, eirigh_linn.ogg and ar_aghaidh.ogg are kept for later
 ## The keys for the spell bar, in order.
-const SPELL_KEYS := [KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P, KEY_Z, KEY_C, KEY_H, KEY_K, KEY_COMMA]
+const SPELL_KEYS := [KEY_R, KEY_T, KEY_Y, KEY_U, KEY_O, KEY_P, KEY_Z, KEY_C, KEY_APOSTROPHE, KEY_COMMA, KEY_PERIOD, KEY_SEMICOLON]
+## Letter keys beside the function keys, which a Mac keyboard sends as media keys unless fn is held.
+const BAG_KEY := KEY_I
+const JOURNAL_KEY := KEY_K
+## Hail: the bot targeted, or the nearest that will stop, stands still for you a while (the server picks).
+const HAIL_KEY := KEY_H
 const HOLD_WORDS := ["", "You are mesmerised.", "You are stunned.", "You are rooted to the spot."]
 var theme: Node3D        # the look: see scripts/theme.gd
 var world: RefCounted    # the world as data: see scripts/world_data.gd
@@ -64,7 +69,6 @@ var _music_pick := ""     # the piece the moment calls for, and since when (musi
 var _music_since := 0.0
 var _fetch_pile := 0       # a pile of loot clicked, which we walk to and pick up (its ground id; 0 none)
 var _fetch_until := 0.0
-const PICKUP_REACH := 2.6  # a little inside the server's 3 units, so it is in reach when we ask
 var _fight_at := -100.0   # when we last struck or were struck: the music turns to battle for a while after
 var _step_from := Vector2.INF
 var _step_dist := 0.0
@@ -103,9 +107,10 @@ const ACT_RISE := 239
 const ACT_BAG := 240
 const ACT_TRADE := 241
 const ACT_AUCTION := 242
+const ACT_HAIL := 243
 ## Bots drawn as something other than a person, by the name their type gives them.
-const CARTERS := ["Ceannai Taistil", "Fear Cairte"]
-const FIRES := ["Tine"]
+const CARTERS := ["Ceannai Taistil", "Fear Cairte", "Travelling Merchant", "Carter"]
+const FIRES := ["Tine", "Fire"]
 const ACT_JUMP := 251
 const JUMP_SECS := 0.6
 const JUMP_HEIGHT := 2.2
@@ -169,6 +174,7 @@ const MATERIAL_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, 
 var build := {}           # /play/info "build"; empty if the server does not offer it
 var building := false     # build mode (B toggles, Esc leaves); otherwise action mode. Only with build offered.
 var build_kind := 0
+var block_items := {}     # material -> the item that is a block of it (/play/info items' "block"); others build free
 var blocks := {}          # column key (cy << 15 | cx) -> {"b": base layer, "k": "..01" (a layer each), "o": owners}
 var block_owners := []    # owner tags, as the old /play/blocks numbers them (1 = the first)
 ## Blocks stream by region (proto::blockfeed): the regions round us we hold, by key (ry << 16 | rx), and the
@@ -449,9 +455,14 @@ func _start() -> void:
 	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
 	for ui in [bagui, tradeui, auctionui]:
 		ui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
+	HudScript.ITEM_TITLES.clear()
 	for it in info.get("items", []):
+		if it.has("title"):
+			HudScript.ITEM_TITLES[String(it["name"])] = String(it["title"])
 		if it.has("rarity"):
 			hud.rarity[String(it["name"])] = String(it["rarity"])
+		if it.has("block"):
+			block_items[int(it["block"])] = String(it["name"])
 	all_spells = info.get("actions", []).slice(1)
 	bar_order = _load_bar()
 	_apply_bar()
@@ -515,6 +526,12 @@ func _start() -> void:
 			hud.say("[color=#8fd3ff][Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
 		elif channel == 7: # a passing remark: over their head, not in the chat
 			_bubble(from, text)
+		elif channel == 11: # an emote: "anim|line", the line in the chat and the clip on whoever acts it
+			var parts := text.split("|", true, 1)
+			hud.say("[i][color=#d8c8a8]%s[/color][/i]" % parts[-1])
+			var node: Node3D = ents.get(from)
+			if parts.size() == 2 and parts[0] != "" and node and node.has_method("emote"):
+				node.emote(parts[0])
 		elif channel == 8: # guild chat
 			hud.say("[color=#7fe08a][Guild] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
 		else:
@@ -702,6 +719,8 @@ func _process(delta: float) -> void:
 		var hp := clampf(float(e.get(health_idx, health_max)) / health_max, 0.0, 1.0) if health_idx != "" else 1.0
 		var air := clampf(float(e.get("airborne", 0.0)) / air_max, 0.0, 1.0) if air_max > 0.0 else 0.0
 		_animate(id, node, np, hp, mine, delta, self_id, air)
+		if node.has_method("hold_pose"): # sitting and the like: a held emote, by the server's `pose`
+			node.hold_pose(_pose_clip(int(round(float(e.get("pose", 0.0))))))
 		# Sneaking: in the dark, someone whose light is out shows no name and no health bar (and carries no torch).
 		if not mine and node.has_node("tag"):
 			var label := node.get_node("tag") as Label3D
@@ -761,6 +780,8 @@ func _process(delta: float) -> void:
 	t = theme.lap("aim", t)
 	var bag: Array = net.bag()
 	hud.set_bag(bag)
+	if building:
+		hud.set_material_counts(_material_counts(bag))
 	_hear_bag(bag.slice(0, BagScript.SLOTS))
 	bagui.refresh(bag)
 	auctionui.refresh(bag)
@@ -1556,10 +1577,37 @@ func _build(place: bool) -> void:
 	if not place and not _breakable(cell):
 		_notice("that block is someone else's")
 		return
+	if place and _material_counts(net.bag())[build_kind] == 0:
+		_notice("you have no %s to build with" % block_items[build_kind])
+		return
 	net.act_arg(int(build["act_build"] if place else build["act_break"]), cell.x | cell.y << 15, _build_arg(cell.z, build_kind))
 	if place:
 		sound.play("place", -4.0)
 	blocks_poll = minf(blocks_poll, 0.12)
+
+## A tuning number from the game file's rules (/play/info "rules"), or `fallback` from an older server.
+## The clip of held emote `pose` (index + 1 into /play/info emotes, as [cmd, anim]), or "" for none.
+func _pose_clip(pose: int) -> String:
+	var list = info.get("emotes", [])
+	if pose <= 0 or not list is Array or pose > list.size() or not list[pose - 1] is Array or list[pose - 1].size() < 2:
+		return ""
+	return String(list[pose - 1][1])
+
+func _rule(name: String, fallback: float) -> float:
+	var r = info.get("rules", {})
+	return float(r.get(name, fallback)) if r is Dictionary else fallback
+
+## How many blocks of each material the bag holds, by material: -1 for one that costs nothing (no item is a block
+## of it, or we are a god).
+func _material_counts(bag: Array) -> Array:
+	var counts := []
+	for k in int(build.get("kinds", 0)):
+		counts.append(-1 if god or not block_items.has(k) else 0)
+	for s in bag.slice(0, BagScript.SLOTS):
+		for k in block_items:
+			if not god and k < counts.size() and s["item"] == block_items[k]:
+				counts[k] += int(s["count"])
+	return counts
 
 ## The input's argument for a build or break: the layer in the low byte, the material in the high one.
 func _build_arg(layer: int, kind: int) -> int:
@@ -1818,7 +1866,7 @@ func _listen(delta: float) -> void:
 	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
 	# In a fight: a bot is locked on us (it holds through a chase with no blows) or a player is fighting us, or a
 	# blow passed lately.
-	var fighting: bool = t_total - _fight_at < 8.0 or (net != null and not net.encounter().is_empty())
+	var fighting: bool = t_total - _fight_at < _rule("pvp_quiet_secs", 8.0) or (net != null and not net.encounter().is_empty())
 	var m := String(zone.get("music", ""))
 	# Now and then a smith, a dog, a cow or a rooster (sound.gd INCIDENTAL): a town has houses all round, a farm a few.
 	sound.daylight = 1.0 - dark
@@ -2189,7 +2237,7 @@ func _go_get_loot() -> bool:
 	if at == Vector2.INF or t_total > _fetch_until or keys.any(func(k): return Input.is_key_pressed(k)):
 		_fetch_pile = 0
 		return false
-	if me_pos.distance_to(at) <= PICKUP_REACH:
+	if me_pos.distance_to(at) <= _rule("pickup_reach", 3.0) - 0.4: # a little inside, so it is in reach when we ask
 		net.set_move(Vector2.ZERO)
 		net.pickup_id(_fetch_pile)
 		_fetch_pile = 0
@@ -2236,13 +2284,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if fallen.down and k != KEY_ESCAPE:
 			return # down: only rising (fallen.gd) or the menu
 		# The journal and the menu come first: Esc closes them, and while one is up the game keys rest.
-		if k == KEY_F2:
+		if k == KEY_F2 or k == JOURNAL_KEY:
 			journal.toggle_journal()
 			return
 		if k == KEY_F3:
 			questui.toggle_log()
 			return
-		if k == KEY_F4:
+		if k == KEY_F4 or k == BAG_KEY:
 			bagui.toggle(net.bag())
 			return
 		if k == KEY_ESCAPE and (settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
@@ -2258,6 +2306,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_toggle_god()
 		elif k in SPELL_KEYS and not building:
 			_cast(SPELL_KEYS.find(k))
+		elif k == HAIL_KEY and not building:
+			net.act(ACT_HAIL, target_id if target_id != 0 and not _players.has(target_id) else 0)
 		elif k == KEY_J:
 			net.act(ACT_JUMP, 0)
 		elif k == KEY_M:
@@ -2381,7 +2431,7 @@ func _apply_bar() -> void:
 	var hz := maxf(float(info.get("hz", 20)), 1.0)
 	var keys := []
 	for k in SPELL_KEYS:
-		keys.append(OS.get_keycode_string(k))
+		keys.append({KEY_COMMA: ",", KEY_PERIOD: ".", KEY_SEMICOLON: ";", KEY_APOSTROPHE: "'"}.get(k, OS.get_keycode_string(k)))
 	var bar := []
 	for i in spells.size():
 		var a: Dictionary = spells[i]
@@ -2497,6 +2547,7 @@ func _social_frame(list: Array, self_id: int) -> void:
 	var me_now: Dictionary = by_id.get(self_id, {})
 	# Fallen: our health held at nothing by the server until we choose to rise.
 	if not me_now.is_empty() and health_idx != "" and not smoke:
+		fallen.wait_secs = _rule("rise_delay_secs", 0.0)
 		fallen.set_down(float(me_now.get(health_idx, 1.0)) <= 0.001 or args.has("fallen")) # --fallen: to look at it
 	var c := int(round(float(me_now.get("class", 0.0))))
 	if c != my_class:
@@ -2738,7 +2789,7 @@ func _map_marks() -> Array:
 
 ## F: talk to the one targeted (or the nearest with a quest mark) if they are in reach; otherwise pick up.
 func _talk_or_pickup() -> void:
-	var reach := 8.0
+	var reach := _rule("talk_reach", 8.0)
 	var who := 0
 	if target_id != 0 and ents.has(target_id) and _dist_to(target_id) <= reach and (ents[target_id] as Node3D).has_node("qmark"):
 		who = target_id
@@ -2768,6 +2819,7 @@ func _talk_or_pickup() -> void:
 				trader = id
 	if trader != 0:
 		_shop_with = trader
+		net.act(ACT_HAIL, trader) # they stand while you buy
 		shopui.open(_name(trader), shops[_name(trader)], net.bag())
 		return
 	# Another player targeted and near: ask them to trade.

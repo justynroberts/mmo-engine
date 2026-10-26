@@ -30,7 +30,8 @@ export default function Bag({ client, shared, onAct, dropArmed }: Props) {
       const me = client.last.self
       let near: View['near'] = null
       if (me) {
-        let best = PICKUP_RANGE * PICKUP_RANGE
+        const reach = client.info.rules?.pickup_reach ?? PICKUP_RANGE
+        let best = reach * reach
         for (const g of client.ground) {
           const d = (g.x - me.x) ** 2 + (g.y - me.y) ** 2
           const it = items[g.item]

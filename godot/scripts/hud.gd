@@ -18,7 +18,7 @@ const MUTED := Color(0.95, 0.92, 0.82, 0.55)
 const KEYS := ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", "]", "\\"]   # the keys that pick each material
 const HELP_ACTION := [["WASD", "move"], ["Q / E", "turn"], ["Mouse wheel", "zoom, in past the closest for first person"],
 	["V", "first person"], ["Click", "target"], ["Tab", "next target"], ["Space", "attack (hold to keep swinging)"],
-	["J", "jump"], ["R T Y U I O P Z C H K ,", "spells, on the bar over the action bar"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "talk to someone near, trade with the player targeted, or pick up"], ["F3", "quests"], ["F4", "bag and bank"],
+	["J", "jump"], ["R T Y U O P Z C ' , . ;", "spells, on the bar over the action bar"], ["H", "hail: a trader or the like stops for you"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "talk to someone near, trade with the player targeted, or pick up"], ["F3", "quests"], ["I or F4", "bag and bank"],
 	["Enter", "chat, start with ! to shout"], ["M", "world map"], ["N", "sound: all, no music, off"], ["G", "god mode"], ["F11", "full screen"]]
 const HELP_BUILD := [["B", "build mode on and off (Esc leaves)"], ["1-0 - = [ ] \\", "pick a material (\\ is tilled soil: plant seeds beside it)"],
 	["Click", "place a block"], ["Hold right click, X or Shift+click", "break one of yours (sweep to keep going)"]]
@@ -27,6 +27,12 @@ const HELP_BUILD := [["B", "build mode on and off (Esc leaves)"], ["1-0 - = [ ] 
 ## banners, places). Both SIL Open Font License, in res://fonts.
 static var BODY: Font
 static var TITLE: Font
+## Items' English names by item name (/play/info "items" "title"), for every panel that shows one: `item`.
+static var ITEM_TITLES := {}
+
+## What players call an item: its title, else its name.
+static func item(name: String) -> String:
+	return String(ITEM_TITLES.get(name, name))
 
 ## Load the fonts (res://fonts/body.tres: Alegreya, medium, level figures for numbers; title.tres: Uncial Antiqua). The
 ## project's default font is body.tres too, so every control and 3D label that names none uses it.
@@ -59,6 +65,7 @@ var abilities := {}                     # name -> Slot
 var materials := HBoxContainer.new()   # the build bar, shown in build mode
 var _material_buttons: Array[Button] = []
 var _materials_shown := -2               # the chosen material as last drawn, -1 = hidden
+var _material_counts := []              # what each material's count was as last drawn
 var mode_chip := Button.new()           # BUILD <material>, over the build bar; click to leave
 var _mode_shown := ""
 var crosshair := Control.new()          # first person: where clicks aim
@@ -115,7 +122,7 @@ func _ready() -> void:
 	side.add_theme_constant_override("separation", 6)
 	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_right.add_child(side)
-	for a in [["map", "Map", "M"], ["build", "Build", "B"], ["journal", "Spells", "F2"], ["quests", "Quests", "F3"]]:
+	for a in [["map", "Map", "M"], ["build", "Build", "B"], ["journal", "Spells", "K"], ["quests", "Quests", "F3"]]:
 		var s := _ability(a[0], a[1], a[2], side)
 		s.custom_minimum_size = Vector2(42, 42)
 	var mm := VBoxContainer.new()
@@ -688,13 +695,13 @@ func set_bag(contents: Array) -> void:
 		var item := String(d.get("item", ""))
 		var count := int(d.get("count", 0))
 		var col := Color(str(d["color"])) if item != "" else Color(0, 0, 0, 0)
-		if s.title == item and s.count == count and s.color == col:
+		if s.title == item(item) and s.count == count and s.color == col:
 			continue
-		s.title = item
+		s.title = item(item)
 		s.count = count
 		s.color = col
 		var rare := String(rarity.get(item, ""))
-		var named := "%s (%s)" % [item, rare] if rare != "" else item
+		var named := "%s (%s)" % [item(item), rare] if rare != "" else item(item)
 		s.tooltip_text = "%s x%d  (%d to use, Shift+%d to drop)" % [named, count, i + 1, i + 1] if item != "" else "Empty"
 		s.queue_redraw()
 
@@ -719,6 +726,18 @@ func set_materials(names: Array, swatches: Array) -> void:
 		_material_buttons.append(b)
 	# Where the action bar sits (the two never show together). Placed from the minimum size once the buttons are in.
 	materials.set_anchors_and_offsets_preset.call_deferred(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 16)
+
+## How many of each material the bag holds (-1, free): shown under its key, and a material you have none of dimmed.
+func set_material_counts(counts: Array) -> void:
+	if counts == _material_counts:
+		return
+	_material_counts = counts
+	for i in mini(counts.size(), _material_buttons.size()):
+		var b := _material_buttons[i]
+		var n := int(counts[i])
+		var key: String = KEYS[i] if i < KEYS.size() else ""
+		b.text = key if n < 0 else "%s\n%d" % [key, n]
+		b.modulate.a = 0.4 if n == 0 else 1.0
 
 ## Show the build bar (or not), with the chosen material marked.
 func show_materials(on: bool, chosen: int) -> void:

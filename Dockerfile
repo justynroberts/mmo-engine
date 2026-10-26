@@ -7,19 +7,27 @@ COPY ui/ ./
 RUN npm run build
 
 FROM rust:1-slim AS build
+# Fat LTO links in one big step; two jobs keeps a small build host from running out of memory.
+ENV CARGO_BUILD_JOBS=2
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 RUN cargo build --release -p server -p bots -p worldgen
 
 FROM debian:stable-slim
-RUN useradd --create-home --uid 10001 app && mkdir /data && chown app /data
+# curl for the platform's health check (it runs inside the container).
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 app && mkdir /data && chown app /data
 COPY --from=build /src/target/release/server /src/target/release/bots /src/target/release/worldgen /usr/local/bin/
 COPY --from=ui /ui/dist /opt/ui
+# What a fresh /data volume starts with: the game file, the world and the blocks built so far.
+COPY deploy/seed /opt/seed
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 USER app
 WORKDIR /data
 # game.json and server.key live in /data: mount a volume there to keep them.
 # The admin interface only binds to loopback (it has no login), so run with host
 # networking, e.g.  docker run --network host -v mmo-data:/data mmo-engine
 EXPOSE 7777/udp
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["server", "--ui-dir", "/opt/ui"]

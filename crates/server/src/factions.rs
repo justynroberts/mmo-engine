@@ -67,7 +67,7 @@ impl Sim {
 
     /// Why a bot will not deal with a player (trade, quests), if it will not.
     pub fn refuses(&self, b: usize, p: usize) -> Option<String> {
-        self.hostile_to(b, p).then(|| format!("The {} will have nothing to do with you.", proto::names::bot(&self.archs[self.ents.arch[b] as usize].name)))
+        self.hostile_to(b, p).then(|| format!("The {} will have nothing to do with you.", self.archs[self.ents.arch[b] as usize].shown()))
     }
 
     /// The `/rep` line: every faction the player is known to, and how they stand.

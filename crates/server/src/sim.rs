@@ -24,7 +24,7 @@ pub struct Entities {
     pub y: Vec<f32>,
     pub dir_x: Vec<i8>,
     pub dir_y: Vec<i8>,
-    /// The short pause after any action (at most `GCD_SECS`), before the next may be used.
+    /// The short pause after any action (at most `Rules::global_cooldown_secs`), before the next may be used.
     pub cooldown_until: Vec<u32>,
     /// Each action's own cooldown: the tick it may be used again, at `slot * MAX_ACTIONS + action index`.
     pub ready_at: Vec<u32>,
@@ -47,6 +47,9 @@ pub struct Entities {
     pub hidden: Vec<bool>,
     /// A player who has fallen and not yet chosen to rise (`ACT_RISE`): still, hidden, health held at nothing.
     pub fallen: Vec<bool>,
+    /// For a bot that has fallen and is waiting out its type's `respawn_secs`, the tick it comes back; for a fallen
+    /// player, the tick they may rise (`rules.rise_delay_secs`).
+    pub back_at: Vec<u32>,
     /// Tick at which it is gone of itself (its type's `lasts_secs`), 0 for never.
     pub expire: Vec<u32>,
     /// God mode (admin only): attributes held at their maximum every tick, so it cannot die or run dry.
@@ -128,6 +131,7 @@ impl Entities {
             say_at: vec![0; cap],
             hidden: vec![false; cap],
             fallen: vec![false; cap],
+            back_at: vec![0; cap],
             expire: vec![0; cap],
             attrs: (0..n_attrs).map(|_| vec![0.0; cap]).collect(),
             name: vec![None; cap],
@@ -188,6 +192,7 @@ impl Entities {
             self.fleeting[slot] = false;
             self.hidden[slot] = false;
             self.fallen[slot] = false;
+            self.back_at[slot] = 0;
             self.expire[slot] = 0;
             self.renamed.push(slot as u32);
             self.free.push(slot as u32);
@@ -311,9 +316,6 @@ struct Undo {
 /// How many ticks a cast is repeated to nearby clients (a dropped packet should not lose a fireball).
 pub const CAST_TICKS: u32 = 3;
 
-/// The longest pause any action puts before the next one (a shared "global cooldown"); an action's own cooldown,
-/// often longer, holds back only that action.
-pub const GCD_SECS: f32 = 0.5;
 
 pub struct PendingAction {
     pub slot: usize,
@@ -330,6 +332,8 @@ pub struct SimStats {
     pub rejected_actions: u64,
     /// Builds refused for a build limit (`GameFile::building`).
     pub build_limited: u64,
+    /// Builds refused for want of the material's item (`ItemDef::block`).
+    pub build_unpaid: u64,
     pub jumps: u64,
     /// Actions that missed because the target was in the air.
     pub dodges: u64,
@@ -366,6 +370,12 @@ pub struct Sim {
     pub pvp: bool,
     /// How much may be built (`GameFile::building`).
     pub building: proto::game::BuildLimits,
+    /// Tuning numbers (`GameFile::rules`).
+    pub rules: proto::rules::Rules,
+    /// What a new character starts with (`GameFile::starter`), as (item, count).
+    pub starter: Vec<(usize, u8)>,
+    /// The game's emotes (`GameFile::emotes`, `social::emote`).
+    pub emotes: Vec<proto::game::Emote>,
     /// The `lit` attribute, when the game has one (sneaking).
     lit_attr: Option<usize>,
     /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
@@ -401,6 +411,11 @@ pub struct Sim {
     /// Classes, and each player's (class index + 1; 0 for none yet).
     pub classes: Vec<proto::game::ClassRt>,
     pub class: Vec<u8>,
+    /// The held emote each player is in (index + 1 into `emotes`, 0 for none), until they move (`POSE_ATTR`).
+    pub pose: Vec<u8>,
+    /// A bot standing still for a player who hailed it or is talking to it (`hail.rs`): (their id, until tick),
+    /// (0, 0) for none.
+    pub hailed: Vec<(u32, u32)>,
     pub gear: Vec<[u8; proto::game::GEAR_SLOTS]>,
     pub mounted: Vec<f32>,
     pub gear_ver: Vec<u32>,
@@ -416,6 +431,14 @@ pub struct Sim {
     pub life_bank: Vec<f32>,
     pub life_at: Vec<(f32, f32)>,
     pub life_paid: Vec<(u32, u32)>,
+    /// The tick each player last moved or did something, for `LifeXp::minute` (only the awake are paid for time).
+    pub life_awake: Vec<u32>,
+    /// Against macros (`LifeXp::trail`, `repeat`): the cells each player walked last, the tick they last reached
+    /// a new one, the deeds they did last (as keys), and how many loops and repeats were let go (`/api` shows it).
+    pub life_trail: Vec<std::collections::VecDeque<u32>>,
+    pub life_fresh: Vec<u32>,
+    pub life_done: Vec<std::collections::VecDeque<u64>>,
+    pub life_stale: Vec<u32>,
     pub foe_at: Vec<u32>,
     pub pursuers: Vec<Vec<u32>>,
     /// The players each player is in a fight with (pvp): (their id, the tick of the last blow between them).
@@ -490,9 +513,9 @@ pub struct ZoneView {
 
 /// How far a bot sees entity `t`, as a share of its sight: an unlit player at night is hard to see.
 #[inline]
-fn seen_at(e: &Entities, lit: usize, t: usize) -> f32 {
+fn seen_at(e: &Entities, lit: usize, t: usize, dim: f32) -> f32 {
     if e.owner[t] < DRIVEN && e.attrs[lit][t] < 0.5 {
-        proto::game::SNEAK_SIGHT
+        dim
     } else {
         1.0
     }
@@ -517,7 +540,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, emotes } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -542,6 +565,9 @@ impl Sim {
             daypart: proto::game::DayPart::Day,
             pvp,
             building,
+            rules,
+            starter,
+            emotes,
             lit_attr: None,
             npc_say: Vec::new(),
             npc_chat: Vec::new(),
@@ -562,6 +588,8 @@ impl Sim {
             currency,
             classes,
             class: vec![0; cap],
+            pose: vec![0; cap],
+            hailed: vec![(0, 0); cap],
             gear: vec![[0; proto::game::GEAR_SLOTS]; cap],
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
@@ -571,6 +599,11 @@ impl Sim {
             life_bank: vec![0.0; cap],
             life_at: vec![(f32::NAN, f32::NAN); cap],
             life_paid: vec![(0, 0); cap],
+            life_awake: vec![0; cap],
+            life_trail: vec![Default::default(); cap],
+            life_fresh: vec![0; cap],
+            life_done: vec![Default::default(); cap],
+            life_stale: vec![0; cap],
             foe_at: vec![0; cap],
             pursuers: vec![Vec::new(); cap],
             rivals: vec![Vec::new(); cap],
@@ -661,6 +694,8 @@ impl Sim {
         self.party_ver[slot] = self.party_ver[slot].wrapping_add(1);
         self.gear[slot] = [0; proto::game::GEAR_SLOTS];
         self.class[slot] = 0;
+        self.pose[slot] = 0;
+        self.hailed[slot] = (0, 0);
         self.rs.reset(slot);
         self.mounted[slot] = 0.0;
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
@@ -668,6 +703,11 @@ impl Sim {
         self.standing[slot].clear();
         self.life_bank[slot] = 0.0;
         self.life_at[slot] = (f32::NAN, f32::NAN);
+        self.life_awake[slot] = self.tick;
+        self.life_trail[slot].clear();
+        self.life_fresh[slot] = self.tick;
+        self.life_done[slot].clear();
+        self.life_stale[slot] = 0;
         self.pursuers[slot].clear();
         self.rivals[slot].clear();
         self.pursuer_ver[slot] = self.pursuer_ver[slot].wrapping_add(1);
@@ -681,6 +721,7 @@ impl Sim {
         e.say_at[slot] = 0;
         e.hidden[slot] = false;
         e.fallen[slot] = false;
+        e.back_at[slot] = 0;
         e.expire[slot] = self.archs.get(arch as usize).filter(|a| a.lasts_secs > 0 && owner == NONE).map_or(0, |a| self.tick + a.lasts_secs * self.tick_hz);
         e.name[slot] = None;
         e.name_claimed[slot] = false;
@@ -727,7 +768,7 @@ impl Sim {
             return n.clone();
         }
         match self.archs.get(self.ents.arch[slot] as usize) {
-            Some(a) => proto::names::bot(&a.name).into(),
+            Some(a) => a.shown().into(),
             None if self.ents.owner[slot] == GHOST => "Traveller".into(),
             None => "Guest".into(),
         }
@@ -1004,6 +1045,15 @@ impl Sim {
             let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
             self.world.set_column(cx, cy, mask);
             self.stats.breaks += 1;
+            // Your own block comes back to you. One nobody owns (the town's, a guest's) gives nothing, or anyone could
+            // quarry the scenery; nor does anything a god breaks, since a god builds for nothing.
+            if let Some((k, by)) = taken {
+                if by != 0 && by == self.ents.account[s] && !self.ents.god[s] {
+                    if let Some(item) = self.block_item(k) {
+                        self.give_or_drop(s, item, 1);
+                    }
+                }
+            }
             if let Some((k, _)) = taken.filter(|t| t.0 == proto::game::SPROUT || t.0 == proto::game::RIPE) {
                 self.harvest(s, key, z, k);
             }
@@ -1030,11 +1080,31 @@ impl Sim {
         if !supported || !self.cell_free(cx, cy, base, Some(z)) {
             return false;
         }
+        // A material some item is a block of costs one of them; a god builds with anything, for nothing.
+        if let Some(item) = self.block_item(kind).filter(|_| !self.ents.god[s]) {
+            if !crate::market::take(&mut self.inv[s], item as u8 + 1, 1) {
+                self.stats.build_unpaid += 1;
+                return false;
+            }
+            self.inv_ver[s] = self.inv_ver[s].wrapping_add(1);
+        }
         self.blocks.put(key, base, z, kind, owner);
         let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
         self.world.set_column(cx, cy, mask);
         self.stats.builds += 1;
         true
+    }
+
+    /// A new character's starter kit, into their bag (what does not fit lands at their feet).
+    pub fn give_starter(&mut self, slot: usize) {
+        for (item, n) in self.starter.clone() {
+            self.give_or_drop(slot, item, n as u32);
+        }
+    }
+
+    /// The item that is a block of this material, if building it costs one.
+    pub fn block_item(&self, kind: u8) -> Option<usize> {
+        self.items.iter().position(|i| i.block == Some(kind))
     }
 
     /// Who a player builds as: their account's tag, or None for a guest (whose blocks nobody owns).
@@ -1133,6 +1203,7 @@ impl Sim {
         let old = self.tick.saturating_sub(CAST_TICKS);
         self.casts.retain(|c| c.0 > old);
         self.system_npc_ai();
+        self.system_hail();
         self.system_regen();
         self.system_movement();
         self.system_actions(pending);
@@ -1227,6 +1298,7 @@ impl Sim {
             let e = &self.ents;
             let me_arch = e.arch[s];
             let sneak = self.sneak();
+            let dim = self.rules.sneak_sight;
             self.grid.for_neighbours(x, y, |t| {
                 let t = t as usize;
                 if t == s {
@@ -1234,7 +1306,7 @@ impl Sim {
                 }
                 let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                 let d2 = dx * dx + dy * dy;
-                let m = sneak.map_or(1.0, |lit| seen_at(e, lit, t));
+                let m = sneak.map_or(1.0, |lit| seen_at(e, lit, t, dim));
                 if d2 > scan * scan * m * m {
                     return;
                 }
@@ -1317,7 +1389,7 @@ impl Sim {
             let steer: (i8, i8) = match then {
                 ActRt::Say { text, shout } => {
                     if self.tick >= self.ents.say_at[s] {
-                        self.ents.say_at[s] = self.tick + self.tick_hz * 6;
+                        self.ents.say_at[s] = self.tick + proto::rules::Rules::ticks(self.rules.bot_say_secs, self.tick_hz);
                         self.npc_say.push((s, shout, text));
                     }
                     continue;
@@ -1437,7 +1509,7 @@ impl Sim {
     fn system_npc_ai(&mut self) {
         let tick = self.tick;
         for s in 0..self.ents.high {
-            if !self.ents.alive[s] || self.ents.owner[s] != NONE {
+            if !self.ents.alive[s] || self.ents.owner[s] != NONE || self.ents.fallen[s] {
                 continue;
             }
             if (tick as usize + s) % 10 != 0 {
@@ -1468,6 +1540,7 @@ impl Sim {
                 let (x, y) = (self.ents.x[s], self.ents.y[s]);
                 let e = &self.ents;
                 let sneak = self.sneak();
+                let dim = self.rules.sneak_sight;
                 let phase = &self.rs.phase;
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
@@ -1476,7 +1549,7 @@ impl Sim {
                     }
                     let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                     let d2 = dx * dx + dy * dy;
-                    let m = sneak.map_or(1.0, |lit| seen_at(e, lit, t));
+                    let m = sneak.map_or(1.0, |lit| seen_at(e, lit, t, dim));
                     if d2 <= reach * reach * m * m && near.map_or(true, |(b, _)| d2 < b) {
                         near = Some((d2, t));
                     }
@@ -1592,7 +1665,8 @@ impl Sim {
             }
             if p.action == proto::game::ACT_BUILD || p.action == proto::game::ACT_BREAK {
                 if self.build_action(p.slot, p.action, p.target, p.arg) {
-                    self.lived(p.slot, crate::life::Deed::Build);
+                    // Keyed by the cell and layer, so building and breaking the same block is one deed.
+                    self.lived_once(p.slot, crate::life::Deed::Build, crate::life::key(&[1, p.target as u64, (p.arg & 0xff) as u64]));
                 } else {
                     self.stats.rejected_actions += 1;
                 }
@@ -1607,8 +1681,10 @@ impl Sim {
                     | proto::game::ACT_SELL
                     | proto::game::ACT_UNEQUIP
                     | proto::game::ACT_CLASS
+                    | proto::game::ACT_HAIL
             ) {
                 let ok = match p.action {
+                    proto::game::ACT_HAIL => self.hail(p.slot, p.target),
                     proto::game::ACT_TALK => self.talk(p.slot, p.target),
                     proto::game::ACT_ACCEPT => self.accept(p.slot, p.arg),
                     proto::game::ACT_ABANDON => self.abandon(p.slot, p.arg),
@@ -1618,7 +1694,7 @@ impl Sim {
                     _ => self.unequip(p.slot, p.arg),
                 };
                 if ok {
-                    self.lived(p.slot, crate::life::Deed::Deed);
+                    self.lived_once(p.slot, crate::life::Deed::Deed, crate::life::key(&[2, p.action as u64, p.target as u64, p.arg as u64]));
                 } else {
                     self.stats.rejected_actions += 1;
                 }
@@ -1634,8 +1710,8 @@ impl Sim {
                     _ => self.auction_action(p.slot, p.arg, p.target),
                 };
                 if ok {
-                    self.item_cd[p.slot] = self.tick + crate::items::ITEM_CD_TICKS;
-                    self.lived(p.slot, crate::life::Deed::Deed);
+                    self.item_cd[p.slot] = self.tick + proto::rules::Rules::ticks(self.rules.item_cooldown_secs, self.tick_hz);
+                    self.lived_once(p.slot, crate::life::Deed::Deed, crate::life::key(&[3, p.action as u64, p.target as u64, p.arg as u64]));
                 } else {
                     self.stats.rejected_actions += 1;
                 }
@@ -1777,7 +1853,7 @@ impl Sim {
                 }
             }
         }
-        let gcd = (GCD_SECS * self.tick_hz as f32).round() as u32;
+        let gcd = (self.rules.global_cooldown_secs * self.tick_hz as f32).round() as u32;
         self.ents.cooldown_until[p.slot] = self.tick + (cooldown as u32).min(gcd);
         self.ents.ready_at[own] = self.tick + cooldown as u32;
         self.cast_seq = self.cast_seq.wrapping_add(1);
@@ -1855,16 +1931,16 @@ impl Sim {
         }
     }
 
-    /// A bot has fallen: every player who hurt it in the last half minute gets its type's experience.
+    /// A bot has fallen: every player who hurt it lately (`Rules::kill_credit_secs`) gets its type's experience.
     fn credit(&mut self, s: usize) {
         let xp = self.archs.get(self.ents.arch[s] as usize).map_or(0, |a| a.xp);
-        let since = self.tick.saturating_sub(30 * self.tick_hz);
+        let since = self.tick.saturating_sub(proto::rules::Rules::ticks(self.rules.kill_credit_secs, self.tick_hz));
         let mut who: Vec<usize> = self.ents.hurt_by[s].iter().filter(|h| h.1 >= since).filter_map(|h| self.ents.resolve(h.0)).collect();
         self.ents.hurt_by[s].clear();
         // Standing moves for those who did it (not for party mates who only stood by).
         self.faction_kill(s, &who.clone());
         // Their party mates near it share in it too.
-        let r2 = crate::social::PARTY_RANGE * crate::social::PARTY_RANGE;
+        let r2 = self.rules.party_share_reach * self.rules.party_share_reach;
         for p in who.clone() {
             for m in self.party_of(p) {
                 if !who.contains(&m) && (self.ents.x[m] - self.ents.x[s]).powi(2) + (self.ents.y[m] - self.ents.y[s]).powi(2) <= r2 {
@@ -1895,8 +1971,25 @@ impl Sim {
         if now > before {
             self.ents.level[s] = now;
             self.tells.push((s, format!("You have reached level {now}!")));
+            self.level_rewards(s, before, now);
         }
         self.progress_ver[s] = self.progress_ver[s].wrapping_add(1);
+    }
+
+    /// What reaching each level from `before` + 1 to `now` gives (`LevelsFile::rewards`).
+    fn level_rewards(&mut self, s: usize, before: u8, now: u8) {
+        let Some(l) = self.levels.as_ref() else { return };
+        let due: Vec<proto::game::LevelReward> = l.rewards.iter().filter(|r| r.level > before && r.level <= now).cloned().collect();
+        for r in due {
+            for st in &r.items {
+                if let Some(i) = self.items.iter().position(|d| d.name == st.item) {
+                    self.give_or_drop(s, i, st.count as u32);
+                }
+            }
+            if !r.text.is_empty() {
+                self.tells.push((s, r.text.clone()));
+            }
+        }
     }
 
     /// Once a second: players walking into a named place for the first time find it, for a little experience.
@@ -1948,7 +2041,17 @@ impl Sim {
         let attr = self.defs.attrs.iter().position(|a| a.name == proto::game::HELD_ATTR);
         let level_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::LEVEL_ATTR);
         let class_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::CLASS_ATTR);
+        let pose_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::POSE_ATTR);
         for s in 0..self.ents.high {
+            // A held emote lasts till they move, jump or fall (or the game file drops it).
+            let e = &self.ents;
+            if self.pose[s] != 0 && (!e.alive[s] || e.fallen[s] || e.dir_x[s] != 0 || e.dir_y[s] != 0 || e.air[s] != 0 || self.pose[s] as usize > self.emotes.len()) {
+                self.pose[s] = 0;
+            }
+            if let Some(a) = pose_attr {
+                let d = &self.defs.attrs[a];
+                self.ents.attrs[a][s] = (self.pose[s] as f32).clamp(d.min, d.max);
+            }
             if let Some(a) = class_attr {
                 let d = &self.defs.attrs[a];
                 self.ents.attrs[a][s] = (self.class[s] as f32).clamp(d.min, d.max);
@@ -2010,11 +2113,17 @@ impl Sim {
                 for (a, def) in self.defs.attrs.iter().enumerate() {
                     // Not the reserved ones the server keeps itself (a jump, a hold, level, a light). Speed is pinned
                     // at its top too, so a god gets round the world fast (clients predict from the replicated value).
-                    let reserved = [proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR, proto::realm::FACTION_ATTR, proto::game::CLASS_ATTR];
+                    let reserved = [proto::game::POSE_ATTR, proto::game::AIRBORNE_ATTR, proto::game::HELD_ATTR, proto::game::LEVEL_ATTR, proto::game::LIT_ATTR, proto::realm::FACTION_ATTR, proto::game::CLASS_ATTR];
                     if !reserved.contains(&def.name.as_str()) {
                         self.ents.attrs[a][s] = def.max;
                     }
                 }
+            }
+        }
+        // Bots whose wait after falling is over come back.
+        for s in 0..self.ents.high {
+            if self.ents.alive[s] && self.ents.fallen[s] && self.ents.owner[s] >= DRIVEN && self.ents.back_at[s] != 0 && self.tick >= self.ents.back_at[s] {
+                self.bring_back(s);
             }
         }
         for a in 0..self.defs.attrs.len() {
@@ -2040,6 +2149,7 @@ impl Sim {
                         e.lift_until[s] = 0;
                         self.mounted[s] = 0.0;
                         self.tells.push((s, "You have fallen.".into()));
+                        self.fall_cost(s);
                         self.stats.respawns += 1;
                         self.end_encounters(s); // whoever falls, the fight is over
                         continue;
@@ -2053,16 +2163,91 @@ impl Sim {
                         self.ents.despawn(s); // an event's bot: beaten is beaten
                         continue;
                     }
-                    let (x, y) = self.world.random_spawn(&mut self.rng, self.defs.entity_radius);
-                    self.ents.x[s] = x;
-                    self.ents.y[s] = y;
-                    self.reset_attrs(s);
-                    self.ents.air[s] = 0;
-                    self.ents.held[s] = 0;
-                    self.ents.lift_until[s] = 0;
-                    self.stats.respawns += 1;
+                    // A bot type that stays gone a while lies out of sight till then (`bring_back`).
+                    let wait = self.archs.get(self.ents.arch[s] as usize).map_or(0.0, |r| r.respawn_secs);
+                    if wait > 0.0 {
+                        let e = &mut self.ents;
+                        e.fallen[s] = true;
+                        e.hidden[s] = true;
+                        e.dir_x[s] = 0;
+                        e.dir_y[s] = 0;
+                        e.back_at[s] = self.tick + proto::rules::Rules::ticks(wait, self.tick_hz);
+                        continue;
+                    }
+                    self.bring_back(s);
                 }
             }
+        }
+    }
+
+    /// A fallen bot comes back, whole: anywhere free, in its home place or where it fell, as its type says.
+    fn bring_back(&mut self, s: usize) {
+        use proto::game::RespawnAt;
+        let r = self.defs.entity_radius;
+        let arch = self.archs.get(self.ents.arch[s] as usize).map(|a| (a.respawn_at, a.home));
+        let (x, y) = match arch {
+            Some((RespawnAt::Here, _)) => (self.ents.x[s], self.ents.y[s]),
+            Some((RespawnAt::Home, Some(h))) => self.spawn_point(Some(h), r),
+            _ => self.world.random_spawn(&mut self.rng, r),
+        };
+        let e = &mut self.ents;
+        e.x[s] = x;
+        e.y[s] = y;
+        e.fallen[s] = false;
+        e.hidden[s] = false;
+        e.back_at[s] = 0;
+        self.reset_attrs(s);
+        self.ents.air[s] = 0;
+        self.ents.held[s] = 0;
+        self.ents.lift_until[s] = 0;
+        self.stats.respawns += 1;
+    }
+
+    /// What falling costs a player, as `rules` says (nothing, by default): experience earned into their level, a
+    /// share of their coin, stacks of their bag left where they fell, and a wait before they may rise (`back_at`).
+    fn fall_cost(&mut self, s: usize) {
+        let r = self.rules;
+        if r.rise_delay_secs > 0.0 {
+            self.ents.back_at[s] = self.tick + proto::rules::Rules::ticks(r.rise_delay_secs, self.tick_hz);
+        }
+        let mut lost = Vec::new();
+        if let Some(l) = self.levels.as_ref().filter(|_| r.fall_xp_loss_pct > 0.0) {
+            let into = self.ents.xp[s].saturating_sub(l.xp_for(self.ents.level[s]));
+            let xp = (into as f32 * r.fall_xp_loss_pct / 100.0).round() as u32;
+            if xp > 0 {
+                self.ents.xp[s] -= xp;
+                self.progress_ver[s] = self.progress_ver[s].wrapping_add(1);
+                lost.push(format!("{xp} experience"));
+            }
+        }
+        let coin = self.currency.map(|c| c as u8 + 1);
+        if let Some(tag) = coin.filter(|_| r.fall_coin_loss_pct > 0.0) {
+            let have: u32 = self.inv[s].iter().filter(|&&(t, _)| t == tag).map(|&(_, n)| n as u32).sum();
+            let n = (have as f32 * r.fall_coin_loss_pct / 100.0).round() as u32;
+            if n > 0 && crate::market::take(&mut self.inv[s], tag, n) {
+                self.inv_ver[s] = self.inv_ver[s].wrapping_add(1);
+                lost.push(format!("{n} {}", self.items[tag as usize - 1].shown()));
+            }
+        }
+        if r.fall_drop_pct > 0.0 {
+            let (x, y) = (self.ents.x[s], self.ents.y[s]);
+            let mut left = 0;
+            for k in 0..proto::game::INV_SLOTS {
+                let (t, n) = self.inv[s][k];
+                if t == 0 || Some(t) == coin || self.rng.f32() * 100.0 >= r.fall_drop_pct {
+                    continue;
+                }
+                self.inv[s][k] = (0, 0);
+                self.put_ground(x, y, t as usize - 1, n);
+                left += 1;
+            }
+            if left > 0 {
+                self.inv_ver[s] = self.inv_ver[s].wrapping_add(1);
+                lost.push(format!("{left} {} of your bag, where you fell", if left == 1 { "stack" } else { "stacks" }));
+            }
+        }
+        if !lost.is_empty() {
+            self.tells.push((s, format!("You lost {}.", lost.join(", "))));
         }
     }
 
@@ -2072,6 +2257,12 @@ impl Sim {
         if !self.ents.fallen[s] {
             return false;
         }
+        if self.tick < self.ents.back_at[s] {
+            let secs = (self.ents.back_at[s] - self.tick).div_ceil(self.tick_hz);
+            self.tells.push((s, format!("You can rise in {secs} s.")));
+            return false;
+        }
+        self.ents.back_at[s] = 0;
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
         let safe = self.places.iter().filter(|p| p.safe).min_by(|a, b| ((a.x - x).powi(2) + (a.y - y).powi(2)).total_cmp(&((b.x - x).powi(2) + (b.y - y).powi(2)))).map(|p| (p.x, p.y, p.r));
         self.ents.fallen[s] = false;
@@ -2248,7 +2439,7 @@ mod tests {
     fn beating_bots_and_finding_places_earns_experience_levels_and_spells() {
         use proto::game::{ActionFile, LevelsFile};
         let mut g = proto::game::GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10, life: Default::default() });
+        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10, life: Default::default(), rewards: vec![] });
         g.archetypes[0].xp = 60;
         g.actions.push(ActionFile { id: 2, name: "late".into(), range: 8.0, level: 2, ..Default::default() });
         let ford = proto::game::Place { name: "ford".into(), x: 300.0, y: 300.0, r: 10.0, title: "The Ford".into(), exit: None, sound: String::new(), music: String::new(), safe: false };
@@ -2361,6 +2552,69 @@ mod tests {
         assert!(act(&mut s, 2));
         assert!(!act(&mut s, 3), "the region is full");
         assert_eq!(s.blocks.in_region(proto::world::block_key(53, 50)), 3);
+    }
+
+    #[test]
+    fn a_bot_type_can_stay_gone_a_while_and_come_back_where_it_fell() {
+        let mut s = sim();
+        s.archs[0].respawn_secs = 2.0;
+        s.archs[0].respawn_at = proto::game::RespawnAt::Here;
+        let b = s.spawn_as(NONE, 0, Some((200.0, 210.0))).unwrap();
+        s.ents.attrs[ATTR_HEALTH as usize][b] = 0.0;
+        s.step(&[]);
+        assert!(s.ents.fallen[b] && s.ents.hidden[b], "gone, out of sight");
+        let fell = (s.ents.x[b], s.ents.y[b]);
+        for _ in 0..(2 * s.tick_hz - 2) {
+            s.step(&[]);
+        }
+        assert!(s.ents.fallen[b], "still waiting");
+        for _ in 0..3 {
+            s.step(&[]);
+        }
+        assert!(!s.ents.fallen[b] && !s.ents.hidden[b]);
+        assert_eq!((s.ents.x[b], s.ents.y[b]), fell, "back where it fell, not moved while down");
+        assert!(s.ents.attrs[ATTR_HEALTH as usize][b] > 0.0, "whole again");
+    }
+
+    #[test]
+    fn a_material_with_an_item_costs_one_and_breaking_your_own_gives_it_back() {
+        use proto::game::{build_arg, build_target, ItemRt, ACT_BREAK, ACT_BUILD};
+        let mut s = sim();
+        let stone = ItemRt { name: "stone".into(), color: "#888888".into(), stack_max: 50, uses: vec![], consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: Some(0) };
+        s.set_items(vec![stone]);
+        let a = s.spawn(0).unwrap();
+        s.set_account(a, Some("aaaaaaaaaaaaaaaa"));
+        place(&mut s, a, 100.0, 101.0);
+        s.grid.rebuild(&s.ents);
+        let act = |s: &mut Sim, action: u8, z: i8, kind: u8| {
+            let before = s.stats.rejected_actions;
+            s.step(&[PendingAction { slot: a, action, target: build_target(53, 50), arg: build_arg(z, kind) }]);
+            s.stats.rejected_actions == before
+        };
+        let held = |s: &Sim| s.inv[a].iter().filter(|b| b.0 == 1).map(|b| b.1 as u32).sum::<u32>();
+        assert!(!act(&mut s, ACT_BUILD, 0, 0), "no stone in the bag");
+        assert_eq!(s.stats.build_unpaid, 1);
+        assert!(act(&mut s, ACT_BUILD, 0, 1), "timber has no item, so it is free");
+        s.give(a, 0, 2);
+        assert!(act(&mut s, ACT_BUILD, 1, 0) && act(&mut s, ACT_BUILD, 2, 0));
+        assert_eq!(held(&s), 0, "each stone block used one");
+        assert!(!act(&mut s, ACT_BUILD, 3, 0));
+        assert!(act(&mut s, ACT_BREAK, 2, 0));
+        assert_eq!(held(&s), 1, "your own block comes back");
+        // A god builds anything for nothing, and gets nothing back.
+        s.set_god(a, true);
+        assert!(act(&mut s, ACT_BUILD, 2, 0) && act(&mut s, ACT_BUILD, 3, 0));
+        assert_eq!(held(&s), 1);
+        assert!(act(&mut s, ACT_BREAK, 3, 0));
+        assert_eq!(held(&s), 1);
+        s.set_god(a, false);
+        // A block nobody owns gives nothing back.
+        let key = proto::world::block_key(53, 50);
+        let mut col = *s.blocks.get(key).unwrap();
+        col.owners.iter_mut().for_each(|o| *o = 0);
+        s.blocks.set_col(key, Some(col));
+        assert!(act(&mut s, ACT_BREAK, 2, 0));
+        assert_eq!(held(&s), 1);
     }
 
     #[test]
@@ -2569,6 +2823,70 @@ mod tests {
     }
 
     #[test]
+    fn falling_can_cost_experience_coin_and_the_bag_and_rising_can_wait() {
+        use proto::game::{ItemDef, LevelsFile};
+        let item = |name: &str| ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None };
+        let mut s = sim_with(|g| {
+            g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
+            g.items = vec![item("silver"), item("stone")];
+            g.currency = Some("silver".into());
+            g.rules = proto::rules::Rules { fall_xp_loss_pct: 50.0, fall_coin_loss_pct: 25.0, fall_drop_pct: 100.0, rise_delay_secs: 2.0, ..Default::default() };
+        });
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 100.0, 100.0);
+        s.award(p, 160, None); // level 2 (100), 60 into it
+        s.give(p, 0, 40);
+        s.give(p, 1, 7);
+        s.ents.attrs[0][p] = 0.0;
+        s.step(&[]);
+        assert!(s.ents.fallen[p]);
+        assert_eq!((s.ents.xp[p], s.ents.level[p]), (130, 2), "half of what was earned into the level, never the level");
+        assert_eq!(s.inv[p].iter().filter(|t| t.0 == 1).map(|t| t.1 as u32).sum::<u32>(), 30, "a quarter of the coin, gone");
+        assert!(!s.inv[p].iter().any(|t| t.0 == 2), "the stone is left where they fell");
+        assert!(s.ground.iter().any(|g| g.item == 1 && g.count == 7));
+        let rise = || PendingAction { slot: p, action: proto::game::ACT_RISE, target: 0, arg: 0 };
+        s.step(&[rise()]);
+        assert!(s.ents.fallen[p], "not yet");
+        run(&mut s, 40);
+        s.step(&[rise()]);
+        assert!(!s.ents.fallen[p], "risen once the wait is over");
+    }
+
+    #[test]
+    fn a_held_emote_shows_in_pose_until_they_move() {
+        use proto::game::{AttrFile, Emote, OnZeroFile};
+        let mut s = sim_with(|g| {
+            g.attrs.push(AttrFile { name: proto::game::POSE_ATTR.into(), min: 0.0, max: 255.0, default: 0.0, bits: 8, replicated: true, regen_per_sec: 0.0, on_zero: OnZeroFile::None });
+            g.emotes = vec![Emote { cmd: "sit".into(), text: "{name} sits.".into(), at: String::new(), anim: "Sit_Floor_Idle".into(), stays: true }];
+            g.max_visible = 48; // one more replicated attribute must still fit a snapshot
+        });
+        let pose = s.defs.attrs.iter().position(|a| a.name == proto::game::POSE_ATTR).unwrap();
+        let p = s.spawn(0).unwrap();
+        s.pose[p] = 1;
+        s.step(&[]);
+        assert_eq!(s.ents.attrs[pose][p], 1.0, "sitting");
+        s.ents.dir_x[p] = 1;
+        s.step(&[]);
+        assert_eq!((s.pose[p], s.ents.attrs[pose][p]), (0, 0.0), "up and away");
+    }
+
+    #[test]
+    fn reaching_a_level_can_give_things_as_well() {
+        use proto::game::{ItemDef, LevelReward, LevelsFile};
+        let mut s = sim_with(|g| {
+            g.items = vec![ItemDef { name: "brick".into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }];
+            let reward = |level: u8, n: u8| LevelReward { level, items: vec![proto::realm::Stack { item: "brick".into(), count: n }], text: format!("Level {level}: bricks.") };
+            g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![reward(2, 10), reward(3, 20)] });
+        });
+        let p = s.spawn(0).unwrap();
+        s.award(p, 250, None); // straight past level 2 to 3: both
+        assert_eq!(s.inv[p].iter().filter(|t| t.0 == 1).map(|t| t.1 as u32).sum::<u32>(), 30);
+        assert!(s.tells.iter().any(|(w, t)| *w == p && t == "Level 3: bricks."));
+        s.award(p, 10, None);
+        assert_eq!(s.inv[p].iter().filter(|t| t.0 == 1).map(|t| t.1 as u32).sum::<u32>(), 30, "once each");
+    }
+
+    #[test]
     fn a_fallen_player_rises_in_the_nearest_safe_place() {
         let mut s = sim_with(|g| {
             let town = |name: &str, x: f32| Place { name: name.into(), x, y: 100.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true };
@@ -2678,6 +2996,7 @@ mod tests {
     fn arch(name: &str, behaviour: Behaviour, rules: Vec<Rule>) -> Archetype {
         Archetype {
             name: name.into(),
+            title: String::new(),
             color: "#112233".into(),
             count: 0,
             behaviour,
@@ -2692,6 +3011,8 @@ mod tests {
             level: 0,
             shop: Vec::new(),
             lasts_secs: 0,
+            respawn_secs: 0.0,
+            respawn_at: Default::default(),
             leash: 0.0,
             faction: None,
             loot: None,

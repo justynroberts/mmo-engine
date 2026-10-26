@@ -4,7 +4,7 @@
 
 import { z } from 'zod'
 import type { Archetype, EntityRow, GameFile, Info, PutResult, State } from '../src/api'
-import { FX, KIND_BOT, KIND_DRIVEN, KIND_GHOST, KIND_PLAYER } from '../src/api'
+import { FX, KIND_BOT, KIND_DRIVEN, KIND_GHOST, KIND_PLAYER, MATERIALS } from '../src/api'
 import { DEFAULT_DAYLIGHT, describe, moment, phase } from '../src/daylight'
 import type { Daylight } from '../src/daylight'
 import {
@@ -224,7 +224,7 @@ async function placeArea(ctx: Ctx, name: string): Promise<{ x: number; y: number
 export const BLOCK = 2
 export const LAYERS = 16
 /** The materials, by number (godot/scripts/theme.gd BLOCK_NAMES; proto::game::BLOCK_KINDS). */
-export const MATERIALS = ['stone', 'timber', 'red brick', 'plaster', 'brick', 'rough brick', 'roof tiles', 'iron', 'glass', 'slate', 'mossy stone', 'sandstone', 'lamp', 'fire', 'soil']
+export { MATERIALS }
 const MAX_CELLS = 20000
 
 export function materialChar(m: string | number): string {
@@ -334,7 +334,7 @@ export const TRADE_NOTE = [
 
 /** How the realm sections work, for game_schema and upsert. */
 const REALM_NOTE = [
-  'The realm sections all apply live (none restarts the world): loot, recipes, crops, dungeons (upsert by name), and plots (put_game, or the game file\'s plots: { size, per_player }).',
+  'The realm sections all apply live (none restarts the world): loot, recipes, crops, dungeons (upsert by name), and plots (put_game, or the game file\'s plots: { size, per_player, cost, sizes: [{ size, cost }] }).',
   'factions (the same section as standing, see FactionFile): players may also join one as their side with /faction name (not one they stand below hostile with); the same side never harms each other, whatever pvp says, and its fighters never take a member for an enemy. color is #rrggbb. A game with a replicated attribute named "faction" (0..32, 8 bits) lets clients tell friend from foe.',
   'classes (see ClassFile and the classes note): schools: [...] lets a class use every action of those schools as well as its spells (and actions without a school); /class name chooses one over chat, once, like the class picker.',
   'Item rarity: common (absent), uncommon, rare, epic, legendary. A bot type names a loot table (loot: name) rolled when it falls, rolls times, each a weighted pick among entries { item, weight, min, max } and nothing; a drop of rare or better is announced to players near it.',

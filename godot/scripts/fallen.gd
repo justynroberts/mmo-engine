@@ -15,7 +15,11 @@ const LINES := [
 var _dim := ColorRect.new()
 var _panel := VBoxContainer.new()
 var _quip := Label.new()
+var _button := Button.new()
 var down := false
+## Seconds the server makes us wait before rising (`rules.rise_delay_secs`), set by main from /play/info.
+var wait_secs := 0.0
+var _left := 0.0
 
 func _ready() -> void:
 	layer = 9
@@ -46,7 +50,7 @@ func _ready() -> void:
 	_quip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_quip.add_theme_color_override("font_color", HUD.TEXT)
 	_panel.add_child(_quip)
-	var b := Button.new()
+	var b := _button
 	b.text = "Rise again"
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(200, 40)
@@ -67,13 +71,25 @@ func set_down(on: bool) -> void:
 	down = on
 	if on:
 		_quip.text = LINES[randi() % LINES.size()]
+		_left = wait_secs
+		_count()
 	_dim.visible = on
 	_panel.visible = on
 	if on:
 		_dim.modulate.a = 0.0
 		create_tween().tween_property(_dim, "modulate:a", 1.0, 0.8)
 
+func _process(delta: float) -> void:
+	if down and _left > 0.0:
+		_left -= delta
+		_count()
+
+## The button waits out the delay, with the seconds left on it.
+func _count() -> void:
+	_button.disabled = _left > 0.0
+	_button.text = "Rise in %d" % ceili(_left) if _left > 0.0 else "Rise again"
+
 func _unhandled_key_input(event: InputEvent) -> void:
-	if down and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
+	if down and _left <= 0.0 and event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
 		rise.emit()
 		get_viewport().set_input_as_handled()

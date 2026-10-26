@@ -13,6 +13,7 @@ pub mod names;
 pub mod predict;
 pub mod realm;
 pub mod rng;
+pub mod rules;
 pub mod secure;
 pub mod snapshot;
 pub mod tiles;

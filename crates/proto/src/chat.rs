@@ -47,6 +47,9 @@ pub mod channel {
     pub const TRADE: u8 = 9;
     /// Server to client: auction house listings, a line each (see `market.rs`). Not shown as chat.
     pub const AUCTION: u8 = 10;
+    /// Server to client: someone acting out an emote (`GameFile::emotes`), from them, as "anim|line"; the line goes in
+    /// the chat and the anim, if any, on the one who acts it.
+    pub const EMOTE: u8 = 11;
 }
 
 pub mod kind {

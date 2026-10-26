@@ -18,3 +18,7 @@ __pycache__/
 /world.*.json
 *.swp
 /dist/
+
+# Local copies of data/ taken before installing a build (they hold server.key)
+data.bak-*/
+.docker-bin/

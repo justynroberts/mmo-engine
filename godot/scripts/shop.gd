@@ -95,7 +95,7 @@ func refresh(bag: Array) -> void:
 	for b in bag:
 		if String(b["item"]) == _currency:
 			money += int(b["count"])
-	_money.text = "%d %s" % [money, _currency]
+	_money.text = "%d %s" % [money, HUD.item(_currency)]
 	for c in _buy.get_children():
 		c.queue_free()
 	for c in _sell.get_children():
@@ -126,7 +126,8 @@ func _row(name: String, price: String, verb: String, ok: bool, on_press: Callabl
 	sw.custom_minimum_size = Vector2(4, 22)
 	row.add_child(sw)
 	var n := Label.new()
-	n.text = name
+	var head := name.get_slice("  ", 0)
+	n.text = HUD.item(head) + name.substr(head.length())
 	n.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	n.add_theme_color_override("font_color", HUD.TEXT)
 	row.add_child(n)

@@ -51,6 +51,8 @@ export interface PlayInfo {
   locations?: import('./shared').LocationView[]
   /** Building, when the server offers it: blocks on a grid, listed at /play/blocks. */
   build?: { block: number; reach: number; max_stack: number; kinds: number; act_build: number; act_break: number }
+  /** The game file's tuning numbers (only those the play page reads are listed). */
+  rules?: { pickup_reach?: number; talk_reach?: number }
 }
 
 /** Where to open the WebSocket for a zone, from the base URL the operator configured. */
@@ -149,7 +151,7 @@ export class GameClient {
   private blocksTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
-    private info: PlayInfo,
+    public info: PlayInfo,
     private identity: Uint8Array | null,
     private url: string,
     private h: Handlers,

@@ -181,7 +181,7 @@ func _row(it: Dictionary, n: int, verb: String, on_press: Callable) -> HBoxConta
 	sw.custom_minimum_size = Vector2(4, 22)
 	row.add_child(sw)
 	var l := Label.new()
-	l.text = "%s  x%d" % [String(it.get("name", "?")), n]
+	l.text = "%s  x%d" % [HUD.item(String(it.get("name", "?"))), n]
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	l.add_theme_color_override("font_color", HUD.TEXT)
 	row.add_child(l)

@@ -9,10 +9,6 @@ use crate::net::Clients;
 use crate::sim::{Sim, DRIVEN};
 use proto::chat::channel;
 
-/// Most players in one party.
-pub const PARTY_MAX: usize = 5;
-/// How near a party member must be to share a fallen bot's experience.
-pub const PARTY_RANGE: f32 = 80.0;
 
 impl Sim {
     /// A player's party mates (slots, themselves included), or just them.
@@ -82,6 +78,27 @@ fn target_and_text(rest: &str) -> (String, String) {
     (n.to_string(), m.trim().to_string())
 }
 
+/// An emote of the game file's (`/wave`, `/wave Name`), acted out for everyone in speaking reach. The one it is at
+/// is a player of that name, or (a bot, a thing) the words as written.
+fn emote(sim: &mut Sim, clients: &mut Clients, slot: usize, cmd: &str, rest: &str) -> bool {
+    let Some(k) = sim.emotes.iter().position(|e| e.cmd == cmd) else { return false };
+    let e = &sim.emotes[k];
+    if sim.ents.fallen[slot] {
+        return true;
+    }
+    let target = (!rest.is_empty()).then(|| match find(sim, rest) {
+        Some(s) => sim.name_of(s).to_string(),
+        None => rest.chars().filter(|c| !c.is_control() && *c != '|').take(24).collect(),
+    });
+    let mut text = format!("{}|{}", e.anim, e.line(&sim.name_of(slot), target.as_deref()));
+    text.truncate(text.char_indices().nth(proto::chat::MAX_TEXT).map_or(text.len(), |(i, _)| i));
+    if e.stays {
+        sim.pose[slot] = k as u8 + 1;
+    }
+    crate::net::say_from(sim, clients, slot, channel::EMOTE, &text);
+    true
+}
+
 /// Handle a "/" line from the player in `slot`. Returns false if it is not a command we know (it is then
 /// answered with the list).
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -147,7 +164,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                 say(clients, slot, &format!("{} is already in a party.", sim.name_of(to)));
                 return true;
             }
-            if sim.party_of(slot).len() >= PARTY_MAX {
+            if sim.party_of(slot).len() >= sim.rules.party_size as usize {
                 say(clients, slot, "Your party is full.");
                 return true;
             }
@@ -161,7 +178,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                 return true;
             };
             sim.invite[slot] = 0;
-            if sim.party_of(from).len() >= PARTY_MAX {
+            if sim.party_of(from).len() >= sim.rules.party_size as usize {
                 say(clients, slot, "That party is full now.");
                 return true;
             }
@@ -212,8 +229,10 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             say(clients, slot, &line);
         }
         _ if crate::realm::command(sim, clients, slot, text) => {}
+        _ if emote(sim, clients, slot, &cmd, &rest) => {}
         _ => {
-            say(clients, slot, &format!("Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name, {}", crate::realm::HELP));
+            let emotes: String = sim.emotes.iter().map(|e| format!(", /{}", e.cmd)).collect();
+            say(clients, slot, &format!("Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name, {}{emotes}", crate::realm::HELP));
             return false;
         }
     }

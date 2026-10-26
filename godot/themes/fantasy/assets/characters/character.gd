@@ -30,6 +30,7 @@ var speed := 0.0
 var dead := false
 var busy := 0.0 # seconds left of a one-shot (attack, hit, stand up)
 var state := ""
+var pose := "" # a held emote's clip (sitting), played while still
 
 static var _libs := {} # scene path -> AnimationLibrary
 
@@ -123,6 +124,14 @@ func jump(seconds: float) -> void:
 	if not dead and anim and anim.has_animation(jump_name):
 		_one_shot(jump_name, anim.get_animation(jump_name).length / maxf(seconds, 0.1))
 
+## An emote's clip (`GameFile::emotes` anim), by its name in the model; nothing if the model has none.
+func hold_pose(n: String) -> void:
+	pose = n
+
+func emote(n: String) -> void:
+	if not dead and busy <= 0.0:
+		_one_shot(n)
+
 func hurt() -> void:
 	if not dead and busy <= 0.0:
 		_one_shot(hit, 1.3)
@@ -145,6 +154,10 @@ func _process(delta: float) -> void:
 		return
 	if busy > 0.0:
 		busy -= delta
+		return
+	if pose != "" and speed < 0.6 and anim and anim.has_animation(pose):
+		_play(pose, 0.3)
+		state = pose
 		return
 	# A little hysteresis so a character on the walk/run border does not flicker between the two.
 	var next := idle

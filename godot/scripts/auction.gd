@@ -184,7 +184,7 @@ func _draw_sell() -> void:
 		for it in _items:
 			if String(it.get("name", "")) == name:
 				value = int(it.get("value", 0))
-		var row := _row({"name": name, "color": String(d.get("color", "#888888"))}, "%s  x%d" % [name, int(d.get("count", 0))])
+		var row := _row({"name": name, "color": String(d.get("color", "#888888"))}, "%s  x%d" % [HUD.item(name), int(d.get("count", 0))])
 		var price := SpinBox.new()
 		price.min_value = 1
 		price.max_value = 999999

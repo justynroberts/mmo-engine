@@ -112,4 +112,5 @@ export function jumpLift(info: PlayInfo, attrs: Record<string, number>): number 
   const k = 1 - Math.min(1, (v - a.min) / (a.max - a.min || 1))
   return 4 * JUMP_HEIGHT * k * (1 - k)
 }
+/** How near a pile you pick it up, when the server does not say (`rules.pickup_reach`). */
 export const PICKUP_RANGE = 3

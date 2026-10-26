@@ -639,6 +639,24 @@ fn bot_archetypes_behave_as_defined() {
 }
 
 #[test]
+fn an_emote_from_the_game_file_is_acted_out_for_those_nearby() {
+    let srv = start(&[]);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["emotes"] = serde_json::json!([{ "cmd": "wave", "text": "{name} waves.", "at": "{name} waves at {target}.", "anim": "wave" }]);
+    let (s, v) = json(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{v}");
+    let mut a = connect(&srv);
+    a.say(proto::chat::channel::SAY, "/wave the innkeeper");
+    for _ in 0..20 {
+        a.tick();
+    }
+    // Players come in anywhere, so only the one acting it is sure to be in reach.
+    let m = a.heard.iter().find(|m| m.channel == proto::chat::channel::EMOTE).unwrap_or_else(|| panic!("the emote, on its own channel: {:?}", a.heard.iter().map(|m| (m.channel, &m.text)).collect::<Vec<_>>()));
+    assert!(m.text.starts_with("wave|") && m.text.ends_with(" waves at the innkeeper."), "{}", m.text);
+    assert_eq!(m.from, a.entity);
+}
+
+#[test]
 fn shouts_reach_everyone_in_order_and_text_is_sanitised() {
     let srv = start(&[]);
     let mut a = connect(&srv);
@@ -2743,7 +2761,7 @@ fn sides_guilds_and_land_survive_a_server_restart() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut g = GameFile::default_game();
     g.factions = vec![proto::game::FactionFile { name: "red".into(), title: "The Red".into(), color: "#ff0000".into(), ..Default::default() }];
-    g.plots = Some(proto::realm::PlotRules { size: 8, per_player: 1 });
+    g.plots = Some(proto::realm::PlotRules { size: 8, per_player: 1, cost: 0, sizes: vec![] });
     std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
     let id = proto::secure::new_identity();
     let ask = |c: &mut Client, line: &str, want: &str| {
