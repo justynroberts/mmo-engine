@@ -30,4 +30,6 @@ WORKDIR /data
 # networking, e.g.  docker run --network host -v mmo-data:/data mmo-engine
 EXPOSE 7777/udp
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["server", "--ui-dir", "/opt/ui"]
+# Native client only by default: the web port serves the data it fetches, not the browser play page (a run that
+# passes its own arguments, like the local docker-compose.yml, decides for itself).
+CMD ["server", "--ui-dir", "/opt/ui", "--no-browser"]
