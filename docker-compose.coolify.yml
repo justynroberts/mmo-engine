@@ -4,7 +4,7 @@
 services:
   server:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     environment:
       # Behind the proxy: serve the play page and WebSocket relay on 7790, take the real address from X-Forwarded-For.
