@@ -30,6 +30,11 @@ static var TITLE: Font
 ## Items' English names by item name (/play/info "items" "title"), for every panel that shows one: `item`.
 static var ITEM_TITLES := {}
 
+## Text from anyone else (chat, names, a plot's name in a server line) made safe for the BBCode chat log, so
+## nobody can restyle, resize or fake lines on another player's screen.
+static func esc(text: String) -> String:
+	return text.replace("[", "[lb]")
+
 ## What players call an item: its title, else its name.
 static func item(name: String) -> String:
 	return String(ITEM_TITLES.get(name, name))

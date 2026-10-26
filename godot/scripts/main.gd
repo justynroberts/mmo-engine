@@ -513,30 +513,30 @@ func _start() -> void:
 		elif channel == 10: # auction house listings
 			auctionui.on_line(text)
 		elif from == 0:
-			hud.say("[color=#ffd27a]%s[/color]" % text)
+			hud.say("[color=#ffd27a]%s[/color]" % HudScript.esc(text))
 			if channel == 3: # a banner: an event's news, across the screen too, with a horn
 				hud.announce(text)
 				sound.play("horn", -3.0, 0.0)
 		elif channel == 4: # a whisper to us
-			hud.say("[color=#e8a0ff]%s whispers:[/color] [color=#f0d8ff]%s[/color]" % [_name(from), text])
+			hud.say("[color=#e8a0ff]%s whispers:[/color] [color=#f0d8ff]%s[/color]" % [HudScript.esc(_name(from)), HudScript.esc(text)])
 			sound.play("chime", -8.0, 0.0)
 		elif channel == 5: # our own whisper, echoed
-			hud.say("[color=#e8a0ff]To %s:[/color] [color=#f0d8ff]%s[/color]" % [_name(from), text])
+			hud.say("[color=#e8a0ff]To %s:[/color] [color=#f0d8ff]%s[/color]" % [HudScript.esc(_name(from)), HudScript.esc(text)])
 		elif channel == 6: # party chat
-			hud.say("[color=#8fd3ff][Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
+			hud.say("[color=#8fd3ff][lb]Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else HudScript.esc(_name(from)), HudScript.esc(text)])
 		elif channel == 7: # a passing remark: over their head, not in the chat
 			_bubble(from, text)
 		elif channel == 11: # an emote: "anim|line", the line in the chat and the clip on whoever acts it
 			var parts := text.split("|", true, 1)
-			hud.say("[i][color=#d8c8a8]%s[/color][/i]" % parts[-1])
+			hud.say("[i][color=#d8c8a8]%s[/color][/i]" % HudScript.esc(parts[-1]))
 			var node: Node3D = ents.get(from)
 			if parts.size() == 2 and parts[0] != "" and node and node.has_method("emote"):
 				node.emote(parts[0])
 		elif channel == 8: # guild chat
-			hud.say("[color=#7fe08a][Guild] %s:[/color] %s" % ["You" if from == net.get_self_id() else _name(from), text])
+			hud.say("[color=#7fe08a][lb]Guild] %s:[/color] %s" % ["You" if from == net.get_self_id() else HudScript.esc(_name(from)), HudScript.esc(text)])
 		else:
 			var who := "You" if from == net.get_self_id() else _name(from)
-			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [who, " shouts" if channel == 1 else "", text]))
+			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [HudScript.esc(who), " shouts" if channel == 1 else "", HudScript.esc(text)]))
 	var id := _identity()
 	my_identity = id
 	if _loading:
@@ -1985,7 +1985,7 @@ func _where() -> void:
 		return
 	if best != "":
 		hud.show_location(best)
-		hud.say("[color=#ffd27a]%s[/color]" % best)
+		hud.say("[color=#ffd27a]%s[/color]" % HudScript.esc(best))
 		sound.play("chime", -9.0, 0.0)
 	else:
 		hud.show_location(_here, true)

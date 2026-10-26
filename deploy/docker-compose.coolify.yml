@@ -1,0 +1,26 @@
+# Coolify deployment (Docker Compose build pack): the web gateway behind the platform's proxy and the game's UDP port
+# published on the host. The admin console stays on the container's loopback and is never exposed. The local setup
+# is docker-compose.yml at the root (host networking).
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      # Behind the proxy: serve the play page and WebSocket relay on 7790, take the real address from X-Forwarded-For.
+      - MMO_ARGS=--web 0.0.0.0:7790 --web-trust-proxy --workers 2
+    expose:
+      - "7790"
+    ports:
+      - "7777:7777/udp"
+    volumes:
+      - mmo-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:7790/play/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+volumes:
+  mmo-data:
