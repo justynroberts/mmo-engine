@@ -416,6 +416,8 @@ pub struct Sim {
     /// A bot standing still for a player who hailed it or is talking to it (`hail.rs`): (their id, until tick),
     /// (0, 0) for none.
     pub hailed: Vec<(u32, u32)>,
+    /// The tick before which a player is not told again why a block was refused (`build_action`).
+    pub build_said: Vec<u32>,
     pub gear: Vec<[u8; proto::game::GEAR_SLOTS]>,
     pub mounted: Vec<f32>,
     pub gear_ver: Vec<u32>,
@@ -590,6 +592,7 @@ impl Sim {
             class: vec![0; cap],
             pose: vec![0; cap],
             hailed: vec![(0, 0); cap],
+            build_said: vec![0; cap],
             gear: vec![[0; proto::game::GEAR_SLOTS]; cap],
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
@@ -1009,18 +1012,18 @@ impl Sim {
     /// Build (put a block in a cell's layer) or break (take one out), for the entity in `s`. Checked here: in
     /// reach, inside the world, not in a wall, not on anyone, resting on the ground or against another block,
     /// under the column and world limits; and only the owner breaks a block (anyone, one nobody owns).
-    fn build_action(&mut self, s: usize, action: u8, target: u32, arg: u16) -> bool {
+    fn build_action(&mut self, s: usize, action: u8, target: u32, arg: u16) -> Result<(), String> {
         use proto::game::{parse_build_arg, parse_build_target, ACT_BREAK, BLOCK_KINDS, BUILD_REACH};
         use proto::world::{block_key, BLOCK};
         let (cx, cy) = parse_build_target(target);
         let (z, kind) = parse_build_arg(arg);
         let z = z as i16;
         if kind >= BLOCK_KINDS || (action != ACT_BREAK && (kind == proto::game::SPROUT || kind == proto::game::RIPE)) {
-            return false; // crops come from seeds, not hands
+            return Err("Crops come from seeds: plant one beside tilled soil.".into());
         }
         let (bx, by) = (cx as f32 * BLOCK, cy as f32 * BLOCK);
         if bx + BLOCK > self.world.size || by + BLOCK > self.world.size {
-            return false;
+            return Err("That is past the edge of the world.".into());
         }
         let (mx, my) = (bx + BLOCK / 2.0, by + BLOCK / 2.0);
         let (dx, dy) = (mx - self.ents.x[s], my - self.ents.y[s]);
@@ -1030,16 +1033,16 @@ impl Sim {
         let my_base = self.blocks.get(block_key(ex, ey)).map_or_else(|| self.terrain.base(ex, ey), |c| c.base);
         let dz = ((z - self.feet(s, my_base)) as f32 + 0.5) * BLOCK;
         if dx * dx + dy * dy > BUILD_REACH * BUILD_REACH || dz.abs() > BUILD_REACH {
-            return false;
+            return Err("Too far: you build within four blocks of where you stand.".into());
         }
         if self.ents.owner[s] < DRIVEN && !self.may_build(s, cx, cy) {
-            return false; // someone else's land
+            return Err("That is someone else's plot.".into());
         }
         if action == ACT_BREAK {
-            let Some(col) = self.blocks.get(key) else { return false };
-            let Some(k) = col.index(z).filter(|&k| col.kinds[k] != 0) else { return false };
+            let Some(col) = self.blocks.get(key) else { return Err("There is no block there to break.".into()) };
+            let Some(k) = col.index(z).filter(|&k| col.kinds[k] != 0) else { return Err("There is no block there to break.".into()) };
             if col.owners[k] != 0 && col.owners[k] != self.ents.account[s] {
-                return false; // someone else's
+                return Err("That block is someone else's.".into());
             }
             let taken = self.blocks.take(key, z);
             let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
@@ -1057,16 +1060,16 @@ impl Sim {
             if let Some((k, _)) = taken.filter(|t| t.0 == proto::game::SPROUT || t.0 == proto::game::RIPE) {
                 self.harvest(s, key, z, k);
             }
-            return true;
+            return Ok(());
         }
         let col = self.blocks.get(key).copied().unwrap_or_else(|| crate::blocks::Col::new(base));
         if col.index(z).is_none() || col.solid(z) || self.blocks.total >= crate::blocks::MAX_BLOCKS {
-            return false;
+            return Err("There is no room for a block there.".into());
         }
         let (owner, lim) = (self.ents.account[s], self.building);
         if (lim.per_region > 0 && self.blocks.in_region(key) >= lim.per_region) || (owner != 0 && lim.per_player > 0 && self.blocks.by_owner(owner) >= lim.per_player) {
             self.stats.build_limited += 1;
-            return false; // this place, or this builder, has built all it may
+            return Err("You have built all you may here.".into());
         }
         // It rests on the ground, or against a block above, below or beside it.
         let beside = |c: Option<(u32, u32)>| c.and_then(|(x, y)| self.blocks.get(block_key(x, y))).is_some_and(|n| n.solid(z));
@@ -1077,14 +1080,17 @@ impl Sim {
             || beside(Some((cx + 1, cy)))
             || beside(cy.checked_sub(1).map(|y| (cx, y)))
             || beside(Some((cx, cy + 1)));
-        if !supported || !self.cell_free(cx, cy, base, Some(z)) {
-            return false;
+        if !supported {
+            return Err("A block needs the ground or another block to rest on.".into());
+        }
+        if !self.cell_free(cx, cy, base, Some(z)) {
+            return Err("Something is in the way there: a wall, or someone standing in it.".into());
         }
         // A material some item is a block of costs one of them; a god builds with anything, for nothing.
         if let Some(item) = self.block_item(kind).filter(|_| !self.ents.god[s]) {
             if !crate::market::take(&mut self.inv[s], item as u8 + 1, 1) {
                 self.stats.build_unpaid += 1;
-                return false;
+                return Err(format!("You have no {} to build with.", self.items[item].shown()));
             }
             self.inv_ver[s] = self.inv_ver[s].wrapping_add(1);
         }
@@ -1092,7 +1098,7 @@ impl Sim {
         let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
         self.world.set_column(cx, cy, mask);
         self.stats.builds += 1;
-        true
+        Ok(())
     }
 
     /// A new character's starter kit, into their bag (what does not fit lands at their feet).
@@ -1664,11 +1670,19 @@ impl Sim {
                 continue;
             }
             if p.action == proto::game::ACT_BUILD || p.action == proto::game::ACT_BREAK {
-                if self.build_action(p.slot, p.action, p.target, p.arg) {
+                match self.build_action(p.slot, p.action, p.target, p.arg) {
                     // Keyed by the cell and layer, so building and breaking the same block is one deed.
-                    self.lived_once(p.slot, crate::life::Deed::Build, crate::life::key(&[1, p.target as u64, (p.arg & 0xff) as u64]));
-                } else {
-                    self.stats.rejected_actions += 1;
+                    Ok(()) => {
+                        self.lived_once(p.slot, crate::life::Deed::Build, crate::life::key(&[1, p.target as u64, (p.arg & 0xff) as u64]));
+                    }
+                    Err(why) => {
+                        self.stats.rejected_actions += 1;
+                        // Said, so a refusal is never silent; at most once a second, since a held button repeats.
+                        if self.ents.owner[p.slot] < DRIVEN && self.tick >= self.build_said[p.slot] {
+                            self.build_said[p.slot] = self.tick + self.tick_hz.max(1);
+                            self.tells.push((p.slot, why));
+                        }
+                    }
                 }
                 continue;
             }
@@ -2552,6 +2566,26 @@ mod tests {
         assert!(act(&mut s, 2));
         assert!(!act(&mut s, 3), "the region is full");
         assert_eq!(s.blocks.in_region(proto::world::block_key(53, 50)), 3);
+    }
+
+    #[test]
+    fn a_refused_block_says_why_but_not_every_tick() {
+        use proto::game::{build_arg, build_target, ACT_BUILD};
+        let mut s = sim();
+        let a = s.spawn(0).unwrap();
+        place(&mut s, a, 100.0, 101.0);
+        s.grid.rebuild(&s.ents);
+        let build = |s: &mut Sim, cx: u32, z: i8| s.step(&[PendingAction { slot: a, action: ACT_BUILD, target: build_target(cx, 50), arg: build_arg(z, 1) }]);
+        let said = |s: &mut Sim| std::mem::take(&mut s.tells).into_iter().filter(|t| t.0 == a).map(|t| t.1).collect::<Vec<_>>();
+        build(&mut s, 90, 0);
+        assert_eq!(said(&mut s), vec!["Too far: you build within four blocks of where you stand.".to_string()]);
+        build(&mut s, 90, 0);
+        assert!(said(&mut s).is_empty(), "a held button is not told again within the second");
+        for _ in 0..20 {
+            s.step(&[]);
+        }
+        build(&mut s, 53, 3);
+        assert_eq!(said(&mut s), vec!["A block needs the ground or another block to rest on.".to_string()]);
     }
 
     #[test]

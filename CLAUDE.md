@@ -118,4 +118,4 @@ Block materials are listed in six places that must stay the same length: `proto:
 
 ## Docker
 
-`Dockerfile` builds the UI, then `server` and `bots`, into a slim non-root image. `docker-compose.yml` uses host networking because the admin interface refuses to bind anywhere but loopback; state persists in `./data`.
+`Dockerfile` builds the UI, then `server` and `bots`, into a slim non-root image. `docker-compose.yml` uses host networking because the admin interface refuses to bind anywhere but loopback; state persists in `./data`. The Coolify deployment (hibernian.apps.fintonlabs.com) is `docker-compose.coolify.yml`: the web gateway behind the platform's TLS proxy with `--web-trust-proxy --no-browser` (only the data the Godot client fetches; no play page or WebSocket relay), UDP 7777 published, a fresh volume seeded from `deploy/seed` by `deploy/entrypoint.sh`, deployment flags in `MMO_ARGS`.

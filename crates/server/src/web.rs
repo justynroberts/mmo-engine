@@ -76,6 +76,9 @@ pub struct WebCfg {
     pub max_conns: usize,
     pub per_ip: u32,
     pub trust_proxy: bool,
+    /// Serve only the data a client fetches (`/play/info`, tiles, the world, names, blocks): no play page and no
+    /// WebSocket relay, for a server played from the native client only (`--no-browser`).
+    pub no_browser: bool,
     /// The other zones' web addresses (`--zone-web`): a page one of them served may connect here, since a player
     /// handed over from that zone arrives with that page still open.
     pub zone_hosts: Vec<String>,
@@ -296,6 +299,9 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
         _ => key_of(peer.ip()),
     };
     if head.websocket && head.path == "/ws" {
+        if cfg.no_browser {
+            return respond(&mut conn, 404, "text/plain", b"not found");
+        }
         return relay(conn, cfg, gw, &head, real);
     }
     // Plain HTTP: consume the head, then answer.
@@ -387,6 +393,7 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
                 },
             }
         }
+        _ if cfg.no_browser => respond(&mut conn, 404, "text/plain", b"not found"),
         p => static_file(&mut conn, cfg.ui_dir.as_deref(), p),
     }
 }

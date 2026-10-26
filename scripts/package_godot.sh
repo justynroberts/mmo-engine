@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Package the Godot client as a macOS app for other people to play: a zip with an .app that opens on the join
-# screen, the server field filled in with SERVER (default: this Mac's LAN address and the web port).
+# screen, the server field filled in with SERVER (default: the public server, hibernian.apps.fintonlabs.com).
 #   scripts/package_godot.sh [server]      -> dist/mmo-client-mac.zip
 # It also publishes the zip for the in-game updater: data/client/mac.zip and mac.json (version, size, sha256), which
 # the server's web gateway serves at /play/client (CLIENT_DIR to put them elsewhere, CLIENT_DIR= to skip).
 # Needs Godot 4.6 on the PATH and its macOS export template (Editor > Manage Export Templates). Apple silicon only.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-server="${1:-$(ipconfig getifaddr en0 2>/dev/null || echo 127.0.0.1)}"
+server="${1:-hibernian.apps.fintonlabs.com}"
 scripts/build_godot.sh release
 echo "$server" > godot/default_server.txt
 # Versions are the packaging time, so they sort as text: an app offers an update when the server has a later one.

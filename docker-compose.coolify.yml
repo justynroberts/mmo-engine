@@ -7,8 +7,9 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      # Behind the proxy: serve the play page and WebSocket relay on 7790, take the real address from X-Forwarded-For.
-      - MMO_ARGS=--web 0.0.0.0:7790 --web-trust-proxy --workers 2
+      # Behind the proxy: the web port on 7790 serves only the data the Godot client fetches (no browser play page or
+      # WebSocket relay), and takes the real address from X-Forwarded-For.
+      - MMO_ARGS=--web 0.0.0.0:7790 --web-trust-proxy --no-browser --workers 2
     expose:
       - "7790"
     ports:

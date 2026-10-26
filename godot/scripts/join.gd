@@ -7,6 +7,8 @@ signal chosen(server: String, name: String)
 
 const HUD := preload("res://scripts/hud.gd")
 const SAVED := "user://join.cfg"
+## The public server, when nothing else is saved or built in (a packaged app may carry its own in default_server.txt).
+const DEFAULT_SERVER := "hibernian.apps.fintonlabs.com"
 ## The title art, behind the join screen and (dimmed) the loading screen.
 const ART := "res://ui/title.jpg"
 
@@ -27,14 +29,14 @@ func _ready() -> void:
 	HUD.use_fonts()
 	var cfg := ConfigFile.new()
 	cfg.load(SAVED)
-	var fallback := ""
+	var fallback := DEFAULT_SERVER
 	if FileAccess.file_exists("res://default_server.txt"):
 		fallback = FileAccess.get_file_as_string("res://default_server.txt").strip_edges()
 	server_in.text = String(cfg.get_value("join", "server", fallback))
 	name_in.text = String(cfg.get_value("join", "name", ""))
-	# The server remembered may be on a network we have left: if it does not answer, offer the built-in one (or,
-	# run from the project, this machine) when that does.
-	var other := fallback if fallback != "" else "127.0.0.1"
+	# The server remembered may be on a network we have left: if it does not answer, offer the built-in one when
+	# that does.
+	var other := fallback if fallback != "" else DEFAULT_SERVER
 	if server_in.text != "" and server_in.text != other:
 		_check_saved.call_deferred(server_in.text, other)
 
@@ -60,7 +62,7 @@ func _ready() -> void:
 	col.add_child(row)
 	var where := VBoxContainer.new()
 	where.add_child(_label("Server"))
-	server_in.placeholder_text = "192.168.1.20"
+	server_in.placeholder_text = DEFAULT_SERVER
 	where.add_child(_field(server_in))
 	server_in.custom_minimum_size = Vector2(240, 34)
 	row.add_child(where)
