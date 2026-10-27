@@ -134,6 +134,7 @@ const RULE_FIELDS: [string, [keyof Rules, string][]][] = [
   ['Falling', [['fall_xp_loss_pct', 'XP lost %'], ['fall_coin_loss_pct', 'Coin lost %'], ['fall_drop_pct', 'Bag dropped %'], ['rise_delay_secs', 'Rise after s']]],
   ['Hailing', [['hail_reach', 'Hail reach'], ['hail_secs', 'Stands for s']]],
   ['Wandering', [['wander_linger_secs', 'Lingers s'], ['wander_range', 'Range (no home)'], ['remark_pause_secs', 'Stops to talk s']]],
+  ['The dark', [['night_sight', 'Fighters see ×'], ['night_ambush_pct', 'Ambush % a minute'], ['night_pack', 'Most in a pack']]],
   ['Company', [['party_size', 'Party size'], ['party_share_reach', 'Party XP reach'], ['quest_share_reach', 'Quest share reach'], ['guild_size', 'Guild size']]],
   ['Trade', [['trade_reach', 'Trade reach'], ['trade_break', 'Trade breaks at'], ['listing_hours', 'Listing hours'], ['listings_per_seller', 'Listings each']]],
 ]

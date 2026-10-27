@@ -333,6 +333,7 @@ export function renamePlace(g: GameFile, index: number, name: string): GameFile 
     archetypes: g.archetypes.map((a) => ({
       ...a,
       home: a.home === old ? name : a.home,
+      ...(a.homes ? { homes: a.homes.map((h) => (h === old ? name : h)) } : {}),
       rules: a.rules.map((r) => ({ when: swapC(r.when), then: swapA(r.then) })),
     })),
   }, 'place', old, name)
@@ -345,12 +346,18 @@ export function removePlace(g: GameFile, index: number): GameFile {
   return rewriteRefs({
     ...g,
     places: g.places.filter((_, i) => i !== index),
-    archetypes: g.archetypes.map((a) => ({
-      ...a,
-      home: a.home === gone ? null : a.home,
-      // Going indoors means going home: with the home gone, so are those rules.
-      rules: a.rules.filter((r) => !refsPlace(r.when, gone) && !refsPlace(r.then, gone) && !(a.home === gone && r.then.kind === 'indoors')),
-    })),
+    archetypes: g.archetypes.map((a) => {
+      // Its other homes stay; the first of them becomes the home if that was the one gone.
+      const rest = (a.homes ?? []).filter((h) => h !== gone)
+      const home = a.home === gone ? rest.shift() ?? null : a.home
+      return {
+        ...a,
+        home,
+        homes: rest.length ? rest : undefined,
+        // Going indoors means going home: with no home left, so are those rules.
+        rules: a.rules.filter((r) => !refsPlace(r.when, gone) && !refsPlace(r.then, gone) && !(home === null && r.then.kind === 'indoors')),
+      }
+    }),
   }, 'place', gone, null)
 }
 
@@ -515,13 +522,14 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
       return { error: 'Each bot type needs a name.' }
     }
     const r = raw as Partial<Archetype> & { name: string }
-    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction'])
+    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction', 'title', 'names', 'homes', 'ambush'])
     const stray = Object.keys(r).find((k) => !known.has(k))
     if (stray) return { error: `${r.name}: “${stray}” is not a bot field. Check the spelling.` }
     const a: Archetype = { ...newArchetype(g), ...r, name: r.name.trim() }
     if (!['idle', 'wander', 'chase', 'flee'].includes(a.behaviour)) return { error: `${a.name}: behaviour must be idle, wander, chase or flee.` }
     if (a.attack && !g.actions.some((x) => x.name === a.attack)) return { error: `${a.name}: there is no action called “${a.attack}” in this game.` }
-    if (a.home && !g.places.some((p) => p.name === a.home)) return { error: `${a.name}: there is no place called “${a.home}”.` }
+    const badHome = [a.home, ...(a.homes ?? [])].find((h) => h && !g.places.some((p) => p.name === h))
+    if (badHome) return { error: `${a.name}: there is no place called “${badHome}”.` }
     const badAttr = Object.keys(a.attrs).find((k) => !g.attrs.some((x) => x.name === k))
     if (badAttr) return { error: `${a.name}: there is no attribute called “${badAttr}”.` }
     const badItem = [...(a.drops ?? []), ...(a.shop ?? [])].find((d) => !(g.items ?? []).some((x) => x.name === d.item))

@@ -1381,7 +1381,8 @@
         }
       ],
       "xp": 20,
-      "level": 2
+      "level": 2,
+      "ambush": true
     },
     {
       "name": "dibheirgeach",
@@ -1410,7 +1411,8 @@
         }
       ],
       "xp": 35,
-      "level": 4
+      "level": 4,
+      "ambush": true
     },
     {
       "name": "lochlannach",
@@ -1479,7 +1481,8 @@
         }
       ],
       "xp": 50,
-      "level": 6
+      "level": 6,
+      "ambush": true
     },
     {
       "name": "crom dubh",
@@ -2083,6 +2086,869 @@
       ],
       "xp": 28,
       "level": 3
+    },
+    {
+      "name": "villager",
+      "title": "Villager",
+      "color": "#7a6a55",
+      "count": 111,
+      "behaviour": "wander",
+      "speed_mult": 0.6,
+      "sight": 30.0,
+      "attack": null,
+      "attrs": {},
+      "home": "dublin",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "mac tire",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "dibheirgeach",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "sluagh",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "villager",
+            "within": 6.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Did you hear about the miller's daughter?",
+              "Prices at the market are a scandal.",
+              "My back's not what it was.",
+              "They say there's weather coming.",
+              "Have you seen my goat anywhere?",
+              "The priest went on and on this Sunday.",
+              "I told him, I said, not in my field!",
+              "Your mother's well, I hope?",
+              "Another wedding in the spring, they say.",
+              "That roof of mine leaks like a sieve."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "weather",
+            "names": [
+              "baisteach"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "night"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dawn"
+            ]
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Morning! Another day, another penny.",
+              "Cold one this morning.",
+              "The well's low again.",
+              "Off to market, then."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dusk"
+            ]
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Getting dark. Best be indoors soon.",
+              "Wolves will be about tonight.",
+              "Bar your door tonight, friend.",
+              "I don't go past the last house after dark."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 12.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Good day to you.",
+              "You're not from round here, are you?",
+              "Mind the wolves if you go out at night.",
+              "Sleeping rough? Build yourself a roof before dark.",
+              "The Watch keep the town safe at night.",
+              "Looking for work? Ask the traders."
+            ]
+          }
+        }
+      ],
+      "drops": [
+        {
+          "item": "aran",
+          "chance_pct": 25.0,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "names": [
+        "Patrick",
+        "Mary",
+        "Michael",
+        "Bridget",
+        "John",
+        "Kathleen",
+        "Thomas",
+        "Margaret",
+        "James",
+        "Nora",
+        "Hugh",
+        "Ellen",
+        "Owen",
+        "Anne",
+        "Daniel",
+        "Rose",
+        "Brian",
+        "Sheila",
+        "Conor",
+        "Maeve",
+        "Dermot",
+        "Siobhan",
+        "Liam",
+        "Aoife",
+        "Sean",
+        "Grainne",
+        "Kevin",
+        "Deirdre",
+        "Martin",
+        "Fiona",
+        "Peter",
+        "Una",
+        "Francis",
+        "Sinead",
+        "Joseph",
+        "Orla",
+        "Denis",
+        "Roisin",
+        "Cormac",
+        "Eileen",
+        "Fergus",
+        "Brigid",
+        "Niall",
+        "Agnes",
+        "Ronan",
+        "Joan",
+        "Declan",
+        "Catherine",
+        "Aidan",
+        "Honora",
+        "Colm",
+        "Winifred",
+        "Eamon",
+        "Johanna",
+        "Ciaran",
+        "Alice",
+        "Donal",
+        "Ita",
+        "Brendan",
+        "Fionnuala",
+        "Cathal",
+        "Clodagh",
+        "Malachy",
+        "Niamh",
+        "Tadhg",
+        "Muireann",
+        "Ruairi",
+        "Eithne",
+        "Oisin",
+        "Sorcha",
+        "Lorcan",
+        "Aisling",
+        "Fintan",
+        "Caoimhe",
+        "Tomas",
+        "Ailbhe",
+        "Diarmuid",
+        "Dervla",
+        "Seamus",
+        "Treasa"
+      ],
+      "homes": [
+        "waterford",
+        "cork",
+        "limerick",
+        "galway",
+        "wexford",
+        "armagh",
+        "derry",
+        "kilkenny",
+        "drogheda",
+        "sligo",
+        "athlone",
+        "coill na mac tire",
+        "dundalk",
+        "kells",
+        "clonmel",
+        "tralee",
+        "downpatrick",
+        "ennis",
+        "roscommon",
+        "kildare",
+        "carlow",
+        "monaghan",
+        "donegal",
+        "westport",
+        "lismore",
+        "coleraine",
+        "enniskillen",
+        "belfast",
+        "mullingar",
+        "thurles",
+        "killarney",
+        "bantry",
+        "youghal",
+        "kinsale",
+        "ardee",
+        "listowel"
+      ]
+    },
+    {
+      "name": "farmer",
+      "title": "Farmer",
+      "color": "#6b7a3a",
+      "count": 48,
+      "behaviour": "wander",
+      "speed_mult": 0.55,
+      "sight": 30.0,
+      "attack": null,
+      "attrs": {},
+      "home": "dundalk",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "mac tire",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "dibheirgeach",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "sluagh",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "villager",
+            "within": 6.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Crows at the seed again!",
+              "The oats are coming on well.",
+              "A dry week would do us good.",
+              "Have you a spare hand for the harvest?"
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "weather",
+            "names": [
+              "baisteach"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dusk",
+              "night"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dawn"
+            ]
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Cows won't milk themselves.",
+              "Up with the lark again."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 12.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Fine land, this.",
+              "You'll want seed from the traders if you've a plot.",
+              "Don't go wandering the bog at night."
+            ]
+          }
+        }
+      ],
+      "names": [
+        "Seamus",
+        "Diarmuid",
+        "Tomas",
+        "Fintan",
+        "Lorcan",
+        "Oisin",
+        "Ruairi",
+        "Tadhg",
+        "Malachy",
+        "Cathal",
+        "Brendan",
+        "Donal",
+        "Ciaran",
+        "Eamon",
+        "Colm",
+        "Aidan",
+        "Declan",
+        "Ronan",
+        "Niall",
+        "Fergus",
+        "Cormac",
+        "Denis",
+        "Joseph",
+        "Francis",
+        "Peter",
+        "Martin",
+        "Kevin",
+        "Sean",
+        "Liam",
+        "Dermot",
+        "Conor",
+        "Brian",
+        "Daniel",
+        "Owen",
+        "Hugh",
+        "James",
+        "Thomas",
+        "John",
+        "Michael",
+        "Patrick"
+      ],
+      "homes": [
+        "kells",
+        "clonmel",
+        "tralee",
+        "downpatrick",
+        "ennis",
+        "roscommon",
+        "kildare",
+        "carlow",
+        "monaghan",
+        "donegal",
+        "westport",
+        "lismore",
+        "coleraine",
+        "enniskillen",
+        "belfast",
+        "mullingar",
+        "thurles",
+        "killarney",
+        "bantry",
+        "youghal",
+        "kinsale",
+        "ardee",
+        "listowel"
+      ]
+    },
+    {
+      "name": "fisher",
+      "title": "Fisher",
+      "color": "#4a6a7a",
+      "count": 34,
+      "behaviour": "wander",
+      "speed_mult": 0.6,
+      "sight": 30.0,
+      "attack": null,
+      "attrs": {},
+      "home": "cork",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "mac tire",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "dibheirgeach",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "sluagh",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "villager",
+            "within": 6.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Fresh herring this morning!",
+              "Sea's rough today.",
+              "Nets to mend, always nets to mend."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "weather",
+            "names": [
+              "baisteach"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dusk",
+              "night"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dawn"
+            ]
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Tide's right, I'm away.",
+              "Red sky this morning. Watch yourself."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 12.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Never whistle on a boat.",
+              "Saw a seal take a whole salmon yesterday.",
+              "Fish is cheap at the quay today."
+            ]
+          }
+        }
+      ],
+      "names": [
+        "Treasa",
+        "Dervla",
+        "Ailbhe",
+        "Caoimhe",
+        "Aisling",
+        "Sorcha",
+        "Eithne",
+        "Muireann",
+        "Niamh",
+        "Clodagh",
+        "Fionnuala",
+        "Ita",
+        "Alice",
+        "Johanna",
+        "Winifred",
+        "Honora",
+        "Catherine",
+        "Joan",
+        "Agnes",
+        "Brigid",
+        "Patrick",
+        "Michael",
+        "John",
+        "Thomas",
+        "James",
+        "Hugh",
+        "Owen",
+        "Daniel",
+        "Brian",
+        "Conor",
+        "Dermot",
+        "Liam",
+        "Sean",
+        "Kevin",
+        "Martin",
+        "Peter",
+        "Francis",
+        "Joseph",
+        "Denis",
+        "Cormac"
+      ],
+      "homes": [
+        "galway",
+        "wexford",
+        "waterford",
+        "drogheda",
+        "derry",
+        "sligo",
+        "dundalk",
+        "tralee",
+        "downpatrick",
+        "westport",
+        "coleraine",
+        "belfast",
+        "bantry",
+        "youghal",
+        "kinsale",
+        "dublin"
+      ]
+    },
+    {
+      "name": "child",
+      "title": "Child",
+      "color": "#a08060",
+      "count": 13,
+      "behaviour": "wander",
+      "speed_mult": 0.9,
+      "sight": 30.0,
+      "attack": null,
+      "attrs": {},
+      "home": "dublin",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "mac tire",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "dibheirgeach",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "sluagh",
+            "within": 30.0
+          },
+          "then": {
+            "kind": "flee"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "child",
+            "within": 8.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Tag! You're it!",
+              "Race you to the well!",
+              "I'm telling Mam!"
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "weather",
+            "names": [
+              "baisteach"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dusk",
+              "night"
+            ]
+          },
+          "then": {
+            "kind": "indoors"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 10.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Are you a knight?",
+              "Mam says I'm not to talk to strangers.",
+              "I saw a wolf once. Honest!",
+              "Have you got a penny?"
+            ]
+          }
+        }
+      ],
+      "names": [
+        "Paddy",
+        "Molly",
+        "Jimmy",
+        "Katie",
+        "Mick",
+        "Nell",
+        "Tommy",
+        "Biddy",
+        "Johnny",
+        "Peggy",
+        "Danny",
+        "Nancy",
+        "Seanie",
+        "Maggie",
+        "Hughie",
+        "Annie"
+      ],
+      "homes": [
+        "waterford",
+        "cork",
+        "limerick",
+        "galway",
+        "wexford",
+        "armagh",
+        "derry",
+        "kilkenny",
+        "drogheda",
+        "sligo",
+        "athlone",
+        "coill na mac tire"
+      ]
+    },
+    {
+      "name": "watchman",
+      "title": "Watchman",
+      "color": "#5a5a6a",
+      "count": 26,
+      "behaviour": "wander",
+      "speed_mult": 0.7,
+      "sight": 40.0,
+      "attack": "buille",
+      "attrs": {},
+      "home": "dublin",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "mac tire",
+            "within": 40.0
+          },
+          "then": {
+            "kind": "attack"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "dibheirgeach",
+            "within": 40.0
+          },
+          "then": {
+            "kind": "attack"
+          }
+        },
+        {
+          "when": {
+            "kind": "sees_kind",
+            "bot": "sluagh",
+            "within": 40.0
+          },
+          "then": {
+            "kind": "attack"
+          }
+        },
+        {
+          "when": {
+            "kind": "during",
+            "parts": [
+              "dusk",
+              "night"
+            ]
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "All's well!",
+              "Keep to the streets tonight.",
+              "Who goes there? Ah, it's you.",
+              "Lantern's low. Long night."
+            ]
+          }
+        },
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 12.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Move along, now.",
+              "Trouble? Come to the Watch.",
+              "Wolves come close to the walls at night."
+            ]
+          }
+        }
+      ],
+      "names": [
+        "Dermot",
+        "Liam",
+        "Sean",
+        "Kevin",
+        "Martin",
+        "Peter",
+        "Francis",
+        "Joseph",
+        "Denis",
+        "Cormac",
+        "Fergus",
+        "Niall",
+        "Ronan",
+        "Declan",
+        "Aidan",
+        "Colm",
+        "Eamon",
+        "Ciaran",
+        "Donal",
+        "Brendan"
+      ],
+      "homes": [
+        "waterford",
+        "cork",
+        "limerick",
+        "galway",
+        "wexford",
+        "armagh",
+        "derry",
+        "kilkenny",
+        "drogheda",
+        "sligo",
+        "athlone",
+        "coill na mac tire"
+      ]
     }
   ],
   "places": [
@@ -6252,6 +7118,43 @@
         "level": 10
       }
     ]
+  },
+  "rules": {
+    "talk_reach": 8.0,
+    "pickup_reach": 3.0,
+    "global_cooldown_secs": 0.5,
+    "item_cooldown_secs": 0.25,
+    "ground_item_secs": 300.0,
+    "sneak_sight": 0.35,
+    "chase_give_up_secs": 10.0,
+    "pvp_quiet_secs": 8.0,
+    "kill_credit_secs": 30.0,
+    "party_size": 5,
+    "party_share_reach": 80.0,
+    "quest_share_reach": 40.0,
+    "say_reach": 64.0,
+    "shout_reach": 0.0,
+    "remark_reach": 24.0,
+    "bot_say_secs": 6.0,
+    "guild_size": 200,
+    "dungeon_idle_secs": 30.0,
+    "trade_reach": 12.0,
+    "trade_break": 24.0,
+    "market_reach": 16.0,
+    "listing_hours": 48.0,
+    "listings_per_seller": 12,
+    "fall_xp_loss_pct": 0.0,
+    "fall_coin_loss_pct": 0.0,
+    "fall_drop_pct": 0.0,
+    "rise_delay_secs": 0.0,
+    "hail_reach": 30.0,
+    "hail_secs": 30.0,
+    "wander_linger_secs": 6.0,
+    "wander_range": 30.0,
+    "remark_pause_secs": 4.0,
+    "night_sight": 1.4,
+    "night_ambush_pct": 30.0,
+    "night_pack": 3
   },
   "starter": [
     {

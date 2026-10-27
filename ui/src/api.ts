@@ -330,6 +330,10 @@ export interface Archetype {
   title?: string
   /** Given names, one for each bot of this type ("Bridget" the Trader); absent, they go by the type. */
   names?: string[]
+  /** More places it lives in besides home: its bots are shared out over all of them. */
+  homes?: string[]
+  /** It comes for players out in the dark (rules.night_ambush_pct), and is gone by day. */
+  ambush?: boolean
   color: string
   count: number
   behaviour: Behaviour
@@ -714,6 +718,11 @@ export interface Rules {
   wander_linger_secs: number
   wander_range: number
   remark_pause_secs: number
+  /** At night fighters see night_sight times further, and a player out in the open is set on with
+   * night_ambush_pct percent a minute by up to night_pack bots of the types marked ambush. */
+  night_sight: number
+  night_ambush_pct: number
+  night_pack: number
 }
 
 export const RULE_DEFAULTS: Rules = {
@@ -749,4 +758,7 @@ export const RULE_DEFAULTS: Rules = {
   wander_linger_secs: 6,
   wander_range: 30,
   remark_pause_secs: 4,
+  night_sight: 1,
+  night_ambush_pct: 0,
+  night_pack: 2,
 }

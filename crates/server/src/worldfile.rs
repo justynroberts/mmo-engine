@@ -53,6 +53,9 @@ pub struct Terrain {
     w: usize,
     h: usize,
     heights: Vec<f32>,
+    /// The footprints of the file's houses (objects of class `house`), where townsfolk live: they come out of
+    /// one in the morning and go back into it at night (`Sim::door_of`).
+    pub houses: Arc<Vec<Aabb>>,
 }
 
 impl WorldFile {
@@ -78,7 +81,7 @@ impl Terrain {
         }
         let span = hi - lo;
         let heights = raw.chunks_exact(2).map(|b| (lo + span * u16::from_le_bytes([b[0], b[1]]) as f64 / 65535.0) as f32).collect();
-        Ok(Terrain { x0: num("x0")?, y0: num("y0")?, cell, w, h: hh, heights })
+        Ok(Terrain { x0: num("x0")?, y0: num("y0")?, cell, w, h: hh, heights, houses: Default::default() })
     }
 
     /// Ground height at a point, interpolated between samples as godot/scripts/world_data.gd does.
@@ -157,6 +160,7 @@ struct Objects {
     /// Address ranges of the text: footprint objects, and point objects with their position.
     feet: Vec<(usize, usize)>,
     points: Vec<(usize, usize, f32, f32)>,
+    houses: Vec<[f32; 4]>,
 }
 
 #[derive(serde::Deserialize)]
@@ -169,6 +173,8 @@ struct ObjIn {
     b: Value,
     #[serde(default)]
     p: Value,
+    #[serde(default)]
+    t: Value,
 }
 
 impl<'de> serde::Deserialize<'de> for Objects {
@@ -192,6 +198,9 @@ impl<'de> serde::Deserialize<'de> for Objects {
                         let b = (b.len() == 4).then(|| [b[0], b[1], b[2], b[3]]);
                         // A solid object at a point is drawn there by the theme (a trunk, a rock), so it is scenery
                         // whether or not it says so: files made before the mark get it right too.
+                        if let (Some(b), true) = (b, o.t == "house") {
+                            out.houses.push(b);
+                        }
                         out.found.push((i, b, if o.scenery == true || point { class::SCENERY } else { class::WALL }));
                         out.over = out.found.len() > MAX_SOLIDS;
                     }
@@ -265,10 +274,11 @@ pub fn load(path: &Path) -> Result<WorldFile, String> {
     let roads = parse_roads(&v.roads)?;
     let tiles = Arc::new(TileSet::build(size, boxes, classes)?.with_roads(&proto::tiles::road_cells(size, &roads)));
     // Heights only place block columns, so a world whose heights cannot be read still runs, on flat ground.
-    let terrain = Terrain::parse(&v.heights).unwrap_or_else(|e| {
+    let mut terrain = Terrain::parse(&v.heights).unwrap_or_else(|e| {
         eprintln!("{}: {e}; built blocks will sit as if the ground were flat", path.display());
         Terrain::default()
     });
+    terrain.houses = Arc::new(solids.houses.iter().map(|b| Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }).collect());
     let h = blake3::hash(&bytes);
     let ver = u64::from_le_bytes(h.as_bytes()[..8].try_into().unwrap());
     // The head: the file as it is, with the object list cut down to the footprints.

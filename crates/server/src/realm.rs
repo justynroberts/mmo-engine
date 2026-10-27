@@ -570,7 +570,9 @@ fn claim(sim: &mut Sim, clients: &mut Clients, slot: usize) {
     }
     sim.rs.plots.push(Plot { owner: me, area, name: String::new() });
     sim.rs.dirty = true;
-    say(clients, slot, &format!("This land is yours: {} by {} blocks. Only you and your guild may build here.", area.x1 - area.x0, area.y1 - area.y0));
+    let (w, h) = (area.x1 - area.x0, area.y1 - area.y0);
+    let paces = |n: u32| (n as f32 * BLOCK) as u32;
+    say(clients, slot, &format!("This land is yours: {w} by {h} blocks ({} by {} paces) round where you stand. Only you and your guild may build here.", paces(w), paces(h)));
 }
 
 fn unclaim(sim: &mut Sim, clients: &mut Clients, slot: usize) {
@@ -632,6 +634,9 @@ fn my_plot_here(sim: &Sim, slot: usize) -> Option<usize> {
 fn plot(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
     let (sub, arg) = split(rest);
     match sub.as_str() {
+        // What people type first: the same as /claim and /unclaim.
+        "claim" => claim(sim, clients, slot),
+        "unclaim" => unclaim(sim, clients, slot),
         "grow" => {
             let Some(i) = my_plot_here(sim, slot) else { return say(clients, slot, "Stand on your own land to grow it.") };
             let a = sim.rs.plots[i].area;

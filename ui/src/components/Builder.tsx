@@ -445,6 +445,18 @@ function BotSection({ game, setGame, arch, a }: Edit & { arch: number; a: Archet
         />
         <NumField label="Spawn count" value={a.count} onCommit={(n) => patch({ count: Math.max(0, Math.round(n)) })} />
       </div>
+      <div className="grid grid-cols-3 gap-x-2 pt-1">
+        <TextField
+          label="Also lives in"
+          value={(a.homes ?? []).join(', ')}
+          onCommit={(t) => {
+            const homes = t.split(',').map((n) => n.trim()).filter((n) => game.places.some((p) => p.name === n))
+            patch({ homes: homes.length && a.home ? homes : undefined })
+          }}
+          className="col-span-2"
+        />
+        <Toggle label="Ambushes at night" checked={!!a.ambush} onChange={(on) => patch({ ambush: on || undefined })} />
+      </div>
     </section>
   )
 }

@@ -82,7 +82,7 @@ impl Sim {
     }
 
     /// A bot lets go of the player it is locked on.
-    fn release(&mut self, bot: usize) {
+    pub(crate) fn release(&mut self, bot: usize) {
         let Some(f) = self.foe[bot].take() else { return };
         if let Some(p) = self.ents.resolve(f) {
             let id = self.ents.id_of(bot);

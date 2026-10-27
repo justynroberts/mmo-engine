@@ -68,6 +68,12 @@ pub struct Rules {
     pub wander_linger_secs: f32,
     pub wander_range: f32,
     pub remark_pause_secs: f32,
+    /// The dark: bots that fight see this many times further at night, and each minute a player out in it (not in
+    /// a `safe` place, not in a shelter they built) is set on with this chance, in percent, by up to `night_pack`
+    /// of the bot types marked `ambush`. Those go again at daybreak, unless they are still in a fight.
+    pub night_sight: f32,
+    pub night_ambush_pct: f32,
+    pub night_pack: u8,
 }
 
 impl Default for Rules {
@@ -105,6 +111,9 @@ impl Default for Rules {
             wander_linger_secs: 6.0,
             wander_range: 30.0,
             remark_pause_secs: 4.0,
+            night_sight: 1.0,
+            night_ambush_pct: 0.0,
+            night_pack: 2,
         }
     }
 }
@@ -155,13 +164,16 @@ impl Rules {
                 return Err(format!("rules: {name} is 0..86400"));
             }
         }
-        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct)] {
+        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct)] {
             if !(v.is_finite() && (0.0..=100.0).contains(&v)) {
                 return Err(format!("rules: {name} is 0..100"));
             }
         }
         if !(self.sneak_sight.is_finite() && (0.0..=1.0).contains(&self.sneak_sight)) {
             return Err("rules: sneak_sight is 0..1".into());
+        }
+        if !(self.night_sight.is_finite() && (0.1..=4.0).contains(&self.night_sight)) || !(1..=8).contains(&self.night_pack) {
+            return Err("rules: night_sight is 0.1..4 and night_pack 1..8".into());
         }
         if self.trade_break < self.trade_reach {
             return Err("rules: trade_break must be at least trade_reach".into());
@@ -191,6 +203,7 @@ mod tests {
         assert!(Rules { trade_break: 1.0, ..Rules::default() }.check().is_err());
         assert!(Rules { sneak_sight: f32::NAN, ..Rules::default() }.check().is_err());
         assert!(Rules { fall_drop_pct: 101.0, ..Rules::default() }.check().is_err());
+        assert!(Rules { night_pack: 0, ..Rules::default() }.check().is_err());
         assert_eq!(Rules::ticks(0.25, 20), 5);
     }
 }

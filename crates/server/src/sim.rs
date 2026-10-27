@@ -425,6 +425,14 @@ pub struct Sim {
     pub wander_to: Vec<(f32, f32)>,
     pub wander_by: Vec<u32>,
     pub wander_wait: Vec<u32>,
+    /// A townsperson's own front door (`homes.rs`), worked out the first time it is needed: None not yet, Some(None)
+    /// for a bot with no house to go to.
+    pub door: Vec<Option<Option<(f32, f32)>>>,
+    /// The dark (`night.rs`): whether a player stands in a shelter they built (worked out once a second), the tick
+    /// before which they are not told so again, and the ids of the bots sent after players at night.
+    pub sheltered: Vec<bool>,
+    pub shelter_said: Vec<u32>,
+    pub ambushers: Vec<u32>,
     pub gear: Vec<[u8; proto::game::GEAR_SLOTS]>,
     pub mounted: Vec<f32>,
     pub gear_ver: Vec<u32>,
@@ -604,6 +612,10 @@ impl Sim {
             wander_to: vec![(f32::NAN, f32::NAN); cap],
             wander_by: vec![0; cap],
             wander_wait: vec![0; cap],
+            door: vec![None; cap],
+            sheltered: vec![false; cap],
+            shelter_said: vec![0; cap],
+            ambushers: Vec::new(),
             gear: vec![[0; proto::game::GEAR_SLOTS]; cap],
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
@@ -663,7 +675,7 @@ impl Sim {
             self.ents.counted[slot] = true;
             self.ents.bots += 1;
         }
-        let home = if owner == NONE { self.archs.get(arch as usize).and_then(|a| a.home) } else { None };
+        let home = if owner == NONE { self.home_for(arch, slot) } else { None };
         let (mut x, mut y) = match at {
             Some((x, y)) if !self.world.blocked_by_walls(x, y, r) => (x, y),
             _ => self.spawn_point(home, r),
@@ -744,6 +756,8 @@ impl Sim {
         self.nav_goal[slot].2 = -1.0;
         self.wander_to[slot] = (f32::NAN, f32::NAN);
         self.wander_wait[slot] = 0;
+        self.door[slot] = None;
+        self.sheltered[slot] = false;
         self.reset_attrs(slot);
         self.clear_inv(slot);
         self.reset_market(slot);
@@ -967,7 +981,7 @@ impl Sim {
 
     /// The layer an entity's feet count as being in, for building next to it: on the bare ground, the base
     /// of the column at `base`.
-    fn feet(&self, s: usize, base: i8) -> i16 {
+    pub(crate) fn feet(&self, s: usize, base: i8) -> i16 {
         let z = self.ents.z[s];
         if z == proto::world::GROUND { base as i16 } else { z as i16 }
     }
@@ -1048,13 +1062,15 @@ impl Sim {
         if dx * dx + dy * dy > BUILD_REACH * BUILD_REACH || dz.abs() > BUILD_REACH {
             return Err("Too far: you build within four blocks of where you stand.".into());
         }
-        if self.ents.owner[s] < DRIVEN && !self.may_build(s, cx, cy) {
+        // A god builds anywhere: on anyone's plot, past every limit, and for nothing.
+        let god = self.ents.god[s];
+        if self.ents.owner[s] < DRIVEN && !god && !self.may_build(s, cx, cy) {
             return Err("That is someone else's plot.".into());
         }
         if action == ACT_BREAK {
             let Some(col) = self.blocks.get(key) else { return Err("There is no block there to break.".into()) };
             let Some(k) = col.index(z).filter(|&k| col.kinds[k] != 0) else { return Err("There is no block there to break.".into()) };
-            if col.owners[k] != 0 && col.owners[k] != self.ents.account[s] {
+            if col.owners[k] != 0 && col.owners[k] != self.ents.account[s] && !god {
                 return Err("That block is someone else's.".into());
             }
             let taken = self.blocks.take(key, z);
@@ -1080,7 +1096,7 @@ impl Sim {
             return Err("There is no room for a block there.".into());
         }
         let (owner, lim) = (self.ents.account[s], self.building);
-        if (lim.per_region > 0 && self.blocks.in_region(key) >= lim.per_region) || (owner != 0 && lim.per_player > 0 && self.blocks.by_owner(owner) >= lim.per_player) {
+        if !god && ((lim.per_region > 0 && self.blocks.in_region(key) >= lim.per_region) || (owner != 0 && lim.per_player > 0 && self.blocks.by_owner(owner) >= lim.per_player)) {
             self.stats.build_limited += 1;
             return Err("You have built all you may here.".into());
         }
@@ -1239,6 +1255,7 @@ impl Sim {
             self.system_discover();
             self.system_quests();
             self.system_encounters();
+            self.system_night();
             self.system_life();
             if self.tick % (60 * self.tick_hz.max(1)) == 0 {
                 self.system_forgive();
@@ -1304,7 +1321,18 @@ impl Sim {
                 return (0, 0);
             }
         }
-        let home = self.archs.get(a).and_then(|r| r.home).and_then(|h| self.places.get(h)).map(|p| (p.x, p.y, p.r));
+        let _ = a;
+        let home = self.home_of(s).and_then(|h| self.places.get(h)).map(|p| (p.x, p.y, p.r));
+        // Now and then a townsperson calls at a neighbour's door rather than a spot in the street.
+        if home.is_some() && self.rng.f32() < 0.3 {
+            if let Some((px, py)) = self.neighbour_door(s) {
+                self.wander_to[s] = (px, py);
+                let speed = (self.ents.speed[s] * self.defs.move_speed).max(0.5);
+                let secs = ((px - x).hypot(py - y) / speed * 2.0 + 5.0).min(120.0);
+                self.wander_by[s] = self.tick + (secs * hz as f32) as u32;
+                return self.toward_static(s, px, py, 1.5);
+            }
+        }
         let (cx, cy, r) = home.unwrap_or((x, y, self.rules.wander_range.max(SPOT)));
         let r = r.max(SPOT);
         let size = self.world.size;
@@ -1359,7 +1387,7 @@ impl Sim {
     fn run_rules(&mut self, s: usize, a: usize) -> bool {
         use proto::game::{ActRt, CondRt, Seek};
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
-        let m = self.sight_at(x, y);
+        let m = self.sight_at(x, y) * self.dark_eyes(a);
         let (reach, attack) = (self.archs[a].reach * m.max(1.0), self.archs[a].attack);
         let attack_range = attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range);
 
@@ -1376,6 +1404,7 @@ impl Sim {
             let me_arch = e.arch[s];
             let sneak = self.sneak();
             let dim = self.rules.sneak_sight;
+            let sheltered = &self.sheltered;
             self.grid.for_neighbours(x, y, |t| {
                 let t = t as usize;
                 if t == s {
@@ -1387,7 +1416,7 @@ impl Sim {
                 if d2 > scan * scan * m * m {
                     return;
                 }
-                if e.owner[t] == GHOST || e.hidden[t] {
+                if e.owner[t] == GHOST || e.hidden[t] || sheltered[t] {
                     return;
                 }
                 for k in kinds.iter_mut() {
@@ -1488,18 +1517,32 @@ impl Sim {
                             let secs = self.rules.remark_pause_secs;
                             self.hold_for_secs(s, p, secs);
                         }
+                        // Said to another bot (a `sees` or `sees_kind` rule found it): the two stand and talk a while.
+                        if let Some((_, t)) = target.filter(|&(_, t)| self.ents.owner[t] == NONE) {
+                            let until = self.tick + proto::rules::Rules::ticks(self.rules.remark_pause_secs * 2.0, self.tick_hz);
+                            for b in [s, t] {
+                                self.wander_wait[b] = self.wander_wait[b].max(until);
+                            }
+                        }
                     }
                     continue;
                 }
                 ActRt::Indoors => {
-                    let Some(h) = self.archs[a].home else { continue };
-                    let p = &self.places[h];
-                    let (px, py, r) = (p.x, p.y, p.r);
-                    if (px - x).powi(2) + (py - y).powi(2) <= (r * 0.35).powi(2) {
+                    let Some(h) = self.home_of(s) else { continue };
+                    // In at its own front door, if it has a house (near enough: the way round a house is coarse);
+                    // else somewhere about the middle of its home.
+                    let (px, py, inside, stop) = match self.door_of(s) {
+                        Some((dx, dy)) => (dx, dy, 3.0, 1.5),
+                        None => {
+                            let p = &self.places[h];
+                            (p.x, p.y, p.r * 0.35, (p.r * 0.3).max(1.0))
+                        }
+                    };
+                    if (px - x).powi(2) + (py - y).powi(2) <= inside * inside {
                         self.ents.hidden[s] = true;
                         (0, 0)
                     } else {
-                        self.toward_static(s, px, py, (r * 0.3).max(1.0))
+                        self.toward_static(s, px, py, stop)
                     }
                 }
                 ActRt::Idle => (0, 0),
@@ -1615,7 +1658,7 @@ impl Sim {
             let (behaviour, sight, attack, attack_range) = match self.archs.get(a as usize) {
                 Some(r) => (
                     r.behaviour,
-                    r.sight * self.sight_at(self.ents.x[s], self.ents.y[s]),
+                    r.sight * self.sight_at(self.ents.x[s], self.ents.y[s]) * self.dark_eyes(a as usize),
                     r.attack,
                     r.attack.and_then(|id| self.defs.action(id)).map_or(0.0, |d| d.range),
                 ),
@@ -1630,10 +1673,11 @@ impl Sim {
                 let sneak = self.sneak();
                 let dim = self.rules.sneak_sight;
                 let phase = &self.rs.phase;
+                let sheltered = &self.sheltered;
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
-                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] {
-                        return; // its own kind, or in another phase (a dungeon's copy) it cannot meet
+                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] {
+                        return; // its own kind, in another phase (a dungeon's copy) it cannot meet, or under a roof
                     }
                     let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                     let d2 = dx * dx + dy * dy;
@@ -2280,7 +2324,7 @@ impl Sim {
     fn bring_back(&mut self, s: usize) {
         use proto::game::RespawnAt;
         let r = self.defs.entity_radius;
-        let arch = self.archs.get(self.ents.arch[s] as usize).map(|a| (a.respawn_at, a.home));
+        let arch = self.archs.get(self.ents.arch[s] as usize).map(|a| (a.respawn_at, self.home_for(self.ents.arch[s], s).or(a.home)));
         let (x, y) = match arch {
             Some((RespawnAt::Here, _)) => (self.ents.x[s], self.ents.y[s]),
             Some((RespawnAt::Home, Some(h))) => self.spawn_point(Some(h), r),
@@ -3114,6 +3158,8 @@ mod tests {
             name: name.into(),
             title: String::new(),
             names: vec![],
+            homes: vec![],
+            ambush: false,
             color: "#112233".into(),
             count: 0,
             behaviour,

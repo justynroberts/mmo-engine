@@ -436,6 +436,13 @@ pub struct Archetype {
     /// Given names for the bots of this type, one each ("Bridget" the Seed Trader): absent, they go by the type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
+    /// More places it lives in besides `home`: its bots are shared out over all of them, one each in turn, so one
+    /// type of townsfolk can people every town.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub homes: Vec<String>,
+    /// It comes for players out in the dark (`Rules::night_ambush_pct`): spawned near them at night, gone by day.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ambush: bool,
 }
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
@@ -1513,6 +1520,9 @@ pub struct ArchRt {
     pub loot: Option<usize>,
     /// `Archetype::names`.
     pub names: Vec<String>,
+    /// Every place it lives in: `home` first, then `Archetype::homes` (empty without a home).
+    pub homes: Vec<usize>,
+    pub ambush: bool,
 }
 
 impl ArchRt {
@@ -1643,6 +1653,8 @@ impl GameFile {
             name: name.into(),
             title: String::new(),
             names: vec![],
+            homes: vec![],
+            ambush: false,
             color: color.into(),
             count,
             behaviour,
@@ -2120,6 +2132,16 @@ impl GameFile {
                 Some(n) => Some(place_ix(n, &ctx)?),
                 None => None,
             };
+            if a.homes.len() > MAX_PLACES {
+                return Err(format!("{ctx}: at most {MAX_PLACES} homes"));
+            }
+            if !a.homes.is_empty() && home.is_none() {
+                return Err(format!("{ctx}: more homes need a home first"));
+            }
+            let mut homes: Vec<usize> = home.into_iter().collect();
+            for n in &a.homes {
+                homes.push(place_ix(n, &ctx)?);
+            }
             if a.rules.len() > MAX_RULES {
                 return Err(format!("{ctx}: at most {MAX_RULES} rules"));
             }
@@ -2243,6 +2265,8 @@ impl GameFile {
                 name: a.name.clone(),
                 title: a.title.clone(),
                 names: a.names.clone(),
+                homes,
+                ambush: a.ambush,
                 color: a.color.clone(),
                 count: a.count,
                 behaviour: a.behaviour,
