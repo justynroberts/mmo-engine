@@ -48,7 +48,7 @@ function server(boxes: [number, number, number, number][]) {
     asked.push(url)
     const q = new URL(url, 'http://x').searchParams
     expect(q.get('v')).toBe(meta.ver)
-    const tiles = q.get('c')!.split(';').map((k): [string, [number, number, number, number, number][]] => {
+    const tiles = q.get('c')!.split('_').map((k): [string, [number, number, number, number, number][]] => {
       const [cx, cy] = k.split(',').map(Number) as [number, number]
       const hit = boxes.map((b, i) => [i, ...b] as [number, number, number, number, number])
       return [k, hit.filter((b) => b[3] >= cx * 256 && b[1] < (cx + 1) * 256 && b[4] >= cy * 256 && b[2] < (cy + 1) * 256)]
@@ -94,7 +94,7 @@ describe('WallStore', () => {
     s.update(110, 110)
     await flush()
     expect(asked.length).toBe(1)
-    expect(new URL(asked[0]!, 'http://x').searchParams.get('c')!.split(';').length).toBe(9) // 3x3 of the 5x5 at the corner
+    expect(new URL(asked[0]!, 'http://x').searchParams.get('c')!.split('_').length).toBe(9) // 3x3 of the 5x5 at the corner
     expect(s.list()).toEqual([[100, 100, 120, 120]])
     expect(s.ready).toBe(true)
     // Same tile again asks for nothing.
@@ -108,7 +108,7 @@ describe('WallStore', () => {
 
   it('keeps the road cells of the tiles it holds, and lets them go with the tiles', async () => {
     const fetcher = async (url: string) => {
-      const keys = new URL(url, 'http://x').searchParams.get('c')!.split(';')
+      const keys = new URL(url, 'http://x').searchParams.get('c')!.split('_')
       return encode(0xaan, keys.map((k): [string, [number, number, number, number, number][], number[]] => [k, [], k === '0,0' ? [126, 127] : []]))
     }
     const s = new WallStore(4096, meta, [], [], fetcher)

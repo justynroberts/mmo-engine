@@ -199,9 +199,15 @@ impl TileSet {
     }
 }
 
-/// Parse `cx,cy;cx,cy` (a `/play/tiles` query's `c`). None if any part is not a pair of numbers.
+/// The parts of a query's list, `a_b_c`. `_` is what clients send: a proxy in front of the gateway may refuse or
+/// rewrite a query holding `;` (Traefik does), so `;` and an escaped `%3B` are still read but not sent.
+pub fn list_parts(list: &str) -> impl Iterator<Item = &str> {
+    list.split(['_', ';']).flat_map(|p| p.split("%3B")).flat_map(|p| p.split("%3b"))
+}
+
+/// Parse `cx,cy_cx,cy` (a `/play/tiles` query's `c`). None if any part is not a pair of numbers.
 pub fn parse_list(list: &str) -> Option<Vec<(u16, u16)>> {
-    list.split(';')
+    list_parts(list)
         .filter(|t| !t.is_empty())
         .map(|t| {
             let (a, b) = t.split_once(',')?;
@@ -372,6 +378,15 @@ impl TileStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_reads_the_same_with_underscores_semicolons_or_escaped_semicolons() {
+        let want = Some(vec![(0, 0), (1, 2), (3, 4)]);
+        assert_eq!(parse_list("0,0_1,2_3,4"), want);
+        assert_eq!(parse_list("0,0;1,2;3,4"), want);
+        assert_eq!(parse_list("0,0%3B1,2%3b3,4"), want);
+        assert_eq!(crate::blockfeed::parse_ask("1,2,3_4,5"), Some(vec![(1, 2, 3), (4, 5, 0)]));
+    }
 
     fn bx(x0: f32, y0: f32, x1: f32, y1: f32) -> Aabb {
         Aabb { x0, y0, x1, y1 }

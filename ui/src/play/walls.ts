@@ -197,7 +197,7 @@ export class WallStore {
     for (const k of keys) this.pending.add(k)
     // The version in the URL makes the reply cacheable for good; a 409 means the walls changed under us, and the
     // next poll of /play/info starts us over.
-    this.fetcher(playUrl(`/play/tiles?v=${this.ver}&c=${keys.join(';')}`))
+    this.fetcher(playUrl(`/play/tiles?v=${this.ver}&c=${keys.join('_')}`))
       .then((buf) => {
         if (epoch !== this.epoch) return // the world changed under the request
         const reply = decodeTiles(buf)

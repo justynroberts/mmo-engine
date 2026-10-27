@@ -161,10 +161,10 @@ pub fn decode_reply(b: &[u8]) -> Option<Vec<RegionIn>> {
     Some(out)
 }
 
-/// Read a request's `c=rx,ry,ver;rx,ry,ver;...` (at most MAX_ASK).
+/// Read a request's `c=rx,ry,ver_rx,ry,ver_...` (at most MAX_ASK; `tiles::list_parts`).
 pub fn parse_ask(s: &str) -> Option<Vec<(u32, u32, u32)>> {
     let mut out = Vec::new();
-    for part in s.split(';').filter(|p| !p.is_empty()) {
+    for part in crate::tiles::list_parts(s).filter(|p| !p.is_empty()) {
         let mut it = part.split(',');
         let rx = it.next()?.parse().ok()?;
         let ry = it.next()?.parse().ok()?;

@@ -329,7 +329,7 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
             let want = q("c").and_then(crate::worldfile::parse_tiles);
             match (gw.statics.file(), q("v").and_then(|v| u64::from_str_radix(v, 16).ok()), want) {
                 (None, _, _) => respond(&mut conn, 404, "text/plain", b"this world has no world file"),
-                (_, _, None) => respond(&mut conn, 400, "text/plain", b"c must be cx,cy;cx,cy"),
+                (_, _, None) => respond(&mut conn, 400, "text/plain", b"c must be cx,cy_cx,cy"),
                 (Some(w), Some(v), _) if v != w.ver => respond(&mut conn, 409, "text/plain", b"the world has changed: read /play/info again"),
                 (Some(w), v, Some(want)) => match w.points_json(&want) {
                     None => respond(&mut conn, 400, "text/plain", b"too many tiles"),
@@ -361,12 +361,12 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
             let body = gw.blocks.read().map(|f| f.since(since)).unwrap_or_default();
             respond(&mut conn, 200, "application/json", body.as_bytes())
         }
-        // The blocks near a client, by region: `c=rx,ry,ver;...` (the version of each it holds, 0 for none), and
+        // The blocks near a client, by region: `c=rx,ry,ver_...` (the version of each it holds, 0 for none), and
         // only the regions that differ come back (`proto::blockfeed`). Binary, gzipped when the client takes it.
         "/play/blocks/r" => {
             let c = head.query.split('&').find_map(|kv| kv.strip_prefix("c=")).unwrap_or("");
             match proto::blockfeed::parse_ask(c) {
-                None => respond(&mut conn, 400, "text/plain", format!("c must be rx,ry,ver;... (at most {})", proto::blockfeed::MAX_ASK).as_bytes()),
+                None => respond(&mut conn, 400, "text/plain", format!("c must be rx,ry,ver_... (at most {})", proto::blockfeed::MAX_ASK).as_bytes()),
                 Some(ask) => {
                     let body = gw.blocks.read().map(|f| f.regions_reply(&ask)).unwrap_or_default();
                     let (body, extra) = maybe_gzip(head.gzip, body, "Cache-Control: no-store\r\n");
@@ -381,7 +381,7 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
             let tiles = gw.statics.tiles();
             let want = q("c").and_then(proto::tiles::parse_list);
             match (q("v").and_then(|v| u64::from_str_radix(v, 16).ok()), want) {
-                (_, None) => respond(&mut conn, 400, "text/plain", b"c must be cx,cy;cx,cy"),
+                (_, None) => respond(&mut conn, 400, "text/plain", b"c must be cx,cy_cx,cy"),
                 (Some(v), _) if v != tiles.ver => respond(&mut conn, 409, "text/plain", b"the walls have changed: read /play/info again"),
                 (v, Some(want)) => match tiles.encode(&want) {
                     None => respond(&mut conn, 400, "text/plain", b"too many tiles"),

@@ -117,5 +117,5 @@ export function regionAsk(x: number, y: number, block: number, reach: number, he
       const [qx, qy] = [rx + dx, ry + dy]
       if (qx >= 0 && qy >= 0) parts.push(`${qx},${qy},${held.get((qy << 16) | qx) ?? 0}`)
     }
-  return parts.join(';')
+  return parts.join('_')
 }

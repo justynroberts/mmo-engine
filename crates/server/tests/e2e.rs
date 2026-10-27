@@ -2376,7 +2376,7 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     // The same by region (proto::blockfeed), binary: the region it is in, with the builder's tag; asked again
     // with the version just given, nothing; a neighbouring empty region never comes back at all.
     let (rx, ry) = proto::blockfeed::region_of(cx, cy);
-    let ask = format!("/play/blocks/r?c={rx},{ry},0;{},{ry},0", rx + 1);
+    let ask = format!("/play/blocks/r?c={rx},{ry},0_{},{ry},0", rx + 1);
     let (st, _, body) = web_get_bytes(web, &ask, false);
     assert_eq!(st, 200);
     let regions = proto::blockfeed::decode_reply(&body).expect("a region reply");

@@ -1085,7 +1085,7 @@ func _poll_world(delta: float) -> void:
 	if want.is_empty():
 		return
 	world_busy = true
-	var text := await _fetch("%s/play/world/tiles?v=%s&c=%s" % [_web_url(), world_ver, ";".join(want)])
+	var text := await _fetch("%s/play/world/tiles?v=%s&c=%s" % [_web_url(), world_ver, "_".join(want)])
 	world_busy = false
 	var d = JSON.parse_string(text) if text != "" else null
 	if not d is Dictionary:
@@ -1172,7 +1172,7 @@ func _poll_block_regions() -> void:
 			if rx + dx >= 0 and ry + dy >= 0:
 				var rk := (ry + dy) << 16 | (rx + dx)
 				ask.append("%d,%d,%d" % [rx + dx, ry + dy, int(block_regions.get(rk, 0))])
-	var got: Array = await _fetch_raw("%s/play/blocks/r?c=%s" % [_web_url(), ";".join(ask)])
+	var got: Array = await _fetch_raw("%s/play/blocks/r?c=%s" % [_web_url(), "_".join(ask)])
 	if int(got[0]) == 404:
 		block_by_region = false # an older server: everything at once, as before
 		blocks_poll = 0.0

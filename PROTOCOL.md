@@ -204,7 +204,7 @@ or one too far behind) it is every column and the client drops what it had. Poll
 after building. This whole-world feed is kept for older clients; a world with many blocks should be streamed by
 region instead.
 
-Blocks by region: `GET /play/blocks/r?c=rx,ry,ver;...` (at most 64 regions). A region is 128 x 128 block cells,
+Blocks by region: `GET /play/blocks/r?c=rx,ry,ver_...` (at most 64 regions). A region is 128 x 128 block cells,
 256 world units, the same squares as the wall tiles; `ver` is the version of that region the client holds (0 for
 none). Only regions whose version differs come back, so polling the 5 x 5 regions round the player every second
 costs a few bytes when nothing changed. The reply is binary, little endian, gzipped if the request takes it:
@@ -248,7 +248,7 @@ the smallest one round them as they walk in, and "Leaving" it as they walk out; 
 (`proto::daylight::Daylight::phase`, ported to `godot/scripts/theme.gd` and `ui/src/daylight.ts`): 0 is sunrise,
 `1 - night_share` sunset. Block materials 12 (`c`) and 13 (`d`) are a lamp and a fire.
 
-`/play/info` carries `walls: {ver, tile, count, inline}`. When `inline` is true (600 walls or fewer, and no roads) the boxes are in `boxes` and what each is in `box_class` (below). When false `boxes` is empty and walls come by tile: `GET /play/tiles?v=<ver>&c=cx,cy;cx,cy` (up to 64 tiles of `tile` = 256 units, counted from (0, 0)). The reply is binary, little-endian, and gzipped for a client that sends `Accept-Encoding: gzip`:
+`/play/info` carries `walls: {ver, tile, count, inline}`. When `inline` is true (600 walls or fewer, and no roads) the boxes are in `boxes` and what each is in `box_class` (below). When false `boxes` is empty and walls come by tile: `GET /play/tiles?v=<ver>&c=cx,cy_cx,cy` (`_` between tiles: a TLS proxy may refuse a query with `;`, which is still read; up to 64 tiles of `tile` = 256 units, counted from (0, 0)). The reply is binary, little-endian, and gzipped for a client that sends `Accept-Encoding: gzip`:
 
 ```
 u8 format (2) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n x (u32 id | f32 x0 | f32 y0 | f32 x1 | f32 y1 | u8 class) | u16 m | m x u16 road

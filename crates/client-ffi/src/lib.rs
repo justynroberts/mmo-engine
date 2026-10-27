@@ -675,7 +675,7 @@ pub unsafe extern "C" fn mmo_tiles_wanted(c: *mut Client, x: f32, y: f32, out: *
         return 0;
     }
     let list: Vec<String> = want.iter().map(|(x, y)| format!("{x},{y}")).collect();
-    let path = format!("/play/tiles?v={:016x}&c={}", t.ver, list.join(";"));
+    let path = format!("/play/tiles?v={:016x}&c={}", t.ver, list.join("_"));
     if path.len() + 1 > cap {
         t.retry();
         return -1;

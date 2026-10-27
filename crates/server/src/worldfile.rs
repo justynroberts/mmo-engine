@@ -345,9 +345,9 @@ impl WorldFile {
     }
 }
 
-/// Parse `cx,cy;cx,cy` where a tile may be negative (scenery past the world's edge). None if any part is not a pair.
+/// Parse `cx,cy_cx,cy` where a tile may be negative (scenery past the world's edge). None if any part is not a pair.
 pub fn parse_tiles(list: &str) -> Option<Vec<(i32, i32)>> {
-    list.split(';')
+    proto::tiles::list_parts(list)
         .filter(|t| !t.is_empty())
         .map(|t| {
             let (a, b) = t.split_once(',')?;

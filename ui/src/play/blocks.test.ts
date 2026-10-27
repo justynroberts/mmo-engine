@@ -28,7 +28,7 @@ describe('blocks by region', () => {
   it('asks for the square round us with the versions held', () => {
     const held = new Map([[(1 << 16) | 1, 42]])
     // 300 units in with 2-unit blocks is region (1, 1); reach 1 is the 3 x 3 round it.
-    expect(regionAsk(300, 300, 2, 1, held)).toBe('0,0,0;1,0,0;2,0,0;0,1,0;1,1,42;2,1,0;0,2,0;1,2,0;2,2,0')
-    expect(regionAsk(10, 10, 2, 1, held).split(';')).toHaveLength(4)
+    expect(regionAsk(300, 300, 2, 1, held)).toBe('0,0,0_1,0,0_2,0,0_0,1,0_1,1,42_2,1,0_0,2,0_1,2,0_2,2,0')
+    expect(regionAsk(10, 10, 2, 1, held).split('_')).toHaveLength(4)
   })
 })
