@@ -1,5 +1,7 @@
 import type { Daylight } from './daylight'
 export type Behaviour = 'idle' | 'wander' | 'chase' | 'flee'
+/** Where a townsperson works by day (Archetype.work), found round its home in the world file. */
+export type Work = 'square' | 'water' | 'fields' | 'streets'
 export type Who = 'self' | 'target'
 
 export interface AttrFile {
@@ -330,10 +332,17 @@ export interface Archetype {
   title?: string
   /** Given names, one for each bot of this type ("Bridget" the Trader); absent, they go by the type. */
   names?: string[]
+  /** Family names to go with names ("Bridget Kavanagh"): no two bots in the world share a pairing. */
+  surnames?: string[]
+  /** A cutpurse: lifts coin from those it stands beside (rules.lift_pct), runs from the watch, drops it when it falls. */
+  thief?: boolean
   /** More places it lives in besides home: its bots are shared out over all of them. */
   homes?: string[]
   /** It comes for players out in the dark (rules.night_ambush_pct), and is gone by day. */
   ambush?: boolean
+  /** Its trade: by day at a stall on a square, by the nearest water, in the fields beyond town, or walking the
+   * streets (the watch); of an evening often out on the square. */
+  work?: Work
   color: string
   count: number
   behaviour: Behaviour
@@ -723,6 +732,10 @@ export interface Rules {
   night_sight: number
   night_ambush_pct: number
   night_pack: number
+  /** Town life: the chance a minute, in percent, that a quarrel in each town comes to blows, and the chance a
+   * second that a cutpurse beside someone lifts their purse. */
+  brawl_pct: number
+  lift_pct: number
 }
 
 export const RULE_DEFAULTS: Rules = {
@@ -761,4 +774,6 @@ export const RULE_DEFAULTS: Rules = {
   night_sight: 1,
   night_ambush_pct: 0,
   night_pack: 2,
+  brawl_pct: 0,
+  lift_pct: 0,
 }

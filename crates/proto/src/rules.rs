@@ -74,6 +74,11 @@ pub struct Rules {
     pub night_sight: f32,
     pub night_ambush_pct: f32,
     pub night_pack: u8,
+    /// Town life (`town.rs`): each minute, in each town, a quarrel between two townsfolk comes to blows with this
+    /// chance in percent (the watch breaks it up), and a cutpurse (`Archetype::thief`) beside someone lifts their
+    /// purse with `lift_pct` a second.
+    pub brawl_pct: f32,
+    pub lift_pct: f32,
 }
 
 impl Default for Rules {
@@ -114,6 +119,8 @@ impl Default for Rules {
             night_sight: 1.0,
             night_ambush_pct: 0.0,
             night_pack: 2,
+            brawl_pct: 0.0,
+            lift_pct: 0.0,
         }
     }
 }
@@ -164,7 +171,7 @@ impl Rules {
                 return Err(format!("rules: {name} is 0..86400"));
             }
         }
-        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct)] {
+        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct), ("brawl_pct", self.brawl_pct), ("lift_pct", self.lift_pct)] {
             if !(v.is_finite() && (0.0..=100.0).contains(&v)) {
                 return Err(format!("rules: {name} is 0..100"));
             }

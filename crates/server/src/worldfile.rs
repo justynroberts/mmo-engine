@@ -56,6 +56,9 @@ pub struct Terrain {
     /// The footprints of the file's houses (objects of class `house`), where townsfolk live: they come out of
     /// one in the morning and go back into it at night (`Sim::door_of`).
     pub houses: Arc<Vec<Aabb>>,
+    /// The town squares (class `square`) and the water (`sea`, `lake`): where townsfolk with a `work` spend the day.
+    pub squares: Arc<Vec<Aabb>>,
+    pub water: Arc<Vec<Aabb>>,
 }
 
 impl WorldFile {
@@ -81,7 +84,7 @@ impl Terrain {
         }
         let span = hi - lo;
         let heights = raw.chunks_exact(2).map(|b| (lo + span * u16::from_le_bytes([b[0], b[1]]) as f64 / 65535.0) as f32).collect();
-        Ok(Terrain { x0: num("x0")?, y0: num("y0")?, cell, w, h: hh, heights, houses: Default::default() })
+        Ok(Terrain { x0: num("x0")?, y0: num("y0")?, cell, w, h: hh, heights, ..Default::default() })
     }
 
     /// Ground height at a point, interpolated between samples as godot/scripts/world_data.gd does.
@@ -161,6 +164,8 @@ struct Objects {
     feet: Vec<(usize, usize)>,
     points: Vec<(usize, usize, f32, f32)>,
     houses: Vec<[f32; 4]>,
+    squares: Vec<[f32; 4]>,
+    water: Vec<[f32; 4]>,
 }
 
 #[derive(serde::Deserialize)]
@@ -193,6 +198,15 @@ impl<'de> serde::Deserialize<'de> for Objects {
                     let text = raw.get();
                     let o: ObjIn = serde_json::from_str(text).map_err(A::Error::custom)?;
                     let point = o.p[0].is_number() && o.p[1].is_number();
+                    let foot: Vec<f32> = o.b.as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).map(|n| n as f32).collect()).unwrap_or_default();
+                    if let (4, Some(t)) = (foot.len(), o.t.as_str()) {
+                        let b = [foot[0], foot[1], foot[2], foot[3]];
+                        match t {
+                            "square" => out.squares.push(b),
+                            "sea" | "lake" => out.water.push(b),
+                            _ => {}
+                        }
+                    }
                     if o.solid == true && !out.over {
                         let b: Vec<f32> = o.b.as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).map(|n| n as f32).collect()).unwrap_or_default();
                         let b = (b.len() == 4).then(|| [b[0], b[1], b[2], b[3]]);
@@ -278,7 +292,8 @@ pub fn load(path: &Path) -> Result<WorldFile, String> {
         eprintln!("{}: {e}; built blocks will sit as if the ground were flat", path.display());
         Terrain::default()
     });
-    terrain.houses = Arc::new(solids.houses.iter().map(|b| Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }).collect());
+    let boxes = |v: &[[f32; 4]]| Arc::new(v.iter().map(|b| Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }).collect::<Vec<_>>());
+    (terrain.houses, terrain.squares, terrain.water) = (boxes(&solids.houses), boxes(&solids.squares), boxes(&solids.water));
     let h = blake3::hash(&bytes);
     let ver = u64::from_le_bytes(h.as_bytes()[..8].try_into().unwrap());
     // The head: the file as it is, with the object list cut down to the footprints.

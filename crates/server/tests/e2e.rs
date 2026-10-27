@@ -2263,6 +2263,10 @@ fn a_player_on_a_road_covers_more_ground_than_one_on_grass() {
     std::fs::write(&path, r#"{"format":1,"size":1024,"objects":[],"roads":[{"half_width":6,"pts":[[40,300],[1000,300]]}]}"#).unwrap();
     let p = path.to_string_lossy().to_string();
     let (srv, web) = start_web(&["--world", &p]);
+    // No bots: a hound that runs the walker down would spoil the timing.
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["archetypes"] = serde_json::json!([]);
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
     let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
     assert_eq!((info["road_speed"].as_f64(), info["walls"]["inline"].clone()), (Some(1.5), false.into()), "roads travel with tiles");
     let ver = info["walls"]["ver"].as_str().unwrap().to_string();

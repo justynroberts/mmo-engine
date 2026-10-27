@@ -2401,10 +2401,14 @@ func _attack() -> void:
 	if attack_id < 0 or t_total < next_swing:
 		return
 	if target_id == 0 or not ents.has(target_id) or _dist_to(target_id) > action_range:
-		var near := _nearest_in(action_range)
+		# With no target in reach, only what is already fighting us: a swing in the street must not land on the
+		# watchman or a passer-by (who would fight back). Anyone else is struck on purpose, by clicking or Tab.
+		var near := _nearest_foe_in(action_range)
 		if near == 0:
 			if target_id != 0 and ents.has(target_id):
 				_notice("Too far: %d units away, reach is %d." % [int(_dist_to(target_id)), int(action_range)])
+			elif _nearest_in(action_range) != 0:
+				_notice("Nothing here is fighting you. Click someone (or Tab) to strike them.")
 			else:
 				_notice("Nothing within reach (%d units). Get closer." % int(action_range))
 			return
@@ -2908,8 +2912,10 @@ func _cast(i: int) -> void:
 			target = target_id # not a friend, or none: the server lands it on you
 		else:
 			if target_id == 0 or not ents.has(target_id) or _dist_to(target_id) > reach:
-				var near := _nearest_in(reach)
+				var near := _nearest_foe_in(reach)
 				if near == 0:
+					if _nearest_in(reach) != 0:
+						return _notice("Nothing here is fighting you. Click someone (or Tab) to cast %s on them." % title)
 					return _notice("Nothing within reach of %s (%d units)." % [title, int(reach)])
 				target_id = near
 			target = target_id
@@ -3054,6 +3060,16 @@ func _in_safe() -> bool:
 func _dist_to(id: int) -> float:
 	var n: Node3D = ents.get(id)
 	return Vector2(n.position.x, n.position.z).distance_to(me_pos) if n else INF
+
+## The nearest of those locked in a fight with us (the server's encounter list), within `r`; 0 for none.
+func _nearest_foe_in(r: float) -> int:
+	var best := 0
+	var best_d := r
+	for id in net.encounter():
+		if ents.has(id) and _dist_to(id) <= best_d:
+			best_d = _dist_to(id)
+			best = id
+	return best
 
 func _nearest_in(r: float) -> int:
 	var best := 0

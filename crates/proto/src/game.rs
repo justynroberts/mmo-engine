@@ -204,6 +204,21 @@ pub enum Behaviour {
     Flee,
 }
 
+/// Where a townsperson works by day (`Archetype::work`); found in the world file round its home, so one bot type
+/// works in every town it lives in. By night it is home (its `indoors` rules), and at dusk it may be at the square.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Work {
+    /// A stall or doorway on one of the town's squares (traders, townsfolk).
+    Square,
+    /// The water's edge nearest the town: the sea or a lake (fishers).
+    Water,
+    /// The fields just beyond the town (farmers, herders).
+    Fields,
+    /// Up and down the town's roads (the watch).
+    Streets,
+}
+
 /// A named circular area: a spawn point, a hangout, a market square. `name` is what rules and events refer to;
 /// `title`, if set, is what players are told when they walk in or out ("Hollow Market"), and makes it a location.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -436,6 +451,10 @@ pub struct Archetype {
     /// Given names for the bots of this type, one each ("Bridget" the Seed Trader): absent, they go by the type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
+    /// Family names to go with `names` ("Bridget Kavanagh"): each bot gets a pairing no other bot in the world has
+    /// (a name with a space in it, "Brother Aidan", stands alone).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surnames: Vec<String>,
     /// More places it lives in besides `home`: its bots are shared out over all of them, one each in turn, so one
     /// type of townsfolk can people every town.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -443,6 +462,13 @@ pub struct Archetype {
     /// It comes for players out in the dark (`Rules::night_ambush_pct`): spawned near them at night, gone by day.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ambush: bool,
+    /// Its trade: where in its home it spends the day (`Work`). None keeps it wandering the streets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<Work>,
+    /// A cutpurse: it lifts coin from those it stands beside (`Rules::lift_pct`), runs from the watch once the
+    /// cry goes up, and drops what it took when it falls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thief: bool,
 }
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
@@ -1518,11 +1544,14 @@ pub struct ArchRt {
     pub faction: Option<usize>,
     /// Its loot table (`Realm::loot`).
     pub loot: Option<usize>,
-    /// `Archetype::names`.
+    /// `Archetype::names` and `surnames`.
     pub names: Vec<String>,
+    pub surnames: Vec<String>,
     /// Every place it lives in: `home` first, then `Archetype::homes` (empty without a home).
     pub homes: Vec<usize>,
     pub ambush: bool,
+    pub work: Option<Work>,
+    pub thief: bool,
 }
 
 impl ArchRt {
@@ -1653,8 +1682,11 @@ impl GameFile {
             name: name.into(),
             title: String::new(),
             names: vec![],
+            surnames: vec![],
             homes: vec![],
             ambush: false,
+            work: None,
+            thief: false,
             color: color.into(),
             count,
             behaviour,
@@ -2085,10 +2117,13 @@ impl GameFile {
             if a.title.len() > 32 || a.title.trim() != a.title || a.title.contains('|') {
                 return Err(format!("{ctx}: a title is at most 32 characters, no leading or trailing spaces, no |"));
             }
-            if a.names.len() > 200 {
-                return Err(format!("{ctx}: at most 200 names"));
+            if a.names.len() > 200 || a.surnames.len() > 200 {
+                return Err(format!("{ctx}: at most 200 names and 200 surnames"));
             }
-            for n in &a.names {
+            if !a.surnames.is_empty() && a.names.is_empty() {
+                return Err(format!("{ctx}: surnames need names to go with"));
+            }
+            for n in a.names.iter().chain(&a.surnames) {
                 if n.trim().is_empty() || n.len() > 20 || n.trim() != n || n.contains('|') || n.chars().any(char::is_control) {
                     return Err(format!("{ctx}: a name is 1..20 characters, no leading or trailing spaces, no | ('{n}')"));
                 }
@@ -2265,8 +2300,11 @@ impl GameFile {
                 name: a.name.clone(),
                 title: a.title.clone(),
                 names: a.names.clone(),
+                surnames: a.surnames.clone(),
                 homes,
                 ambush: a.ambush,
+                work: a.work,
+                thief: a.thief,
                 color: a.color.clone(),
                 count: a.count,
                 behaviour: a.behaviour,

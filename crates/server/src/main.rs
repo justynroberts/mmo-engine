@@ -17,6 +17,7 @@ mod market;
 mod io;
 mod nav;
 mod night;
+mod town;
 mod quests;
 mod realm;
 mod net;

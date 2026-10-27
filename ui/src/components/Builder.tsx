@@ -3,7 +3,7 @@ import * as Slider from '@radix-ui/react-slider'
 import { Reorder } from 'framer-motion'
 import { Plus, Trash2 } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
-import { MUSIC, SOUNDS, type Act, type Archetype, type Behaviour, type Cond, type GameFile, type Rule, type Seek } from '../api'
+import { MUSIC, SOUNDS, type Act, type Archetype, type Behaviour, type Cond, type GameFile, type Rule, type Seek, type Work } from '../api'
 import {
   ACT_KINDS,
   addRule,
@@ -456,6 +456,37 @@ function BotSection({ game, setGame, arch, a }: Edit & { arch: number; a: Archet
           className="col-span-2"
         />
         <Toggle label="Ambushes at night" checked={!!a.ambush} onChange={(on) => patch({ ambush: on || undefined })} />
+        <TextField
+          label="Given names"
+          value={(a.names ?? []).join(', ')}
+          onCommit={(t) => {
+            const names = t.split(',').map((n) => n.trim()).filter((n) => n && n.length <= 20 && !n.includes('|'))
+            patch({ names: names.length ? names : undefined, surnames: names.length ? a.surnames : undefined })
+          }}
+          className="col-span-2"
+        />
+        <Toggle label="Cutpurse" checked={!!a.thief} onChange={(on) => patch({ thief: on || undefined })} />
+        <TextField
+          label="Surnames"
+          value={(a.surnames ?? []).join(', ')}
+          onCommit={(t) => {
+            const names = t.split(',').map((n) => n.trim()).filter((n) => n && n.length <= 20 && !n.includes('|'))
+            patch({ surnames: names.length && a.names?.length ? names : undefined })
+          }}
+          className="col-span-2"
+        />
+        <SelectField
+          label="Works by day"
+          value={a.work ?? ''}
+          options={[
+            { value: '', label: 'no trade' },
+            { value: 'square', label: 'a stall on the square' },
+            { value: 'water', label: 'by the water' },
+            { value: 'fields', label: 'in the fields' },
+            { value: 'streets', label: 'walking the streets' },
+          ]}
+          onChange={(v) => patch({ work: v === '' ? undefined : (v as Work) })}
+        />
       </div>
     </section>
   )

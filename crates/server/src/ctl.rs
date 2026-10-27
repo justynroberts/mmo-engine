@@ -1116,6 +1116,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.defs = game.defs; // same wire schema; spells (not in the hash) may have changed
         c.sim.archs = game.archs;
         c.sim.names_all = true; // bot types may have been renamed: every bot's name may have changed
+        c.sim.rename_bots();
         c.sim.set_items(game.items);
         c.sim.places = game.places;
         c.sim.pvp = game.pvp;

@@ -202,7 +202,7 @@ impl Entities {
 }
 
 /// Unit direction toward an offset as input bytes; (0, 0) inside `stop` units.
-fn dir_to(dx: f32, dy: f32, stop: f32) -> (i8, i8) {
+pub(crate) fn dir_to(dx: f32, dy: f32, stop: f32) -> (i8, i8) {
     let d2 = dx * dx + dy * dy;
     if d2 <= stop * stop || d2 == 0.0 {
         return (0, 0);
@@ -385,7 +385,7 @@ pub struct Sim {
     /// Chat lines from bots (`Act::Chat`) this tick: shown over the speaker's head to players close by.
     pub npc_chat: Vec<(usize, String)>,
     /// Actions requested by bots this tick.
-    npc_actions: Vec<PendingAction>,
+    pub(crate) npc_actions: Vec<PendingAction>,
     /// Effects spread over time (burns, curses, slow heals) still running.
     over_time: Vec<OverTime>,
     undo: Vec<Undo>,
@@ -425,6 +425,27 @@ pub struct Sim {
     pub wander_to: Vec<(f32, f32)>,
     pub wander_by: Vec<u32>,
     pub wander_wait: Vec<u32>,
+    /// How long it stays once there, as a multiple of `wander_linger_secs`: longer at its work, or at the square of
+    /// an evening, than at a spot in the street.
+    pub wander_stay: Vec<f32>,
+    /// The places that are towns (houses inside them), as (x, y, r²), and which bot types carry a weapon: a beast
+    /// does not hunt into a town, nor go after what would fight back (`system_npc_ai`). Worked out once a second.
+    pub towns: Vec<(f32, f32, f32)>,
+    /// Each named bot's own name, unique in the world (`give_name`).
+    pub given: Vec<Option<std::sync::Arc<str>>>,
+    /// Town life (`town.rs`): who each townsperson is brawling with and till when, a cutpurse's takings, the tick it
+    /// is wanted till, where it runs from and till when, the thief one of the watch is after, and when a cutpurse may
+    /// try again, and the tick a townsperson who has just fought will not again before.
+    pub brawl: Vec<Option<(u32, u32)>>,
+    pub purse: Vec<u32>,
+    pub wanted: Vec<u32>,
+    pub slip: Vec<Option<(f32, f32, u32)>>,
+    pub collar: Vec<Option<u32>>,
+    pub lift_at: Vec<u32>,
+    pub calm: Vec<u32>,
+    pub armed: Vec<bool>,
+    /// Where a townsperson with a trade works by day (`homes.rs` `work_of`), cached as `door` is.
+    pub work: Vec<Option<Option<(f32, f32)>>>,
     /// A townsperson's own front door (`homes.rs`), worked out the first time it is needed: None not yet, Some(None)
     /// for a bot with no house to go to.
     pub door: Vec<Option<Option<(f32, f32)>>>,
@@ -612,6 +633,18 @@ impl Sim {
             wander_to: vec![(f32::NAN, f32::NAN); cap],
             wander_by: vec![0; cap],
             wander_wait: vec![0; cap],
+            wander_stay: vec![1.0; cap],
+            towns: Vec::new(),
+            given: vec![None; cap],
+            brawl: vec![None; cap],
+            purse: vec![0; cap],
+            wanted: vec![0; cap],
+            slip: vec![None; cap],
+            collar: vec![None; cap],
+            lift_at: vec![0; cap],
+            calm: vec![0; cap],
+            armed: Vec::new(),
+            work: vec![None; cap],
             door: vec![None; cap],
             sheltered: vec![false; cap],
             shelter_said: vec![0; cap],
@@ -753,9 +786,13 @@ impl Sim {
         e.name_claimed[slot] = false;
         e.renamed.push(slot as u32);
         e.live += 1;
+        self.give_name(slot);
+        self.town_reset(slot);
         self.nav_goal[slot].2 = -1.0;
         self.wander_to[slot] = (f32::NAN, f32::NAN);
         self.wander_wait[slot] = 0;
+        self.wander_stay[slot] = 1.0;
+        self.work[slot] = None;
         self.door[slot] = None;
         self.sheltered[slot] = false;
         self.reset_attrs(slot);
@@ -1256,6 +1293,8 @@ impl Sim {
             self.system_quests();
             self.system_encounters();
             self.system_night();
+            self.find_towns();
+            self.system_town();
             self.system_life();
             if self.tick % (60 * self.tick_hz.max(1)) == 0 {
                 self.system_forgive();
@@ -1301,8 +1340,8 @@ impl Sim {
     /// without one), linger there a while, then pick another. Spots sit on a coarse grid so bots share flow
     /// fields; one not reached in time is given up.
     fn wander_dir(&mut self, s: usize, a: usize) -> (i8, i8) {
+        use proto::game::{DayPart, Work};
         const SPOT: f32 = 8.0;
-        let hz = self.tick_hz.max(1);
         if self.tick < self.wander_wait[s] {
             return (0, 0);
         }
@@ -1315,22 +1354,43 @@ impl Sim {
             }
             self.wander_to[s] = (f32::NAN, f32::NAN);
             if arrived {
-                // There: stand about a while, half to one and a half times the usual.
-                let linger = self.rules.wander_linger_secs * (0.5 + self.rng.f32());
+                // There: stand about a while, half to one and a half times the usual (more at work).
+                let linger = self.rules.wander_linger_secs * self.wander_stay[s] * (0.5 + self.rng.f32());
                 self.wander_wait[s] = self.tick + proto::rules::Rules::ticks(linger, self.tick_hz);
                 return (0, 0);
             }
         }
-        let _ = a;
         let home = self.home_of(s).and_then(|h| self.places.get(h)).map(|p| (p.x, p.y, p.r));
+        // A working day: to work by day (now and then an errand instead), to the square of an evening.
+        if let (Some(work), Some(_)) = (self.archs.get(a).and_then(|r| r.work), home) {
+            let errand = self.rng.f32() < 0.2;
+            match self.daypart {
+                DayPart::Dawn | DayPart::Day if work == Work::Streets && !errand => {
+                    if let Some((px, py)) = self.beat_spot(s) {
+                        return self.go_to(s, px, py, 1.0);
+                    }
+                }
+                DayPart::Dawn | DayPart::Day if !errand => {
+                    if let Some((wx, wy)) = self.work_of(s) {
+                        // About its stall, its nets or its rows: a step or two either way, then a long stay.
+                        let (ang, d) = (self.rng.f32() * std::f32::consts::TAU, 3.0 * self.rng.f32());
+                        let (px, py) = (wx + ang.cos() * d, wy + ang.sin() * d);
+                        let (px, py) = if self.world.blocked_by_walls(px, py, self.defs.entity_radius) { (wx, wy) } else { (px, py) };
+                        return self.go_to(s, px, py, 4.0);
+                    }
+                }
+                DayPart::Dusk if self.rng.f32() < 0.6 => {
+                    if let Some((px, py)) = self.square_spot(s) {
+                        return self.go_to(s, px, py, 3.0);
+                    }
+                }
+                _ => {}
+            }
+        }
         // Now and then a townsperson calls at a neighbour's door rather than a spot in the street.
         if home.is_some() && self.rng.f32() < 0.3 {
             if let Some((px, py)) = self.neighbour_door(s) {
-                self.wander_to[s] = (px, py);
-                let speed = (self.ents.speed[s] * self.defs.move_speed).max(0.5);
-                let secs = ((px - x).hypot(py - y) / speed * 2.0 + 5.0).min(120.0);
-                self.wander_by[s] = self.tick + (secs * hz as f32) as u32;
-                return self.toward_static(s, px, py, 1.5);
+                return self.go_to(s, px, py, 1.0);
             }
         }
         let (cx, cy, r) = home.unwrap_or((x, y, self.rules.wander_range.max(SPOT)));
@@ -1343,25 +1403,69 @@ impl Sim {
             if px < 1.0 || py < 1.0 || px > size - 1.0 || py > size - 1.0 || self.world.blocked_by_walls(px, py, self.defs.entity_radius) {
                 continue;
             }
-            self.wander_to[s] = (px, py);
-            // Long enough to walk there at its pace, with room for going round things.
-            let speed = (self.ents.speed[s] * self.defs.move_speed).max(0.5);
-            let secs = ((px - x).hypot(py - y) / speed * 2.0 + 5.0).min(120.0);
-            self.wander_by[s] = self.tick + (secs * hz as f32) as u32;
-            return self.toward_static(s, px, py, 1.5);
+            return self.go_to(s, px, py, 1.0);
         }
         (0, 0)
     }
 
+    /// Set a wandering bot off to (px, py), to stay `stay` times the usual once there: long enough to walk there at
+    /// its pace, with room for going round things.
+    fn go_to(&mut self, s: usize, px: f32, py: f32, stay: f32) -> (i8, i8) {
+        let (x, y) = (self.ents.x[s], self.ents.y[s]);
+        self.wander_to[s] = (px, py);
+        self.wander_stay[s] = stay;
+        let speed = (self.ents.speed[s] * self.defs.move_speed).max(0.5);
+        let secs = ((px - x).hypot(py - y) / speed * 2.0 + 5.0).min(120.0);
+        self.wander_by[s] = self.tick + (secs * self.tick_hz.max(1) as f32) as u32;
+        self.toward_static(s, px, py, 1.5)
+    }
+
     /// A bot's given name, if its type has names (`Archetype::names`): the same one for as long as it holds its slot.
     pub fn given_name(&self, slot: usize) -> Option<&str> {
-        let names = &self.archs.get(self.ents.arch[slot] as usize)?.names;
-        if names.is_empty() || self.ents.owner[slot] != NONE {
+        if self.ents.owner[slot] != NONE {
             return None;
         }
-        // By slot: bots of a type are spawned side by side, so they get different names, and one that falls and
-        // comes back in its slot keeps its own.
-        Some(names[slot % names.len()].as_str())
+        self.given[slot].as_deref()
+    }
+
+    /// Name the bot in `slot` from its type's `names` and `surnames`: a pairing no other bot in the world has while
+    /// one is left, kept while it holds the slot (one that falls and comes back is still itself).
+    pub(crate) fn give_name(&mut self, s: usize) {
+        self.given[s] = None;
+        let Some(a) = self.archs.get(self.ents.arch[s] as usize).filter(|_| self.ents.owner[s] == NONE) else { return };
+        if a.names.is_empty() {
+            return;
+        }
+        let (n, m) = (a.names.len(), a.surnames.len().max(1));
+        let make = |k: usize| -> String {
+            let first = &a.names[k % n];
+            match a.surnames.get(k / n) {
+                Some(last) if !first.contains(' ') => format!("{first} {last}"),
+                _ => first.clone(),
+            }
+        };
+        let taken: std::collections::HashSet<&str> =
+            (0..self.ents.high).filter(|&t| t != s && self.ents.alive[t]).filter_map(|t| self.given[t].as_deref()).collect();
+        // From a random start through every pairing, so the first free one is as likely as any.
+        let start = self.rng.below((n * m) as u32) as usize;
+        let name = (0..n * m).map(|k| make((start + k) % (n * m))).find(|t| !taken.contains(t.as_str())).unwrap_or_else(|| make(start));
+        self.given[s] = Some(name.into());
+    }
+
+    /// The game file changed: a bot whose name its type no longer gives is named again.
+    pub(crate) fn rename_bots(&mut self) {
+        for s in 0..self.ents.high {
+            if !self.ents.alive[s] || self.ents.owner[s] != NONE {
+                continue;
+            }
+            let Some(a) = self.archs.get(self.ents.arch[s] as usize) else { continue };
+            let fits = self.given[s].as_deref().map_or(a.names.is_empty(), |g| {
+                a.names.iter().any(|f| g == f || g.strip_prefix(f.as_str()).and_then(|r| r.strip_prefix(' ')).is_some_and(|l| a.surnames.iter().any(|x| x == l)))
+            });
+            if !fits {
+                self.give_name(s);
+            }
+        }
     }
 
     /// What a player calls the bot in `slot` in a line: "Bridget the Seed Trader", or "the Seed Trader".
@@ -1650,6 +1754,9 @@ impl Sim {
                 continue;
             }
             self.nav_goal[s].2 = -1.0;
+            if self.town_steer(s) {
+                continue;
+            }
             let a = self.ents.arch[s];
             if self.archs.get(a as usize).is_some_and(|r| !r.rules.is_empty()) && self.run_rules(s, a as usize) {
                 continue;
@@ -1666,6 +1773,22 @@ impl Sim {
             };
             let wants_target = matches!(behaviour, Behaviour::Chase | Behaviour::Flee) || attack.is_some();
             let mut near: Option<(f32, usize)> = None;
+            // A beast strayed past its leash goes back to its own ground rather than on after anything.
+            if behaviour == Behaviour::Chase && self.foe[s].is_none() {
+                if let Some(h) = self.home_of(s) {
+                    let (px, py, pr) = (self.places[h].x, self.places[h].y, self.places[h].r);
+                    let leash = pr + self.archs[a as usize].leash.max(proto::game::MIN_LEASH);
+                    if (self.ents.x[s] - px).powi(2) + (self.ents.y[s] - py).powi(2) > leash * leash {
+                        let d = self.toward_static(s, px, py, pr * 0.5);
+                        (self.ents.dir_x[s], self.ents.dir_y[s]) = d;
+                        continue;
+                    }
+                }
+            }
+            // What a hunter hunts: players, and among bots only those that cannot fight back, out of town.
+            let hunter = behaviour == Behaviour::Chase;
+            let towns = &self.towns;
+            let armed = &self.armed;
             if wants_target {
                 let reach = sight.max(attack_range);
                 let (x, y) = (self.ents.x[s], self.ents.y[s]);
@@ -1676,8 +1799,14 @@ impl Sim {
                 let sheltered = &self.sheltered;
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
-                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] {
-                        return; // its own kind, in another phase (a dungeon's copy) it cannot meet, or under a roof
+                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] || e.hidden[t] {
+                        return; // its own kind, in another phase (a dungeon's copy) it cannot meet, under a roof or indoors
+                    }
+                    if hunter && e.owner[t] >= DRIVEN {
+                        let in_town = towns.iter().any(|&(tx, ty, r2)| (e.x[t] - tx).powi(2) + (e.y[t] - ty).powi(2) <= r2);
+                        if in_town || armed.get(e.arch[t] as usize).copied().unwrap_or(false) {
+                            return;
+                        }
                     }
                     let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                     let d2 = dx * dx + dy * dy;
@@ -1720,7 +1849,10 @@ impl Sim {
             };
             self.ents.dir_x[s] = dx;
             self.ents.dir_y[s] = dy;
-            if let (Some(act), Some((d2, t))) = (attack, near) {
+            // A hunter strikes what it hunts; any other armed bot only what it is in a fight with, so the watch
+            // walking a busy street does not cut down the passers-by.
+            let strike = if behaviour == Behaviour::Chase { near } else { foe };
+            if let (Some(act), Some((d2, t))) = (attack, strike) {
                 if d2 <= attack_range * attack_range {
                     self.npc_actions.push(PendingAction { slot: s, action: act, target: self.ents.id_of(t), arg: 0 });
                 }
@@ -2297,6 +2429,7 @@ impl Sim {
                     if self.is_bot(s) {
                         self.credit(s);
                         self.loot_from(s);
+                        self.drop_purse(s);
                     }
                     self.end_encounters(s); // whoever falls, the fight is over
                     if self.ents.fleeting[s] {
@@ -2320,14 +2453,15 @@ impl Sim {
         }
     }
 
-    /// A fallen bot comes back, whole: anywhere free, in its home place or where it fell, as its type says.
+    /// A fallen bot comes back, whole: anywhere free, in its home place or where it fell, as its type says. One
+    /// with a home that may come back anywhere comes back there: a townsperson is not reborn in the wilds.
     fn bring_back(&mut self, s: usize) {
         use proto::game::RespawnAt;
         let r = self.defs.entity_radius;
         let arch = self.archs.get(self.ents.arch[s] as usize).map(|a| (a.respawn_at, self.home_for(self.ents.arch[s], s).or(a.home)));
         let (x, y) = match arch {
             Some((RespawnAt::Here, _)) => (self.ents.x[s], self.ents.y[s]),
-            Some((RespawnAt::Home, Some(h))) => self.spawn_point(Some(h), r),
+            Some((RespawnAt::Home | RespawnAt::Anywhere, Some(h))) => self.spawn_point(Some(h), r),
             _ => self.world.random_spawn(&mut self.rng, r),
         };
         let e = &mut self.ents;
@@ -3158,8 +3292,11 @@ mod tests {
             name: name.into(),
             title: String::new(),
             names: vec![],
+            surnames: vec![],
             homes: vec![],
             ambush: false,
+            work: None,
+            thief: false,
             color: "#112233".into(),
             count: 0,
             behaviour,
@@ -3325,6 +3462,84 @@ mod tests {
         assert_eq!(&*s.feed_name(t), format!("Trader|{g}"));
         assert_eq!(s.called(t), format!("{g} the Trader"));
         assert_eq!((&*s.feed_name(w), s.called(w).as_str()), ("Wolf", "the Wolf"));
+    }
+
+    #[test]
+    fn named_bots_each_get_a_first_name_and_surname_no_one_else_has() {
+        let mut s = sim_with(|g| {
+            let mut a = arch("villager", Behaviour::Idle, vec![]);
+            (a.names, a.surnames) = (vec!["Mary".into(), "Brother Aidan".into(), "John".into()], vec!["Byrne".into(), "Walsh".into()]);
+            let mut b = a.clone();
+            b.name = "farmer".into();
+            g.archetypes = vec![a, b];
+        });
+        let bots: Vec<usize> = (0..5).map(|k| s.spawn_as(NONE, (k % 2) as u8, Some((100.0 + k as f32 * 3.0, 100.0))).unwrap()).collect();
+        let names: Vec<String> = bots.iter().map(|&b| s.given_name(b).unwrap().to_string()).collect();
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 5, "no two alike, across types too: {names:?}");
+        assert!(names.iter().all(|n| n == "Brother Aidan" || n.split(' ').count() == 2), "a surname unless the name stands alone: {names:?}");
+        // A name the type no longer gives is replaced; one it still gives is kept.
+        let keep = s.given_name(bots[0]).unwrap().to_string();
+        s.rename_bots();
+        assert_eq!(s.given_name(bots[0]), Some(keep.as_str()));
+        s.archs[0].names = vec!["Kate".into()];
+        s.archs[0].surnames = vec![];
+        s.rename_bots();
+        assert_eq!(s.given_name(bots[0]), Some("Kate"));
+    }
+
+    #[test]
+    fn a_beast_hunts_the_unarmed_out_of_town_but_not_in_it_and_goes_home_past_its_leash() {
+        let mut s = sim_with(|g| {
+            for (name, x) in [("den", 100.0), ("town", 400.0)] {
+                g.places.push(Place { name: name.into(), x, y: 300.0, r: 30.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false });
+            }
+            let mut wolf = arch("wolf", Behaviour::Chase, vec![]);
+            (wolf.home, wolf.sight, wolf.attack, wolf.leash) = (Some("den".into()), 60.0, Some(g.actions[0].name.clone()), 100.0);
+            let sheep = arch("sheep", Behaviour::Idle, vec![]);
+            let mut guard = arch("guard", Behaviour::Idle, vec![]);
+            guard.attack = Some(g.actions[0].name.clone());
+            g.archetypes = vec![wolf, sheep, guard];
+        });
+        s.terrain.houses = std::sync::Arc::new(vec![proto::world::Aabb { x0: 395.0, y0: 310.0, x1: 405.0, y1: 320.0 }]);
+        s.find_towns();
+        let wolf = s.spawn_as(NONE, 0, Some((150.0, 300.0))).unwrap();
+        let guard = s.spawn_as(NONE, 2, Some((150.0, 320.0))).unwrap();
+        let sheep = s.spawn_as(NONE, 1, Some((150.0, 340.0))).unwrap();
+        run(&mut s, 40);
+        assert!(s.ents.y[wolf] > 310.0, "after the sheep, past the guard: {}", s.ents.y[wolf]);
+        // A sheep in town is safe from it.
+        place(&mut s, sheep, 400.0, 300.0);
+        place(&mut s, wolf, 350.0, 300.0);
+        place(&mut s, guard, 150.0, 300.0);
+        run(&mut s, 40);
+        assert!((s.ents.x[sheep] - s.ents.x[wolf]).abs() > 20.0, "it does not follow into town: wolf at {}", s.ents.x[wolf]);
+        // Strayed past its leash (30 + 100 from the den), it heads home.
+        place(&mut s, sheep, 500.0, 500.0);
+        place(&mut s, wolf, 300.0, 300.0);
+        run(&mut s, 40);
+        assert!(s.ents.x[wolf] < 290.0, "back towards the den: {}", s.ents.x[wolf]);
+    }
+
+    #[test]
+    fn an_armed_bot_that_only_wanders_does_not_strike_whoever_walks_past() {
+        let mut s = sim_with(|g| {
+            let mut watch = arch("watch", Behaviour::Wander, vec![]);
+            watch.attack = Some(g.actions[0].name.clone());
+            g.archetypes = vec![watch, arch("folk", Behaviour::Idle, vec![])];
+        });
+        let w = s.spawn_as(NONE, 0, Some((200.0, 200.0))).unwrap();
+        let f = s.spawn_as(NONE, 1, Some((202.0, 200.0))).unwrap();
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 200.0, 202.0);
+        for _ in 0..60 {
+            (s.ents.x[w], s.ents.y[w]) = (200.0, 200.0);
+            s.step(&[]);
+        }
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][f], s.defs.attrs[ATTR_HEALTH as usize].max, "the passer-by is untouched");
+        assert_eq!(s.ents.attrs[ATTR_HEALTH as usize][p], s.defs.attrs[ATTR_HEALTH as usize].max, "and so is the player");
     }
 
     #[test]
