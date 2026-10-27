@@ -1713,7 +1713,9 @@ fn the_c_client_draws_smooth_motion_between_snapshots() {
     let (srv, web) = start_web(&[]);
     let c = ffi::connect(srv.udp.port(), &play_info(web), None);
     assert!(frames(&c, 5, |c| ffi::me(c).is_some()));
-    unsafe { mmo_client::mmo_set_move(c.0, 1, 0) };
+    // Players spawn anywhere: walk away from the nearer side wall, so there is room to walk.
+    let east = ffi::me(&c).unwrap().x < 256.0;
+    unsafe { mmo_client::mmo_set_move(c.0, if east { 1 } else { -1 }, 0) };
     // Let the character get going, then watch 60 fps frames: a client that only moved on
     // snapshots (20 per second) would change position on one frame in three.
     frames(&c, 1, |_| false);
@@ -1724,8 +1726,8 @@ fn the_c_client_draws_smooth_motion_between_snapshots() {
         unsafe { mmo_client::mmo_poll(c.0) };
         let e = ffi::me(&c).unwrap();
         let d = (e.x - last.x).hypot(e.y - last.y);
-        if e.x >= 480.0 {
-            break; // walked into the east wall
+        if (east && e.x >= 480.0) || (!east && e.x <= 32.0) {
+            break; // walked into the side wall
         }
         n += 1;
         still += (d < 1e-4) as i32;

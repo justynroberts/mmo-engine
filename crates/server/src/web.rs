@@ -101,7 +101,7 @@ impl Gateway {
     pub fn names_changed(&self, sim: &crate::sim::Sim) {
         let slots: Vec<usize> = if sim.names_all { (0..sim.ents.high).collect() } else { sim.ents.renamed.iter().map(|&s| s as usize).collect() };
         let fresh: Vec<(usize, u32, Arc<str>)> =
-            slots.into_iter().filter(|&s| sim.ents.alive[s]).map(|s| (s, sim.ents.id_of(s), sim.name_of(s))).collect();
+            slots.into_iter().filter(|&s| sim.ents.alive[s]).map(|s| (s, sim.ents.id_of(s), sim.feed_name(s))).collect();
         if let Ok(mut t) = self.names.write() {
             if t.len() < sim.ents.cap() {
                 t.resize(sim.ents.cap(), (u32::MAX, Arc::from("")));

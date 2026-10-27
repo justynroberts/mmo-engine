@@ -1123,6 +1123,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.rules = game.rules;
         c.sim.starter = game.starter;
         c.sim.emotes = game.emotes;
+        c.sim.gods = game.gods;
         c.sim.levels = game.levels;
         // Quests are kept by name: everyone's are sent again, as indices may have moved.
         c.sim.quests = game.quests;

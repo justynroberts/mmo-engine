@@ -133,6 +133,7 @@ const RULE_FIELDS: [string, [keyof Rules, string][]][] = [
   ['Fights', [['sneak_sight', 'Sneak sight ×'], ['chase_give_up_secs', 'Chase gives up s'], ['pvp_quiet_secs', 'PvP calm s'], ['kill_credit_secs', 'Kill credit s']]],
   ['Falling', [['fall_xp_loss_pct', 'XP lost %'], ['fall_coin_loss_pct', 'Coin lost %'], ['fall_drop_pct', 'Bag dropped %'], ['rise_delay_secs', 'Rise after s']]],
   ['Hailing', [['hail_reach', 'Hail reach'], ['hail_secs', 'Stands for s']]],
+  ['Wandering', [['wander_linger_secs', 'Lingers s'], ['wander_range', 'Range (no home)'], ['remark_pause_secs', 'Stops to talk s']]],
   ['Company', [['party_size', 'Party size'], ['party_share_reach', 'Party XP reach'], ['quest_share_reach', 'Quest share reach'], ['guild_size', 'Guild size']]],
   ['Trade', [['trade_reach', 'Trade reach'], ['trade_break', 'Trade breaks at'], ['listing_hours', 'Listing hours'], ['listings_per_seller', 'Listings each']]],
 ]
@@ -946,6 +947,15 @@ export function BotsEditor({
               </label>
               <TextField label="Bot type" value={a.name} invalid={dup(a.name, i)} onCommit={(n) => setGame(renameArch(game, i, n))} className="flex-1" />
               <TextField label="Shown as" value={a.title ?? ''} onCommit={(t) => patch(i, { title: t.trim().slice(0, 32) || undefined })} className="w-32" />
+              <TextField
+                label="Given names"
+                value={(a.names ?? []).join(', ')}
+                onCommit={(t) => {
+                  const names = t.split(',').map((n) => n.trim().replace(/\|/g, '').slice(0, 20)).filter(Boolean).slice(0, 200)
+                  patch(i, { names: names.length ? names : undefined })
+                }}
+                className="w-48"
+              />
               <IconButton
                 label={`Delete bot type ${a.name}`}
                 onClick={() => setGame(removeArch(game, i))}

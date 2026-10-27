@@ -62,6 +62,12 @@ pub struct Rules {
     /// leave twice that reach). Only bots that do not fight stop: a trader, a farmer, a quest giver.
     pub hail_reach: f32,
     pub hail_secs: f32,
+    /// How a wandering bot spends its time: it walks to a spot in its home place (or within `wander_range` of
+    /// where it is, without one), lingers about `wander_linger_secs` (half to one and a half times), and picks
+    /// another. One that passes a remark to a player stands for `remark_pause_secs`.
+    pub wander_linger_secs: f32,
+    pub wander_range: f32,
+    pub remark_pause_secs: f32,
 }
 
 impl Default for Rules {
@@ -96,6 +102,9 @@ impl Default for Rules {
             rise_delay_secs: 0.0,
             hail_reach: 30.0,
             hail_secs: 30.0,
+            wander_linger_secs: 6.0,
+            wander_range: 30.0,
+            remark_pause_secs: 4.0,
         }
     }
 }
@@ -119,6 +128,7 @@ impl Rules {
             ("trade_break", self.trade_break),
             ("market_reach", self.market_reach),
             ("hail_reach", self.hail_reach),
+            ("wander_range", self.wander_range),
         ];
         for (name, v) in reaches {
             if !(v.is_finite() && (0.0..=10_000.0).contains(&v)) {
@@ -137,6 +147,8 @@ impl Rules {
             ("listing_hours", self.listing_hours),
             ("rise_delay_secs", self.rise_delay_secs),
             ("hail_secs", self.hail_secs),
+            ("wander_linger_secs", self.wander_linger_secs),
+            ("remark_pause_secs", self.remark_pause_secs),
         ];
         for (name, v) in secs {
             if !(v.is_finite() && (0.0..=86_400.0).contains(&v)) {

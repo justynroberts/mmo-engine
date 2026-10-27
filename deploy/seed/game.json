@@ -503,7 +503,7 @@
           "then": {
             "kind": "chat",
             "lines": [
-              "Dia dhuit, a stróinséir.",
+              "God be with you, stranger.",
               "Quiet night. Too quiet.",
               "Keep your blade sheathed in the town."
             ]
@@ -540,6 +540,16 @@
           "item": "luireach",
           "price": 40
         }
+      ],
+      "names": [
+        "Conor",
+        "Fergus",
+        "Brian",
+        "Niall",
+        "Donal",
+        "Rory",
+        "Cormac",
+        "Dermot"
       ]
     },
     {
@@ -655,7 +665,7 @@
           "then": {
             "kind": "chat",
             "lines": [
-              "Dia is Muire dhuit.",
+              "God and Mary be with you.",
               "Rain's good for the barley, they say.",
               "Mind where you step, the cows were through here.",
               "They say Norse longships were seen off Loch Garman.",
@@ -690,6 +700,24 @@
           "item": "siol cabaiste",
           "price": 2
         }
+      ],
+      "names": [
+        "Patrick",
+        "Mary",
+        "Michael",
+        "Bridget",
+        "John",
+        "Kathleen",
+        "Thomas",
+        "Margaret",
+        "James",
+        "Nora",
+        "Hugh",
+        "Ellen",
+        "Owen",
+        "Anne",
+        "Daniel",
+        "Rose"
       ]
     },
     {
@@ -804,7 +832,7 @@
           "then": {
             "kind": "chat",
             "lines": [
-              "Earraí breátha! Arán agus miodh!",
+              "Fine goods! Bread and mead!",
               "Best bread in Áth Cliath, and that's no lie.",
               "They say Norse longships were seen off Loch Garman.",
               "Something stirs under Brú na Bóinne at night.",
@@ -868,6 +896,13 @@
           "item": "siol cabaiste",
           "price": 2
         }
+      ],
+      "names": [
+        "Martin",
+        "Agnes",
+        "Peter",
+        "Alice",
+        "Richard"
       ]
     },
     {
@@ -983,7 +1018,7 @@
             "kind": "chat",
             "lines": [
               "The sheep know the way home better than I do.",
-              "Dia dhuit.",
+              "God be with you.",
               "They say Norse longships were seen off Loch Garman.",
               "Something stirs under Brú na Bóinne at night.",
               "The road south past Cill Dara is no place to be alone."
@@ -998,6 +1033,13 @@
           "min": 1,
           "max": 2
         }
+      ],
+      "names": [
+        "Colm",
+        "Jane",
+        "Kevin",
+        "Sarah",
+        "Liam"
       ]
     },
     {
@@ -1113,7 +1155,7 @@
             "kind": "chat",
             "lines": [
               "The catch is thin this week.",
-              "Dia dhuit, a chara.",
+              "God be with you, friend.",
               "They say Norse longships were seen off Loch Garman.",
               "Something stirs under Brú na Bóinne at night.",
               "The road south past Cill Dara is no place to be alone."
@@ -1138,6 +1180,13 @@
           "item": "miodh",
           "price": 2
         }
+      ],
+      "names": [
+        "Sean",
+        "Grace",
+        "Tom",
+        "Molly",
+        "Ned"
       ]
     },
     {
@@ -1252,7 +1301,7 @@
           "then": {
             "kind": "chat",
             "lines": [
-              "Beannacht Dé ort.",
+              "God's blessing on you.",
               "Peace be with you, traveller.",
               "Wolves in Coill na Mac Tíre, hungrier every winter.",
               "There's a fair in Áth Cliath when the week turns.",
@@ -1268,6 +1317,13 @@
           "min": 1,
           "max": 1
         }
+      ],
+      "names": [
+        "Brother Aidan",
+        "Brother Kieran",
+        "Brother Finian",
+        "Brother Columba",
+        "Brother Brendan"
       ]
     },
     {
@@ -1519,6 +1575,10 @@
           "min": 1,
           "max": 3
         }
+      ],
+      "names": [
+        "Simon",
+        "Henry"
       ]
     },
     {
@@ -1564,7 +1624,7 @@
             "lines": [
               "Barley for Cill Dara, and back with wool.",
               "This wheel wants mending.",
-              "Dia dhuit."
+              "God be with you."
             ]
           }
         },
@@ -1585,6 +1645,10 @@
           "min": 1,
           "max": 2
         }
+      ],
+      "names": [
+        "Barney",
+        "Francis"
       ]
     },
     {
@@ -1633,6 +1697,11 @@
             "route": "bothar na teamhrach"
           }
         }
+      ],
+      "names": [
+        "Edmund",
+        "Joan",
+        "Walter"
       ]
     },
     {
@@ -1657,7 +1726,7 @@
             "kind": "chat",
             "lines": [
               "To Cluain Mhic Nóis, God willing.",
-              "Beannacht ort, a chara."
+              "A blessing on you, friend."
             ]
           }
         },
@@ -1670,6 +1739,10 @@
             "route": "bothar chluain"
           }
         }
+      ],
+      "names": [
+        "Matthew",
+        "Cecily"
       ]
     },
     {
@@ -1718,7 +1791,11 @@
           }
         }
       ],
-      "level": 6
+      "level": 6,
+      "names": [
+        "William",
+        "Robert"
+      ]
     },
     {
       "name": "meirleach",
@@ -1831,15 +1908,19 @@
           "then": {
             "kind": "chat",
             "lines": [
-              "♪ Óró, sé do bheatha 'bhaile! ♪",
-              "♪ Siúil, a rún... ♪",
+              "♪ Oh-ro, welcome home! ♪",
+              "♪ Walk on, my love... ♪",
               "A tune for a penny, a jig for two!",
-              "♪ An raibh tú ag an gCarraig? ♪"
+              "♪ Were you at the Rock? ♪"
             ]
           }
         }
       ],
-      "lasts_secs": 1800
+      "lasts_secs": 1800,
+      "names": [
+        "Turlough",
+        "Eileen"
+      ]
     },
     {
       "name": "ceannai aonaigh",
@@ -1914,7 +1995,12 @@
           "price": 2
         }
       ],
-      "lasts_secs": 1800
+      "lasts_secs": 1800,
+      "names": [
+        "Kate",
+        "Jack",
+        "Moll"
+      ]
     },
     {
       "name": "sluagh mairseala",
@@ -6232,5 +6318,8 @@
       "at": "{name} laughs at {target}.",
       "anim": "Cheer"
     }
+  ],
+  "gods": [
+    "27e5f44f38eb50e5"
   ]
 }

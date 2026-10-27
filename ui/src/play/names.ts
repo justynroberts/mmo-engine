@@ -35,8 +35,11 @@ export class NameBook {
       const changed: number[] = []
       for (const [k, v] of Object.entries(got ?? {})) {
         const id = Number(k)
-        if (typeof v === 'string' && this.known.get(id) !== v) {
-          this.known.set(id, v)
+        // A bot with a name of its own comes as "Kind|Given" (the Godot client matches shops by kind); shown here
+        // as "Given the Kind".
+        const shown = typeof v === 'string' && v.includes('|') ? `${v.split('|')[1]} the ${v.split('|')[0]}` : v
+        if (typeof shown === 'string' && this.known.get(id) !== shown) {
+          this.known.set(id, shown)
           changed.push(id)
         }
       }

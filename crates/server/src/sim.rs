@@ -376,6 +376,8 @@ pub struct Sim {
     pub starter: Vec<(usize, u8)>,
     /// The game's emotes (`GameFile::emotes`, `social::emote`).
     pub emotes: Vec<proto::game::Emote>,
+    /// Account tags that may take god mode in game (`GameFile::gods`, `/god`).
+    pub gods: Vec<String>,
     /// The `lit` attribute, when the game has one (sneaking).
     lit_attr: Option<usize>,
     /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
@@ -418,6 +420,11 @@ pub struct Sim {
     pub hailed: Vec<(u32, u32)>,
     /// The tick before which a player is not told again why a block was refused (`build_action`).
     pub build_said: Vec<u32>,
+    /// A wandering bot's errand (`wander_dir`): the spot it is walking to (NaN for none), the tick it gives up
+    /// on reaching it, and the tick it lingers until once there.
+    pub wander_to: Vec<(f32, f32)>,
+    pub wander_by: Vec<u32>,
+    pub wander_wait: Vec<u32>,
     pub gear: Vec<[u8; proto::game::GEAR_SLOTS]>,
     pub mounted: Vec<f32>,
     pub gear_ver: Vec<u32>,
@@ -542,7 +549,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, emotes } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, emotes, gods } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -570,6 +577,7 @@ impl Sim {
             rules,
             starter,
             emotes,
+            gods,
             lit_attr: None,
             npc_say: Vec::new(),
             npc_chat: Vec::new(),
@@ -593,6 +601,9 @@ impl Sim {
             pose: vec![0; cap],
             hailed: vec![(0, 0); cap],
             build_said: vec![0; cap],
+            wander_to: vec![(f32::NAN, f32::NAN); cap],
+            wander_by: vec![0; cap],
+            wander_wait: vec![0; cap],
             gear: vec![[0; proto::game::GEAR_SLOTS]; cap],
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
@@ -731,6 +742,8 @@ impl Sim {
         e.renamed.push(slot as u32);
         e.live += 1;
         self.nav_goal[slot].2 = -1.0;
+        self.wander_to[slot] = (f32::NAN, f32::NAN);
+        self.wander_wait[slot] = 0;
         self.reset_attrs(slot);
         self.clear_inv(slot);
         self.reset_market(slot);
@@ -1267,19 +1280,77 @@ impl Sim {
     }
 
     /// Random-walk step, drifting back toward the home place when outside it.
+    /// Wandering with a purpose: walk to a spot in the home place (or within `rules.wander_range` of here,
+    /// without one), linger there a while, then pick another. Spots sit on a coarse grid so bots share flow
+    /// fields; one not reached in time is given up.
     fn wander_dir(&mut self, s: usize, a: usize) -> (i8, i8) {
-        if let Some(p) = self.archs.get(a).and_then(|r| r.home).and_then(|h| self.places.get(h)) {
-            let (dx, dy) = (p.x - self.ents.x[s], p.y - self.ents.y[s]);
-            if dx * dx + dy * dy > p.r * p.r {
-                let (px, py, pr) = (p.x, p.y, p.r);
-                return self.toward_static(s, px, py, pr);
+        const SPOT: f32 = 8.0;
+        let hz = self.tick_hz.max(1);
+        if self.tick < self.wander_wait[s] {
+            return (0, 0);
+        }
+        let (x, y) = (self.ents.x[s], self.ents.y[s]);
+        let (tx, ty) = self.wander_to[s];
+        if tx.is_finite() {
+            let arrived = (tx - x).powi(2) + (ty - y).powi(2) <= 2.5 * 2.5;
+            if !arrived && self.tick < self.wander_by[s] {
+                return self.toward_static(s, tx, ty, 1.5);
+            }
+            self.wander_to[s] = (f32::NAN, f32::NAN);
+            if arrived {
+                // There: stand about a while, half to one and a half times the usual.
+                let linger = self.rules.wander_linger_secs * (0.5 + self.rng.f32());
+                self.wander_wait[s] = self.tick + proto::rules::Rules::ticks(linger, self.tick_hz);
+                return (0, 0);
             }
         }
-        if self.rng.below(4) == 0 {
-            (0, 0)
-        } else {
-            const D: [i8; 3] = [-127, 0, 127];
-            (D[self.rng.below(3) as usize], D[self.rng.below(3) as usize])
+        let home = self.archs.get(a).and_then(|r| r.home).and_then(|h| self.places.get(h)).map(|p| (p.x, p.y, p.r));
+        let (cx, cy, r) = home.unwrap_or((x, y, self.rules.wander_range.max(SPOT)));
+        let r = r.max(SPOT);
+        let size = self.world.size;
+        for _ in 0..6 {
+            let (ang, d) = (self.rng.f32() * std::f32::consts::TAU, r * self.rng.f32().sqrt());
+            let (px, py) = (cx + ang.cos() * d, cy + ang.sin() * d);
+            let (px, py) = (((px / SPOT).floor() + 0.5) * SPOT, ((py / SPOT).floor() + 0.5) * SPOT);
+            if px < 1.0 || py < 1.0 || px > size - 1.0 || py > size - 1.0 || self.world.blocked_by_walls(px, py, self.defs.entity_radius) {
+                continue;
+            }
+            self.wander_to[s] = (px, py);
+            // Long enough to walk there at its pace, with room for going round things.
+            let speed = (self.ents.speed[s] * self.defs.move_speed).max(0.5);
+            let secs = ((px - x).hypot(py - y) / speed * 2.0 + 5.0).min(120.0);
+            self.wander_by[s] = self.tick + (secs * hz as f32) as u32;
+            return self.toward_static(s, px, py, 1.5);
+        }
+        (0, 0)
+    }
+
+    /// A bot's given name, if its type has names (`Archetype::names`): the same one for as long as it holds its slot.
+    pub fn given_name(&self, slot: usize) -> Option<&str> {
+        let names = &self.archs.get(self.ents.arch[slot] as usize)?.names;
+        if names.is_empty() || self.ents.owner[slot] != NONE {
+            return None;
+        }
+        // By slot: bots of a type are spawned side by side, so they get different names, and one that falls and
+        // comes back in its slot keeps its own.
+        Some(names[slot % names.len()].as_str())
+    }
+
+    /// What a player calls the bot in `slot` in a line: "Bridget the Seed Trader", or "the Seed Trader".
+    pub fn called(&self, slot: usize) -> String {
+        let kind = self.name_of(slot);
+        match self.given_name(slot) {
+            Some(g) => format!("{g} the {kind}"),
+            None => format!("the {kind}"),
+        }
+    }
+
+    /// The name the web feed (`/play/names`) gives clients: a bot with a given name as "Kind|Given", so a client
+    /// still finds shops and quest givers by kind; everyone else as `name_of`.
+    pub fn feed_name(&self, slot: usize) -> std::sync::Arc<str> {
+        match self.given_name(slot) {
+            Some(g) => format!("{}|{g}", self.name_of(slot)).into(),
+            None => self.name_of(slot),
         }
     }
 
@@ -1406,6 +1477,17 @@ impl Sim {
                         self.ents.say_at[s] = self.tick + self.tick_hz * (14 + self.rng.below(16));
                         let line = lines[self.rng.below(lines.len() as u32) as usize].clone();
                         self.npc_chat.push((s, line));
+                        // Said to someone: it stops a moment for the nearest player in earshot.
+                        let reach = self.rules.remark_reach * self.rules.remark_reach;
+                        let near = (0..self.ents.high)
+                            .filter(|&p| self.ents.alive[p] && self.ents.owner[p] < DRIVEN && !self.ents.fallen[p])
+                            .map(|p| ((self.ents.x[p] - x).powi(2) + (self.ents.y[p] - y).powi(2), p))
+                            .filter(|&(d2, _)| d2 <= reach)
+                            .min_by(|a, b| a.0.total_cmp(&b.0));
+                        if let Some((_, p)) = near {
+                            let secs = self.rules.remark_pause_secs;
+                            self.hold_for_secs(s, p, secs);
+                        }
                     }
                     continue;
                 }
@@ -3031,6 +3113,7 @@ mod tests {
         Archetype {
             name: name.into(),
             title: String::new(),
+            names: vec![],
             color: "#112233".into(),
             count: 0,
             behaviour,
@@ -3146,6 +3229,56 @@ mod tests {
             let d = (s.ents.x[sl] - 250.0).hypot(s.ents.y[sl] - 250.0);
             assert!(d < 15.0 + 10.0, "wandered {d} from home");
         }
+    }
+
+    #[test]
+    fn a_wanderer_walks_to_a_spot_and_stands_there_a_while_then_goes_on() {
+        let mut s = sim_with(|g| {
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false }];
+            let mut a = arch("w", Behaviour::Wander, vec![]);
+            a.home = Some("home".into());
+            g.archetypes = vec![a];
+            g.rules.wander_linger_secs = 4.0;
+        });
+        let b = s.spawn_as(NONE, 0, Some((250.0, 250.0))).unwrap();
+        // Over a minute it is either walking somewhere or standing still, not jittering: count the seconds of each
+        // and the times it set off again.
+        let (mut moving, mut still, mut starts, mut was_still) = (0, 0, 0, true);
+        for _ in 0..60 {
+            let at = (s.ents.x[b], s.ents.y[b]);
+            run(&mut s, 20);
+            let d = (s.ents.x[b] - at.0).hypot(s.ents.y[b] - at.1);
+            if d < 0.05 {
+                still += 1;
+                was_still = true;
+            } else {
+                moving += 1;
+                starts += was_still as u32;
+                was_still = false;
+            }
+            assert!((s.ents.x[b] - 250.0).hypot(s.ents.y[b] - 250.0) < 40.0 + 6.0, "it keeps to home");
+        }
+        assert!(still >= 8 && moving >= 8, "it walks and it lingers: {moving} s moving, {still} s still");
+        assert!(starts >= 2, "and sets off again after lingering: {starts}");
+    }
+
+    #[test]
+    fn a_bot_with_names_keeps_one_and_is_called_by_it() {
+        let mut s = sim_with(|g| {
+            let mut a = arch("ceannai", Behaviour::Idle, vec![]);
+            a.title = "Trader".into();
+            a.names = vec!["Bridget".into(), "Thomas".into()];
+            g.archetypes = vec![a, arch("wolf", Behaviour::Idle, vec![])];
+        });
+        let t = s.spawn_as(NONE, 0, Some((100.0, 100.0))).unwrap();
+        let w = s.spawn_as(NONE, 1, Some((120.0, 100.0))).unwrap();
+        let g = s.given_name(t).unwrap().to_string();
+        assert!(g == "Bridget" || g == "Thomas");
+        assert_eq!(s.given_name(t), Some(g.as_str()), "the same each time");
+        assert_eq!(&*s.name_of(t), "Trader", "shops and quests still know it by its kind");
+        assert_eq!(&*s.feed_name(t), format!("Trader|{g}"));
+        assert_eq!(s.called(t), format!("{g} the Trader"));
+        assert_eq!((&*s.feed_name(w), s.called(w).as_str()), ("Wolf", "the Wolf"));
     }
 
     #[test]

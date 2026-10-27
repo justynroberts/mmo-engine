@@ -433,6 +433,9 @@ pub struct Archetype {
     /// A loot table (`GameFile::loot`) rolled when it falls, on top of its `drops`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loot: Option<String>,
+    /// Given names for the bots of this type, one each ("Bridget" the Seed Trader): absent, they go by the type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<String>,
 }
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
@@ -527,6 +530,11 @@ pub struct GameFile {
     /// "/" commands that act something out for those nearby (`/wave`, `/bow Name`). Not in the content hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emotes: Vec<Emote>,
+    /// Players who may take god mode in the game (`/god`, the G key) by their account tag (`secure::account_tag`,
+    /// 16 hex digits): the identity key proves who they are, so no admin console has to be reachable. Not in the
+    /// content hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gods: Vec<String>,
 }
 
 /// An emote: `/cmd` says `text` to everyone in `say_reach`, or `at` when a name follows (`/wave Bob`); `{name}` is
@@ -1503,6 +1511,8 @@ pub struct ArchRt {
     pub faction: Option<usize>,
     /// Its loot table (`Realm::loot`).
     pub loot: Option<usize>,
+    /// `Archetype::names`.
+    pub names: Vec<String>,
 }
 
 impl ArchRt {
@@ -1573,6 +1583,7 @@ pub struct Game {
     /// The starter kit, as (item index, count).
     pub starter: Vec<(usize, u8)>,
     pub emotes: Vec<Emote>,
+    pub gods: Vec<String>,
 }
 
 /// Most walls a game file may place.
@@ -1631,6 +1642,7 @@ impl GameFile {
         let bot = |name: &str, color: &str, count, behaviour, speed_mult: f32, attack: Option<&str>| Archetype {
             name: name.into(),
             title: String::new(),
+            names: vec![],
             color: color.into(),
             count,
             behaviour,
@@ -1713,6 +1725,7 @@ impl GameFile {
             rules: Default::default(),
             starter: Vec::new(),
             emotes: Vec::new(),
+            gods: Vec::new(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -2057,8 +2070,16 @@ impl GameFile {
             if a.name.is_empty() || a.name.len() > 32 || !seen.insert(a.name.clone()) {
                 return Err(format!("archetype names must be unique, 1..32 characters ('{}')", a.name));
             }
-            if a.title.len() > 32 || a.title.trim() != a.title {
-                return Err(format!("{ctx}: a title is at most 32 characters, no leading or trailing spaces"));
+            if a.title.len() > 32 || a.title.trim() != a.title || a.title.contains('|') {
+                return Err(format!("{ctx}: a title is at most 32 characters, no leading or trailing spaces, no |"));
+            }
+            if a.names.len() > 200 {
+                return Err(format!("{ctx}: at most 200 names"));
+            }
+            for n in &a.names {
+                if n.trim().is_empty() || n.len() > 20 || n.trim() != n || n.contains('|') || n.chars().any(char::is_control) {
+                    return Err(format!("{ctx}: a name is 1..20 characters, no leading or trailing spaces, no | ('{n}')"));
+                }
             }
             if !(a.respawn_secs.is_finite() && (0.0..=86_400.0).contains(&a.respawn_secs)) {
                 return Err(format!("{ctx}: respawn_secs is 0..86400"));
@@ -2221,6 +2242,7 @@ impl GameFile {
                 reach,
                 name: a.name.clone(),
                 title: a.title.clone(),
+                names: a.names.clone(),
                 color: a.color.clone(),
                 count: a.count,
                 behaviour: a.behaviour,
@@ -2347,7 +2369,10 @@ impl GameFile {
                 return Err(format!("emotes: '/{}' needs a text (at most 100), an at line of at most 100 and a short anim", e.cmd));
             }
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, emotes: self.emotes.clone() })
+        if self.gods.len() > 50 || self.gods.iter().any(|t| t.len() != 16 || !t.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
+            return Err("gods: at most 50 account tags, each 16 lowercase hex digits".into());
+        }
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, emotes: self.emotes.clone(), gods: self.gods.clone() })
     }
 
     /// Factions: names unique, numbers in range, and what they hate there.

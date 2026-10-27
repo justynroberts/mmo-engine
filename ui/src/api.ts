@@ -328,6 +328,8 @@ export interface Archetype {
   name: string
   /** What players see it called (absent: its name, capitalised), e.g. "Trader". At most 32 characters. */
   title?: string
+  /** Given names, one for each bot of this type ("Bridget" the Trader); absent, they go by the type. */
+  names?: string[]
   color: string
   count: number
   behaviour: Behaviour
@@ -707,6 +709,11 @@ export interface Rules {
   /** How near you hail a bot (H), and how long one that does not fight then stands still for you. */
   hail_reach: number
   hail_secs: number
+  /** A wanderer walks to a spot in its home (or within wander_range without one), lingers about
+   * wander_linger_secs, and goes on; one that passes a remark to a player stands remark_pause_secs. */
+  wander_linger_secs: number
+  wander_range: number
+  remark_pause_secs: number
 }
 
 export const RULE_DEFAULTS: Rules = {
@@ -739,4 +746,7 @@ export const RULE_DEFAULTS: Rules = {
   rise_delay_secs: 0,
   hail_reach: 30,
   hail_secs: 30,
+  wander_linger_secs: 6,
+  wander_range: 30,
+  remark_pause_secs: 4,
 }

@@ -35,17 +35,28 @@ impl Sim {
             return true;
         }
         self.hold_for(t, s);
-        let who = self.archs[self.ents.arch[t] as usize].shown();
-        self.tells.push((s, format!("The {who} stops for you.")));
+        let who = self.called(t);
+        let mut c = who.chars();
+        let who: String = c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default();
+        self.tells.push((s, format!("{who} stops for you.")));
         true
     }
 
     /// Keep the bot in `t` standing for the player in `s` (`rules.hail_secs` from now).
     pub(crate) fn hold_for(&mut self, t: usize, s: usize) {
-        if !self.hailable(t) {
+        let secs = self.rules.hail_secs;
+        self.hold_for_secs(t, s, secs);
+    }
+
+    /// Keep the bot in `t` standing for the player in `s` for `secs`, unless it is held longer already.
+    pub(crate) fn hold_for_secs(&mut self, t: usize, s: usize, secs: f32) {
+        if !self.hailable(t) || secs <= 0.0 {
             return;
         }
-        self.hailed[t] = (self.ents.id_of(s), self.tick + proto::rules::Rules::ticks(self.rules.hail_secs, self.tick_hz));
+        let until = self.tick + proto::rules::Rules::ticks(secs, self.tick_hz);
+        if self.hailed[t].1 < until {
+            self.hailed[t] = (self.ents.id_of(s), until);
+        }
     }
 
     /// Each tick, after the bots decide: those held stand still, until the time is up or whoever hailed them

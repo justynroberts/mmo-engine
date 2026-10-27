@@ -139,6 +139,22 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             let line = sim.standing_line(slot);
             say(clients, slot, &line);
         }
+        // God mode for those the game file names (`GameFile::gods`), by the account their identity proves: "/god",
+        // "/god on", "/god off". Anyone else is told their tag, so it can be added.
+        "god" => {
+            let tag = sim.tag_of(slot).unwrap_or_default();
+            if tag.is_empty() || !sim.gods.contains(&tag) {
+                say(clients, slot, &format!("God mode is not yours here. Your account is {}.", if tag.is_empty() { "a guest" } else { tag.as_str() }));
+                return true;
+            }
+            let on = match rest.trim() {
+                "on" => true,
+                "off" => false,
+                _ => !sim.ents.god[slot],
+            };
+            sim.set_god(slot, on);
+            say(clients, slot, if on { "God mode on: you cannot die and never run out of energy." } else { "God mode off." });
+        }
         "who" => {
             let mut names: Vec<String> = (0..sim.ents.high)
                 .filter(|&s| sim.ents.alive[s] && sim.ents.owner[s] < DRIVEN)

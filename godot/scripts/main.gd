@@ -13,6 +13,7 @@ const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
 const SoundScript := preload("res://scripts/sound.gd")
 const JoinScript := preload("res://scripts/join.gd")
+const BubblesScript := preload("res://scripts/bubbles.gd")
 const SpellFx := preload("res://scripts/spellfx.gd")
 const JournalScript := preload("res://scripts/journal.gd")
 const QuestsScript := preload("res://scripts/quests.gd")
@@ -211,7 +212,9 @@ var _break_sent := {}                   # cell -> when we broke it, so it crumbl
 var _debris: Array = []                 # flying pieces: {node, vel, spin, life, age, floor}
 var crumbled := 0                       # blocks seen to crumble (the smoke test checks it)
 # Names: the web gateway's /play/names, asked for the ids we do not know yet and refreshed now and then (players rename).
-var names := {}           # entity id -> name
+var names := {}           # entity id -> name (a bot's kind, "Trader": what shops, quests and looks go by)
+var given := {}           # entity id -> a bot's own name ("Bridget"), for its nameplate and its words
+var bubbles: CanvasLayer  # speech bubbles over whoever speaks: scripts/bubbles.gd
 var _names_want := {}     # ids to ask about next
 var _names_busy := false
 var _names_poll := 0.0
@@ -299,6 +302,9 @@ func _ready() -> void:
 	journal.settings_requested.connect(func(): settingsui.open())
 	tutorial = TutorialScript.new()
 	add_child(tutorial)
+	bubbles = BubblesScript.new()
+	bubbles.cam = cam
+	add_child(bubbles)
 	fallen = FallenScript.new()
 	add_child(fallen)
 	fallen.rise.connect(func(): net.act(ACT_RISE, 0))
@@ -518,6 +524,12 @@ func _start() -> void:
 			auctionui.on_line(text)
 		elif from == 0:
 			hud.say("[color=#ffd27a]%s[/color]" % HudScript.esc(text))
+			if text.begins_with("God mode on"):
+				god = true
+				_notice(text)
+			elif text.begins_with("God mode off"):
+				god = false
+				_notice(text)
 			if channel == 3: # a banner: an event's news, across the screen too, with a horn
 				hud.announce(text)
 				sound.play("horn", -3.0, 0.0)
@@ -530,6 +542,7 @@ func _start() -> void:
 			hud.say("[color=#8fd3ff][lb]Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else HudScript.esc(_name(from)), HudScript.esc(text)])
 		elif channel == 7: # a passing remark: over their head, not in the chat
 			_bubble(from, text)
+			_turn_to_me(from)
 		elif channel == 11: # an emote: "anim|line", the line in the chat and the clip on whoever acts it
 			var parts := text.split("|", true, 1)
 			hud.say("[i][color=#d8c8a8]%s[/color][/i]" % HudScript.esc(parts[-1]))
@@ -539,8 +552,11 @@ func _start() -> void:
 		elif channel == 8: # guild chat
 			hud.say("[color=#7fe08a][lb]Guild] %s:[/color] %s" % ["You" if from == net.get_self_id() else HudScript.esc(_name(from)), HudScript.esc(text)])
 		else:
-			var who := "You" if from == net.get_self_id() else _name(from)
-			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [HudScript.esc(who), " shouts" if channel == 1 else "", HudScript.esc(text)]))
+			var who := "You" if from == net.get_self_id() else _called(from)
+			hud.say("[color=#9fe8e0]%s%s:[/color] %s" % [HudScript.esc(who), " shouts" if channel == 1 else "", HudScript.esc(text)])
+			_bubble(from, text, channel == 1)
+			if from != net.get_self_id() and not _players.has(from):
+				_turn_to_me(from))
 	var id := _identity()
 	my_identity = id
 	if _loading:
@@ -729,10 +745,10 @@ func _process(delta: float) -> void:
 		if not mine and node.has_node("tag"):
 			var label := node.get_node("tag") as Label3D
 			var nm := _name(id)
+			if given.has(id):
+				nm = "%s\n%s" % [given[id], nm] # a bot's own name over its kind
 			if e.has("level") and float(e["level"]) >= 1.0:
 				nm = "%s  %d" % [nm, int(round(float(e["level"])))] # their level beside their name
-			if info.get("shops") is Dictionary and (info["shops"] as Dictionary).has(_name(id)):
-				nm += "  · trader"
 			if label.text != nm:
 				label.text = nm
 		var unlit := has_lit and float(e.get("lit", 1.0)) < 0.5
@@ -1010,7 +1026,13 @@ func _poll_names(delta: float, list: Array) -> void:
 	var got = JSON.parse_string(text) if text != "" else null
 	if got is Dictionary:
 		for k in got:
-			names[int(k)] = String(got[k])
+			# A bot with a name of its own comes as "Kind|Given": the kind is what everything matches on.
+			var parts := String(got[k]).split("|", true, 1)
+			names[int(k)] = parts[0]
+			if parts.size() == 2:
+				given[int(k)] = parts[1]
+			else:
+				given.erase(int(k))
 
 # ---------------------------------------------------------------- walls by tile
 
@@ -2699,32 +2721,23 @@ func _fire_node() -> Node3D:
 	return n
 
 ## A passing remark over someone's head, for a few seconds (chat channel 7).
-func _bubble(id: int, text: String) -> void:
-	if not ents.has(id):
-		return
-	var node: Node3D = ents[id]
-	var old := node.get_node_or_null("bubble")
-	if old:
-		old.queue_free()
-	var b := Label3D.new()
-	b.name = "bubble"
-	b.text = text
-	b.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	b.pixel_size = 0.009
-	b.font_size = 28
-	b.font = HudScript.BODY
-	b.outline_size = 10
-	b.outline_modulate = Color(0, 0, 0, 0.85)
-	b.modulate = Color("fff4d6")
-	b.width = 520.0
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	b.no_depth_test = true
-	b.position.y = 3.7
-	node.add_child(b)
-	var tw := b.create_tween()
-	tw.tween_interval(5.0)
-	tw.tween_property(b, "modulate:a", 0.0, 0.8)
-	tw.tween_callback(b.queue_free)
+## A speech bubble over whoever said `text` (scripts/bubbles.gd).
+func _bubble(id: int, text: String, shout := false) -> void:
+	if ents.has(id):
+		bubbles.say(id, ents[id], text, shout)
+
+## A bot that speaks while we stand near turns to face us (it stands a moment for us on the server, too).
+func _turn_to_me(id: int) -> void:
+	var me: Node3D = ents.get(net.get_self_id())
+	var them: Node3D = ents.get(id)
+	if me and them and me.position.distance_to(them.position) <= 12.0:
+		_face(them, me.position)
+		if track.has(id):
+			track[id]["face_until"] = t_total + 4.0
+
+## How a line names its speaker: a player by their name, a bot by its own name and kind ("Bridget the Trader").
+func _called(id: int) -> String:
+	return "%s the %s" % [given[id], _name(id)] if given.has(id) else _name(id)
 
 ## A plain low-poly horse, chestnut with a dark mane, facing -Z like the characters.
 func _make_horse() -> Node3D:
@@ -3103,13 +3116,17 @@ func _bars(e: Dictionary, mine: bool) -> Array:
 	return out
 
 ## God mode lives on the server (admin API, loopback only): your attributes are held at full every tick.
+## God mode: on a server on this machine through its admin API; anywhere else by asking the server ("/god"), which
+## grants it to the accounts its game file names and says so (the reply sets `god`, in the chat handler).
 func _toggle_god() -> void:
-	var code := await _post("http://%s/api/god" % args["admin"], {"id": net.get_self_id(), "on": not god})
-	if code == 200:
-		god = not god
-		_notice("God mode on: you cannot die and never run out of energy." if god else "God mode off.")
-	else:
-		_notice("God mode needs the server's admin API on this machine (--admin %s did not answer)." % args["admin"])
+	var host := String(args.get("host", ""))
+	if host == "127.0.0.1" or host == "localhost":
+		var code := await _post("http://%s/api/god" % args["admin"], {"id": net.get_self_id(), "on": not god})
+		if code == 200:
+			god = not god
+			_notice("God mode on: you cannot die and never run out of energy." if god else "God mode off.")
+			return
+	net.say("/god %s" % ("off" if god else "on"), false)
 
 func _cycle_target() -> void:
 	var best := 0
