@@ -1,7 +1,8 @@
 import type { Daylight } from './daylight'
 export type Behaviour = 'idle' | 'wander' | 'chase' | 'flee'
 /** Where a townsperson works by day (Archetype.work), found round its home in the world file. */
-export type Work = 'square' | 'water' | 'fields' | 'streets'
+export type Work = 'square' | 'water' | 'fields' | 'streets' | 'play'
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
 export type Who = 'self' | 'target'
 
 export interface AttrFile {
@@ -336,6 +337,12 @@ export interface Archetype {
   surnames?: string[]
   /** A cutpurse: lifts coin from those it stands beside (rules.lift_pct), runs from the watch, drops it when it falls. */
   thief?: boolean
+  /** A dog: keeps at the heel of one of the townsfolk, waits at their door, barks at strangers and runs at a cutpurse. */
+  pet?: boolean
+  /** A farm beast that strays: townsfolk ask a player to find it and lead it home (rules.plea_pct). */
+  stray?: boolean
+  /** Tends the sick while a plague is in town (a plague doctor). */
+  healer?: boolean
   /** More places it lives in besides home: its bots are shared out over all of them. */
   homes?: string[]
   /** It comes for players out in the dark (rules.night_ambush_pct), and is gone by day. */
@@ -414,11 +421,17 @@ export type Step =
   | { kind: 'wait'; secs: number }
   | { kind: 'defeat'; within_secs: number }
   | { kind: 'reward'; item: string; count: number; everyone?: boolean }
+  /** The event's town comes out to its square (a market, a feast, a wedding): lines of `occasion`, maybe dancing. */
+  | { kind: 'gather'; secs: number; occasion: string; announce?: string | null; dance?: boolean }
+  /** The sickness comes to the event's town: `first` fall ill, it spreads to those close by (spread_pct a minute),
+   * and deaths_pct of townsfolk cases end in death. Shops shut while it lasts; a healing draught cures. */
+  | { kind: 'plague'; secs: number; spread_pct: number; deaths_pct: number; first: number }
 export type DayPart = 'dawn' | 'day' | 'dusk' | 'night'
 /** What starts an event on its own, besides its timer. */
 export type When =
   | { kind: 'players'; count: number }
   | { kind: 'time'; at: DayPart }
+  | { kind: 'season'; is: Season }
   | { kind: 'after'; event: string; outcome?: 'success' | 'failure' | 'either' }
 /** A weather that stays over one place: drawn as mist there, in effect only inside. */
 export interface WeatherZone {
@@ -439,6 +452,8 @@ export interface EventDef {
   place?: string | null
   /** Longest it may run before it has failed; 0 for no limit. */
   limit_secs?: number
+  /** It comes to a town picked each time (one with players at it first), not to `place`. */
+  roams?: boolean
   steps: Step[]
   /** What happens instead if it fails. */
   fail_steps?: Step[]
@@ -505,6 +520,10 @@ export interface GameFile {
   starter?: { item: string; count?: number }[]
   /** "/" commands that act something out nearby. Not in the hash. */
   emotes?: Emote[]
+  /** What townsfolk say, by occasion (insult, cry, greet_new, greet_known, hurt, night, rain, rich, news_theft,
+   * news_caught, news_brawl, news_ambush, news_fell, news_level, ...): any occasion named replaces its default lines.
+   * Lines may hold {name}, {who}, {other}, {place} and {greeting}. Applies live. */
+  talk?: Record<string, string[]>
   factions?: FactionFile[]
   /** Loot tables, crafting, farming, land and dungeons. All apply live. */
   loot?: LootTable[]
@@ -736,6 +755,14 @@ export interface Rules {
    * second that a cutpurse beside someone lifts their purse. */
   brawl_pct: number
   lift_pct: number
+  /** Of an evening a townsperson goes to the inn with inn_pct percent; one killed is replaced by a newcomer
+   * newcomer_secs on (0: they come back themselves); plea_pct a minute, one with trouble near asks a player for help. */
+  inn_pct: number
+  newcomer_secs: number
+  plea_pct: number
+  /** Game days to a season (0: no seasons), and days the year is shifted on. */
+  season_days: number
+  season_shift: number
 }
 
 export const RULE_DEFAULTS: Rules = {
@@ -776,4 +803,9 @@ export const RULE_DEFAULTS: Rules = {
   night_pack: 2,
   brawl_pct: 0,
   lift_pct: 0,
+  inn_pct: 0,
+  newcomer_secs: 0,
+  plea_pct: 0,
+  season_days: 0,
+  season_shift: 0,
 }

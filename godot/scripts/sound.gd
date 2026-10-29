@@ -11,11 +11,11 @@ extends Node
 ## silence for the quieter moods; a change of mood crosses over.
 
 const AMBIENCE := ["sea", "shore", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy",
-	"battle"]
+	"battle", "tavern", "fair"]
 const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city"]
 ## How loud each layer is at full strength, in dB, so they sit together.
 const AMB_DB := {"sea": -11.0, "shore": -10.0, "river": -12.0, "forest": -9.0, "night": -8.0, "wind": -16.0, "rain": -10.0,
-	"fire": -6.0, "town": -15.0, "market": -11.0, "crypt": -5.0, "holy": -9.0, "battle": -10.0}
+	"fire": -6.0, "town": -15.0, "market": -11.0, "crypt": -5.0, "holy": -9.0, "battle": -10.0, "tavern": -9.0, "fair": -7.0}
 const MUSIC_DB := -13.0
 ## Moods that play louder (or softer) than MUSIC_DB, in dB: a fight should be heard over the din.
 const MUSIC_MOOD_DB := {"battle": 6.0}
@@ -79,6 +79,8 @@ var _inc_off := INF        # seconds since `incidental` was last set
 var _inc_last := ""        # the one played last, not picked twice running when there is a choice
 var _inc_again := -1.0     # seconds before the smith's next burst (-1: none pending)
 var _inc_bus := 0
+var log_heard := false     # count what would be heard, even muted (the screenshot run reports it)
+var heard := {}            # effect or "amb_<incidental>" -> times; "~<ambience>" -> the most it was wanted
 
 func _ready() -> void:
 	for n in AMBIENCE:
@@ -142,6 +144,10 @@ func cycle() -> String:
 
 func _process(delta: float) -> void:
 	var quiet := mode == 2
+	if log_heard:
+		for n in want:
+			if float(want[n]) > 0.05:
+				heard["~" + n] = snappedf(maxf(float(heard.get("~" + n, 0.0)), float(want[n])), 0.01)
 	for n in AMBIENCE:
 		var target: float = 0.0 if quiet else clampf(float(want.get(n, 0.0)), 0.0, 1.0)
 		var v: float = _vol[n]
@@ -160,7 +166,7 @@ func _process(delta: float) -> void:
 	_incidental_step(delta)
 
 func _incidental_step(delta: float) -> void:
-	if mode == 2:
+	if mode == 2 and not log_heard:
 		if _inc.playing:
 			_inc.stop()
 		_inc_again = -1.0
@@ -217,7 +223,11 @@ func _incidental_play(what: String, bus: int, db: float) -> void:
 	var s := _take("amb_" + what)
 	if s == null:
 		return
+	if log_heard:
+		heard["amb_" + what] = int(heard.get("amb_" + what, 0)) + 1
 	_inc_last = what
+	if mode == 2:
+		return
 	_inc_bus = bus
 	_inc.stream = s
 	_inc.bus = _inc_buses[bus]
@@ -319,6 +329,8 @@ func _music_weight(path: String) -> float:
 
 ## Play an effect (a random take of it, if it has several) at `db` from its usual loudness, pitched a little at random.
 func play(name: String, db := 0.0, spread := 0.06) -> void:
+	if log_heard:
+		heard[name] = int(heard.get(name, 0)) + 1
 	if mode == 2:
 		return
 	var s := _take(name)

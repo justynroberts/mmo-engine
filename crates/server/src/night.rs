@@ -82,7 +82,7 @@ impl Sim {
             return;
         }
         self.ambushers.retain(|&id| self.ents.resolve(id).is_some());
-        let pct = self.rules.night_ambush_pct;
+        let pct = self.rules.night_ambush_pct * self.season_night();
         let kinds: Vec<u8> = self.archs.iter().enumerate().filter(|(_, a)| a.ambush).map(|(i, _)| i as u8).collect();
         if pct <= 0.0 || kinds.is_empty() {
             return;
@@ -122,6 +122,8 @@ impl Sim {
             }
             if came > 0 {
                 self.tells.push((p, "Something is moving out there in the dark.".into()));
+                let who = self.name_of(p).to_string();
+                self.tell_news("news_ambush", who, String::new(), px, py);
             }
         }
     }

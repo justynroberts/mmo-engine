@@ -60,6 +60,9 @@ pub struct Record {
     /// The side they joined (`/faction`), by name, empty for none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub faction: String,
+    /// How each town thinks of them, by place name (`repute.rs`; those at 0 left out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub towns: Vec<(String, i32)>,
 }
 
 fn is_zero(v: &u32) -> bool {

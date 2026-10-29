@@ -1,7 +1,7 @@
 import { CloudFog, CloudLightning, Crosshair, Lightning, Moon, Stop, Sun, SunHorizon } from '@phosphor-icons/react'
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { api, type DayPart, type DirectorState, type EventDef, type GameFile, type RunRow, type Step, type WeatherDef, type WeatherZone, type When } from '../api'
+import { api, type DayPart, type DirectorState, type EventDef, type GameFile, type RunRow, type Season, type Step, type WeatherDef, type WeatherZone, type When } from '../api'
 import { DEFAULT_DAYLIGHT, describe, moment, nightShare, phase, problem, type Daylight } from '../daylight'
 import {
   addEvent,
@@ -21,6 +21,7 @@ import {
   renameEvent,
   renameWeather,
   STEP_KINDS,
+  GATHER_OCCASIONS,
   WEATHER_PRESETS,
 } from '../directorEdit'
 import { clamp } from '../gameEdit'
@@ -343,13 +344,22 @@ function swap<T>(a: T[], i: number, j: number): T[] {
   return b
 }
 
-type Start = 'hand' | 'timer' | 'players' | 'time' | 'after'
+type Start = 'hand' | 'timer' | 'players' | 'time' | 'season' | 'after'
+/** The "Where" choice for an event that comes round the towns (`roams`). */
+const ROAMS = '*towns*'
 const START_OPTS: { value: Start; label: string }[] = [
   { value: 'hand', label: 'by hand' },
   { value: 'timer', label: 'on a timer' },
   { value: 'players', label: 'when players gather' },
   { value: 'time', label: 'at a time of day' },
+  { value: 'season', label: 'as a season comes' },
   { value: 'after', label: 'after another event' },
+]
+const SEASONS: { value: Season; label: string }[] = [
+  { value: 'spring', label: 'spring' },
+  { value: 'summer', label: 'summer' },
+  { value: 'autumn', label: 'autumn' },
+  { value: 'winter', label: 'winter' },
 ]
 const DAY_PARTS: { value: DayPart; label: string }[] = [
   { value: 'dawn', label: 'dawn (sunrise)' },
@@ -389,7 +399,15 @@ function EventEditor({
   const start: Start = e.when ? e.when.kind : e.every_secs > 0 ? 'timer' : 'hand'
   const setStart = (k: Start) => {
     const when: When | null =
-      k === 'players' ? { kind: 'players', count: 2 } : k === 'time' ? { kind: 'time', at: 'dusk' } : k === 'after' ? { kind: 'after', event: others[0] ?? '', outcome: 'success' } : null
+      k === 'players'
+        ? { kind: 'players', count: 2 }
+        : k === 'time'
+          ? { kind: 'time', at: 'dusk' }
+          : k === 'season'
+            ? { kind: 'season', is: 'winter' }
+            : k === 'after'
+              ? { kind: 'after', event: others[0] ?? '', outcome: 'success' }
+              : null
     set({ ...e, when, every_secs: k === 'timer' ? Math.max(e.every_secs, 300) : 0 })
   }
   const failing = (e.fail_steps?.length ?? 0) > 0 || (e.limit_secs ?? 0) > 0 || e.steps.some((s) => s.kind === 'defeat')
@@ -414,7 +432,16 @@ function EventEditor({
       </div>
       <div className="grid grid-cols-3 gap-2 pt-1">
         <SelectField label="Starts" value={start} options={START_OPTS.filter((o) => o.value !== 'after' || others.length > 0)} onChange={setStart} />
-        <SelectField label="Where" value={e.place ?? ''} options={withNone(lists.places, 'the whole world')} onChange={(place) => set({ ...e, place: place || null, steps: place ? e.steps : e.steps.map((s) => (s.kind === 'announce' ? { ...s, nearby: false } : s)) })} />
+        <SelectField
+          label="Where"
+          value={e.roams ? ROAMS : (e.place ?? '')}
+          options={[{ value: ROAMS, label: 'a town, a different one each time' }, ...withNone(lists.places, 'the whole world')]}
+          onChange={(place) =>
+            place === ROAMS
+              ? set({ ...e, roams: true, place: null })
+              : set({ ...e, roams: undefined, place: place || null, steps: place ? e.steps : e.steps.map((s) => (s.kind === 'announce' ? { ...s, nearby: false } : s)) })
+          }
+        />
         <NumField label="Time limit (s, 0 = none)" value={e.limit_secs ?? 0} onCommit={(n) => set({ ...e, limit_secs: clamp(Math.round(n), 0, 86400) })} />
       </div>
       <div className="grid grid-cols-3 gap-2 pt-1">
@@ -428,6 +455,7 @@ function EventEditor({
           <NumField label={e.place ? 'Players at the place' : 'Players online'} value={e.when.count} onCommit={(n) => set({ ...e, when: { kind: 'players', count: clamp(Math.round(n), 1, 10000) } })} />
         )}
         {e.when?.kind === 'time' && <SelectField label="At" value={e.when.at} options={DAY_PARTS} onChange={(at) => set({ ...e, when: { kind: 'time', at } })} />}
+        {e.when?.kind === 'season' && <SelectField label="As comes" value={e.when.is} options={SEASONS} onChange={(is) => set({ ...e, when: { kind: 'season', is } })} />}
         {e.when?.kind === 'after' && (
           <>
             <SelectField label="After" value={e.when.event} options={opts(others)} onChange={(event) => set({ ...e, when: { ...(e.when as Extract<When, { kind: 'after' }>), event } })} />
@@ -462,11 +490,11 @@ function EventEditor({
           'Not applied yet.'
         )}
       </p>
-      <StepList title={`Steps of ${e.name}`} steps={e.steps} game={game} lists={lists} local={!!e.place} min={1} onChange={(steps) => set({ ...e, steps })} />
+      <StepList title={`Steps of ${e.name}`} steps={e.steps} game={game} lists={lists} local={!!e.place || !!e.roams} min={1} onChange={(steps) => set({ ...e, steps })} />
       {failing ? (
         <div className="pt-2">
           <h3 className="lbl">If it fails (a wait to beat its bots, or the time limit, runs out)</h3>
-          <StepList title={`If ${e.name} fails`} steps={e.fail_steps ?? []} game={game} lists={lists} local={!!e.place} min={0} onChange={(fail_steps) => set({ ...e, fail_steps })} />
+          <StepList title={`If ${e.name} fails`} steps={e.fail_steps ?? []} game={game} lists={lists} local={!!e.place || !!e.roams} min={0} onChange={(fail_steps) => set({ ...e, fail_steps })} />
         </div>
       ) : null}
     </Strip>
@@ -571,6 +599,24 @@ function StepFields({ step, onChange, lists, local }: { step: Step; onChange: (s
           <SelectField label={step.everyone ? 'Give everyone online' : 'Give those who took part'} value={step.item} options={opts(items)} onChange={(item) => onChange({ ...step, item })} />
           <NumField label="How many" value={step.count} onCommit={(n) => onChange({ ...step, count: clamp(Math.round(n), 1, 255) })} />
           <Toggle label="Everyone" checked={!!step.everyone} onChange={(everyone) => onChange({ ...step, everyone })} />
+        </div>
+      )
+    case 'gather':
+      return (
+        <div className="grid grid-cols-[6rem_8rem_1fr_auto] gap-2 items-end">
+          <NumField label="For (s)" value={step.secs} onCommit={(n) => onChange({ ...step, secs: clamp(Math.round(n), 1, 86400) })} />
+          <SelectField label="They say" value={step.occasion} options={GATHER_OCCASIONS.map((o) => ({ value: o, label: o }))} onChange={(occasion) => onChange({ ...step, occasion })} />
+          <TextField label="Tell those nearby ({who}, {other}, {place})" value={step.announce ?? ''} onCommit={(t) => onChange({ ...step, announce: t.trim().slice(0, 120) || null })} />
+          <Toggle label="Dancing" checked={!!step.dance} onChange={(dance) => onChange({ ...step, dance })} />
+        </div>
+      )
+    case 'plague':
+      return (
+        <div className="grid grid-cols-4 gap-2 items-end">
+          <NumField label="For (s)" value={step.secs} onCommit={(n) => onChange({ ...step, secs: clamp(Math.round(n), 1, 86400) })} />
+          <NumField label="Fall ill first" value={step.first} onCommit={(n) => onChange({ ...step, first: clamp(Math.round(n), 1, 50) })} />
+          <NumField label="Spreads (% a minute)" value={step.spread_pct} onCommit={(n) => onChange({ ...step, spread_pct: clamp(n, 0, 100) })} />
+          <NumField label="Townsfolk die (%)" value={step.deaths_pct} onCommit={(n) => onChange({ ...step, deaths_pct: clamp(n, 0, 100) })} />
         </div>
       )
     case 'zone':

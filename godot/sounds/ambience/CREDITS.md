@@ -26,6 +26,8 @@ CC0 sources need no credit, but they are listed here too.
 | `crypt.ogg` (drone) | Dungeon Air | Flamiffer | <https://freesound.org/people/Flamiffer/sounds/530161/> | CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>) |
 | `holy.ogg` | R4_00197v2_FR_CatholicMonks.wav | kevp888 | <https://freesound.org/people/kevp888/sounds/575757/> | **CC-BY** 4.0 (<https://creativecommons.org/licenses/by/4.0/>) |
 | `battle.ogg` | Vikings in battle (swords crossing, shields bashing, men yelling) | DeadVDI | <https://freesound.org/people/DeadVDI/sounds/376646/> | CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>) |
+| `tavern.ogg` | IRISH PUB the cobblestone.WAV | traggeldy | <https://freesound.org/people/traggeldy/sounds/368830/> | CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>) |
+| `fair.ogg` | French Folk Dance.mp3 | DenisTr | <https://freesound.org/people/DenisTr/sounds/267912/> | CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>) |
 
 The Freesound files were taken from Freesound's high-quality previews (Ogg, 44.1/48 kHz) on 2026-10-25, with the
 licence checked on each sound's page.
@@ -52,3 +54,5 @@ stereo (quality 3).
 | `shore.ogg` | 18.0-117.75 s (95.75 s, cut at wave troughs) | 4 s | high-pass 25 Hz | -17.5 LUFS (quality 4) |
 | `sea.ogg` | the same recording, so the open sea is a soft rumble and the surf's hiss belongs to the shore layer | | low-pass 700-900 Hz | about -19 LUFS |
 | `battle.ogg` | 131-204 s (68 s), after the last edit in the source; low-passed at 3.2 kHz with a short echo and a compressor so it sounds distant | 5 s | high-pass 80 Hz | -20.1 LUFS |
+| `tavern.ogg` | 115-166 s (48 s), the stretch where the session's tune is clearest over the talk | 3 s | none | -20 LUFS |
+| `fair.ogg` | 0-39 s (36 s), musicians playing outdoors in Chinon | 3 s | none | -20 LUFS |

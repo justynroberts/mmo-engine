@@ -113,6 +113,16 @@ impl Daylight {
         }
     }
 
+    /// How many days have passed at `unix_ms` (with the fraction of today), for the seasons: a cycle counts its
+    /// own days, a clock the real ones, and a fixed moment is always day 0.
+    pub fn day(&self, unix_ms: f64) -> f64 {
+        match self {
+            Daylight::Cycle { day_minutes, offset, .. } => unix_ms / (day_minutes * 60_000.0) + offset,
+            Daylight::Clock { utc_offset_minutes, .. } => (unix_ms / 60_000.0 + *utc_offset_minutes as f64) / 1440.0,
+            Daylight::Fixed { .. } => 0.0,
+        }
+    }
+
     /// The same schedule moved so that it is `phase` at `unix_ms` (a cycle only; the others are what they are).
     pub fn set_phase(&mut self, unix_ms: f64, phase: f64) -> Result<(), String> {
         match self {

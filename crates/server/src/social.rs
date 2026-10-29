@@ -138,6 +138,8 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "rep" | "standing" | "reputation" => {
             let line = sim.standing_line(slot);
             say(clients, slot, &line);
+            let towns = sim.repute_line(slot);
+            say(clients, slot, &towns);
         }
         // God mode for those the game file names (`GameFile::gods`), by the account their identity proves: "/god",
         // "/god on", "/god off". Anyone else is told their tag, so it can be added.

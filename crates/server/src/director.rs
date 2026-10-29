@@ -31,8 +31,10 @@ pub struct Run {
     pub name: String,
     steps: Vec<Step>,
     fail_steps: Vec<Step>,
-    /// The event's place as it was when the run started.
+    /// The event's place as it was when the run started (the town it came to, for one that `roams`), and which.
     place: Option<(f32, f32, f32)>,
+    town: Option<usize>,
+    roams: bool,
     pub pc: usize,
     pub failing: bool,
     wait: Wait,
@@ -83,8 +85,9 @@ pub struct Director {
     finished: Vec<(String, bool)>,
     /// How each event last ended, for the console.
     pub outcome: HashMap<String, &'static str>,
-    /// Where the day was when last looked (for `When::Time`).
+    /// Where the day was when last looked (for `When::Time`), and the season (for `When::Season`).
     last_phase: Option<f64>,
+    last_season: Option<Option<proto::game::Season>>,
 }
 
 impl Director {
@@ -291,6 +294,8 @@ impl Director {
         if phase.is_some() {
             self.last_phase = phase;
         }
+        // The year turns: one season to another (not the first look at start up, nor seasons being switched on).
+        let turned = now % hz == 0 && matches!((self.last_season.replace(sim.season), sim.season), (Some(Some(was)), Some(is)) if was != is);
         for i in 0..self.events.len() {
             let Some(when) = self.events[i].when.clone() else { continue };
             let name = self.events[i].name.clone();
@@ -307,6 +312,7 @@ impl Director {
                     (Some(a), Some(b)) if crossed(a, b, at.phase(ns)) => Some(format!("at {at:?}").to_lowercase()),
                     _ => None,
                 },
+                When::Season { is } if turned && sim.season == Some(is) => Some(format!("as {} comes", is.name())),
                 When::After { event, outcome } => finished.iter().find(|(n, ok)| n == &event && match outcome {
                     Outcome::Success => *ok,
                     Outcome::Failure => !*ok,
@@ -328,13 +334,25 @@ impl Director {
             self.note(sim.tick, format!("event '{}' is still running, so not again {why}", e.name));
             return;
         }
-        let place = e.place.as_deref().and_then(|p| place_area(sim, p));
+        let mut town = e.place.as_deref().and_then(|p| sim.places.iter().position(|x| x.name == p));
+        if e.roams {
+            // A town with players at it first, else any: a market comes where it will be seen.
+            let towns = sim.town_index.clone();
+            let seen: Vec<usize> = towns.iter().copied().filter(|&h| !players(sim, clients, place_area(sim, &sim.places[h].name).map(|(x, y, r)| (x, y, r + NEARBY))).is_empty()).collect();
+            let from = if seen.is_empty() { &towns } else { &seen };
+            if !from.is_empty() {
+                town = Some(from[sim.rng.below(from.len() as u32) as usize]);
+            }
+        }
+        let place = town.and_then(|h| place_area(sim, &sim.places[h].name));
         let hz = sim.tick_hz;
         let mut run = Run {
             name: e.name.clone(),
             steps: e.steps.clone(),
             fail_steps: e.fail_steps.clone(),
             place,
+            town,
+            roams: e.roams,
             pc: 0,
             failing: false,
             wait: Wait::No,
@@ -446,7 +464,7 @@ impl Director {
         };
         let hz = sim.tick_hz;
         let said = match st {
-            Step::Announce { text, banner, nearby } => match proto::chat::sanitize(text) {
+            Step::Announce { text, banner, nearby } => match proto::chat::sanitize(&run.town.map_or_else(|| text.clone(), |h| text.replace("{place}", &sim.place_called(h)))) {
                 Some(t) => {
                     let area = if *nearby { run.place.map(|(x, y, r)| (x, y, r + NEARBY)) } else { None };
                     let ch = if *banner { proto::chat::channel::BANNER } else { proto::chat::channel::SHOUT };
@@ -461,7 +479,14 @@ impl Director {
             },
             Step::Spawn { archetype, count, place, name } => {
                 let Some(a) = sim.archs.iter().position(|x| &x.name == archetype) else { return };
-                let area = here(place, sim);
+                // A roaming event sets its stalls, lanterns and players out round the town's square.
+                let area = match (place, run.roams, run.town) {
+                    (None, true, Some(h)) => Some({
+                        let (x, y) = sim.square_middle(h);
+                        (x, y, 14.0)
+                    }),
+                    _ => here(place, sim),
+                };
                 let mut n = 0;
                 for _ in 0..*count {
                     let at = area.map(|(x, y, r)| {
@@ -470,6 +495,12 @@ impl Director {
                     });
                     let Some(slot) = sim.spawn_as(NONE, a as u8, at) else { break };
                     sim.ents.fleeting[slot] = true;
+                    if place.is_none() && run.roams {
+                        // A roaming event's stalls and players live in the town it came to while it lasts.
+                        sim.home_over[slot] = run.town;
+                        sim.door[slot] = None;
+                        sim.work[slot] = None;
+                    }
                     if let Some(nm) = name {
                         sim.set_name(slot, nm, false);
                     }
@@ -540,6 +571,23 @@ impl Director {
                     }
                 }
                 format!("rewarded {n} player{} with {count} {item}", if n == 1 { "" } else { "s" })
+            }
+            Step::Gather { secs, occasion, announce, dance } => {
+                let Some(h) = run.town else { return };
+                let said = sim.gather(h, *secs, occasion, announce.as_deref(), *dance);
+                if let Some(t) = said.and_then(|t| proto::chat::sanitize(&t)) {
+                    let area = run.place.map(|(x, y, r)| (x, y, r + NEARBY));
+                    tell(sim, clients, &t, proto::chat::channel::SHOUT, area);
+                }
+                format!("the town gathers for {secs}s ({occasion})")
+            }
+            Step::Plague { secs, spread_pct, deaths_pct, first } => {
+                let Some(h) = run.town else { return };
+                if sim.start_plague(h, *secs, *spread_pct, *deaths_pct, *first) {
+                    format!("the sickness comes to {} for {secs}s", sim.places[h].name)
+                } else {
+                    format!("no sickness in {}: it is there already, or no one lives there", sim.places[h].name)
+                }
             }
         };
         self.note(sim.tick, format!("  {said}"));
@@ -879,5 +927,43 @@ mod tests {
         let ns = 1.0 / 3.0;
         assert_eq!(proto::game::DayPart::Dusk.phase(ns), 1.0 - ns);
         assert!((proto::game::DayPart::Night.phase(ns) - (1.0 - ns / 2.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_roaming_market_comes_to_a_town_gathers_its_folk_and_the_turning_year_starts_events() {
+        use proto::game::{Behaviour, Place, Season};
+        let (mut s, mut d, mut c, _) = setup(|g| {
+            g.places.push(Place { name: "kells".into(), x: 200.0, y: 200.0, r: 50.0, title: "Ceanannas".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+            let mut folk = g.archetypes[0].clone();
+            (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.names) = ("folk".into(), Behaviour::Wander, None, 0, Some("kells".into()), vec![], vec!["Aoife".into(), "Brian".into()]);
+            g.archetypes.push(folk);
+            g.events.push(EventDef {
+                name: "market".into(),
+                roams: true,
+                steps: vec![Step::Announce { text: "Market day in {place}!".into(), banner: false, nearby: false }, Step::Gather { secs: 60, occasion: "market".into(), announce: Some("{who} and {other} wed in {place}".into()), dance: false }],
+                ..EventDef::default()
+            });
+            g.events.push(EventDef { name: "winter".into(), when: Some(When::Season { is: Season::Winter }), steps: vec![Step::Announce { text: "Winter".into(), banner: true, nearby: false }], ..EventDef::default() });
+        });
+        s.terrain.houses = std::sync::Arc::new(vec![proto::world::Aabb { x0: 210.0, y0: 210.0, x1: 216.0, y1: 216.0 }]);
+        s.find_towns();
+        let folk = s.archs.iter().position(|a| a.name == "folk").unwrap() as u8;
+        let a = s.spawn_as(NONE, folk, Some((220.0, 200.0))).unwrap();
+        s.spawn_as(NONE, folk, Some((180.0, 200.0))).unwrap();
+        d.fire("market").unwrap();
+        step(&mut s, &mut d, &mut c, 3);
+        assert!(c.chat_log.iter().any(|l| l.3 == "Market day in Ceanannas!"), "{:?}", c.chat_log);
+        assert!(s.festive(a), "the town is out");
+        // The year turns to winter: its event starts (not at start up, only when it turns).
+        s.daylight = proto::daylight::Daylight::Fixed { phase: 0.3 };
+        step(&mut s, &mut d, &mut c, 40);
+        (s.rules.season_days, s.rules.season_shift) = (1.0, 3.0);
+        step(&mut s, &mut d, &mut c, 40);
+        assert!(!c.chat_log.iter().any(|l| l.3 == "Winter"), "switching seasons on is not the year turning");
+        s.rules.season_shift = 2.0;
+        step(&mut s, &mut d, &mut c, 40);
+        s.rules.season_shift = 3.0;
+        step(&mut s, &mut d, &mut c, 40);
+        assert!(c.chat_log.iter().any(|l| l.3 == "Winter"), "winter came");
     }
 }

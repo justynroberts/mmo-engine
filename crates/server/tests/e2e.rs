@@ -2551,6 +2551,8 @@ fn players_gathering_start_a_local_event_that_tells_and_rewards_only_those_there
     std::fs::create_dir_all(&dir).unwrap();
     let mut g = GameFile::default_game();
     g.walls = Some(vec![]);
+    // By day: at night the sentries see further still.
+    g.daylight = Some(proto::daylight::Daylight::Fixed { phase: 0.3 });
     g.events.push(proto::game::EventDef {
         name: "defend".into(),
         place: Some("plaza".into()),
@@ -2568,7 +2570,11 @@ fn players_gathering_start_a_local_event_that_tells_and_rewards_only_those_there
     let mut far = connect_as(&srv, proto::secure::new_identity());
     far.send_input(0, 0);
     far.pump(200);
-    walk_to(&mut far, 470.0, 470.0, |c| (c.pos().0 - 470.0).hypot(c.pos().1 - 470.0) < 4.0);
+    // Along the south edge: clear of the plaza (it would start the event) and of the watchtower's sentries (at 330,
+    // 430, who would cut it down).
+    for (x, y) in [(far.pos().0, 500.0), (470.0, 500.0), (470.0, 470.0)] {
+        walk_to(&mut far, x, y, |c| (c.pos().0 - x).hypot(c.pos().1 - y) < 4.0);
+    }
     far.send_input(0, 0);
     far.pump(300);
     let far_bag = far.bag.clone(); // (whatever they picked up on the way)
@@ -2804,4 +2810,448 @@ fn sides_guilds_and_land_survive_a_server_restart() {
     ask(&mut b, "/plot", "This land is yours");
     drop(srv);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A town that a player turns against them: striking its folk until it shuns them, then a shop that will not serve
+/// them and a watchman who follows them about.
+#[test]
+fn a_town_shuns_one_who_strikes_its_folk_its_shops_refuse_them_and_the_watch_follows() {
+    use proto::game::{Behaviour, ShopItem, Work};
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-repute-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A town of four houses round a square.
+    let world = r#"{"format":1,"size":1024,"objects":[
+        {"t":"house","b":[455,455,461,461],"solid":true},{"t":"house","b":[539,455,545,461],"solid":true},
+        {"t":"house","b":[455,539,461,545],"solid":true},{"t":"house","b":[539,539,545,545],"solid":true},
+        {"t":"square","b":[490,490,510,510]}]}"#;
+    std::fs::write(dir.join("world.json"), world).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.daylight = Some(proto::daylight::Daylight::Fixed { phase: 0.3 }); // by day, when folk are out
+    for a in g.archetypes.iter_mut() {
+        a.count = 0;
+    }
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+    let mut folk = g.archetypes[0].clone();
+    (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 4, Some("kells".into()), vec![], vec![]);
+    (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into()], vec!["Byrne".into()]);
+    folk.speed_mult = 0.3;
+    let mut watch = folk.clone();
+    (watch.name, watch.attack, watch.work, watch.count, watch.names) = ("watch".into(), Some("zap".into()), Some(Work::Streets), 1, vec!["Eoin".into()]);
+    let mut trader = folk.clone();
+    (trader.name, trader.count, trader.names) = ("trader".into(), 1, vec!["Fionn".into()]);
+    trader.shop = vec![ShopItem { item: "medkit".into(), price: 1 }];
+    let base = g.archetypes.len();
+    g.archetypes.extend([folk, watch, trader]);
+    g.currency = Some("data chip".into());
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir.clone(), &["--world", &dir.join("world.json").to_string_lossy()]);
+    let mut me = connect(&srv);
+    me.send_input(0, 0);
+    me.pump(300);
+    let (s, b) = http(&srv, "POST", "/api/give", &format!(r#"{{"id":{},"item":"data chip","count":20}}"#, me.entity));
+    assert_eq!(s, 200, "{b}");
+    walk_to(&mut me, 500.0, 500.0, |c| (c.pos().0 - 500.0).hypot(c.pos().1 - 500.0) < 6.0);
+    let town = |srv: &Srv| state(srv)["town"].clone();
+    let of = |srv: &Srv, arch: usize| -> Vec<(u32, f32, f32)> {
+        state(srv)["e"].as_array().unwrap().iter().filter(|e| e[3].as_i64() == Some(arch as i64)).map(|e| (e[0].as_u64().unwrap() as u32, e[1].as_f64().unwrap() as f32, e[2].as_f64().unwrap() as f32)).collect()
+    };
+    let standing = |srv: &Srv| town(srv)["repute"].as_array().and_then(|r| r.first().cloned()).map_or(0, |r| r["towns"][0][1].as_i64().unwrap_or(0));
+    // Strike its folk until the town will have nothing to do with them.
+    let t = Instant::now();
+    while standing(&srv) > -50 {
+        assert!(t.elapsed() < Duration::from_secs(90), "never shunned: {}", town(&srv));
+        // The nearest of them still up, struck from within reach.
+        let (px, py) = me.pos();
+        let mut folk = of(&srv, base);
+        folk.sort_by(|a, b| (a.1 - px).hypot(a.2 - py).total_cmp(&(b.1 - px).hypot(b.2 - py)));
+        let Some(&(id, x, y)) = folk.first() else {
+            me.pump(200);
+            continue;
+        };
+        let t0 = Instant::now();
+        while (me.pos().0 - x).hypot(me.pos().1 - y) > 5.0 && t0.elapsed() < Duration::from_secs(6) {
+            let (dx, dy) = (x - me.pos().0, y - me.pos().1);
+            let d = dx.hypot(dy).max(0.001);
+            me.send_input((dx / d * 127.0) as i8, (dy / d * 127.0) as i8);
+            me.pump(40);
+        }
+        me.send_input(0, 0);
+        act(&mut me, proto::defs::ACTION_ZAP, id);
+        me.pump(600);
+    }
+    me.pump(300);
+    assert!(me.heard.iter().any(|m| m.from == 0 && m.text.contains("shunned")), "told so: {:?}", me.heard.iter().map(|m| &m.text).collect::<Vec<_>>());
+    let tier = town(&srv)["repute"][0]["towns"][0][2].clone();
+    assert_eq!(tier, "shunned");
+    // The shop: not served.
+    let &(tid, tx, ty) = of(&srv, base + 2).first().expect("the trader");
+    walk_to(&mut me, tx, ty, |c| (c.pos().0 - tx).hypot(c.pos().1 - ty) < 3.0);
+    me.send_input(0, 0);
+    let before = me.bag.clone();
+    let n = me.heard.len();
+    act_arg(&mut me, proto::game::ACT_BUY, tid, 0);
+    me.pump(800);
+    let shun: Vec<&str> = proto::talk::DEFAULTS.iter().find(|(o, _)| *o == "shun").unwrap().1.to_vec();
+    assert!(me.heard[n..].iter().any(|m| m.from == 0 && shun.iter().any(|l| m.text.contains(l))), "turned away: {:?}", me.heard[n..].iter().map(|m| &m.text).collect::<Vec<_>>());
+    assert_eq!(me.bag, before, "and sold nothing");
+    // The watch first cuts down one still wanted for striking its folk; once that has passed (and they are up again),
+    // one of them takes to following them about.
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(35) {
+        act(&mut me, proto::game::ACT_RISE, 0);
+        me.pump(500);
+    }
+    let &(wid, wx, wy) = of(&srv, base + 1).first().expect("the watchman");
+    walk_to(&mut me, wx, wy, |c| (c.pos().0 - wx).hypot(c.pos().1 - wy) < 10.0);
+    let t = Instant::now();
+    loop {
+        me.send_input(0, 0);
+        me.pump(300);
+        let shadows = town(&srv)["shadows"].clone();
+        if shadows.as_array().is_some_and(|s| s.iter().any(|s| s["watch"].as_u64() == Some(wid as u64))) {
+            break;
+        }
+        assert!(t.elapsed() < Duration::from_secs(10), "no one follows: {shadows} {:?}", me.heard.iter().rev().take(6).map(|m| &m.text).collect::<Vec<_>>());
+    }
+}
+
+/// The evening bell, heard in a running town: as dusk comes the townsfolk near a player remark on it, and the
+/// children's games end.
+#[test]
+fn the_evening_bell_is_remarked_on_by_the_townsfolk_round_a_player() {
+    use proto::game::{Behaviour, Work};
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-bell-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let world = r#"{"format":1,"size":1024,"objects":[
+        {"t":"house","b":[455,455,461,461],"solid":true},{"t":"house","b":[539,455,545,461],"solid":true},
+        {"t":"house","b":[455,539,461,545],"solid":true},{"t":"house","b":[539,539,545,545],"solid":true},
+        {"t":"square","b":[490,490,510,510]}]}"#;
+    std::fs::write(dir.join("world.json"), world).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.daylight = Some(proto::daylight::Daylight::Fixed { phase: 0.3 });
+    for a in g.archetypes.iter_mut() {
+        a.count = 0;
+    }
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+    let mut folk = g.archetypes[0].clone();
+    (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 4, Some("kells".into()), vec![], vec![]);
+    (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into()], vec!["Byrne".into()]);
+    let mut child = folk.clone();
+    (child.name, child.behaviour, child.work, child.count, child.names) = ("child".into(), Behaviour::Wander, Some(Work::Play), 2, vec!["Una".into(), "Finn".into()]);
+    let base = g.archetypes.len();
+    g.archetypes.extend([folk, child]);
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir.clone(), &["--world", &dir.join("world.json").to_string_lossy()]);
+    let mut me = connect(&srv);
+    me.send_input(0, 0);
+    me.pump(300);
+    walk_to(&mut me, 500.0, 500.0, |c| (c.pos().0 - 500.0).hypot(c.pos().1 - 500.0) < 6.0);
+    me.send_input(0, 0);
+    // By day the children are at a game of chase on the square.
+    let t = Instant::now();
+    while state(&srv)["town"]["playing"].as_u64().unwrap_or(0) < 2 {
+        assert!(t.elapsed() < Duration::from_secs(20), "no game: {}", state(&srv)["town"]);
+        me.send_input(0, 0);
+        me.pump(500);
+    }
+    let n = me.heard.len();
+    // Dusk comes (a third of the day is night, the last 15% of the light is dusk).
+    let (s, r) = json(&srv, "POST", "/api/daylight", r#"{"phase":0.6}"#);
+    assert_eq!(s, 200, "{r}");
+    let bell: Vec<&str> = proto::talk::DEFAULTS.iter().find(|(o, _)| *o == "bell").unwrap().1.to_vec();
+    let t = Instant::now();
+    while !me.heard[n..].iter().any(|m| m.channel == proto::chat::channel::NEARBY && bell.contains(&m.text.as_str())) {
+        assert!(t.elapsed() < Duration::from_secs(8), "no one remarked on the bell: {:?}", me.heard[n..].iter().map(|m| (m.channel, &m.text)).collect::<Vec<_>>());
+        me.send_input(0, 0);
+        me.pump(200);
+    }
+    assert_eq!(state(&srv)["town"]["playing"], 0, "the games are over");
+    // And the children go home: to their own doors (the houses are at the town's four corners).
+    let houses = [(458.0f32, 458.0f32), (542.0, 458.0), (458.0, 542.0), (542.0, 542.0)];
+    let child = base + 1;
+    let t = Instant::now();
+    loop {
+        let st = state(&srv);
+        let kids: Vec<(f32, f32)> = st["e"].as_array().unwrap().iter().filter(|e| e[3].as_i64() == Some(child as i64)).map(|e| (e[1].as_f64().unwrap() as f32, e[2].as_f64().unwrap() as f32)).collect();
+        let home = |&(x, y): &(f32, f32)| houses.iter().any(|&(hx, hy)| (x - hx).abs() < 8.0 && (y - hy).abs() < 8.0);
+        if !kids.is_empty() && kids.iter().all(home) {
+            break;
+        }
+        assert!(t.elapsed() < Duration::from_secs(40), "the children did not go home: {kids:?}");
+        me.send_input(0, 0);
+        me.pump(500);
+    }
+    // And the morning bell, at dawn.
+    let n = me.heard.len();
+    let (s, r) = json(&srv, "POST", "/api/daylight", r#"{"phase":0.02}"#);
+    assert_eq!(s, 200, "{r}");
+    let morning: Vec<&str> = proto::talk::DEFAULTS.iter().find(|(o, _)| *o == "bell_dawn").unwrap().1.to_vec();
+    let t = Instant::now();
+    while !me.heard[n..].iter().any(|m| m.channel == proto::chat::channel::NEARBY && morning.contains(&m.text.as_str())) {
+        assert!(t.elapsed() < Duration::from_secs(8), "no one remarked on the morning bell: {:?}", me.heard[n..].iter().map(|m| (m.channel, &m.text)).collect::<Vec<_>>());
+        me.send_input(0, 0);
+        me.pump(200);
+    }
+}
+
+/// A town that comes to love a player: four cutpurses caught make them its hero, greeted as one and sold to at a
+/// friend's price.
+#[test]
+fn a_player_who_catches_its_cutpurses_becomes_a_towns_hero() {
+    use proto::game::{Behaviour, ShopItem};
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-hero-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let world = r#"{"format":1,"size":1024,"objects":[
+        {"t":"house","b":[455,455,461,461],"solid":true},{"t":"house","b":[539,455,545,461],"solid":true},
+        {"t":"house","b":[455,539,461,545],"solid":true},{"t":"house","b":[539,539,545,545],"solid":true},
+        {"t":"square","b":[490,490,510,510]}]}"#;
+    std::fs::write(dir.join("world.json"), world).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.daylight = Some(proto::daylight::Daylight::Fixed { phase: 0.3 });
+    g.rules.lift_pct = 100.0;
+    for a in g.archetypes.iter_mut() {
+        a.count = 0;
+    }
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+    let mut folk = g.archetypes[0].clone();
+    (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 3, Some("kells".into()), vec![], vec![]);
+    (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into()], vec!["Byrne".into()]);
+    let mut thief = folk.clone();
+    (thief.name, thief.thief, thief.count, thief.names, thief.speed_mult) = ("cutpurse".into(), true, 4, vec!["Gerry".into(), "Hugh".into(), "Ivo".into(), "Jack".into()], 0.25);
+    thief.attrs.insert("health".into(), 5.0);
+    let mut trader = folk.clone();
+    (trader.name, trader.count, trader.names) = ("trader".into(), 1, vec!["Fionn".into()]);
+    trader.shop = vec![ShopItem { item: "medkit".into(), price: 10 }];
+    let base = g.archetypes.len();
+    g.archetypes.extend([folk, thief, trader]);
+    g.currency = Some("data chip".into());
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir.clone(), &["--world", &dir.join("world.json").to_string_lossy()]);
+    let mut me = connect(&srv);
+    me.send_input(0, 0);
+    me.pump(300);
+    let (s, b) = http(&srv, "POST", "/api/give", &format!(r#"{{"id":{},"item":"data chip","count":200}}"#, me.entity));
+    assert_eq!(s, 200, "{b}");
+    walk_to(&mut me, 500.0, 500.0, |c| (c.pos().0 - 500.0).hypot(c.pos().1 - 500.0) < 6.0);
+    let of = |srv: &Srv, arch: usize| -> Vec<(u32, f32, f32)> {
+        state(srv)["e"].as_array().unwrap().iter().filter(|e| e[3].as_i64() == Some(arch as i64)).map(|e| (e[0].as_u64().unwrap() as u32, e[1].as_f64().unwrap() as f32, e[2].as_f64().unwrap() as f32)).collect()
+    };
+    let standing = |srv: &Srv| state(srv)["town"]["repute"].as_array().and_then(|r| r.first().cloned()).map_or(0, |r| r["towns"][0][1].as_i64().unwrap_or(0));
+    let mut steer = |me: &mut Client, x: f32, y: f32| {
+        let (dx, dy) = (x - me.pos().0, y - me.pos().1);
+        let d = dx.hypot(dy).max(0.001);
+        me.send_input((dx / d * 127.0) as i8, (dy / d * 127.0) as i8);
+        me.pump(40);
+    };
+    // Let each cutpurse at the purse, then run it down.
+    let t = Instant::now();
+    while standing(&srv) < 60 {
+        assert!(t.elapsed() < Duration::from_secs(150), "no hero yet: {}", state(&srv)["town"]);
+        let (px, py) = me.pos();
+        let mut thieves = of(&srv, base + 1);
+        thieves.sort_by(|a, b| (a.1 - px).hypot(a.2 - py).total_cmp(&(b.1 - px).hypot(b.2 - py)));
+        let Some(&(id, x, y)) = thieves.first() else { break };
+        let was = standing(&srv);
+        let t0 = Instant::now();
+        while standing(&srv) == was && t0.elapsed() < Duration::from_secs(30) {
+            let e = of(&srv, base + 1).into_iter().find(|e| e.0 == id);
+            let Some((_, x, y)) = e.or(Some((id, x, y))) else { break };
+            if (me.pos().0 - x).hypot(me.pos().1 - y) > 2.0 {
+                steer(&mut me, x, y);
+            } else {
+                me.send_input(0, 0);
+                act(&mut me, proto::defs::ACTION_ZAP, id);
+                me.pump(300);
+            }
+        }
+    }
+    assert!(standing(&srv) >= 60, "a hero of Kells: {}", standing(&srv));
+    me.pump(300);
+    assert!(me.heard.iter().any(|m| m.from == 0 && m.text.contains("a hero")), "told so: {:?}", me.heard.iter().map(|m| &m.text).collect::<Vec<_>>());
+    // Greeted as one: the townsfolk say so.
+    let hero: Vec<&str> = proto::talk::DEFAULTS.iter().find(|(o, _)| *o == "greet_hero").unwrap().1.to_vec();
+    let stem = |l: &str| l.split('{').next().unwrap_or("").to_string();
+    let &(_, fx, fy) = of(&srv, base).first().expect("folk");
+    walk_to(&mut me, fx, fy, |c| (c.pos().0 - fx).hypot(c.pos().1 - fy) < 4.0);
+    let t = Instant::now();
+    while !me.heard.iter().any(|m| m.from != 0 && hero.iter().any(|l| !stem(l).is_empty() && m.text.starts_with(&stem(l)) || m.text.contains("hero of Kells"))) {
+        assert!(t.elapsed() < Duration::from_secs(120), "not greeted as a hero: {:?}", me.heard.iter().rev().take(10).map(|m| &m.text).collect::<Vec<_>>());
+        me.send_input(0, 0);
+        me.pump(500);
+    }
+    // And sold to at a friend's price: 8 for what costs others 10.
+    let &(tid, tx, ty) = of(&srv, base + 2).first().expect("the trader");
+    walk_to(&mut me, tx, ty, |c| (c.pos().0 - tx).hypot(c.pos().1 - ty) < 3.0);
+    me.send_input(0, 0);
+    let n = me.heard.len();
+    act_arg(&mut me, proto::game::ACT_BUY, tid, 0);
+    me.pump(800);
+    assert!(me.heard[n..].iter().any(|m| m.from == 0 && m.text.contains("a friend's price") && m.text.contains('8')), "{:?}", me.heard[n..].iter().map(|m| &m.text).collect::<Vec<_>>());
+}
+
+/// The sickness in a running town: the client is told the town has it, the sick cough and ask for a cure, the
+/// shops shut, and a healing draught used beside one of the sick cures them.
+#[test]
+fn the_sickness_comes_to_a_town_its_sick_cough_and_ask_for_a_cure_its_shops_shut_and_a_draught_cures() {
+    use proto::game::{Behaviour, ShopItem, Step};
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-plague-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let world = r#"{"format":1,"size":1024,"objects":[
+        {"t":"house","b":[455,455,461,461],"solid":true},{"t":"house","b":[539,455,545,461],"solid":true},
+        {"t":"house","b":[455,539,461,545],"solid":true},{"t":"house","b":[539,539,545,545],"solid":true},
+        {"t":"square","b":[490,490,510,510]}]}"#;
+    std::fs::write(dir.join("world.json"), world).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.daylight = Some(proto::daylight::Daylight::Fixed { phase: 0.3 });
+    g.rules.plea_pct = 100.0;
+    for a in g.archetypes.iter_mut() {
+        a.count = 0;
+    }
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+    let mut folk = g.archetypes[0].clone();
+    (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 6, Some("kells".into()), vec![], vec![]);
+    (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into(), "Eoin".into(), "Fiona".into()], vec!["Byrne".into()]);
+    folk.speed_mult = 0.2;
+    let mut trader = folk.clone();
+    (trader.name, trader.count, trader.names) = ("trader".into(), 1, vec!["Fionn".into()]);
+    trader.shop = vec![ShopItem { item: "medkit".into(), price: 1 }];
+    let base = g.archetypes.len();
+    g.archetypes.extend([folk, trader]);
+    g.currency = Some("data chip".into());
+    g.events.push(proto::game::EventDef {
+        name: "the sickness".into(),
+        place: Some("kells".into()),
+        steps: vec![Step::Plague { secs: 900, spread_pct: 0.0, deaths_pct: 0.0, first: 6 }],
+        ..Default::default()
+    });
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir.clone(), &["--world", &dir.join("world.json").to_string_lossy()]);
+    let mut me = connect(&srv);
+    me.send_input(0, 0);
+    me.pump(300);
+    for (item, n) in [("data chip", 20), ("medkit", 3)] {
+        let (s, b) = http(&srv, "POST", "/api/give", &format!(r#"{{"id":{},"item":"{item}","count":{n}}}"#, me.entity));
+        assert_eq!(s, 200, "{b}");
+    }
+    walk_to(&mut me, 500.0, 500.0, |c| (c.pos().0 - 500.0).hypot(c.pos().1 - 500.0) < 6.0);
+    let (s, b) = http(&srv, "POST", "/api/events/fire", r#"{"name":"the sickness"}"#);
+    assert_eq!(s, 200, "{b}");
+    let heard = |me: &Client, what: &dyn Fn(&proto::chat::ChatMsg) -> bool| me.heard.iter().any(|m| what(m));
+    let lines = |o: &str| proto::talk::DEFAULTS.iter().find(|(k, _)| *k == o).unwrap().1.iter().map(|l| l.split('{').next().unwrap().to_string()).filter(|l| !l.is_empty()).collect::<Vec<_>>();
+    let (shut, cured) = (lines("shut"), lines("cured"));
+    let of = |srv: &Srv, arch: usize| -> Vec<(u32, f32, f32)> {
+        state(srv)["e"].as_array().unwrap().iter().filter(|e| e[3].as_i64() == Some(arch as i64)).map(|e| (e[0].as_u64().unwrap() as u32, e[1].as_f64().unwrap() as f32, e[2].as_f64().unwrap() as f32)).collect()
+    };
+    // Told the town has it; the sick cough (a wordless emote, and now and then a word); one asks for a cure.
+    let t = Instant::now();
+    loop {
+        let told = heard(&me, &|m| m.channel == proto::chat::channel::PLAGUE && m.text.starts_with("P|500,500,60"));
+        let coughed = heard(&me, &|m| m.channel == proto::chat::channel::EMOTE && m.text == "cough|");
+        let asked = heard(&me, &|m| m.from == 0 && m.text.contains("Use a healing draught beside them"));
+        if told && coughed && asked {
+            break;
+        }
+        assert!(t.elapsed() < Duration::from_secs(120), "told {told}, coughed {coughed}, asked {asked}: {:?}", me.heard.iter().rev().take(10).map(|m| (m.channel, &m.text)).collect::<Vec<_>>());
+        // Among the folk, so the sick are close enough to see and to ask.
+        if let Some(&(_, x, y)) = of(&srv, base).first() {
+            walk_to(&mut me, x, y, |c| (c.pos().0 - x).hypot(c.pos().1 - y) < 3.0);
+        }
+        me.send_input(0, 0);
+        me.pump(500);
+    }
+    // The shop is shut.
+    let &(tid, tx, ty) = of(&srv, base + 1).first().expect("the trader");
+    walk_to(&mut me, tx, ty, |c| (c.pos().0 - tx).hypot(c.pos().1 - ty) < 3.0);
+    me.send_input(0, 0);
+    let n = me.heard.len();
+    act_arg(&mut me, proto::game::ACT_BUY, tid, 0);
+    me.pump(800);
+    assert!(me.heard[n..].iter().any(|m| m.from == 0 && shut.iter().any(|l| m.text.contains(l.trim()))), "shut: {:?}", me.heard[n..].iter().map(|m| &m.text).collect::<Vec<_>>());
+    // A draught used beside one of the sick: cured, and they say so.
+    let sick_before = state(&srv)["town"]["plagues"][0]["sick"].as_u64().unwrap();
+    let &(_, x, y) = of(&srv, base).first().expect("folk");
+    walk_to(&mut me, x, y, |c| (c.pos().0 - x).hypot(c.pos().1 - y) < 2.0);
+    me.send_input(0, 0);
+    let slot = me.bag.iter().position(|&(item, _)| item == 1).expect("a medkit in the bag") as u8;
+    let n = me.heard.len();
+    act(&mut me, wire_use(slot), 0);
+    me.pump(1500);
+    let st = state(&srv)["town"]["plagues"][0].clone();
+    assert_eq!(st["cured"], 1, "{st}");
+    assert!(st["sick"].as_u64().unwrap() < sick_before, "{st}");
+    assert!(me.heard[n..].iter().any(|m| m.channel == proto::chat::channel::NEARBY && cured.iter().any(|l| m.text.starts_with(l.as_str()))), "thanked: {:?}", me.heard[n..].iter().map(|m| (m.channel, &m.text)).collect::<Vec<_>>());
+}
+
+/// An evening at the inn, in a running town: at dusk the townsfolk go in, come out the worse for drink, singing and
+/// weaving their way home, and two of them come to blows.
+#[test]
+fn of_an_evening_the_townsfolk_go_to_the_inn_and_come_out_singing_and_fighting() {
+    use proto::game::Behaviour;
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-inn-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let world = r#"{"format":1,"size":1024,"objects":[
+        {"t":"house","b":[455,455,461,461],"solid":true},{"t":"house","b":[539,455,545,461],"solid":true},
+        {"t":"house","b":[455,539,461,545],"solid":true},{"t":"house","b":[539,539,545,545],"solid":true},
+        {"t":"square","b":[490,490,510,510]}]}"#;
+    std::fs::write(dir.join("world.json"), world).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.daylight = Some(proto::daylight::Daylight::Fixed { phase: 0.3 });
+    g.rules.inn_pct = 100.0;
+    for a in g.archetypes.iter_mut() {
+        a.count = 0;
+    }
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+    let mut folk = g.archetypes[0].clone();
+    (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Wander, None, 8, Some("kells".into()), vec![], vec![]);
+    (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into(), "Eoin".into(), "Fiona".into(), "Gráinne".into(), "Hugh".into()], vec!["Byrne".into()]);
+    g.archetypes.push(folk);
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir.clone(), &["--world", &dir.join("world.json").to_string_lossy()]);
+    let mut me = connect(&srv);
+    me.send_input(0, 0);
+    me.pump(300);
+    walk_to(&mut me, 500.0, 500.0, |c| (c.pos().0 - 500.0).hypot(c.pos().1 - 500.0) < 6.0);
+    let inn = |srv: &Srv| state(srv)["town"]["inn"].clone();
+    // Dusk: off to the inn, and in.
+    assert_eq!(json(&srv, "POST", "/api/daylight", r#"{"phase":0.6}"#).0, 200);
+    let t = Instant::now();
+    while inn(&srv)["in"].as_u64().unwrap_or(0) < 2 {
+        assert!(t.elapsed() < Duration::from_secs(60), "no one went in: {}", inn(&srv));
+        me.send_input(0, 0);
+        me.pump(500);
+    }
+    // Out again at closing, merry; the player waits by the inn's door (the first house: they tie on the square's
+    // middle, and the first is taken) to hear them.
+    walk_to(&mut me, 466.0, 466.0, |c| (c.pos().0 - 466.0).hypot(c.pos().1 - 466.0) < 3.0);
+    let t = Instant::now();
+    while inn(&srv)["merry"].as_u64().unwrap_or(0) < 1 {
+        assert!(t.elapsed() < Duration::from_secs(300), "no one came out merry: {}", inn(&srv));
+        me.send_input(0, 0);
+        me.pump(500);
+    }
+    let sing: Vec<&str> = proto::talk::DEFAULTS.iter().find(|(o, _)| *o == "sing").unwrap().1.to_vec();
+    let n = me.heard.len();
+    let (mut sang, mut fought) = (false, false);
+    let t = Instant::now();
+    while !(sang && fought) {
+        assert!(t.elapsed() < Duration::from_secs(150), "sang {sang}, fought {fought}: {} {:?}", state(&srv)["town"], me.heard[n..].iter().map(|m| (m.channel, &m.text)).collect::<Vec<_>>());
+        // Among the merry, so as to hear them.
+        let st = state(&srv);
+        let merry: Vec<u64> = st["town"]["inn"]["merry_ids"].as_array().unwrap().iter().filter_map(|v| v.as_u64()).collect();
+        if let Some(e) = st["e"].as_array().unwrap().iter().find(|e| e[0].as_u64().is_some_and(|id| merry.contains(&id))) {
+            let (x, y) = (e[1].as_f64().unwrap() as f32, e[2].as_f64().unwrap() as f32);
+            if (me.pos().0 - x).hypot(me.pos().1 - y) > 6.0 {
+                walk_to(&mut me, x, y, |c| (c.pos().0 - x).hypot(c.pos().1 - y) < 5.0);
+            }
+        }
+        sang |= me.heard[n..].iter().any(|m| m.channel == proto::chat::channel::NEARBY && sing.contains(&m.text.as_str()));
+        fought |= st["town"]["brawling"].as_u64().unwrap_or(0) >= 2 || st["town"]["news"].as_array().unwrap().iter().any(|n| n["what"] == "news_brawl");
+        me.send_input(0, 0);
+        me.pump(500);
+    }
 }

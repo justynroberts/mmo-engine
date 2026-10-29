@@ -217,6 +217,35 @@ pub enum Work {
     Fields,
     /// Up and down the town's roads (the watch).
     Streets,
+    /// About the square, playing chase with the others at play (children).
+    Play,
+}
+
+/// The time of year (`Rules::season_days`): it changes how the land looks, how crops grow, what food costs and how
+/// hard the nights are.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Season {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+impl Season {
+    pub const ALL: [Season; 4] = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter];
+    /// The season `day` (`Daylight::day`) falls in, `days` to a season, `shift` days on: None with no seasons.
+    pub fn of(day: f64, days: f32, shift: f32) -> Option<Season> {
+        (days > 0.0).then(|| Season::ALL[(((day + shift as f64) / days as f64).floor() as i64).rem_euclid(4) as usize])
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Season::Spring => "spring",
+            Season::Summer => "summer",
+            Season::Autumn => "autumn",
+            Season::Winter => "winter",
+        }
+    }
 }
 
 /// A named circular area: a spawn point, a hangout, a market square. `name` is what rules and events refer to;
@@ -469,6 +498,17 @@ pub struct Archetype {
     /// cry goes up, and drops what it took when it falls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thief: bool,
+    /// A dog: it keeps at the heel of one of the townsfolk of its home, waits at their door while they are in, and
+    /// barks at strangers and at a cutpurse on the run.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pet: bool,
+    /// A beast from a farm that wanders off (a cow, a goat): townsfolk ask a player to bring it home, and it follows
+    /// whoever leads it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stray: bool,
+    /// Tends the sick in a town the plague is in (a plague doctor): goes to them and, now and then, cures one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub healer: bool,
 }
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
@@ -568,6 +608,10 @@ pub struct GameFile {
     /// content hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gods: Vec<String>,
+    /// What townsfolk say, by occasion (`proto::talk`): any occasion named here replaces its default lines. Not in
+    /// the content hash.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub talk: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// An emote: `/cmd` says `text` to everyone in `say_reach`, or `at` when a name follows (`/wave Bob`); `{name}` is
@@ -720,6 +764,11 @@ pub struct LevelsFile {
     /// What reaching a level gives, besides being stronger: items (coin is an item too) and a line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rewards: Vec<LevelReward>,
+    /// Pools that grow with level (`{"health": 10, "mana": 8}`): a player's ceiling for each starts at its
+    /// default and each level above the first adds this much, up to the attribute's max (so set the max to what
+    /// the cap should reach). Reaching a level, or rising again, fills it. Players only; bots keep their own.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub grow: BTreeMap<String, f32>,
 }
 
 /// Reaching `level` gives `items` (into the bag; what does not fit lands at their feet) and says `text`.
@@ -797,7 +846,7 @@ mod level_tests {
 
     #[test]
     fn the_curve_climbs_and_stops_at_the_cap() {
-        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10, life: Default::default(), rewards: vec![] };
+        let l = LevelsFile { cap: 20, base: 100.0, exponent: 1.6, might: 0.06, toughness: 0.05, discover_xp: 10, life: Default::default(), rewards: vec![], grow: Default::default() };
         assert_eq!((l.xp_for(1), l.xp_for(2)), (0, 100));
         assert!((2..=20).all(|v| l.xp_for(v) > l.xp_for(v - 1)));
         assert_eq!((l.level_of(0), l.level_of(99), l.level_of(100), l.level_of(u32::MAX)), (1, 1, 2, 20));
@@ -806,6 +855,11 @@ mod level_tests {
 }
 
 impl LevelsFile {
+    /// A player's ceiling for an attribute that grows (`grow`) at `level`, from its default, up to its max.
+    pub fn ceiling(&self, name: &str, default: f32, max: f32, level: u8) -> Option<f32> {
+        self.grow.get(name).map(|per| (default + per * (level.max(1) - 1) as f32).min(max))
+    }
+
     /// Experience needed, in all, to be at `level` (0 for level 1).
     pub fn xp_for(&self, level: u8) -> u32 {
         if level <= 1 {
@@ -1400,6 +1454,51 @@ pub enum Step {
         #[serde(default, skip_serializing_if = "is_false")]
         everyone: bool,
     },
+    /// The townsfolk of the event's place come out to its square for `secs` (a market, a feast, a wedding), and
+    /// now and then say a line of `occasion` (`GameFile::talk`) and dance. With `announce`, those nearby are told
+    /// so, `{who}` and `{other}` filled with two of the townsfolk there (the couple) and `{place}` with the town.
+    Gather {
+        #[serde(default = "d_gather_secs")]
+        secs: u32,
+        #[serde(default = "d_gather_occasion")]
+        occasion: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        announce: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        dance: bool,
+    },
+    /// The sickness comes to the event's town for `secs`: `first` of its folk fall ill, and it spreads to those who
+    /// stand close (`spread_pct` a minute for each one beside the sick). Each case runs its course and ends in
+    /// recovery or, `deaths_pct` of the time for townsfolk, death; a player it weakens but does not kill. A healing
+    /// draught used beside the sick cures them, and the town's shops shut until it has passed.
+    Plague {
+        #[serde(default = "d_plague_secs")]
+        secs: u32,
+        #[serde(default = "d_plague_spread")]
+        spread_pct: f32,
+        #[serde(default = "d_plague_deaths")]
+        deaths_pct: f32,
+        #[serde(default = "d_plague_first")]
+        first: u8,
+    },
+}
+fn d_plague_secs() -> u32 {
+    1500
+}
+fn d_plague_spread() -> f32 {
+    12.0
+}
+fn d_plague_deaths() -> f32 {
+    20.0
+}
+fn d_plague_first() -> u8 {
+    3
+}
+fn d_gather_secs() -> u32 {
+    600
+}
+fn d_gather_occasion() -> String {
+    "market".into()
 }
 fn d_one_count() -> u32 {
     1
@@ -1416,6 +1515,8 @@ pub enum When {
     },
     /// The day reaches this part (`daylight`): `dawn` sunrise, `day` midday, `dusk` sunset, `night` midnight.
     Time { at: DayPart },
+    /// The year turns to this season (`Rules::season_days`).
+    Season { is: Season },
     /// Another event has just finished.
     After {
         event: String,
@@ -1496,6 +1597,11 @@ pub struct EventDef {
     /// Longest it may run before it has failed (0: no limit).
     #[serde(default)]
     pub limit_secs: u32,
+    /// It happens in a town (a place with houses) picked each time it starts, one with players at it before one
+    /// without, rather than at `place`: a market day, a feast, a wedding that comes round the towns. Its steps'
+    /// messages may say `{place}`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub roams: bool,
     #[serde(default)]
     pub steps: Vec<Step>,
     /// What happens instead if it fails: a `Defeat` or the time limit ran out.
@@ -1508,7 +1614,7 @@ fn d_cooldown() -> u32 {
 
 impl Default for EventDef {
     fn default() -> Self {
-        EventDef { name: String::new(), every_secs: 0, chance_pct: 100.0, when: None, cooldown_secs: d_cooldown(), place: None, limit_secs: 0, steps: Vec::new(), fail_steps: Vec::new() }
+        EventDef { name: String::new(), every_secs: 0, chance_pct: 100.0, when: None, cooldown_secs: d_cooldown(), place: None, limit_secs: 0, roams: false, steps: Vec::new(), fail_steps: Vec::new() }
     }
 }
 
@@ -1552,6 +1658,9 @@ pub struct ArchRt {
     pub ambush: bool,
     pub work: Option<Work>,
     pub thief: bool,
+    pub pet: bool,
+    pub stray: bool,
+    pub healer: bool,
 }
 
 impl ArchRt {
@@ -1623,6 +1732,7 @@ pub struct Game {
     pub starter: Vec<(usize, u8)>,
     pub emotes: Vec<Emote>,
     pub gods: Vec<String>,
+    pub talk: crate::talk::Talk,
 }
 
 /// Most walls a game file may place.
@@ -1687,6 +1797,9 @@ impl GameFile {
             ambush: false,
             work: None,
             thief: false,
+            pet: false,
+            stray: false,
+            healer: false,
             color: color.into(),
             count,
             behaviour,
@@ -1770,6 +1883,7 @@ impl GameFile {
             starter: Vec::new(),
             emotes: Vec::new(),
             gods: Vec::new(),
+            talk: Default::default(),
             events: Vec::new(),
             move_speed: 20.0,
             road_speed: crate::world::ROAD_SPEED,
@@ -2305,6 +2419,9 @@ impl GameFile {
                 ambush: a.ambush,
                 work: a.work,
                 thief: a.thief,
+                pet: a.pet,
+                stray: a.stray,
+                healer: a.healer,
                 color: a.color.clone(),
                 count: a.count,
                 behaviour: a.behaviour,
@@ -2367,6 +2484,11 @@ impl GameFile {
         if let Some(l) = &self.levels {
             if l.cap < 1 || l.cap > MAX_LEVEL {
                 return Err(format!("levels.cap must be 1..{MAX_LEVEL}"));
+            }
+            for (name, &per) in &l.grow {
+                if !self.attrs.iter().any(|a| &a.name == name) || !(per.is_finite() && (0.0..=10_000.0).contains(&per)) {
+                    return Err(format!("levels.grow: '{name}' must be an attribute, growing by 0..10000 a level"));
+                }
             }
             for (v, what, lo, hi) in [
                 (l.base, "base", 1.0, 1e7),
@@ -2434,7 +2556,8 @@ impl GameFile {
         if self.gods.len() > 50 || self.gods.iter().any(|t| t.len() != 16 || !t.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
             return Err("gods: at most 50 account tags, each 16 lowercase hex digits".into());
         }
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, emotes: self.emotes.clone(), gods: self.gods.clone() })
+        let talk = crate::talk::Talk::build(&self.talk)?;
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, emotes: self.emotes.clone(), gods: self.gods.clone(), talk })
     }
 
     /// Factions: names unique, numbers in range, and what they hate there.
@@ -2572,6 +2695,34 @@ impl GameFile {
                     return Err(format!("{ctx}: count must be 1..255"));
                 }
             }
+            Step::Plague { secs, spread_pct, deaths_pct, first } => {
+                if !has_place {
+                    return Err(format!("{ctx}: a plague needs the event to have a place, or to roam"));
+                }
+                if *secs == 0 || *secs > MAX_EVENT_SECS {
+                    return Err(format!("{ctx}: a plague lasts 1..{MAX_EVENT_SECS} seconds"));
+                }
+                if !(0.0..=100.0).contains(spread_pct) || !(0.0..=100.0).contains(deaths_pct) {
+                    return Err(format!("{ctx}: spread_pct and deaths_pct are 0..100"));
+                }
+                if *first == 0 || *first > 50 {
+                    return Err(format!("{ctx}: first is 1..50"));
+                }
+            }
+            Step::Gather { secs, occasion, announce, .. } => {
+                if !has_place {
+                    return Err(format!("{ctx}: a gathering needs the event to have a place"));
+                }
+                if *secs == 0 || *secs > MAX_EVENT_SECS {
+                    return Err(format!("{ctx}: a gathering is 1..{MAX_EVENT_SECS} seconds"));
+                }
+                if !crate::talk::DEFAULTS.iter().any(|d| d.0 == occasion) {
+                    return Err(format!("{ctx}: no talk occasion '{occasion}'"));
+                }
+                if announce.as_ref().is_some_and(|t| t.trim().is_empty() || t.len() > 120) {
+                    return Err(format!("{ctx}: the message must be 1..120 bytes"));
+                }
+            }
         }
         Ok(())
     }
@@ -2696,7 +2847,7 @@ impl GameFile {
             for (i, st) in e.steps.iter().map(|s| (false, s)).chain(e.fail_steps.iter().map(|s| (true, s))).enumerate() {
                 let (failing, st) = st;
                 let ctx = if failing { format!("event '{}' fail step {}", e.name, i + 1 - e.steps.len()) } else { format!("event '{}' step {}", e.name, i + 1) };
-                self.check_step(st, &ctx, e.place.is_some())?;
+                self.check_step(st, &ctx, e.place.is_some() || e.roams)?;
             }
         }
         if self.zones.len() > MAX_ZONES {

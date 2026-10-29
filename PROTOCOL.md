@@ -262,6 +262,8 @@ The bag, the bank, trading and the auction house (`proto::game` `bag_op`, `trade
 
 Chat channel 7 is a bot's passing remark, heard within 24 units (sender the bot): show it over the speaker's head rather than in the chat log; a client that does not know it can show it as a line said nearby. A player whose health runs out is not respawned: they stay where they fell with health held at its minimum, cannot move or act, and are left out of everyone else's snapshots, until they send action 239; then they come back whole in the nearest place marked `safe` (anywhere free, if there is none). A client tells it is down from its own health being at the minimum. Bots that have gone indoors (`indoors` rule) are also left out of snapshots. (No version change: none of this alters a packet.)
 
+Chat channel 12 is server to client only, from 0: the lit windows round you, the houses someone is at home in of an evening. `L0|` starts a new list (an empty `L0|` puts every light out) and `L1|` adds to it, then entries `x,y,name` joined by `;`: the house's middle rounded to whole units (its footprint in the world file), and who is in, an inn's name starting with `*`. A bot's emote on channel 11 may carry no line (`dance|`): play the clip and say nothing. Chat channel 13 is server to client only, from 0: the towns the sickness is in, `P|` then `x,y,r` of each (its place's middle and radius, whole units) joined by `;`, sent when the list changes (`P|` alone: none). The sick cough as a wordless emote on channel 11 (`cough|`). A client that knows none of these can ignore them. (No version change.)
+
 ## Encounters, quests and the crowd (versions 10 and 11)
 
 Version 10 widened QUESTS to u16 quest indices with a bitmap of the quests done, and added ENCOUNTER (`0x8F`).

@@ -37,6 +37,7 @@ uniform float map_size = 96.0;
 uniform float wind = 0.3;
 uniform float sea_level = -1000.0;
 global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
+global uniform float world_autumn;  // life.gd: the year's turn to gold, 0 .. 1
 varying vec3 wp;
 varying float tip;
 varying float cold;
@@ -94,6 +95,8 @@ void fragment() {
 	vec3 cb = mix(vec3(0.36, 0.42, 0.30), vec3(0.45, 0.47, 0.36), k);
 	vec3 ct = mix(vec3(0.58, 0.58, 0.46), vec3(0.80, 0.84, 0.86), smoothstep(0.55, 0.95, cold) * 0.7);
 	c = mix(c, mix(cb, ct, tip) * (0.9 + 0.2 * h(floor(q * 3.0))), cold);
+	// Autumn: blades gone over to straw, rust at the tips.
+	c = mix(c, mix(vec3(0.58, 0.48, 0.22), vec3(0.66, 0.42, 0.20), tip), world_autumn * (1.0 - cold) * 0.6);
 	// A flower at the tip: buttercup, daisy, clover, poppy or cornflower.
 	vec3 fc = flower < 1.5 ? vec3(0.96, 0.82, 0.22) : flower < 2.5 ? vec3(0.96, 0.95, 0.90) : flower < 3.5 ? vec3(0.70, 0.45, 0.78) : flower < 4.5 ? vec3(0.88, 0.22, 0.18) : vec3(0.40, 0.55, 0.92);
 	c = mix(c, fc, step(0.5, flower) * smoothstep(0.7, 0.95, tip));

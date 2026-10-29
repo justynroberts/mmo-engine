@@ -8,7 +8,7 @@
     {
       "name": "health",
       "min": 0.0,
-      "max": 100.0,
+      "max": 300.0,
       "default": 100.0,
       "bits": 8,
       "replicated": true,
@@ -38,7 +38,7 @@
     {
       "name": "mana",
       "min": 0.0,
-      "max": 100.0,
+      "max": 250.0,
       "default": 100.0,
       "bits": 8,
       "replicated": true,
@@ -2800,13 +2800,17 @@
           "when": {
             "kind": "sees",
             "who": "player",
-            "within": 16.0
+            "within": 35.0
           },
           "then": {
             "kind": "chat",
             "lines": [
               "Fair prices on fair day!",
-              "Bread, mead, and a cure for what ails you!"
+              "Bread, mead, and a cure for what ails you!",
+              "Fresh loaves! Who'll have a loaf?",
+              "Mead by the cup, mead by the jug!",
+              "Swords from Dublin's best smith, come and see!",
+              "Seed for the spring sowing, a penny a bag!"
             ]
           }
         }
@@ -3259,7 +3263,6 @@
         "drogheda",
         "sligo",
         "athlone",
-        "coill na mac tire",
         "dundalk",
         "kells",
         "clonmel",
@@ -4016,8 +4019,7 @@
         "kilkenny",
         "drogheda",
         "sligo",
-        "athlone",
-        "coill na mac tire"
+        "athlone"
       ],
       "surnames": [
         "Byrne",
@@ -4090,7 +4092,8 @@
         "Roche",
         "Scanlon",
         "Tully"
-      ]
+      ],
+      "work": "play"
     },
     {
       "name": "watchman",
@@ -4201,8 +4204,7 @@
         "kilkenny",
         "drogheda",
         "sligo",
-        "athlone",
-        "coill na mac tire"
+        "athlone"
       ],
       "work": "streets",
       "surnames": [
@@ -4436,6 +4438,161 @@
         "Tully"
       ],
       "respawn_secs": 120.0
+    },
+    {
+      "name": "madra",
+      "title": "Dog",
+      "color": "#8b6b4a",
+      "count": 30,
+      "behaviour": "wander",
+      "speed_mult": 1.15,
+      "sight": 30.0,
+      "attack": null,
+      "attrs": {},
+      "home": "dublin",
+      "homes": [
+        "waterford",
+        "cork",
+        "limerick",
+        "galway",
+        "wexford",
+        "armagh",
+        "derry",
+        "kilkenny",
+        "drogheda",
+        "sligo",
+        "athlone",
+        "dundalk",
+        "kells",
+        "clonmel",
+        "tralee",
+        "downpatrick",
+        "ennis",
+        "roscommon",
+        "kildare",
+        "carlow",
+        "monaghan",
+        "donegal",
+        "westport",
+        "lismore",
+        "coleraine",
+        "enniskillen",
+        "belfast",
+        "mullingar",
+        "thurles",
+        "killarney",
+        "bantry",
+        "youghal",
+        "kinsale",
+        "ardee",
+        "listowel"
+      ],
+      "rules": [],
+      "pet": true,
+      "names": [
+        "Bran",
+        "Sceolan",
+        "Lúath",
+        "Cú",
+        "Faol",
+        "Rua",
+        "Dubh",
+        "Smut",
+        "Gearr",
+        "Bric",
+        "Fionn",
+        "Donn",
+        "Liath",
+        "Sionnach",
+        "Grá",
+        "Óg",
+        "Tóla",
+        "Ailbe",
+        "Fiach",
+        "Bláth",
+        "Caoimh",
+        "Púca",
+        "Gaoth",
+        "Réalt",
+        "Spota",
+        "Coileán",
+        "Ceann",
+        "Lasair",
+        "Scáth",
+        "Saoi"
+      ]
+    },
+    {
+      "name": "bo",
+      "title": "Cow",
+      "color": "#6b3f22",
+      "count": 0,
+      "behaviour": "idle",
+      "speed_mult": 0.6,
+      "sight": 10.0,
+      "attack": null,
+      "attrs": {},
+      "home": null,
+      "rules": [],
+      "stray": true,
+      "lasts_secs": 900
+    },
+    {
+      "name": "lochran",
+      "title": "Lantern",
+      "color": "#ffc070",
+      "count": 0,
+      "behaviour": "idle",
+      "speed_mult": 0.0,
+      "sight": 1.0,
+      "attack": null,
+      "attrs": {},
+      "home": null,
+      "rules": [],
+      "lasts_secs": 1800
+    },
+    {
+      "name": "dochtuir",
+      "title": "Plague Doctor",
+      "color": "#2f2a24",
+      "count": 0,
+      "behaviour": "wander",
+      "speed_mult": 0.8,
+      "sight": 30.0,
+      "attack": null,
+      "attrs": {},
+      "home": "dublin",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 14.0
+          },
+          "then": {
+            "kind": "chat",
+            "lines": [
+              "Keep your distance, friend. And your draughts handy.",
+              "Vinegar and prayer. It's all we have.",
+              "Bring me any you find with the fever.",
+              "Breathe through a cloth, if you must come near."
+            ]
+          }
+        }
+      ],
+      "lasts_secs": 1800,
+      "names": [
+        "Tomás",
+        "Seán",
+        "Peadar",
+        "Muiris"
+      ],
+      "surnames": [
+        "Ó Dálaigh",
+        "Mac Craith",
+        "Ó Néill"
+      ],
+      "healer": true
     }
   ],
   "places": [
@@ -7710,6 +7867,246 @@
           "place": "kells"
         }
       ]
+    },
+    {
+      "every_secs": 1500,
+      "chance_pct": 70.0,
+      "cooldown_secs": 600,
+      "limit_secs": 0,
+      "name": "la margaidh",
+      "roams": true,
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "It is market day in {place}! Traders are setting out their stalls.",
+          "nearby": true
+        },
+        {
+          "kind": "spawn",
+          "archetype": "ceannai aonaigh",
+          "count": 3
+        },
+        {
+          "kind": "gather",
+          "secs": 900,
+          "occasion": "market"
+        }
+      ]
+    },
+    {
+      "every_secs": 0,
+      "chance_pct": 100.0,
+      "cooldown_secs": 2000,
+      "limit_secs": 0,
+      "name": "oiche cheoil",
+      "when": {
+        "kind": "time",
+        "at": "dusk"
+      },
+      "roams": true,
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "Music on the square in {place} tonight! Come and dance.",
+          "nearby": true
+        },
+        {
+          "kind": "spawn",
+          "archetype": "ceoltoir",
+          "count": 2
+        },
+        {
+          "kind": "spawn",
+          "archetype": "lochran",
+          "count": 8
+        },
+        {
+          "kind": "gather",
+          "secs": 900,
+          "occasion": "feast",
+          "dance": true
+        }
+      ]
+    },
+    {
+      "every_secs": 2700,
+      "chance_pct": 40.0,
+      "cooldown_secs": 600,
+      "limit_secs": 0,
+      "name": "bainis",
+      "roams": true,
+      "steps": [
+        {
+          "kind": "gather",
+          "secs": 600,
+          "occasion": "wedding",
+          "dance": true,
+          "announce": "Bells ring in {place}: {who} and {other} are wed today! All are welcome."
+        },
+        {
+          "kind": "spawn",
+          "archetype": "ceoltoir",
+          "count": 1
+        },
+        {
+          "kind": "drop",
+          "item": "miodh",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "every_secs": 0,
+      "chance_pct": 100.0,
+      "cooldown_secs": 3600,
+      "limit_secs": 0,
+      "name": "samhain",
+      "when": {
+        "kind": "season",
+        "is": "winter"
+      },
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "Samhain. Winter comes down on Hibernia, and the nights grow hungry.",
+          "banner": true
+        },
+        {
+          "kind": "weather",
+          "name": "sneachta",
+          "duration_secs": 900
+        }
+      ]
+    },
+    {
+      "every_secs": 0,
+      "chance_pct": 100.0,
+      "cooldown_secs": 3600,
+      "limit_secs": 0,
+      "name": "imbolc",
+      "when": {
+        "kind": "season",
+        "is": "spring"
+      },
+      "place": "tobar",
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "Imbolc. Brigid's light returns to the land: spring is here.",
+          "banner": true
+        },
+        {
+          "kind": "weather",
+          "name": "solas bhride",
+          "duration_secs": 600
+        }
+      ]
+    },
+    {
+      "every_secs": 0,
+      "chance_pct": 100.0,
+      "cooldown_secs": 3600,
+      "limit_secs": 0,
+      "name": "bealtaine",
+      "when": {
+        "kind": "season",
+        "is": "summer"
+      },
+      "place": "tara",
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "Bealtaine! Fires are lit on Teamhair to welcome the summer.",
+          "banner": true
+        },
+        {
+          "kind": "spawn",
+          "archetype": "tine",
+          "count": 4
+        },
+        {
+          "kind": "spawn",
+          "archetype": "ceoltoir",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "every_secs": 0,
+      "chance_pct": 100.0,
+      "cooldown_secs": 3600,
+      "limit_secs": 0,
+      "name": "lughnasa",
+      "when": {
+        "kind": "season",
+        "is": "autumn"
+      },
+      "place": "dublin",
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "Lughnasa: the harvest is in! A feast in Áth Cliath, and bread for all.",
+          "banner": true
+        },
+        {
+          "kind": "spawn",
+          "archetype": "ceoltoir",
+          "count": 3
+        },
+        {
+          "kind": "spawn",
+          "archetype": "lochran",
+          "count": 10
+        },
+        {
+          "kind": "gather",
+          "secs": 900,
+          "occasion": "feast",
+          "dance": true
+        },
+        {
+          "kind": "reward",
+          "item": "aran",
+          "count": 2,
+          "everyone": true
+        }
+      ]
+    },
+    {
+      "name": "an phla",
+      "roams": true,
+      "every_secs": 5400,
+      "chance_pct": 30.0,
+      "cooldown_secs": 5400,
+      "limit_secs": 0,
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "The sickness has come to {place}! Keep your distance, and pray.",
+          "banner": true
+        },
+        {
+          "kind": "plague",
+          "secs": 1500,
+          "spread_pct": 40.0,
+          "deaths_pct": 20.0,
+          "first": 5
+        },
+        {
+          "kind": "wait",
+          "secs": 240
+        },
+        {
+          "kind": "announce",
+          "text": "A plague doctor has come to {place}, in a beaked mask, with vinegar and herbs.",
+          "nearby": true
+        },
+        {
+          "kind": "spawn",
+          "archetype": "dochtuir",
+          "count": 1
+        }
+      ]
     }
   ],
   "quests": [
@@ -8457,7 +8854,11 @@
         ],
         "text": "Level 15: a gold ring, and a purse."
       }
-    ]
+    ],
+    "grow": {
+      "health": 10.0,
+      "mana": 7.0
+    }
   },
   "currency": "pingin airgid",
   "classes": [
@@ -8643,7 +9044,12 @@
     "night_ambush_pct": 30.0,
     "night_pack": 3,
     "brawl_pct": 15.0,
-    "lift_pct": 20.0
+    "lift_pct": 20.0,
+    "inn_pct": 35.0,
+    "newcomer_secs": 2400.0,
+    "plea_pct": 40.0,
+    "season_days": 3.0,
+    "season_shift": 0.0
   },
   "starter": [
     {

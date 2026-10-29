@@ -348,11 +348,17 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "road_speed": sim.defs.road_speed,
         // Players may harm each other outside places marked safe.
         "pvp": sim.pvp,
+        // Pools that grow with level: a player's ceiling is the attribute's default plus this per level above the
+        // first (up to its max), so a client draws bars against the level it sees.
+        "grow": sim.levels.as_ref().map(|l| l.grow.clone()).unwrap_or_default(),
         // Quests, for a client to show: who gives them (by the name its bots go by), what to do, what they give.
         "quests": sim.quests.iter().map(|q| quest_info(q, &sim.places, &sim.archs, &sim.items)).collect::<Vec<_>>(),
         // Tuning numbers a client needs too (talk and pickup reach, the pause after an action), all of them.
         "rules": sim.rules,
         "emotes": sim.emotes.iter().map(|e| (e.cmd.as_str(), e.anim.as_str())).collect::<Vec<_>>(),
+        // Bot types a client draws as beasts rather than people, by the name players see: dogs (`Archetype::pet`,
+        // whose remarks are barks) and strays from the farms (`Archetype::stray`).
+        "beasts": sim.archs.iter().filter(|a| a.pet || a.stray).map(|a| (a.shown(), if a.pet { "dog" } else { "cow" })).collect::<Vec<_>>(),
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,
@@ -364,7 +370,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             "act_build": proto::game::ACT_BUILD, "act_break": proto::game::ACT_BREAK,
             "climb": proto::world::CLIMB, "ground": proto::world::GROUND,
         },
-        "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
+        "attrs": sim.defs.attrs.iter().map(|a| json!({"name": a.name, "min": a.min, "max": a.max, "default": a.default, "bits": a.bits, "replicated": a.replicated})).collect::<Vec<_>>(),
         "replicated": sim.defs.replicated,
         "actions": sim.defs.actions.iter().map(|a| action_info(&sim.defs, a)).collect::<Vec<_>>(),
         "boxes": boxes,
@@ -1125,6 +1131,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.starter = game.starter;
         c.sim.emotes = game.emotes;
         c.sim.gods = game.gods;
+        c.sim.talk = game.talk;
         c.sim.levels = game.levels;
         // Quests are kept by name: everyone's are sent again, as indices may have moved.
         c.sim.quests = game.quests;
@@ -1270,6 +1277,27 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     let mut looping: Vec<(u32, usize)> = (0..s.ents.high).filter(|&slot| s.ents.alive[slot] && s.ents.owner[slot] < DRIVEN && s.life_stale[slot] > 0).map(|slot| (s.life_stale[slot], slot)).collect();
     looping.sort_unstable_by(|a, b| b.0.cmp(&a.0));
     let looping: Vec<serde_json::Value> = looping.iter().take(50).map(|&(n, slot)| json!({"id": s.ents.id_of(slot), "name": &*s.name_of(slot), "stale": n, "xp": s.ents.xp[slot]})).collect();
-    let _ = write!(o, r#"],"shown":{shown},"names":{},"looping":{}}}"#, serde_json::Value::Object(players), json!(looping));
+    // Town life: the season, the latest news, funerals and gatherings under way, pleas asked of players.
+    let place = |h: usize| s.places.get(h).map_or("", |p| p.name.as_str());
+    let town = json!({
+        "season": s.season.map(|x| x.name()),
+        "news": s.news.iter().rev().take(20).map(|n| json!({"what": n.occasion, "who": &n.who, "by": &n.other, "place": &n.place, "at": [n.x.round(), n.y.round()]})).collect::<Vec<_>>(),
+        "funerals": s.funerals.iter().map(|f| json!({"who": &f.who, "town": place(f.home)})).collect::<Vec<_>>(),
+        "gatherings": s.gatherings.iter().map(|g| json!({"what": &g.occasion, "town": place(g.place)})).collect::<Vec<_>>(),
+        "repute": (0..s.ents.high).filter(|&p| s.ents.alive[p] && s.ents.owner[p] < DRIVEN && !s.repute[p].is_empty()).map(|p| json!({"who": &*s.name_of(p), "towns": s.repute[p].iter().map(|(t, v)| json!([t, v, crate::repute::Tier::of(*v).word()])).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        "plagues": s.plagues.iter().map(|q| json!({"town": place(q.town), "cases": q.cases, "dead": q.dead, "cured": q.cured, "sick": (0..s.ents.high).filter(|&k| s.ents.alive[k] && s.sick[k] > 0).count(), "secs_left": q.until.saturating_sub(s.tick) / s.tick_hz.max(1)})).collect::<Vec<_>>(),
+        "inn": {
+            "going": (0..s.ents.high).filter(|&k| s.ents.alive[k] && matches!(s.folk[k].inn, crate::folk::Inn::Going(_))).count(),
+            "in": (0..s.ents.high).filter(|&k| s.ents.alive[k] && matches!(s.folk[k].inn, crate::folk::Inn::In(_))).count(),
+            "merry": (0..s.ents.high).filter(|&k| s.ents.alive[k] && matches!(s.folk[k].inn, crate::folk::Inn::Merry(_))).count(),
+            "merry_ids": (0..s.ents.high).filter(|&k| s.ents.alive[k] && matches!(s.folk[k].inn, crate::folk::Inn::Merry(_))).map(|k| s.ents.id_of(k)).collect::<Vec<_>>(),
+        },
+        "brawling": (0..s.ents.high).filter(|&k| s.ents.alive[k] && s.brawl[k].is_some()).count(),
+        "indoors": (0..s.ents.high).filter(|&k| s.ents.alive[k] && s.ents.owner[k] == crate::sim::NONE && s.ents.hidden[k]).count(),
+        "playing": (0..s.ents.high).filter(|&k| s.ents.alive[k] && s.folk[k].play.is_some()).count(),
+        "shadows": (0..s.ents.high).filter_map(|w| s.ents.resolve(s.folk[w].shadow).map(|p| json!({"watch": s.ents.id_of(w), "follows": &*s.name_of(p)}))).collect::<Vec<_>>(),
+        "pleas": (0..s.plea.len()).filter_map(|p| s.plea[p].as_ref().map(|q| json!({"to": &*s.name_of(p), "from": &q.from_name, "town": place(q.town), "kind": match q.kind { crate::repute::PleaKind::Beat(_) => "beat", crate::repute::PleaKind::Fetch(_) => "fetch", crate::repute::PleaKind::Cure(_) => "cure" }}))).collect::<Vec<_>>(),
+    });
+    let _ = write!(o, r#"],"shown":{shown},"names":{},"looping":{},"town":{town}}}"#, serde_json::Value::Object(players), json!(looping));
     o
 }

@@ -378,6 +378,8 @@ pub struct Sim {
     pub emotes: Vec<proto::game::Emote>,
     /// Account tags that may take god mode in game (`GameFile::gods`, `/god`).
     pub gods: Vec<String>,
+    /// What townsfolk say (`GameFile::talk` over `proto::talk::DEFAULTS`).
+    pub talk: proto::talk::Talk,
     /// The `lit` attribute, when the game has one (sneaking).
     lit_attr: Option<usize>,
     /// Lines bots want to say this tick: (slot, shout, text). Drained by the network layer.
@@ -443,7 +445,38 @@ pub struct Sim {
     pub collar: Vec<Option<u32>>,
     pub lift_at: Vec<u32>,
     pub calm: Vec<u32>,
+    /// Talk (`gossip.rs`): the news going round, the id the next one gets, and for each player when next they are
+    /// spoken to, the townsfolk they have met and the news they have heard. `town_index` is the places that are towns.
+    pub news: Vec<crate::gossip::News>,
+    pub news_id: u32,
+    pub talk_at: Vec<u32>,
+    pub met: Vec<std::collections::HashSet<u32>>,
+    pub heard: Vec<Vec<u32>>,
+    pub town_index: Vec<usize>,
     pub armed: Vec<bool>,
+    /// The rest of town life (`folk.rs`): each bot's part in it, the towns out at a gathering, the funerals under
+    /// way, the dances to show (bot, clip), each town's inn (worked out per world: `inns_for` is the houses it was
+    /// worked out from), and the middle of each townsperson's own house (for its lit windows, as `door`).
+    pub folk: Vec<crate::folk::Folk>,
+    pub gatherings: Vec<crate::folk::Gathering>,
+    pub funerals: Vec<crate::folk::Funeral>,
+    pub npc_emotes: Vec<(usize, String)>,
+    pub inns: std::collections::HashMap<usize, Option<((f32, f32), (f32, f32))>>,
+    pub inns_for: usize,
+    pub house: Vec<Option<(f32, f32)>>,
+    /// What lit windows each player was last told of (a hash), so it is sent only when it changes (`net.rs`).
+    pub lit_sent: Vec<u64>,
+    /// The day (`Daylight::day`) and the season (`seasons.rs`), worked out once a second.
+    pub day: f64,
+    pub season: Option<proto::game::Season>,
+    /// How each town thinks of each player, by place name (`repute.rs`), what they were asked to help with, and
+    /// when next they may be asked.
+    pub repute: Vec<Vec<(String, i32)>>,
+    pub plea: Vec<Option<crate::repute::Plea>>,
+    pub plea_at: Vec<u32>,
+    /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
+    /// starts in one.
+    pub bell_seen: Option<proto::game::DayPart>,
     /// Where a townsperson with a trade works by day (`homes.rs` `work_of`), cached as `door` is.
     pub work: Vec<Option<Option<(f32, f32)>>>,
     /// A townsperson's own front door (`homes.rs`), worked out the first time it is needed: None not yet, Some(None)
@@ -461,6 +494,17 @@ pub struct Sim {
     /// passed between them, the bots locked on each player (ids), and a version bumped when those change
     /// (`wire::kind::ENCOUNTER`).
     pub foe: Vec<Option<u32>>,
+    /// Who last struck each slot (an id), bot or player: what the news says killed it.
+    pub last_hit: Vec<Option<u32>>,
+    /// A home given to one bot over its type's (a roaming fair's traders live in the town it came to).
+    pub home_over: Vec<Option<usize>>,
+    /// The sickness (`plague.rs`): when each slot's case runs its course (0: well), who has had it and is over it,
+    /// the towns it is in, a version bumped when that list changes, and the version each client was last told.
+    pub sick: Vec<u32>,
+    pub immune: Vec<bool>,
+    pub plagues: Vec<crate::plague::Plague>,
+    pub plague_ver: u64,
+    pub plague_sent: Vec<u64>,
     /// Factions (`factions.rs`), and each player's standing with them by faction name.
     pub factions: Vec<proto::game::FactionFile>,
     pub standing: Vec<Vec<(String, i32)>>,
@@ -514,7 +558,7 @@ pub struct Sim {
     pub nav: crate::nav::Nav,
     /// Per slot: the static point a bot last decided to walk to and how near counts as there (negative for
     /// none), so between decisions it can keep following the flow field round corners.
-    nav_goal: Vec<(f32, f32, f32)>,
+    pub(crate) nav_goal: Vec<(f32, f32, f32)>,
     /// Factions, classes, loot tables, recipes, crops, land and dungeons (`proto::realm`), and their live state:
     /// who is on which side, guilds, plots, crops in the ground, dungeon runs (`realm.rs`).
     pub realm: proto::realm::Realm,
@@ -578,7 +622,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, emotes, gods } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, emotes, gods, talk } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -607,6 +651,7 @@ impl Sim {
             starter,
             emotes,
             gods,
+            talk,
             lit_attr: None,
             npc_say: Vec::new(),
             npc_chat: Vec::new(),
@@ -643,7 +688,27 @@ impl Sim {
             collar: vec![None; cap],
             lift_at: vec![0; cap],
             calm: vec![0; cap],
+            news: Vec::new(),
+            news_id: 0,
+            talk_at: vec![0; cap],
+            met: vec![Default::default(); cap],
+            heard: vec![Vec::new(); cap],
+            town_index: Vec::new(),
             armed: Vec::new(),
+            folk: vec![Default::default(); cap],
+            gatherings: Vec::new(),
+            funerals: Vec::new(),
+            npc_emotes: Vec::new(),
+            inns: std::collections::HashMap::new(),
+            inns_for: 0,
+            house: vec![None; cap],
+            lit_sent: vec![0; cap],
+            day: 0.0,
+            season: None,
+            repute: vec![Vec::new(); cap],
+            plea: vec![None; cap],
+            plea_at: vec![0; cap],
+            bell_seen: None,
             work: vec![None; cap],
             door: vec![None; cap],
             sheltered: vec![false; cap],
@@ -653,6 +718,13 @@ impl Sim {
             mounted: vec![0.0; cap],
             gear_ver: vec![0; cap],
             foe: vec![None; cap],
+            last_hit: vec![None; cap],
+            home_over: vec![None; cap],
+            sick: vec![0; cap],
+            immune: vec![false; cap],
+            plagues: Vec::new(),
+            plague_ver: 0,
+            plague_sent: vec![0; cap],
             factions,
             standing: vec![Vec::new(); cap],
             life_bank: vec![0.0; cap],
@@ -759,6 +831,9 @@ impl Sim {
         self.mounted[slot] = 0.0;
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         self.foe[slot] = None;
+        self.last_hit[slot] = None;
+        self.home_over[slot] = None;
+        (self.sick[slot], self.immune[slot], self.plague_sent[slot]) = (0, false, 0);
         self.standing[slot].clear();
         self.life_bank[slot] = 0.0;
         self.life_at[slot] = (f32::NAN, f32::NAN);
@@ -794,6 +869,7 @@ impl Sim {
         self.wander_stay[slot] = 1.0;
         self.work[slot] = None;
         self.door[slot] = None;
+        self.house[slot] = None;
         self.sheltered[slot] = false;
         self.reset_attrs(slot);
         self.clear_inv(slot);
@@ -818,6 +894,7 @@ impl Sim {
             gear: self.gear_names(slot),
             class: self.class_of(slot).map_or(String::new(), |c| c.name.clone()),
             standing: self.standing[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
+            towns: self.repute[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -913,6 +990,7 @@ impl Sim {
         self.restore_gear(slot, &rec.gear);
         self.class[slot] = self.classes.iter().position(|c| c.name == rec.class).map_or(0, |k| k as u8 + 1);
         self.standing[slot] = rec.standing.iter().map(|(n, v)| (n.clone(), (*v).clamp(-proto::game::STANDING_MAX, proto::game::STANDING_MAX))).collect();
+        self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 
     /// An inert copy of a neighbour zone's entity. It is visible to interest management and nothing else:
@@ -1206,6 +1284,27 @@ impl Sim {
         for (i, def) in self.defs.attrs.iter().enumerate() {
             self.ents.attrs[i][slot] = self.archs.get(a).map_or(def.default, |r| r.start[i]);
         }
+        self.fill_grown(slot); // a player rises with their level's health and mana
+    }
+
+    /// A player's ceiling for attribute `i` when it grows with level (`LevelsFile::grow`); None for one that
+    /// does not, or for a bot.
+    pub fn ceiling(&self, s: usize, i: usize) -> Option<f32> {
+        let l = self.levels.as_ref()?;
+        if self.ents.owner[s] >= DRIVEN {
+            return None;
+        }
+        let d = &self.defs.attrs[i];
+        l.ceiling(&d.name, d.default, d.max, self.ents.level[s])
+    }
+
+    /// Fill every pool that grows with level to the player's ceiling (on reaching a level, or rising again).
+    pub fn fill_grown(&mut self, s: usize) {
+        for i in 0..self.defs.attrs.len() {
+            if let Some(c) = self.ceiling(s, i) {
+                self.ents.attrs[i][s] = c;
+            }
+        }
     }
 
     /// Everything about the bots worth saving: which archetype, where, and their attributes.
@@ -1269,6 +1368,7 @@ impl Sim {
             let phase = self.daylight.phase(proto::daylight::now_ms());
             self.night = phase >= 1.0 - self.daylight.night_share();
             self.daypart = proto::game::DayPart::during(phase, self.daylight.night_share());
+            self.system_season();
             self.system_expire();
         }
         self.npc_actions.clear();
@@ -1295,9 +1395,14 @@ impl Sim {
             self.system_night();
             self.find_towns();
             self.system_town();
+            self.system_folk();
+            self.system_plague();
+            self.system_repute();
+            self.system_gossip();
             self.system_life();
             if self.tick % (60 * self.tick_hz.max(1)) == 0 {
                 self.system_forgive();
+                self.repute_forgive();
             }
             self.system_realm();
             self.system_market();
@@ -1313,7 +1418,7 @@ impl Sim {
     /// Steer toward a point that does not move (a place, a route point): down its flow field when one is
     /// built and the bot is in its window, otherwise straight at it. Remembers the point so the bot keeps
     /// following the field between decisions.
-    fn toward_static(&mut self, s: usize, tx: f32, ty: f32, stop: f32) -> (i8, i8) {
+    pub(crate) fn toward_static(&mut self, s: usize, tx: f32, ty: f32, stop: f32) -> (i8, i8) {
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
         let (dx, dy) = (tx - x, ty - y);
         if dx * dx + dy * dy <= stop * stop {
@@ -1339,7 +1444,7 @@ impl Sim {
     /// Wandering with a purpose: walk to a spot in the home place (or within `rules.wander_range` of here,
     /// without one), linger there a while, then pick another. Spots sit on a coarse grid so bots share flow
     /// fields; one not reached in time is given up.
-    fn wander_dir(&mut self, s: usize, a: usize) -> (i8, i8) {
+    pub(crate) fn wander_dir(&mut self, s: usize, a: usize) -> (i8, i8) {
         use proto::game::{DayPart, Work};
         const SPOT: f32 = 8.0;
         if self.tick < self.wander_wait[s] {
@@ -1361,10 +1466,37 @@ impl Sim {
             }
         }
         let home = self.home_of(s).and_then(|h| self.places.get(h)).map(|p| (p.x, p.y, p.r));
+        // The town is out on its square (`folk.rs` gatherings): there, and a long stay.
+        if self.festive(s) {
+            if let Some((px, py)) = self.square_spot(s) {
+                return self.go_to(s, px, py, 2.0);
+            }
+        }
+        // Out in the wild (no town for a home): to the water to drink of an evening, a long graze at dawn.
+        let wild = self.home_of(s).is_none_or(|h| !self.town_index.contains(&h));
+        if wild && self.archs.get(a).is_some_and(|r| r.work.is_none() && !r.stray && !r.pet) {
+            if self.daypart == DayPart::Dusk && self.rng.f32() < 0.35 {
+                if let Some((wx, wy)) = self.water_near(x, y, 250.0) {
+                    return self.go_to(s, wx, wy, 2.0);
+                }
+            }
+        }
+        let graze = if wild && self.daypart == DayPart::Dawn { 2.5 } else { 1.0 };
         // A working day: to work by day (now and then an errand instead), to the square of an evening.
         if let (Some(work), Some(_)) = (self.archs.get(a).and_then(|r| r.work), home) {
             let errand = self.rng.f32() < 0.2;
             match self.daypart {
+                DayPart::Dawn | DayPart::Day if work == Work::Play => {
+                    if let Some((px, py)) = self.square_spot(s) {
+                        return self.go_to(s, px, py, 0.5);
+                    }
+                }
+                // The evening bell has called the children in: to their door, to wait there for the night.
+                DayPart::Dusk if work == Work::Play => {
+                    if let Some((px, py)) = self.door_of(s) {
+                        return self.go_to(s, px, py, 3.0);
+                    }
+                }
                 DayPart::Dawn | DayPart::Day if work == Work::Streets && !errand => {
                     if let Some((px, py)) = self.beat_spot(s) {
                         return self.go_to(s, px, py, 1.0);
@@ -1403,7 +1535,7 @@ impl Sim {
             if px < 1.0 || py < 1.0 || px > size - 1.0 || py > size - 1.0 || self.world.blocked_by_walls(px, py, self.defs.entity_radius) {
                 continue;
             }
-            return self.go_to(s, px, py, 1.0);
+            return self.go_to(s, px, py, graze);
         }
         (0, 0)
     }
@@ -1719,7 +1851,7 @@ impl Sim {
     }
 
     /// The weather where (x, y) is: a weather zone's there, otherwise the weather everywhere, if any.
-    fn weather_name_at(&self, x: f32, y: f32) -> Option<&str> {
+    pub(crate) fn weather_name_at(&self, x: f32, y: f32) -> Option<&str> {
         for z in &self.zones {
             if (x - z.x).powi(2) + (y - z.y).powi(2) <= z.r * z.r {
                 return Some(&z.weather);
@@ -2190,8 +2322,12 @@ impl Sim {
             }
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s) {
                 self.engage(s, by);
+                self.last_hit[s] = Some(src);
             }
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s && self.ents.owner[b] < DRIVEN) {
+                if self.ents.owner[s] == NONE && self.ents.attrs[attr][s] > self.defs.attrs[attr].min {
+                    self.struck_townsfolk(by, s, false);
+                }
                 let id = self.ents.id_of(by);
                 let list = &mut self.ents.hurt_by[s];
                 list.retain(|h| h.0 != id);
@@ -2243,6 +2379,7 @@ impl Sim {
         if now > before {
             self.ents.level[s] = now;
             self.tells.push((s, format!("You have reached level {now}!")));
+            self.fill_grown(s); // stronger, and whole again
             self.level_rewards(s, before, now);
         }
         self.progress_ver[s] = self.progress_ver[s].wrapping_add(1);
@@ -2250,6 +2387,11 @@ impl Sim {
 
     /// What reaching each level from `before` + 1 to `now` gives (`LevelsFile::rewards`).
     fn level_rewards(&mut self, s: usize, before: u8, now: u8) {
+        // Word gets round of a player growing in strength, every few levels.
+        if self.ents.owner[s] < DRIVEN && now >= 3 && now / 3 > before / 3 {
+            let who = self.name_of(s).to_string();
+            self.tell_news("news_level", who, String::new(), self.ents.x[s], self.ents.y[s]);
+        }
         let Some(l) = self.levels.as_ref() else { return };
         let due: Vec<proto::game::LevelReward> = l.rewards.iter().filter(|r| r.level > before && r.level <= now).cloned().collect();
         for r in due {
@@ -2314,7 +2456,19 @@ impl Sim {
         let level_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::LEVEL_ATTR);
         let class_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::CLASS_ATTR);
         let pose_attr = self.defs.attrs.iter().position(|a| a.name == proto::game::POSE_ATTR);
+        // Pools that grow with level: a player never holds more than their level's ceiling.
+        let grown: Vec<usize> = match &self.levels {
+            Some(l) => self.defs.attrs.iter().enumerate().filter(|(_, a)| l.grow.contains_key(&a.name)).map(|(i, _)| i).collect(),
+            None => Vec::new(),
+        };
         for s in 0..self.ents.high {
+            for &i in &grown {
+                if let Some(c) = self.ceiling(s, i) {
+                    if self.ents.attrs[i][s] > c {
+                        self.ents.attrs[i][s] = c;
+                    }
+                }
+            }
             // A held emote lasts till they move, jump or fall (or the game file drops it).
             let e = &self.ents;
             if self.pose[s] != 0 && (!e.alive[s] || e.fallen[s] || e.dir_x[s] != 0 || e.dir_y[s] != 0 || e.air[s] != 0 || self.pose[s] as usize > self.emotes.len()) {
@@ -2421,23 +2575,44 @@ impl Sim {
                         e.lift_until[s] = 0;
                         self.mounted[s] = 0.0;
                         self.tells.push((s, "You have fallen.".into()));
+                        let who = self.name_of(s).to_string();
+                        self.tell_news("news_fell", who, String::new(), self.ents.x[s], self.ents.y[s]);
                         self.fall_cost(s);
                         self.stats.respawns += 1;
                         self.end_encounters(s); // whoever falls, the fight is over
                         continue;
                     }
+                    let mut buried = false;
                     if self.is_bot(s) {
+                        // Who struck last, before the credit is shared out (a cutpurse's catcher is talked of), and
+                        // what the news will say did it: that player, else the bot it was fighting.
+                        let by = self.ents.hurt_by[s].last().and_then(|h| self.ents.resolve(h.0));
+                        let since = self.tick.saturating_sub(proto::rules::Rules::ticks(self.rules.kill_credit_secs, self.tick_hz));
+                        let killers: Vec<usize> = self.ents.hurt_by[s].iter().filter(|h| h.1 >= since).filter_map(|h| self.ents.resolve(h.0)).collect();
+                        let killer = match by {
+                            Some(p) => self.name_of(p).to_string(),
+                            // Dead of the sickness; else the bot that struck last, else the one it was fighting.
+                            None if self.sick[s] > 0 => "the sickness".into(),
+                            None => self.last_hit[s].or(self.foe[s]).and_then(|f| self.ents.resolve(f)).map_or_else(|| "something in the dark".into(), |f| self.news_name(f)),
+                        };
+                        if let Some(p) = by {
+                            self.struck_townsfolk(p, s, true);
+                        }
+                        self.plea_kill(s, &killers);
                         self.credit(s);
                         self.loot_from(s);
-                        self.drop_purse(s);
+                        self.drop_purse(s, by);
+                        buried = self.folk_death(s, killer);
                     }
                     self.end_encounters(s); // whoever falls, the fight is over
                     if self.ents.fleeting[s] {
                         self.ents.despawn(s); // an event's bot: beaten is beaten
                         continue;
                     }
-                    // A bot type that stays gone a while lies out of sight till then (`bring_back`).
+                    // A bot type that stays gone a while lies out of sight till then (`bring_back`); a townsperson
+                    // buried stays gone till a newcomer takes their place.
                     let wait = self.archs.get(self.ents.arch[s] as usize).map_or(0.0, |r| r.respawn_secs);
+                    let wait = if buried { wait.max(self.rules.newcomer_secs) } else { wait };
                     if wait > 0.0 {
                         let e = &mut self.ents;
                         e.fallen[s] = true;
@@ -2475,6 +2650,7 @@ impl Sim {
         self.ents.held[s] = 0;
         self.ents.lift_until[s] = 0;
         self.stats.respawns += 1;
+        self.folk_back(s);
     }
 
     /// What falling costs a player, as `rules` says (nothing, by default): experience earned into their level, a
@@ -2713,7 +2889,7 @@ mod tests {
     fn beating_bots_and_finding_places_earns_experience_levels_and_spells() {
         use proto::game::{ActionFile, LevelsFile};
         let mut g = proto::game::GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10, life: Default::default(), rewards: vec![] });
+        g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10, life: Default::default(), rewards: vec![], grow: Default::default() });
         g.archetypes[0].xp = 60;
         g.actions.push(ActionFile { id: 2, name: "late".into(), range: 8.0, level: 2, ..Default::default() });
         let ford = proto::game::Place { name: "ford".into(), x: 300.0, y: 300.0, r: 10.0, title: "The Ford".into(), exit: None, sound: String::new(), music: String::new(), safe: false };
@@ -2785,6 +2961,28 @@ mod tests {
         assert!(refused(&mut s, 3));
         assert!(!refused(&mut s, ACTION_ZAP));
         assert_eq!(s.record_of(p).class, "druid");
+    }
+
+    #[test]
+    fn health_and_mana_grow_with_level_fill_on_reaching_one_and_never_pass_the_ceiling() {
+        use proto::game::LevelsFile;
+        let mut g = proto::game::GameFile::default_game();
+        g.attrs[0].max = 300.0; // health: default 100, room to grow
+        let mut grow = std::collections::BTreeMap::new();
+        grow.insert("health".to_string(), 10.0);
+        g.levels = Some(LevelsFile { cap: 20, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let h = ATTR_HEALTH as usize;
+        let p = s.spawn(0).unwrap();
+        let bot = s.spawn_as(NONE, 0, None).unwrap();
+        assert_eq!(s.ents.attrs[h][p], 100.0, "level 1: the default");
+        s.ents.attrs[h][p] = 40.0;
+        s.award(p, 300, None); // level 4
+        assert_eq!((s.ents.level[p], s.ents.attrs[h][p]), (4, 130.0), "filled to 100 + 3 x 10");
+        s.ents.attrs[h][p] = 299.0; // a potion or a god cannot carry it past the ceiling
+        s.step(&[]);
+        assert_eq!(s.ents.attrs[h][p], 130.0);
+        assert!(s.ceiling(bot, h).is_none(), "bots keep their own");
     }
 
     #[test]
@@ -3121,7 +3319,7 @@ mod tests {
         use proto::game::{ItemDef, LevelsFile};
         let item = |name: &str| ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None };
         let mut s = sim_with(|g| {
-            g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
+            g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
             g.items = vec![item("silver"), item("stone")];
             g.currency = Some("silver".into());
             g.rules = proto::rules::Rules { fall_xp_loss_pct: 50.0, fall_coin_loss_pct: 25.0, fall_drop_pct: 100.0, rise_delay_secs: 2.0, ..Default::default() };
@@ -3170,7 +3368,7 @@ mod tests {
         let mut s = sim_with(|g| {
             g.items = vec![ItemDef { name: "brick".into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }];
             let reward = |level: u8, n: u8| LevelReward { level, items: vec![proto::realm::Stack { item: "brick".into(), count: n }], text: format!("Level {level}: bricks.") };
-            g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![reward(2, 10), reward(3, 20)] });
+            g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![reward(2, 10), reward(3, 20)], grow: Default::default() });
         });
         let p = s.spawn(0).unwrap();
         s.award(p, 250, None); // straight past level 2 to 3: both
@@ -3297,6 +3495,9 @@ mod tests {
             ambush: false,
             work: None,
             thief: false,
+            pet: false,
+            stray: false,
+            healer: false,
             color: "#112233".into(),
             count: 0,
             behaviour,

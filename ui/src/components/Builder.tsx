@@ -466,6 +466,9 @@ function BotSection({ game, setGame, arch, a }: Edit & { arch: number; a: Archet
           className="col-span-2"
         />
         <Toggle label="Cutpurse" checked={!!a.thief} onChange={(on) => patch({ thief: on || undefined })} />
+        <Toggle label="Dog" checked={!!a.pet} onChange={(on) => patch({ pet: on || undefined })} />
+        <Toggle label="Strays" checked={!!a.stray} onChange={(on) => patch({ stray: on || undefined })} />
+        <Toggle label="Tends the sick" checked={!!a.healer} onChange={(on) => patch({ healer: on || undefined })} />
         <TextField
           label="Surnames"
           value={(a.surnames ?? []).join(', ')}
@@ -484,6 +487,7 @@ function BotSection({ game, setGame, arch, a }: Edit & { arch: number; a: Archet
             { value: 'water', label: 'by the water' },
             { value: 'fields', label: 'in the fields' },
             { value: 'streets', label: 'walking the streets' },
+            { value: 'play', label: 'at play (a child)' },
           ]}
           onChange={(v) => patch({ work: v === '' ? undefined : (v as Work) })}
         />

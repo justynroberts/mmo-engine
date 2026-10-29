@@ -38,6 +38,8 @@ var air: Node3D                 # themes/fantasy/air.gd: mist, haze and wisps be
 var _here := Vector2.ZERO        # where we are, for the air
 var towns = TownsScript.new()     # every settlement's look and trade (towns.gd)
 var land = LandScript.new()       # cold north, wet and wooded ground, fields, road junctions (land.gd)
+var _windows := {}               # "x,y" (a house's middle, rounded) -> its lit windows, shown while someone is in
+var _lit := {}                   # what main.gd was last told is lit: "x,y" -> [who, an inn]
 var _pal_meshes := {}            # "path#palette" -> a piece with its materials tinted to that palette
 var _pal_mats := {}
 
@@ -166,6 +168,7 @@ global uniform float world_wet;     // life.gd: how wet the ground is after rain
 global uniform float world_puddles; // standing water, which lasts longer
 global uniform float world_snow;    // snow lying
 global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
+global uniform float world_autumn;  // life.gd: the year's turn to gold, 0 .. 1
 varying vec3 wp;
 varying vec3 wn;
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
@@ -193,6 +196,8 @@ void fragment() {
 	tun = mix(tun, vec3(0.46, 0.36, 0.38), smoothstep(0.55, 0.72, fbm(q / 22.0 + 3.0)) * 0.55);
 	tun = mix(tun, vec3(0.52, 0.52, 0.50), smoothstep(0.62, 0.8, fbm(q / 9.0 + 11.0)) * 0.5);
 	c = mix(c, tun, cold);
+	// Autumn: the meadow goes over to straw and rust in drifts.
+	c = mix(c, mix(vec3(0.62, 0.52, 0.24), vec3(0.55, 0.36, 0.18), smoothstep(0.4, 0.7, fbm(q / 24.0 + 9.0))), world_autumn * (1.0 - cold) * 0.55);
 	c *= 0.94 + 0.12 * fbm(q * 0.6);
 	c = mix(c, vec3(0.80, 0.85, 0.90), cold * cold * smoothstep(0.55, 0.72, fbm(q * 0.9 + 4.0)) * 0.3);
 	// By water the grass is lush and dark, and the very edge is mud.
@@ -319,6 +324,89 @@ void fragment() {
 }"""
 	_snow_overlay = ShaderMaterial.new()
 	_snow_overlay.shader = sh
+
+## A house's windows lit from within, one on each wall, and a word on who is in for those close by: hidden till
+## the server says someone is home (set_lit).
+func _house_windows(b: Array, y: float) -> Node3D:
+	var key := "%d,%d" % [roundi((float(b[0]) + float(b[2])) / 2.0), roundi((float(b[1]) + float(b[3])) / 2.0)]
+	var root := Node3D.new()
+	var glow := StandardMaterial3D.new()
+	glow.albedo_color = Color("ffcf7a")
+	glow.emission_enabled = true
+	glow.emission = Color("ffb04a")
+	glow.emission_energy_multiplier = 3.0
+	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var x0 := float(b[0]); var z0 := float(b[1]); var x1 := float(b[2]); var z1 := float(b[3])
+	var mx := (x0 + x1) / 2.0
+	var mz := (z0 + z1) / 2.0
+	var ground := y + height(mx, mz)
+	for side in [[Vector3(mx, 0, z0 - 0.06), Vector3(0.55, 0.6, 0.02)], [Vector3(mx, 0, z1 + 0.06), Vector3(0.55, 0.6, 0.02)],
+			[Vector3(x0 - 0.06, 0, mz), Vector3(0.02, 0.6, 0.55)], [Vector3(x1 + 0.06, 0, mz), Vector3(0.02, 0.6, 0.55)]]:
+		var w := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = side[1]
+		w.mesh = bm
+		w.material_override = glow
+		w.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		w.position = Vector3(side[0].x, ground + 1.55, side[0].z)
+		root.add_child(w)
+	var l := OmniLight3D.new()
+	l.light_color = Color("ffb35a")
+	l.light_energy = 0.9
+	l.omni_range = 7.0
+	l.position = Vector3(mx, ground + 1.6, z1 + 1.2)
+	l.distance_fade_enabled = true
+	l.distance_fade_begin = 60.0
+	l.distance_fade_length = 20.0
+	root.add_child(l)
+	var label := Label3D.new()
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.font_size = 28
+	label.pixel_size = 0.008
+	label.outline_size = 6
+	label.modulate = Color("ffe2b0")
+	label.position = Vector3(mx, ground + 3.4, mz)
+	label.visibility_range_end = 14.0
+	label.name = "who"
+	root.add_child(label)
+	root.set_meta("key", key)
+	_windows[key] = root
+	_show_lit(root, key)
+	return root
+
+func _show_lit(root: Node3D, key: String) -> void:
+	var on := _lit.has(key)
+	root.visible = on
+	if on:
+		var who := String(_lit[key][0])
+		(root.get_node("who") as Label3D).text = ("The inn" + (": " + who + " within" if who != "" else "")) if bool(_lit[key][1]) else (who + " is home" if who != "" else "")
+
+## The lit windows built and shown now, and what the nearest few say (the screenshot run reports it).
+func lit_report(at: Vector2) -> Dictionary:
+	var shown := []
+	for key in _windows:
+		var root = _windows[key]
+		if is_instance_valid(root) and root.visible:
+			var xy := String(key).split(",")
+			shown.append([Vector2(float(xy[0]), float(xy[1])).distance_to(at), (root.get_node("who") as Label3D).text])
+	shown.sort_custom(func(a, b): return a[0] < b[0])
+	return {"built": _windows.size(), "told": _lit.size(), "lit": shown.size(), "nearest": shown.slice(0, 3).map(func(e): return "%s (%d away)" % [e[1], int(e[0])])}
+
+## Which houses have someone in now (main.gd, from the server): their windows light, the rest go dark.
+func set_lit(lit: Dictionary) -> void:
+	_lit = lit.duplicate()
+	for key in _windows.keys():
+		var root = _windows[key]
+		if not is_instance_valid(root):
+			_windows.erase(key)
+			continue
+		_show_lit(root, key)
+
+## The time of year (main.gd, from the schedule): autumn turns the meadows gold, winter leaves snow lying.
+func set_season(s: String) -> void:
+	if life:
+		life.season_snow = 0.55 if s == "winter" else 0.0
+		life.season_autumn = 1.0 if s == "autumn" else 0.0
 
 ## Snow lies (or has melted): roofs, tops and blocks wear the snow overlay, or stop (life.gd says when).
 func show_snow(on: bool) -> void:
@@ -498,6 +586,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 			"house":
 				_chimney_at = Vector3.INF
 				node.add_child(_build_house(o["b"], float(o.get("y", 0.0)), int(o.get("v", 0)), batch))
+				node.add_child(_house_windows(o["b"], float(o.get("y", 0.0))))
 				if _chimney_at != Vector3.INF:
 					chimneys.append(_chimney_at + Vector3(0, float(o.get("y", 0.0)), 0))
 				# Every third house hangs a lantern by its south wall.

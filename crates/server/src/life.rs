@@ -164,7 +164,7 @@ mod tests {
 
     fn sim() -> (Sim, usize) {
         let mut g = GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
+        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
         let mut s = Sim::new(g.build().unwrap(), World::from_boxes(1024.0, 1, vec![]), 64, 20, 1);
         let me = s.spawn(0).unwrap();
         (s.ents.x[me], s.ents.y[me]) = (100.0, 500.0);

@@ -256,7 +256,7 @@ impl Sim {
         if let Some(c) = self.blocks.get(key) {
             self.world.set_column(cx, cy, c.column());
         }
-        let ticks = (self.realm.crops[crop].grow_secs * self.tick_hz as f32).round() as u32;
+        let ticks = (self.realm.crops[crop].grow_secs * self.season_growth() * self.tick_hz as f32).round() as u32;
         self.rs.crops.insert((key, z), (self.realm.crops[crop].name.clone(), self.tick + ticks.max(1)));
         self.rs.dirty = true;
         true
@@ -269,7 +269,7 @@ impl Sim {
         let Some(c) = self.realm.crops.iter().find(|c| c.name == name).cloned() else { return };
         if kind == RIPE {
             self.lived(s, crate::life::Deed::Harvest);
-            let n = c.min as u32 + self.rng.next_u32() % ((c.max - c.min) as u32 + 1);
+            let n = c.min as u32 + self.rng.next_u32() % ((c.max - c.min) as u32 + 1) + self.season_yield();
             self.give_or_drop(s, c.yields, n);
         } else if kind == SPROUT {
             self.give_or_drop(s, c.seed, 1);

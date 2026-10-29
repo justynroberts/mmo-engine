@@ -245,7 +245,8 @@ func _web(server: String) -> String:
 func _check_update() -> void:
 	await get_tree().create_timer(1.6).timeout # after the saved-server check has had its say
 	var mine := version()
-	if mine == "" or not OS.has_feature("template") or server_in.text.strip_edges() == "":
+	# Only the macOS app has updates to offer (the server publishes mac.zip); other builds are replaced by hand.
+	if mine == "" or not OS.has_feature("template") or OS.get_name() != "macOS" or server_in.text.strip_edges() == "":
 		return
 	var r := HTTPRequest.new()
 	r.timeout = 3.0

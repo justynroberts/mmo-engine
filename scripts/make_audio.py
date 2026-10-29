@@ -36,8 +36,8 @@ OUT = ARGS.pop(0) if ARGS and os.path.isdir(ARGS[0]) else os.path.join(os.path.d
 ONLY = ARGS  # path fragments: make only the files whose path contains one
 # Real recordings (godot/sounds/ambience/CREDITS.md): never written, even with --force.
 RECORDED = {f'ambience/{n}.ogg' for n in ('sea', 'shore', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town',
-                                          'market', 'crypt', 'holy', 'battle')}
-RECORDED |= {f'sfx/{n}.ogg' for n in ('hurt', 'pickup', 'drop', 'place', 'break', 'horn', 'chime', 'splash', 'click')}
+                                          'market', 'crypt', 'holy', 'battle', 'tavern', 'fair')}
+RECORDED |= {f'sfx/{n}.ogg' for n in ('hurt', 'pickup', 'drop', 'place', 'break', 'horn', 'chime', 'splash', 'click', 'bell')}
 RECORDED |= {f'sfx/{n}_{i}.ogg' for n, k in (('step_grass', 6), ('step_road', 4), ('step_stone', 6), ('step_water', 6),
                                              ('swing', 3), ('hit', 4)) for i in range(1, k + 1)}
 SR = 32000  # ambience and effects

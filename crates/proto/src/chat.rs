@@ -50,6 +50,13 @@ pub mod channel {
     /// Server to client: someone acting out an emote (`GameFile::emotes`), from them, as "anim|line"; the line goes in
     /// the chat and the anim, if any, on the one who acts it.
     pub const EMOTE: u8 = 11;
+    /// Server to client, from the server (0): the lit windows round you, the houses someone is at home in of an
+    /// evening (`folk.rs`), as "L0|" (a new list) or "L1|" (more of it) then entries "x,y,name" (the house's
+    /// middle, rounded, and who is in) joined by ";", an inn's name starting with "*". An empty "L0|" puts every
+    /// light out. Not shown as chat.
+    pub const LIT: u8 = 12;
+    /// The towns the sickness is in: "P|x,y,r;..." (`plague.rs`), sent when it changes.
+    pub const PLAGUE: u8 = 13;
 }
 
 pub mod kind {

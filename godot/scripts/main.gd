@@ -112,6 +112,13 @@ const ACT_HAIL := 243
 ## Bots drawn as something other than a person, by the name their type gives them.
 const CARTERS := ["Ceannai Taistil", "Fear Cairte", "Travelling Merchant", "Carter"]
 const FIRES := ["Tine", "Fire"]
+const LANTERNS := ["Lochran", "Lóchrann", "Lantern"]
+const MUSICIANS := ["Musician", "Ceoltóir", "Ceoltoir"]
+const BeastScript := preload("res://scripts/beast.gd")
+## The lit windows round us (proto::chat::channel::LIT): "x,y" of a house's middle -> [who is in, an inn].
+var lit := {}
+var _daypart := ""      # the part of the day last heard (dawn, day, dusk, night), for the bells
+var _season := ""       # the season the land was last dressed for
 const ACT_JUMP := 251
 const JUMP_SECS := 0.6
 const JUMP_HEIGHT := 2.2
@@ -121,6 +128,9 @@ var target_ring := MeshInstance3D.new()
 var me_pos := Vector2.ZERO
 var target_id := 0
 var health_max := 100.0
+var _health_attr := {}     # the health attribute's entry in /play/info attrs
+var _seen_max := {}        # entity id -> {attribute: the most it has been seen with}, for bars of pools that grow
+var _hp_max := {}          # entity id -> what its health bar is out of now
 var health_idx := ""
 var attack_id := -1
 ## Spells: the game's actions after the first (which is the plain attack), on the spell bar. By id: when each is ready.
@@ -168,6 +178,11 @@ var next_swing := 0.0
 var notice_until := 0.0
 var notice := ""
 var smoke_log: Array[String] = []
+var _rec: AudioEffectRecord               # --listen: the mix, recorded
+var plague_towns: Array[Vector3] = []     # the towns with the sickness (chat channel 13): x, y, radius
+var _plague_toll := -100.0                # when the death bell last tolled where we stand
+var _lines_seen: Array[String] = []     # every remark heard, for the screenshot run
+var _talk_seen := {}                    # who spoke ("Kind") and emotes ("*anim") seen, for the screenshot run
 # Building: blocks on one grid in all three directions (/play/info "build"), fetched from /play/blocks. Layer z
 # fills heights z * block to (z + 1) * block everywhere, so blocks line up however the ground runs.
 const GROUND := -128      # the layer of something on the bare ground
@@ -240,9 +255,15 @@ func _ready() -> void:
 	add_child(hud)
 	sound = SoundScript.new()
 	add_child(sound)
-	# Screenshots, smoke tests and --mute play nothing.
-	if smoke or args.has("shot") or args.has("mute"):
+	# Screenshots play nothing unless asked to --listen (recorded with Godot's --write-movie).
+	if smoke or (args.has("shot") and not args.has("listen")) or args.has("mute"):
 		sound.mode = 2
+	sound.log_heard = args.has("shot")
+	if args.has("listen"):
+		# What the player hears, mixed, recorded off the master bus and saved beside the screenshot.
+		_rec = AudioEffectRecord.new()
+		AudioServer.add_bus_effect(0, _rec)
+		_rec.set_recording_active(true)
 	sound.music_for = "" # nothing from the game until we are in it
 	if sound.mode != 2 and _hop.is_empty() and ResourceLoader.exists(TITLE_THEME):
 		var theme_stream: AudioStream = load(TITLE_THEME)
@@ -455,6 +476,7 @@ func _start() -> void:
 		if a["replicated"] and (health_idx == "" or a["name"] == "health"):
 			health_idx = a["name"]
 			health_max = max(float(a["max"]), 1.0)
+			_health_attr = a
 	if info.get("actions", []).size() > 0:
 		attack_id = int(info["actions"][0]["id"])
 		action_range = float(info["actions"][0].get("range", 8.0))
@@ -522,6 +544,14 @@ func _start() -> void:
 				sound.play("chime", -8.0, 0.0)
 		elif channel == 10: # auction house listings
 			auctionui.on_line(text)
+		elif channel == 12: # the lit windows round us (from the server, so before its own lines)
+			_on_lit(text)
+		elif channel == 13: # the towns the sickness is in: "P|x,y,r;..."
+			plague_towns.clear()
+			for e in text.substr(2).split(";", false):
+				var f := e.split(",")
+				if f.size() == 3:
+					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
 		elif from == 0:
 			hud.say("[color=#ffd27a]%s[/color]" % HudScript.esc(text))
 			if text.begins_with("God mode on"):
@@ -542,11 +572,24 @@ func _start() -> void:
 			hud.say("[color=#8fd3ff][lb]Party] %s:[/color] %s" % ["You" if from == net.get_self_id() else HudScript.esc(_name(from)), HudScript.esc(text)])
 		elif channel == 7: # a passing remark: over their head, not in the chat
 			_bubble(from, text)
-			_turn_to_me(from)
+			if sound.log_heard:
+				var who := _name(from).get_slice("|", 0)
+				_talk_seen[who] = int(_talk_seen.get(who, 0)) + 1
+				_lines_seen.append("%s: %s" % [who, text])
+			if _beast_look(_name(from)) == "dog" and ents.has(from):
+				var near := Vector2(ents[from].position.x, ents[from].position.z).distance_to(me_pos)
+				sound.play("amb_dog", SoundScript.at_distance(near, 50.0) + 2.0, 0.1)
+			else:
+				_turn_to_me(from)
 		elif channel == 11: # an emote: "anim|line", the line in the chat and the clip on whoever acts it
 			var parts := text.split("|", true, 1)
-			hud.say("[i][color=#d8c8a8]%s[/color][/i]" % HudScript.esc(parts[-1]))
+			if parts[-1] != "": # a bot's dance comes with no words
+				hud.say("[i][color=#d8c8a8]%s[/color][/i]" % HudScript.esc(parts[-1]))
 			var node: Node3D = ents.get(from)
+			if parts[0] == "cough" and node:
+				_cough(node)
+			if sound.log_heard and parts.size() == 2:
+				_talk_seen["*" + parts[0]] = int(_talk_seen.get("*" + parts[0], 0)) + 1
 			if parts.size() == 2 and parts[0] != "" and node and node.has_method("emote"):
 				node.emote(parts[0])
 		elif channel == 8: # guild chat
@@ -590,6 +633,23 @@ func _start() -> void:
 		await get_tree().create_timer(float(args.get("shot_after", "5"))).timeout
 		get_viewport().get_texture().get_image().save_png(String(args["shot"]))
 		print("SHOT %s: phase %.2f darkness %.2f, torch %s, %d light(s) burning, %d in view" % [args["shot"], theme.day_phase(), theme.darkness, theme.torch_lit(), theme.lights_burning(), ents.size()])
+		print("HEARD %s" % JSON.stringify(sound.heard))
+		if _rec:
+			var wav := _rec.get_recording()
+			if wav:
+				wav.save_to_wav(String(args["shot"]).get_basename() + ".wav")
+				print("RECORDED %.1f s" % [wav.get_length()])
+		print("TALK %s" % JSON.stringify(_talk_seen))
+		print("LINES %s" % JSON.stringify(_lines_seen))
+		var kinds := {}
+		for eid in ents:
+			var k := _name(eid).get_slice("|", 0)
+			kinds[k] = int(kinds.get(k, 0)) + 1
+		print("NEAR %s" % JSON.stringify(kinds))
+		if theme.has_method("lit_report"):
+			print("LIT %s" % JSON.stringify(theme.lit_report(me_pos)))
+		if theme.get("life") and theme.life:
+			print("LIFE %s %s" % [JSON.stringify(theme.life.seen), JSON.stringify(theme.life.counts())])
 		get_tree().quit(0)
 
 func _identity() -> String:
@@ -736,9 +796,12 @@ func _process(delta: float) -> void:
 		var p: Vector2 = e["position"]
 		var layer := int(e.get("layer", GROUND))
 		var np := Vector3(p.x, _stand_height(p, layer), p.y)
-		var hp := clampf(float(e.get(health_idx, health_max)) / health_max, 0.0, 1.0) if health_idx != "" else 1.0
+		var hmax := _max_of(e, _health_attr) if not _health_attr.is_empty() else health_max
+		_hp_max[id] = hmax
+		var hp := clampf(float(e.get(health_idx, hmax)) / hmax, 0.0, 1.0) if health_idx != "" else 1.0
 		var air := clampf(float(e.get("airborne", 0.0)) / air_max, 0.0, 1.0) if air_max > 0.0 else 0.0
 		_animate(id, node, np, hp, mine, delta, self_id, air)
+		_sheaf(id, node)
 		if node.has_method("hold_pose"): # sitting and the like: a held emote, by the server's `pose`
 			node.hold_pose(_pose_clip(int(round(float(e.get("pose", 0.0))))))
 		# Sneaking: in the dark, someone whose light is out shows no name and no health bar (and carries no torch).
@@ -1713,7 +1776,7 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 			sound.play("hit", SoundScript.at_distance(near) - 3.0)
 			if near < action_range + 4.0:
 				_fight_at = t_total
-		_damage_number(np, (t["hp"] - hp) * health_max, mine)
+		_damage_number(np, (t["hp"] - hp) * float(_hp_max.get(id, health_max)), mine)
 		if animated:
 			node.hurt()
 		if mine:
@@ -1887,6 +1950,27 @@ func _listen(delta: float) -> void:
 		for k in w:
 			w[k] = float(w[k]) * 0.5
 		w[own] = 1.0
+	# The inn of an evening: a fiddle and voices through the door.
+	var inn_d := INF
+	for k in lit:
+		if bool(lit[k][1]):
+			var xy := String(k).split(",")
+			inn_d = minf(inn_d, Vector2(float(xy[0]), float(xy[1])).distance_to(p))
+	w["tavern"] = (1.0 - smoothstep(5.0, 28.0, inn_d)) if inn_d < INF else 0.0
+	# A fair night's musicians on the square: their reel, out in the open, louder the nearer.
+	var fair := 0.0
+	for eid in ents:
+		if _name(eid).get_slice("|", 0) in MUSICIANS:
+			var md := Vector2(ents[eid].position.x, ents[eid].position.z).distance_to(p)
+			fair = maxf(fair, 1.0 - smoothstep(6.0, 45.0, md))
+	w["fair"] = fair
+	# A town with the sickness: the church bell tolls for the dead, slowly, while we are in it.
+	for t in plague_towns:
+		if Vector2(t.x, t.y).distance_to(p) <= t.z and t_total - _plague_toll > 45.0:
+			_plague_toll = t_total
+			sound.play("bell", -9.0, 0.0)
+	_bells(houses)
+	_dress_season()
 	sound.want = w
 	# Music: a fight first, then the place's own, then a town, then the night or the day. It changes only once the
 	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
@@ -1907,6 +1991,165 @@ func _listen(delta: float) -> void:
 	# A change of mood waits a few seconds (passing a house is not a town); the first pick does not.
 	if fighting or t_total - _music_since > 3.0 or (sound.music_for == "" and not _title_on):
 		sound.music_for = "" if _title_on else _music_pick
+
+## The lit windows message: "L0|" starts the list afresh, "L1|" adds to it, then "x,y,name" entries by ";" (an inn's
+## name starting with "*").
+func _on_lit(text: String) -> void:
+	if text.begins_with("L0|"):
+		lit.clear()
+	elif not text.begins_with("L1|"):
+		return
+	for e in text.substr(3).split(";", false):
+		var f := e.split(",", true, 2)
+		if f.size() == 3:
+			var inn := f[2].begins_with("*")
+			lit["%s,%s" % [f[0], f[1]]] = [f[2].substr(1) if inn else f[2], inn]
+	if theme.has_method("set_lit"):
+		theme.set_lit(lit)
+	if sound.log_heard:
+		for k in lit:
+			if bool(lit[k][1]):
+				_talk_seen["inn lit: " + String(lit[k][0])] = 1
+
+## One of the sick coughs: the sound (sfx/cough_*, when there are recordings of it), louder the nearer, and a puff of
+## sour breath that hangs a moment.
+func _cough(node: Node3D) -> void:
+	var near := Vector2(node.position.x, node.position.z).distance_to(me_pos)
+	sound.play("cough", SoundScript.at_distance(near, 25.0), 0.08)
+	var puff := CPUParticles3D.new()
+	puff.one_shot = true
+	puff.amount = 10
+	puff.lifetime = 1.4
+	puff.explosiveness = 0.8
+	puff.direction = Vector3(0, 0.3, 1)
+	puff.spread = 35.0
+	puff.initial_velocity_min = 0.4
+	puff.initial_velocity_max = 0.9
+	puff.gravity = Vector3(0, 0.15, 0)
+	puff.scale_amount_min = 0.08
+	puff.scale_amount_max = 0.18
+	var m := SphereMesh.new()
+	m.radius = 0.5
+	m.height = 1.0
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.62, 0.68, 0.45, 0.45)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.material = mat
+	puff.mesh = m
+	puff.position = Vector3(0, 1.5, 0)
+	node.add_child(puff)
+	puff.emitting = true
+	get_tree().create_timer(2.0).timeout.connect(puff.queue_free)
+
+## The part of the day now, as the server reckons it (proto::game::DayPart::during).
+func _day_part() -> String:
+	var dl: Dictionary = info.get("daylight", {})
+	if dl.is_empty():
+		return "day"
+	var p: float = theme.daylight_phase(dl, Time.get_unix_time_from_system() * 1000.0)
+	var night: float = theme.daylight_night(dl)
+	var light := 1.0 - night
+	if p < light * 0.15:
+		return "dawn"
+	if p < light * 0.85:
+		return "day"
+	if p < light + night * 0.15:
+		return "dusk"
+	return "night"
+
+## Church bells in a town at sunrise and sunset, calling folk out and home.
+func _bells(houses: int) -> void:
+	var part := _day_part()
+	if part == _daypart:
+		return
+	var was := _daypart
+	_daypart = part
+	if was != "" and (part == "dawn" or part == "dusk") and houses >= 4:
+		sound.play("bell", -2.0, 0.0)
+
+## The season now (proto::game::Season::of), "" when the game has none.
+func _season_now() -> String:
+	var days := _rule("season_days", 0.0)
+	var dl: Dictionary = info.get("daylight", {})
+	if days <= 0.0 or dl.is_empty() or not theme.has_method("daylight_day"):
+		return ""
+	var day: float = theme.daylight_day(dl, Time.get_unix_time_from_system() * 1000.0) + _rule("season_shift", 0.0)
+	return ["spring", "summer", "autumn", "winter"][posmod(floori(day / days), 4)]
+
+## Dress the land for the season: autumn's gold, winter's snow lying.
+func _dress_season() -> void:
+	var s := _season_now()
+	if s == _season:
+		return
+	var first := _season == ""
+	_season = s
+	if theme.has_method("set_season"):
+		theme.set_season(s)
+	if not first and s != "":
+		_notice("%s comes to the land." % s.capitalize())
+
+## Who works the fields: in autumn they carry sheaves home of an evening.
+const FARMERS := ["Farmer", "Shepherd", "Seed Trader", "Tuathanach"]
+
+## A farmer in autumn, from the afternoon on, with a sheaf of wheat on their shoulder.
+func _sheaf(id: int, node: Node3D) -> void:
+	var want := _season == "autumn" and (_daypart == "dusk" or _daypart == "day") and _name(id) in FARMERS
+	var has := node.has_node("sheaf")
+	if want == has:
+		return
+	if has:
+		node.get_node("sheaf").queue_free()
+		return
+	var sheaf := Node3D.new()
+	sheaf.name = "sheaf"
+	var gold := StandardMaterial3D.new()
+	gold.albedo_color = Color("d9b452")
+	gold.roughness = 0.95
+	var stalks := MeshInstance3D.new()
+	var c := CylinderMesh.new()
+	c.top_radius = 0.2
+	c.bottom_radius = 0.1
+	c.height = 0.9
+	stalks.mesh = c
+	stalks.material_override = gold
+	sheaf.add_child(stalks)
+	var band := MeshInstance3D.new()
+	var b := CylinderMesh.new()
+	b.top_radius = 0.135
+	b.bottom_radius = 0.135
+	b.height = 0.08
+	band.mesh = b
+	var tie := StandardMaterial3D.new()
+	tie.albedo_color = Color("7a5a2a")
+	band.material_override = tie
+	band.position.y = -0.1
+	sheaf.add_child(band)
+	sheaf.position = Vector3(0.28, 1.45, 0.05)
+	sheaf.rotation = Vector3(0.0, 0.0, -0.5)
+	node.add_child(sheaf)
+
+## A lantern on a post, lit: a fair's lights.
+func _lantern_node() -> Node3D:
+	var n := Node3D.new()
+	var post := MeshInstance3D.new()
+	var pm := BoxMesh.new()
+	pm.size = Vector3(0.12, 2.4, 0.12)
+	post.mesh = pm
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color("4a3524")
+	post.material_override = wood
+	post.position.y = 1.2
+	n.add_child(post)
+	if theme.has_method("_lantern"):
+		n.add_child(theme.call("_lantern", Vector3(0.0, 2.3, 0.0)))
+	var l := OmniLight3D.new()
+	l.light_color = Color("ffc070")
+	l.light_energy = 1.6
+	l.omni_range = 9.0
+	l.position.y = 2.2
+	n.add_child(l)
+	return n
 
 ## The smallest place round a point that has a sound or music of its own (/play/info locations), or {}.
 func _sound_zone(p: Vector2) -> Dictionary:
@@ -2125,12 +2368,28 @@ func _look_of(e: Dictionary, mine: bool) -> String:
 		var n := String(names[int(e["id"])])
 		if n in FIRES:
 			return "fire"
+		if n in LANTERNS:
+			return "lantern"
+		var b := _beast_look(n)
+		if b != "":
+			return b
+	return ""
+
+## How a bot type that is a beast is drawn ("dog", "cow"), by the name players see (/play/info "beasts"), or "".
+func _beast_look(kind: String) -> String:
+	for pair in info.get("beasts", []):
+		if pair is Array and pair.size() == 2 and String(pair[0]) == kind:
+			return String(pair[1])
 	return ""
 
 func _entity_node(id: int, mine: bool, look := "") -> Node3D:
 	var n: Node3D
 	if look == "fire":
 		n = _fire_node()
+	elif look == "dog" or look == "cow":
+		n = BeastScript.make(look)
+	elif look == "lantern":
+		n = _lantern_node()
 	else:
 		n = theme.entity_node(id, mine, {"class": look} if look != "" else {})
 	n.set_meta("look", look)
@@ -2599,7 +2858,7 @@ func _social_frame(list: Array, self_id: int) -> void:
 		if int(id) == self_id:
 			continue
 		var e: Dictionary = by_id.get(int(id), {})
-		var hp := clampf(float(e.get(health_idx, 0.0)) / health_max, 0.0, 1.0) if not e.is_empty() and health_idx != "" else -1.0
+		var hp := clampf(float(e.get(health_idx, 0.0)) / _max_of(e, _health_attr), 0.0, 1.0) if not e.is_empty() and health_idx != "" and not _health_attr.is_empty() else -1.0
 		mates.append([_name(int(id)), hp])
 	hud.set_party(mates)
 	var gear: Dictionary = net.gear()
@@ -3111,13 +3370,32 @@ func _on_ability(name: String) -> void:
 			questui.toggle_log()
 
 ## The frame bars for an entity: every replicated attribute except the bookkeeping ones (airborne, lit).
+## How full a bar of attribute `a` can be for entity `e`: a player's level ceiling when the pool grows with level
+## (`/play/info` grow), otherwise the most it has been seen with (a bot starts full), never past the attribute's max.
+func _max_of(e: Dictionary, a: Dictionary) -> float:
+	var n := String(a["name"])
+	var top := maxf(float(a["max"]), 1.0)
+	var grow: Dictionary = info.get("grow", {}) if info.get("grow") is Dictionary else {}
+	var id := int(e.get("id", 0))
+	var player: bool = id == int(net.get_self_id()) or float(e.get("class", 0.0)) > 0.5
+	if grow.has(n) and player:
+		var lv := maxf(float(e.get("level", 1.0)), 1.0)
+		return clampf(float(a.get("default", top)) + float(grow[n]) * (lv - 1.0), 1.0, top)
+	if grow.has(n):
+		var seen: Dictionary = _seen_max.get(id, {})
+		var m := maxf(float(seen.get(n, 0.0)), float(e.get(n, 0.0)))
+		seen[n] = m
+		_seen_max[id] = seen
+		return maxf(m, 1.0)
+	return top
+
 func _bars(e: Dictionary, mine: bool) -> Array:
 	var out := []
 	for a in info.get("attrs", []):
 		var n := String(a["name"])
 		if not a.get("replicated", false) or n in ["airborne", "lit", "held", "speed", "level"] or not e.has(n):
 			continue
-		var mx := maxf(float(a["max"]), 1.0)
+		var mx := _max_of(e, a)
 		var v := float(e[n])
 		var col := Color("c23b2e") if n == health_idx else Color("3f7fd0") if n.contains("energy") or n.contains("mana") else Color("d0a03f")
 		out.append([n, v / mx, "%d / %d" % [int(v), int(mx)] if mine else "%d%%" % int(round(v / mx * 100.0)), col])

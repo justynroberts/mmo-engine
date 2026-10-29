@@ -125,6 +125,9 @@ impl Sim {
                 }
             }
             self.ents.quests[s][i].state = QUEST_DONE;
+            if let Some(h) = self.town_of_bot(t) {
+                self.change_repute(s, h, 10); // a good turn for one of its folk
+            }
             let said = if q.done_text.is_empty() { format!("Quest done: {}", q.title) } else { format!("{} ({} done)", q.done_text, q.title) };
             if q.xp > 0 && self.levels.is_some() {
                 self.award(s, q.xp, Some(format!("{said} +{} experience", q.xp)));
@@ -292,7 +295,7 @@ mod tests {
     #[test]
     fn a_quest_is_offered_taken_shared_done_and_handed_in() {
         let mut g = GameFile::default_game();
-        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
+        g.levels = Some(LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
         let plaza = g.places.iter().find(|p| p.name == "plaza").unwrap().clone();
         g.quests.push(QuestFile {
             name: "cull".into(),

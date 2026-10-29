@@ -522,7 +522,7 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
       return { error: 'Each bot type needs a name.' }
     }
     const r = raw as Partial<Archetype> & { name: string }
-    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction', 'title', 'names', 'homes', 'ambush', 'work', 'surnames', 'thief'])
+    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction', 'title', 'names', 'homes', 'ambush', 'work', 'surnames', 'thief', 'pet', 'stray', 'healer'])
     const stray = Object.keys(r).find((k) => !known.has(k))
     if (stray) return { error: `${r.name}: “${stray}” is not a bot field. Check the spelling.` }
     const a: Archetype = { ...newArchetype(g), ...r, name: r.name.trim() }

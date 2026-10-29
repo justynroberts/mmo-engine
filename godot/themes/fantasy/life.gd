@@ -37,6 +37,9 @@ var _water := Vector2.INF  # the nearest water of any kind (fireflies)
 var wet := 0.0             # how wet the ground is: darker, glossier
 var puddles := 0.0         # standing water on roads and in hollows, slower to go than the wet
 var snow := 0.0            # how much snow lies on roofs, tops and ground
+var season_snow := 0.0     # snow the season leaves lying whatever the sky does (winter), set by the theme
+var season_autumn := 0.0   # the meadows' turn to gold (autumn), and how far it has gone
+var autumn := 0.0
 var _snow_shown := false
 
 # ---------------------------------------------------------------------------- birds
@@ -64,11 +67,12 @@ static func ensure_globals() -> void:
 	if Engine.has_meta("life_globals"):
 		return
 	Engine.set_meta("life_globals", true)
-	for n in ["world_wet", "world_puddles", "world_snow"]:
+	for n in ["world_wet", "world_puddles", "world_snow", "world_autumn"]:
 		RenderingServer.global_shader_parameter_add(n, RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
 	# land.gd: the band of latitude where the north turns cold (set by the theme once it knows the world).
 	RenderingServer.global_shader_parameter_add("world_cold_band", RenderingServer.GLOBAL_VAR_TYPE_VEC2, Vector2(-1e9, -1e9))
 
+var seen := {}              # what the wildlife has done ("scatter", "crows", "bolt", "graze", "leap"): times, for the screenshot run
 var _placing: Array = []    # what is left to place after a survey, one a frame
 
 func setup(p_theme: Node3D) -> void:
@@ -94,6 +98,9 @@ func setup(p_theme: Node3D) -> void:
 	add_child(_flies)
 
 ## How many of each are about (for the smoke test).
+func _saw(what: String) -> void:
+	seen[what] = int(seen.get(what, 0)) + 1
+
 func counts() -> Dictionary:
 	var birds := 0
 	for f in _flocks:
@@ -128,6 +135,7 @@ func step(center: Vector2, dt: float) -> void:
 		f.call() # one a frame, so looking round never stalls a frame
 		theme.lap("life " + f.get_method(), t)
 	_birds(dt)
+	_fish_step(dt)
 	_deer_step(dt)
 	_stock_step(dt)
 	_smoke_frame()
@@ -262,6 +270,19 @@ func _survey() -> void:
 			_water = q
 
 ## Somewhere open near us, out of the way: past `from` units and inside NEAR.
+## Somewhere in a farm field round us (land.gd), at least `from` away, or INF.
+func _field_spot(from: float) -> Vector2:
+	if theme.land == null or not theme.land.has_method("fields_in"):
+		return Vector2.INF
+	var fields: Array = theme.land.fields_in(Rect2(_center - Vector2(NEAR, NEAR), Vector2(NEAR, NEAR) * 2.0))
+	fields.shuffle()
+	for f in fields:
+		var r: Rect2 = f[0]
+		var p := r.position + Vector2(_rng.randf(), _rng.randf()) * r.size
+		if p.distance_to(_center) >= from and p.distance_to(_center) < NEAR * 0.85 and _open(p):
+			return p
+	return Vector2.INF
+
 func _spot(from: float) -> Vector2:
 	for _k in 12:
 		var a := _rng.randf() * TAU
@@ -269,6 +290,88 @@ func _spot(from: float) -> Vector2:
 		if _open(p):
 			return p
 	return Vector2.INF
+
+# ================================================================== fish
+
+var _fish: MeshInstance3D
+var _fish_t := -1.0         # how far through its leap a fish is (0..1), -1 for none in the air
+var _fish_wait := 4.0       # seconds till the next leaps
+var _fish_at := Vector3.ZERO
+var _fish_dir := Vector2.RIGHT
+var _splash: CPUParticles3D
+
+## Now and then a fish leaps from the sea off the shore near us: an arc, a flash of silver, a ring of spray.
+func _fish_step(dt: float) -> void:
+	var world = theme.world
+	if _fish == null:
+		_fish = MeshInstance3D.new()
+		var m := CapsuleMesh.new()
+		m.radius = 0.09
+		m.height = 0.5
+		_fish.mesh = m
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color("b8c4cc")
+		mat.metallic = 0.6
+		mat.roughness = 0.3
+		_fish.material_override = mat
+		_fish.visible = false
+		add_child(_fish)
+		_splash = CPUParticles3D.new()
+		_splash.emitting = false
+		_splash.one_shot = true
+		_splash.amount = 18
+		_splash.lifetime = 0.7
+		_splash.explosiveness = 0.9
+		_splash.direction = Vector3.UP
+		_splash.spread = 40.0
+		_splash.initial_velocity_min = 1.5
+		_splash.initial_velocity_max = 3.0
+		_splash.gravity = Vector3(0, -9.8, 0)
+		_splash.scale_amount_min = 0.05
+		_splash.scale_amount_max = 0.1
+		var drop := SphereMesh.new()
+		drop.radius = 0.5
+		drop.height = 1.0
+		var dm := StandardMaterial3D.new()
+		dm.albedo_color = Color(0.85, 0.92, 1.0, 0.8)
+		dm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		drop.material = dm
+		_splash.mesh = drop
+		add_child(_splash)
+	if _fish_t >= 0.0:
+		_fish_t += dt / 0.8
+		if _fish_t >= 1.0:
+			_fish_t = -1.0
+			_fish.visible = false
+			_splash.position = _fish_at + Vector3(_fish_dir.x, 0, _fish_dir.y) * 1.6
+			_splash.restart()
+			_saw("leap")
+			return
+		var along := Vector3(_fish_dir.x, 0, _fish_dir.y) * (_fish_t * 1.6)
+		_fish.position = _fish_at + along + Vector3(0, sin(_fish_t * PI) * 0.9, 0)
+		_fish.rotation = Vector3(0, atan2(_fish_dir.x, _fish_dir.y), 0)
+		_fish.rotate_object_local(Vector3.RIGHT, PI / 2.0 + (_fish_t - 0.5) * 2.2)
+		return
+	_fish_wait -= dt
+	if _fish_wait > 0.0:
+		return
+	_fish_wait = _rng.randf_range(5.0, 14.0)
+	if not world.has_sea or _shore == Vector2.INF or _shore.distance_to(_center) > 70.0:
+		return
+	# Out from the shore, over water.
+	var out := (_shore - _center).normalized()
+	if out == Vector2.ZERO:
+		return
+	var p := _shore + out * _rng.randf_range(5.0, 16.0) + Vector2(-out.y, out.x) * _rng.randf_range(-10.0, 10.0)
+	if not _sea_at(p):
+		return
+	_fish_at = Vector3(p.x, float(world.sea_level), p.y)
+	var a := _rng.randf() * TAU
+	_fish_dir = Vector2(cos(a), sin(a))
+	_fish_t = 0.0
+	_fish.visible = true
+	_splash.position = _fish_at
+	_splash.restart()
 
 # ================================================================== birds
 
@@ -367,7 +470,12 @@ func _place_flocks() -> void:
 		# A perched flock left far behind (or none yet) settles somewhere new round us, out of sight.
 		var gone: bool = fl["mode"] == OFF or (fl["mode"] == PERCHED and (fl["home"] as Vector2).distance_to(_center) > NEAR)
 		if gone:
-			var p := _spot(35.0)
+			# The first flock is crows, and crows go to the fields when there are any round us.
+			var p := _field_spot(35.0) if f == 0 else Vector2.INF
+			if p != Vector2.INF:
+				_saw("crows")
+			if p == Vector2.INF:
+				p = _spot(35.0)
 			if p != Vector2.INF:
 				_perch(f, p)
 			else:
@@ -385,6 +493,7 @@ func _birds(dt: float) -> void:
 			# Running at them (or walking right up) sends them up.
 			var d := (fl["home"] as Vector2).distance_to(_center)
 			if (d < 9.0 and _speed > 3.0) or d < 3.5:
+				_saw("scatter")
 				fl["mode"] = FLYING
 				fl["t"] = 0.0
 				var away := ((fl["home"] as Vector2) - _center).normalized()
@@ -612,6 +721,7 @@ func _deer_step(dt: float) -> void:
 		if mode == PERCHED:
 			if at.distance_to(_center) < (16.0 if _speed > 0.5 else 9.0):
 				d["mode"] = FLYING # bolting
+				_saw("bolt")
 				d["away"] = (at - _center).normalized().rotated(_rng.randf_range(-0.5, 0.5))
 				d["t"] = _rng.randf_range(2.5, 3.5)
 				continue
@@ -623,7 +733,11 @@ func _deer_step(dt: float) -> void:
 				d["yaw"] = atan2(-step.x, -step.y)
 				_pose(d, 0.5, 0.0, dt)
 			else:
-				_pose(d, 0.0, 1.0 if sin(_clock * 0.4 + n.get_instance_id()) > -0.3 else 0.0, dt)
+				var grazing := sin(_clock * 0.4 + n.get_instance_id()) > -0.3
+				if grazing and not d.get("grazed", false):
+					_saw("graze")
+				d["grazed"] = grazing
+				_pose(d, 0.0, 1.0 if grazing else 0.0, dt)
 			if float(d["t"]) <= 0.0:
 				d["t"] = _rng.randf_range(4.0, 10.0)
 				var nxt: Vector2 = at + Vector2(_rng.randf_range(-3, 3), _rng.randf_range(-3, 3))
@@ -892,11 +1006,15 @@ func _ground_weather(dt: float) -> void:
 	else:
 		wet = move_toward(wet, 0.0, dt / 180.0)
 		puddles = move_toward(puddles, 0.0, dt / 360.0)
-	# Snow settles over a minute and a half; melts over four (faster in rain).
+	# Snow settles over a minute and a half; melts over four (faster in rain), down to what the season leaves lying.
 	if snowing:
-		snow = move_toward(snow, clampf(falling * 1.1, 0.0, 1.0), dt / 90.0)
+		snow = move_toward(snow, maxf(clampf(falling * 1.1, 0.0, 1.0), season_snow), dt / 90.0)
+	elif snow > season_snow:
+		snow = move_toward(snow, season_snow, dt / (120.0 if raining else 240.0))
 	else:
-		snow = move_toward(snow, 0.0, dt / (120.0 if raining else 240.0))
+		snow = move_toward(snow, season_snow, dt / 90.0)
+	autumn = move_toward(autumn, season_autumn, dt / 60.0)
+	RenderingServer.global_shader_parameter_set("world_autumn", autumn)
 	RenderingServer.global_shader_parameter_set("world_wet", wet)
 	RenderingServer.global_shader_parameter_set("world_puddles", puddles)
 	RenderingServer.global_shader_parameter_set("world_snow", snow)

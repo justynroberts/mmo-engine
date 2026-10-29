@@ -939,8 +939,104 @@ pub fn route_chat(sim: &mut Sim, clients: &mut Clients, store: Option<&Store>) {
             }
         }
     }
+    // Bots dancing (and the like): the clip on them, for those close enough to see.
+    for (slot, anim) in std::mem::take(&mut sim.npc_emotes) {
+        if sim.ents.alive[slot] && !sim.ents.hidden[slot] {
+            let from = sim.ents.id_of(slot);
+            let (sx, sy) = (sim.ents.x[slot], sim.ents.y[slot]);
+            let reach = sim.rules.remark_reach * 2.0;
+            for c in clients.slab.iter_mut().flatten() {
+                let (dx, dy) = (sim.ents.x[c.slot] - sx, sim.ents.y[c.slot] - sy);
+                if dx * dx + dy * dy <= reach * reach {
+                    c.chat.deliver(from, proto::chat::channel::EMOTE, &format!("{anim}|"));
+                }
+            }
+        }
+    }
+    if sim.tick % (2 * sim.tick_hz.max(1)) == 0 {
+        send_lit(sim, clients);
+        send_plague(sim, clients);
+    }
     clients.chat_in = events;
     clients.chat_in.clear();
+}
+
+/// Tell each player which towns have the sickness, when that changes (`proto::chat::channel::PLAGUE`).
+fn send_plague(sim: &mut Sim, clients: &mut Clients) {
+    let ver = sim.plague_ver;
+    let mut line = None;
+    for c in clients.slab.iter_mut().flatten() {
+        if sim.plague_sent[c.slot] == ver {
+            continue;
+        }
+        sim.plague_sent[c.slot] = ver;
+        let l = line.get_or_insert_with(|| sim.plague_line());
+        c.chat.deliver(0, proto::chat::channel::PLAGUE, l);
+    }
+}
+
+/// How near a house must be for a player to be told whether its windows are lit, and how many at most.
+const LIT_REACH: f32 = 160.0;
+const LIT_MOST: usize = 16;
+
+/// Tell each player whose windows are lit round them, when that changes: houses with someone in of an evening,
+/// till late in the night when all but the inns go dark (`proto::chat::channel::LIT`).
+fn send_lit(sim: &mut Sim, clients: &mut Clients) {
+    use proto::game::DayPart;
+    let phase = sim.daylight.phase(proto::daylight::now_ms());
+    let late = phase > 1.0 - sim.daylight.night_share() * 0.4;
+    let evening = matches!(sim.daypart, DayPart::Dusk | DayPart::Night);
+    // Every house with someone in: (middle, who, an inn).
+    let mut lit: Vec<((f32, f32), String, bool)> = Vec::new();
+    if evening {
+        for s in 0..sim.ents.high {
+            if !sim.ents.alive[s] || sim.ents.owner[s] != crate::sim::NONE || !sim.ents.hidden[s] || sim.ents.fallen[s] {
+                continue;
+            }
+            let inn = matches!(sim.folk[s].inn, crate::folk::Inn::In(_));
+            let at = if inn { sim.home_of(s).and_then(|h| sim.inns.get(&h).copied().flatten()).map(|i| i.1) } else { sim.house[s] };
+            let Some(at) = at else { continue };
+            if late && !inn {
+                continue;
+            }
+            let who = sim.given[s].as_deref().unwrap_or("").chars().filter(|c| !matches!(c, ',' | ';' | '|' | '*')).take(18).collect::<String>();
+            match lit.iter_mut().find(|l| l.0 == at) {
+                Some(l) => l.2 |= inn,
+                None => lit.push((at, who, inn)),
+            }
+        }
+    }
+    for c in clients.slab.iter_mut().flatten() {
+        let (px, py) = (sim.ents.x[c.slot], sim.ents.y[c.slot]);
+        let mut near: Vec<&((f32, f32), String, bool)> = lit.iter().filter(|l| (l.0 .0 - px).powi(2) + (l.0 .1 - py).powi(2) <= LIT_REACH * LIT_REACH).collect();
+        near.sort_by(|a, b| ((a.0 .0 - px).powi(2) + (a.0 .1 - py).powi(2)).total_cmp(&((b.0 .0 - px).powi(2) + (b.0 .1 - py).powi(2))));
+        near.truncate(LIT_MOST);
+        near.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0).then(a.0 .1.total_cmp(&b.0 .1)));
+        let entries: Vec<String> = near.iter().map(|l| format!("{},{},{}{}", l.0 .0.round() as i32, l.0 .1.round() as i32, if l.2 { "*" } else { "" }, l.1)).collect();
+        // None lit hashes to 0, what a newcomer starts at, so nothing is sent until there is something to show or clear.
+        let hash = if entries.is_empty() { 0 } else { entries.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, e| e.bytes().fold(h ^ 0xff, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))) };
+        if sim.lit_sent[c.slot] == hash {
+            continue;
+        }
+        sim.lit_sent[c.slot] = hash;
+        // As few messages as will carry them, each inside a chat line.
+        let mut line = String::from("L0|");
+        let mut first = true;
+        for e in &entries {
+            if line.len() + e.len() + 1 > proto::chat::MAX_TEXT {
+                c.chat.deliver(0, proto::chat::channel::LIT, &line);
+                line = String::from("L1|");
+                first = false;
+            }
+            if !line.ends_with('|') {
+                line.push(';');
+            }
+            line.push_str(e);
+        }
+        if first || line.len() > 3 {
+            c.chat.deliver(0, proto::chat::channel::LIT, &line);
+        }
+    }
 }
 
 /// Collect queued action requests (at most one per client per tick).
@@ -1466,7 +1562,7 @@ mod tests {
         // client "level 1" then would make it celebrate the saved level as a level up at every sign-in.
         let (mut sim, mut clients, mut peers, sink, out) = fixture(4, 256);
         sink.set_nonblocking(true).unwrap();
-        sim.levels = Some(proto::game::LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
+        sim.levels = Some(proto::game::LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
         let mut lanes = vec![Worker::new(out.as_raw_fd())];
         let mut progress = |sim: &Sim, clients: &mut Clients| {
             build_snapshots(sim, clients, &mut lanes, None);

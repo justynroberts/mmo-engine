@@ -63,7 +63,8 @@ export default function Play() {
       setLines((l) => [...l.slice(-30), { key: lineKey.current++, from: m.from, who: m.from === 0 ? 'server' : m.from === self ? 'you' : names.name(m.from), text: m.channel === channel.EMOTE ? m.text.slice(m.text.indexOf('|') + 1) : m.text, shout: m.channel === 1, banner: m.from === 0 && m.channel === channel.BANNER }])
     const c: GameClient = new GameClient(inf, id, url, {
       onStatus: (s, detail) => setStatus({ s, detail }),
-      onChat: (m) => add(m, c.entity),
+      // Lit windows and a bot's wordless dance are for a 3D client; nothing to say in the chat.
+      onChat: (m) => (m.channel === channel.LIT || m.channel === channel.PLAGUE || (m.channel === channel.EMOTE && m.text.endsWith('|')) ? undefined : add(m, c.entity)),
       onMoved: (zone) => void travel(inf, id, zone),
     })
     setClient(c)

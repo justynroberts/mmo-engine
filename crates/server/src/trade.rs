@@ -53,8 +53,17 @@ impl Sim {
             self.tells.push((s, why));
             return false;
         }
-        let Some(&(item, price)) = self.archs[self.ents.arch[t] as usize].shop.get(index as usize) else { return false };
-        if self.money(s) < price as u32 {
+        if self.shut_for_plague(s, t) {
+            return false;
+        }
+        let Some(&(item, listed)) = self.archs[self.ents.arch[t] as usize].shop.get(index as usize) else { return false };
+        // What the town thinks of them, and the season, move the price; one it shuns is not served.
+        let Some(price) = self.price_for(s, t, item, listed as u32) else {
+            let line = self.pick_line(t, "shun", &[]).map_or_else(|| "They will not serve you.".to_string(), |l| l.1);
+            self.tells.push((s, format!("{}: \"{line}\"", self.called(t))));
+            return false;
+        };
+        if self.money(s) < price {
             self.tells.push((s, "You cannot afford that.".into()));
             return false;
         }
@@ -62,8 +71,13 @@ impl Sim {
             self.tells.push((s, "Your bag is full.".into()));
             return false;
         }
-        self.pay(s, price as u32);
-        self.tells.push((s, format!("Bought {} for {price}.", self.items[item].shown())));
+        self.pay(s, price);
+        let why = match price.cmp(&(listed as u32)) {
+            std::cmp::Ordering::Less => " (a friend's price)",
+            std::cmp::Ordering::Greater => " (they charge you dear)",
+            _ => "",
+        };
+        self.tells.push((s, format!("Bought {} for {price}{why}.", self.items[item].shown())));
         true
     }
 
@@ -72,6 +86,13 @@ impl Sim {
         let (Some(t), Some(c)) = (self.merchant(s, target), self.currency) else { return false };
         if let Some(why) = self.refuses(t, s) {
             self.tells.push((s, why));
+            return false;
+        }
+        if self.shut_for_plague(s, t) {
+            return false;
+        }
+        if self.town_of_bot(t).is_some_and(|h| self.tier(s, h) == crate::repute::Tier::Shunned) {
+            self.tells.push((s, format!("{} will not deal with you.", self.called(t))));
             return false;
         }
         let Some(&(tag, count)) = self.inv[s].get(i as usize) else { return false };
@@ -252,7 +273,7 @@ mod tests {
     #[test]
     fn a_party_forms_shares_a_kill_and_ends_when_one_is_left() {
         let mut g = GameFile::default_game();
-        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![] });
+        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
         g.archetypes[0].xp = 30;
         let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
         let [a, b] = [0, 1].map(|o| s.spawn(o).unwrap());

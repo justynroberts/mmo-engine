@@ -315,6 +315,17 @@ static func daylight_phase(d: Dictionary, unix_ms: float) -> float:
 		_:
 			return fposmod(unix_ms / (float(d.get("day_minutes", 24.0)) * 60000.0) + float(d.get("offset", 0.0)), 1.0)
 
+## How many days have passed at `unix_ms`, with the fraction of today (proto::daylight::Daylight::day): for the
+## seasons, which every client works out from it as the server does.
+static func daylight_day(d: Dictionary, unix_ms: float) -> float:
+	match String(d.get("mode", "cycle")):
+		"fixed":
+			return 0.0
+		"clock":
+			return (unix_ms / 60000.0 + float(d.get("utc_offset_minutes", 0))) / 1440.0
+		_:
+			return unix_ms / (float(d.get("day_minutes", 24.0)) * 60000.0) + float(d.get("offset", 0.0))
+
 ## The share of the day that is night (proto::daylight::Daylight::night_share).
 static func daylight_night(d: Dictionary) -> float:
 	match String(d.get("mode", "cycle")):

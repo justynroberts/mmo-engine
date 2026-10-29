@@ -17,37 +17,36 @@ const WATCH_CHASES: f32 = 60.0;
 /// Below this share of its health one in a brawl gives in.
 const GIVES_IN: f32 = 0.45;
 
-const INSULTS: &[&str] = &["Say that again, I dare you!", "You cheated me at the market!", "That's my seat, you lout!", "You've a face like a slapped haddock.", "Who are you calling a liar?"];
-const GIVE_IN: &[&str] = &["Enough! Enough, I yield!", "All right, all right!", "I'll pay, I'll pay!"];
-const WON: &[&str] = &["And that's the penny you owed me.", "Let that be a lesson to you.", "Next time, mind your tongue."];
-const BREAK_UP: &[&str] = &["Break it up, you two!", "Enough of that! Off home with you.", "Any more of this and it's the stocks."];
-const CRY: &[&str] = &["Thief! Stop, thief!", "My purse! Someone stop him!", "Cutpurse! Watch, watch!"];
-const NOTICED: &[&str] = &["Hands off my purse!", "I see you there, you rogue!"];
-const STOP: &[&str] = &["Stop in the name of the watch!", "Halt, thief!", "After him!"];
 
-fn pick(sim: &mut Sim, lines: &[&str]) -> String {
-    lines[sim.rng.below(lines.len() as u32) as usize].to_string()
+/// A line of `occasion` (`GameFile::talk`) with no holes to fill but `{place}`, for bot `s` to say.
+fn pick(sim: &mut Sim, s: usize, occasion: &str) -> Option<(usize, String)> {
+    let place = sim.town_near(sim.ents.x[s], sim.ents.y[s]);
+    sim.say_line(occasion, &[("place", &place)]).map(|l| (s, l))
 }
 
 impl Sim {
-    /// A bot with a home and no weapon, out and about: one of the townsfolk.
-    fn townsperson(&self, s: usize) -> bool {
+    /// A bot with a home and no weapon, out and about: one of the townsfolk (not a dog, nor a stray).
+    pub(crate) fn townsperson(&self, s: usize) -> bool {
         self.ents.alive[s]
             && self.ents.owner[s] == NONE
             && !self.ents.hidden[s]
             && !self.ents.fallen[s]
-            && self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.attack.is_none() && !a.thief && !a.homes.is_empty())
+            && self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.attack.is_none() && !a.thief && !a.pet && !a.stray && !a.homes.is_empty())
     }
 
-    fn is_thief(&self, s: usize) -> bool {
+    pub(crate) fn is_thief(&self, s: usize) -> bool {
         self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.thief)
     }
 
-    fn is_watch(&self, s: usize) -> bool {
+    pub(crate) fn is_thief_type(&self, s: usize) -> bool {
+        self.is_thief(s)
+    }
+
+    pub(crate) fn is_watch(&self, s: usize) -> bool {
         self.ents.alive[s] && self.ents.owner[s] == NONE && !self.ents.fallen[s] && self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.work == Some(Work::Streets) && a.attack.is_some())
     }
 
-    fn d2(&self, a: usize, b: usize) -> f32 {
+    pub(crate) fn d2(&self, a: usize, b: usize) -> f32 {
         (self.ents.x[a] - self.ents.x[b]).powi(2) + (self.ents.y[a] - self.ents.y[b]).powi(2)
     }
 
@@ -59,6 +58,11 @@ impl Sim {
     /// A spawn takes nothing of the last one in the slot.
     pub(crate) fn town_reset(&mut self, s: usize) {
         (self.brawl[s], self.purse[s], self.wanted[s], self.slip[s], self.collar[s], self.lift_at[s], self.calm[s]) = (None, 0, 0, None, None, 0, 0);
+        (self.talk_at[s], self.heard[s]) = (0, Vec::new());
+        self.met[s].clear();
+        self.folk[s] = Default::default();
+        (self.plea[s], self.plea_at[s], self.lit_sent[s]) = (None, 0, 0);
+        self.repute[s].clear();
     }
 
     /// The bot in `s` is busy with town life this AI tick (in a brawl, running with a purse, after a thief): its
@@ -80,6 +84,9 @@ impl Sim {
                 }
                 None => self.brawl[s] = None,
             }
+        }
+        if self.plague_steer(s) || self.folk_steer(s) {
+            return true;
         }
         if let Some((fx, fy, until)) = self.slip[s] {
             if tick < until {
@@ -132,15 +139,22 @@ impl Sim {
             let beaten = self.ents.attrs[ATTR_HEALTH as usize][s] < max * GIVES_IN;
             let watch = (0..self.ents.high).find(|&w| self.is_watch(w) && self.d2(w, s) <= WATCH_SEES * WATCH_SEES);
             if !beaten && watch.is_none() {
+                self.crowd_round(s, o);
                 continue;
             }
             if let Some(w) = watch {
-                let line = pick(self, BREAK_UP);
-                self.npc_chat.push((w, line));
+                if let Some(l) = pick(self, w, "break_up") {
+                self.npc_chat.push(l);
+            }
             } else {
-                let (a, b) = (pick(self, GIVE_IN), pick(self, WON));
-                self.npc_chat.push((s, a));
-                self.npc_chat.push((o, b));
+                if let Some(l) = pick(self, s, "give_in") {
+                self.npc_chat.push(l);
+            }
+                if let Some(l) = pick(self, o, "won") {
+                self.npc_chat.push(l);
+            }
+                let (who, other) = (self.news_name(o), self.news_name(s));
+                self.tell_news("news_brawl", who, other, self.ents.x[s], self.ents.y[s]);
             }
             for b in [s, o] {
                 self.brawl[b] = None;
@@ -160,7 +174,7 @@ impl Sim {
             }
             let (tx, ty, r2) = self.towns[k];
             let here: Vec<usize> = (0..self.ents.high)
-                .filter(|&s| self.townsperson(s) && self.brawl[s].is_none() && self.foe[s].is_none() && tick >= self.calm[s])
+                .filter(|&s| self.adult(s) && self.brawl[s].is_none() && self.foe[s].is_none() && tick >= self.calm[s])
                 .filter(|&s| (self.ents.x[s] - tx).powi(2) + (self.ents.y[s] - ty).powi(2) <= r2)
                 .collect();
             if here.len() < 2 {
@@ -172,12 +186,20 @@ impl Sim {
             if (0..self.ents.high).any(|w| self.is_watch(w) && self.d2(w, a) <= WATCH_SEES * WATCH_SEES) {
                 continue;
             }
-            let until = tick + (10 + self.rng.below(7)) * hz;
-            self.brawl[a] = Some((self.ents.id_of(b), until));
-            self.brawl[b] = Some((self.ents.id_of(a), until));
-            let (la, lb) = (pick(self, INSULTS), pick(self, INSULTS));
-            self.npc_chat.push((a, la));
-            self.npc_chat.push((b, lb));
+            self.start_brawl(a, b);
+        }
+    }
+
+    /// Two townsfolk come to blows, with words first.
+    pub(crate) fn start_brawl(&mut self, a: usize, b: usize) {
+        let until = self.tick + (10 + self.rng.below(7)) * self.tick_hz.max(1);
+        self.brawl[a] = Some((self.ents.id_of(b), until));
+        self.brawl[b] = Some((self.ents.id_of(a), until));
+        if let Some(l) = pick(self, a, "insult") {
+            self.npc_chat.push(l);
+        }
+        if let Some(l) = pick(self, b, "insult") {
+            self.npc_chat.push(l);
         }
     }
 
@@ -214,8 +236,9 @@ impl Sim {
                 if player {
                     self.tells.push((t, format!("You catch {}'s hand at your purse!", self.called(s))));
                 } else {
-                    let line = pick(self, NOTICED);
-                    self.npc_chat.push((t, line));
+                    if let Some(l) = pick(self, t, "noticed") {
+                self.npc_chat.push(l);
+            }
                 }
             } else if !fumbled {
                 let n = if player {
@@ -228,10 +251,13 @@ impl Sim {
                     self.tells.push((t, format!("Your purse is {n} {} lighter: {} is off with it! Catch them and you'll have it back.", self.items[c].shown(), self.called(s))));
                     n
                 } else {
-                    let line = pick(self, CRY);
-                    self.npc_chat.push((t, line));
+                    if let Some(l) = pick(self, t, "cry") {
+                self.npc_chat.push(l);
+            }
                     1 + self.rng.below(3)
                 };
+                let who = self.news_name(t);
+                self.tell_news("news_theft", who, String::new(), self.ents.x[t], self.ents.y[t]);
                 self.purse[s] = self.purse[s].saturating_add(n);
             } else {
                 continue; // a fumble nobody noticed
@@ -256,17 +282,64 @@ impl Sim {
                 .min_by(|&a, &b| self.d2(a, t).total_cmp(&self.d2(b, t)));
             if let Some(w) = near {
                 self.collar[w] = Some(id);
-                let line = pick(self, STOP);
-                self.npc_chat.push((w, line));
+                if let Some(l) = pick(self, w, "stop") {
+                self.npc_chat.push(l);
+            }
             }
         }
     }
 
-    /// A cutpurse fell: what it took is on the ground where it lies.
-    pub(crate) fn drop_purse(&mut self, s: usize) {
+    /// Townsfolk near a brawl stop to watch it, and now and then one calls out.
+    fn crowd_round(&mut self, a: usize, b: usize) {
+        let (tick, hz) = (self.tick, self.tick_hz.max(1));
+        let (mx, my) = ((self.ents.x[a] + self.ents.x[b]) / 2.0, (self.ents.y[a] + self.ents.y[b]) / 2.0);
+        let near: Vec<usize> = (0..self.ents.high)
+            .filter(|&t| t != a && t != b && self.townsperson(t) && self.brawl[t].is_none())
+            .filter(|&t| (self.ents.x[t] - mx).powi(2) + (self.ents.y[t] - my).powi(2) <= 12.0 * 12.0)
+            .collect();
+        for t in near {
+            self.wander_wait[t] = self.wander_wait[t].max(tick + 2 * hz);
+            self.wander_to[t] = (f32::NAN, f32::NAN);
+            if tick >= self.ents.say_at[t] && self.rng.f32() < 0.12 {
+                self.ents.say_at[t] = tick + 8 * hz;
+                if let Some(l) = pick(self, t, "cheer") {
+                self.npc_chat.push(l);
+            }
+            }
+        }
+    }
+
+    /// A cutpurse fell: what it took is on the ground where it lies, and whoever brought it down (`by`, a player, or
+    /// else one of the watch after it) has the thanks of the town and its talk.
+    pub(crate) fn drop_purse(&mut self, s: usize, by: Option<usize>) {
         let n = std::mem::take(&mut self.purse[s]);
+        let was_wanted = self.tick < self.wanted[s] || n > 0;
         self.wanted[s] = 0;
         self.slip[s] = None;
+        if self.is_thief(s) && was_wanted {
+            let id = self.ents.id_of(s);
+            let watch = (0..self.ents.high).find(|&w| self.collar[w] == Some(id));
+            let (x, y) = (self.ents.x[s], self.ents.y[s]);
+            match (by, watch) {
+                (Some(p), _) => {
+                    let (name, place) = (self.name_of(p).to_string(), self.town_near(x, y));
+                    if let Some(w) = watch.or_else(|| (0..self.ents.high).filter(|&w| self.is_watch(w)).min_by(|&a, &b| self.d2(a, s).total_cmp(&self.d2(b, s))).filter(|&w| self.d2(w, s) <= WATCH_CHASES * WATCH_CHASES)) {
+                        if let Some(line) = self.say_line("thanks", &[("name", &name), ("place", &place)]) {
+                            self.npc_chat.push((w, line));
+                        }
+                    }
+                    self.tell_news("news_caught", name, String::new(), x, y);
+                    if let Some(h) = self.town_at(x, y).or_else(|| self.town_of_bot(s)) {
+                        self.change_repute(p, h, 15);
+                    }
+                }
+                (None, Some(w)) => {
+                    let who = self.news_name(w);
+                    self.tell_news("news_caught", who, String::new(), x, y);
+                }
+                _ => {}
+            }
+        }
         if let (Some(c), true) = (self.currency, n > 0) {
             let (x, y) = (self.ents.x[s], self.ents.y[s]);
             self.put_ground(x, y, c, n.min(255) as u8);
@@ -335,7 +408,7 @@ mod tests {
         let w = s.spawn_as(NONE, watch, Some((506.0, 500.0))).unwrap();
         s.system_town();
         assert!(s.brawl[a].is_none(), "the watch stepped in");
-        assert!(s.npc_chat.iter().any(|(by, line)| *by == w && line.contains('!')), "and said so");
+        assert!(s.npc_chat.iter().any(|(by, line)| *by == w && s.talk.lines("break_up").contains(line)), "and said so");
     }
 
     #[test]

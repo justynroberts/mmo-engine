@@ -188,6 +188,15 @@ impl Sim {
         if def.uses.is_empty() {
             return false;
         }
+        // A healing draught, with the sickness about: it cures the sick one beside them (or them) instead.
+        let heals = def.uses.iter().any(|&(attr, delta)| attr == proto::defs::ATTR_HEALTH as usize && delta > 0.0);
+        if heals && !self.plagues.is_empty() && self.plague_cure(slot) {
+            if def.consume {
+                self.inv[slot][i] = if count <= 1 { (0, 0) } else { (tag, count - 1) };
+            }
+            self.bump_inv(slot);
+            return true;
+        }
         for &(attr, delta) in &def.uses {
             let a = &self.defs.attrs[attr];
             let v = &mut self.ents.attrs[attr][slot];

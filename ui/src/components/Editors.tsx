@@ -135,7 +135,8 @@ const RULE_FIELDS: [string, [keyof Rules, string][]][] = [
   ['Hailing', [['hail_reach', 'Hail reach'], ['hail_secs', 'Stands for s']]],
   ['Wandering', [['wander_linger_secs', 'Lingers s'], ['wander_range', 'Range (no home)'], ['remark_pause_secs', 'Stops to talk s']]],
   ['The dark', [['night_sight', 'Fighters see ×'], ['night_ambush_pct', 'Ambush % a minute'], ['night_pack', 'Most in a pack']]],
-  ['Town life', [['brawl_pct', 'Brawl % a minute'], ['lift_pct', 'Cutpurse % a second']]],
+  ['Town life', [['brawl_pct', 'Brawl % a minute'], ['lift_pct', 'Cutpurse % a second'], ['inn_pct', 'To the inn % an evening'], ['newcomer_secs', 'Newcomer after (s, 0 = none)'], ['plea_pct', 'Asks for help % a minute']]],
+  ['Seasons', [['season_days', 'Days a season (0 = none)'], ['season_shift', 'Shift the year (days)']]],
   ['Company', [['party_size', 'Party size'], ['party_share_reach', 'Party XP reach'], ['quest_share_reach', 'Quest share reach'], ['guild_size', 'Guild size']]],
   ['Trade', [['trade_reach', 'Trade reach'], ['trade_break', 'Trade breaks at'], ['listing_hours', 'Listing hours'], ['listings_per_seller', 'Listings each']]],
 ]

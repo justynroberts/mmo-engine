@@ -19,7 +19,7 @@ impl Sim {
         if self.ents.owner[s] != NONE {
             return None;
         }
-        self.home_for(self.ents.arch[s], s)
+        self.home_over[s].or_else(|| self.home_for(self.ents.arch[s], s))
     }
 
     /// The home a bot of type `arch` gets in `slot`.
@@ -32,7 +32,7 @@ impl Sim {
     }
 
     /// The houses whose middle is inside place `h`.
-    fn houses_in(&self, h: usize) -> impl Iterator<Item = &Aabb> + '_ {
+    pub(crate) fn houses_in(&self, h: usize) -> impl Iterator<Item = &Aabb> + '_ {
         let p = &self.places[h];
         let (px, py, r2) = (p.x, p.y, p.r * p.r);
         self.terrain.houses.iter().filter(move |b| ((b.x0 + b.x1) / 2.0 - px).powi(2) + ((b.y0 + b.y1) / 2.0 - py).powi(2) <= r2)
@@ -40,7 +40,7 @@ impl Sim {
 
     /// A house's door step: the middle of one of its sides, just outside, on a road if one side gives onto one,
     /// else the side facing the middle of `toward`, and never inside another wall.
-    fn step_of(&self, b: &Aabb, toward: (f32, f32)) -> Option<(f32, f32)> {
+    pub(crate) fn step_of(&self, b: &Aabb, toward: (f32, f32)) -> Option<(f32, f32)> {
         let (mx, my) = ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
         let sides = [(mx, b.y0 - STEP), (mx, b.y1 + STEP), (b.x0 - STEP, my), (b.x1 + STEP, my)];
         let r = self.defs.entity_radius;
@@ -60,24 +60,23 @@ impl Sim {
         if let Some(d) = self.door[s] {
             return d;
         }
-        let d = self.home_of(s).and_then(|h| {
+        let found = self.home_of(s).and_then(|h| {
             let mid = (self.places[h].x, self.places[h].y);
             let n = self.houses_in(h).count();
             // Spread over the houses, not in file order: neighbouring slots get houses apart from each other.
             let pick = (s as u64).wrapping_mul(2_654_435_761) as usize % n.max(1);
             let b = *self.houses_in(h).nth(pick)?;
-            self.step_of(&b, mid)
+            Some((self.step_of(&b, mid)?, ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0)))
         });
-        self.door[s] = Some(d);
-        d
+        self.door[s] = Some(found.map(|f| f.0));
+        self.house[s] = found.map(|f| f.1);
+        found.map(|f| f.0)
     }
 
     /// Which places are towns (a house inside), and which bot types are armed: see `Sim::towns`.
     pub(crate) fn find_towns(&mut self) {
-        self.towns = (0..self.places.len())
-            .filter(|&h| self.houses_in(h).next().is_some())
-            .map(|h| (self.places[h].x, self.places[h].y, self.places[h].r * self.places[h].r))
-            .collect();
+        self.town_index = (0..self.places.len()).filter(|&h| self.houses_in(h).next().is_some()).collect();
+        self.towns = self.town_index.iter().map(|&h| (self.places[h].x, self.places[h].y, self.places[h].r * self.places[h].r)).collect();
         self.armed = self.archs.iter().map(|a| a.attack.is_some()).collect();
     }
 
@@ -114,7 +113,7 @@ impl Sim {
         let hash = (s as u64).wrapping_mul(2_654_435_761) >> 7;
         let frac = |k: u64| ((hash >> (k * 8)) & 0xff) as f32 / 255.0;
         match kind {
-            Work::Streets => None,
+            Work::Streets | Work::Play => None,
             // A stall along one side of a square, a little in from its edge.
             Work::Square => {
                 let n = self.squares_in(h).count();
@@ -148,9 +147,10 @@ impl Sim {
                 }
                 let (ux, uy) = ((px - sx) / d, (py - sy) / d);
                 let along = (frac(0) - 0.5) * 2.0 * r.clamp(10.0, 40.0);
-                (0..30).map(|k| 2.0 + k as f32 * 1.5).find_map(|out| {
+                // On the shore itself: the first dry ground out of the water, not a spot in it.
+                (0..40).map(|k| 2.0 + k as f32 * 1.5).find_map(|out| {
                     let (x, y) = (sx + ux * out - uy * along, sy + uy * out + ux * along);
-                    self.standable(x, y).then_some((x, y))
+                    (self.standable(x, y) && self.terrain.dry(x, y)).then_some((x, y))
                 })
             }
             // Out in the fields round the town, off the road.
@@ -180,6 +180,31 @@ impl Sim {
             any.get_or_insert((x, y));
         }
         any
+    }
+
+    /// The middle of town `h`'s first square, else of the town: where its gatherings are, and its inn is beside.
+    pub(crate) fn square_middle(&self, h: usize) -> (f32, f32) {
+        self.squares_in(h).next().map_or((self.places[h].x, self.places[h].y), |b| ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0))
+    }
+
+    /// A spot on the shore of the water nearest (x, y), a step out of it, if any is within `reach`: where a beast
+    /// comes to drink.
+    pub(crate) fn water_near(&self, x: f32, y: f32, reach: f32) -> Option<(f32, f32)> {
+        let (sx, sy) = self
+            .terrain
+            .water
+            .iter()
+            .map(|b| (x.clamp(b.x0, b.x1), y.clamp(b.y0, b.y1)))
+            .min_by(|a, b| ((a.0 - x).powi(2) + (a.1 - y).powi(2)).total_cmp(&((b.0 - x).powi(2) + (b.1 - y).powi(2))))?;
+        let d = (sx - x).hypot(sy - y);
+        if d > reach || d < 0.01 {
+            return None;
+        }
+        let (ux, uy) = ((x - sx) / d, (y - sy) / d);
+        (0..20).map(|k| 2.0 + k as f32 * 1.5).find_map(|out| {
+            let (px, py) = (sx + ux * out, sy + uy * out);
+            (self.standable(px, py) && self.terrain.dry(px, py)).then_some((px, py))
+        })
     }
 
     /// Somewhere on one of the squares of the bot's home, for an evening there.

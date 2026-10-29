@@ -16,6 +16,7 @@ pub mod rng;
 pub mod rules;
 pub mod secure;
 pub mod snapshot;
+pub mod talk;
 pub mod tiles;
 pub mod wire;
 pub mod world;

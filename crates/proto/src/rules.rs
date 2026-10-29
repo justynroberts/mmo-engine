@@ -79,6 +79,19 @@ pub struct Rules {
     /// purse with `lift_pct` a second.
     pub brawl_pct: f32,
     pub lift_pct: f32,
+    /// Of an evening each townsperson goes to the inn (the house nearest its town's square) with this chance in
+    /// percent, and comes out late, singing (`folk.rs`).
+    pub inn_pct: f32,
+    /// A townsperson who is killed is buried, and this many seconds on a newcomer takes their place, under a new
+    /// name. 0: they come back as themselves, as any bot does.
+    pub newcomer_secs: f32,
+    /// Each minute, a townsperson with trouble near them (a beast at the fields, a stray, a thief) asks a player
+    /// close by for help with this chance in percent (`repute.rs`).
+    pub plea_pct: f32,
+    /// Game days to a season (0: no seasons), and how many days on the year is shifted (the console's "make it
+    /// winter").
+    pub season_days: f32,
+    pub season_shift: f32,
 }
 
 impl Default for Rules {
@@ -121,6 +134,11 @@ impl Default for Rules {
             night_pack: 2,
             brawl_pct: 0.0,
             lift_pct: 0.0,
+            inn_pct: 0.0,
+            newcomer_secs: 0.0,
+            plea_pct: 0.0,
+            season_days: 0.0,
+            season_shift: 0.0,
         }
     }
 }
@@ -165,13 +183,14 @@ impl Rules {
             ("hail_secs", self.hail_secs),
             ("wander_linger_secs", self.wander_linger_secs),
             ("remark_pause_secs", self.remark_pause_secs),
+            ("newcomer_secs", self.newcomer_secs),
         ];
         for (name, v) in secs {
             if !(v.is_finite() && (0.0..=86_400.0).contains(&v)) {
                 return Err(format!("rules: {name} is 0..86400"));
             }
         }
-        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct), ("brawl_pct", self.brawl_pct), ("lift_pct", self.lift_pct)] {
+        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct), ("brawl_pct", self.brawl_pct), ("lift_pct", self.lift_pct), ("inn_pct", self.inn_pct), ("plea_pct", self.plea_pct)] {
             if !(v.is_finite() && (0.0..=100.0).contains(&v)) {
                 return Err(format!("rules: {name} is 0..100"));
             }
@@ -181,6 +200,9 @@ impl Rules {
         }
         if !(self.night_sight.is_finite() && (0.1..=4.0).contains(&self.night_sight)) || !(1..=8).contains(&self.night_pack) {
             return Err("rules: night_sight is 0.1..4 and night_pack 1..8".into());
+        }
+        if !(self.season_days.is_finite() && (0.0..=365.0).contains(&self.season_days)) || !(self.season_shift.is_finite() && (0.0..=1460.0).contains(&self.season_shift)) {
+            return Err("rules: season_days is 0..365 and season_shift 0..1460".into());
         }
         if self.trade_break < self.trade_reach {
             return Err("rules: trade_break must be at least trade_reach".into());

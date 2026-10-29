@@ -31,6 +31,7 @@ Downloaded 2026-10-25.
 | `place.ogg` | 5.3-5.85 s | two large cobblestone blocks | jobel0092 | <https://freesound.org/people/jobel0092/sounds/268055/> | CC0 1.0 |
 | `break.ogg` | 0.0-1.0 s | crate_break4 | K-Forces | <https://freesound.org/people/K-Forces/sounds/856631/> | CC0 1.0 |
 | `horn.ogg` | 0.1-3.9 s (the first blast) | medieval viking horn | Artiom_Constantinov | <https://freesound.org/people/Artiom_Constantinov/sounds/856540/> | CC0 1.0 |
+| `bell.ogg` | 0-9 s, faded over the last 2.5 s | Church bell.wav | Audeption | <https://freesound.org/people/Audeption/sounds/425172/> | CC0 1.0 |
 | `chime.ogg` | 0.4-2.4 s | Small Bell | NachtmahrTV | <https://freesound.org/people/NachtmahrTV/sounds/553214/> | CC0 1.0 |
 | `splash.ogg` | 5.5-6.1 s | Splashing Stomps Impacts Shallow Water | ChristopherJngs | <https://freesound.org/people/ChristopherJngs/sounds/861370/> | CC0 1.0 |
 | `click.ogg` | the first click | `metalClick` from RPG Audio | Kenney | <https://kenney.nl/assets/rpg-audio> | CC0 1.0 |

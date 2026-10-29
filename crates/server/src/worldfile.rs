@@ -59,6 +59,12 @@ pub struct Terrain {
     /// The town squares (class `square`) and the water (`sea`, `lake`): where townsfolk with a `work` spend the day.
     pub squares: Arc<Vec<Aabb>>,
     pub water: Arc<Vec<Aabb>>,
+    /// Towers (class `tower`): a village's church, where the dead are buried (`folk.rs`).
+    pub towers: Arc<Vec<Aabb>>,
+    /// The sea's level (WORLD.md `water.sea.level`), if the world has a sea: ground below it is under water.
+    pub sea: Option<f32>,
+    /// The lakes' footprints (`water.lakes`).
+    pub lakes: Arc<Vec<Aabb>>,
 }
 
 impl WorldFile {
@@ -85,6 +91,12 @@ impl Terrain {
         let span = hi - lo;
         let heights = raw.chunks_exact(2).map(|b| (lo + span * u16::from_le_bytes([b[0], b[1]]) as f64 / 65535.0) as f32).collect();
         Ok(Terrain { x0: num("x0")?, y0: num("y0")?, cell, w, h: hh, heights, ..Default::default() })
+    }
+
+    /// Whether a point is on dry ground: above the sea (with the beach's margin, as clients draw the shore) and out
+    /// of the lakes.
+    pub fn dry(&self, x: f32, y: f32) -> bool {
+        self.sea.is_none_or(|l| self.heights.is_empty() || self.height(x, y) > l + 1.0) && !self.lakes.iter().any(|b| x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1)
     }
 
     /// Ground height at a point, interpolated between samples as godot/scripts/world_data.gd does.
@@ -150,6 +162,8 @@ struct FileIn<'a> {
     heights: Value,
     #[serde(default)]
     roads: Value,
+    #[serde(default)]
+    water: Value,
     #[serde(borrow)]
     objects: Option<&'a RawValue>,
 }
@@ -166,6 +180,7 @@ struct Objects {
     houses: Vec<[f32; 4]>,
     squares: Vec<[f32; 4]>,
     water: Vec<[f32; 4]>,
+    towers: Vec<[f32; 4]>,
 }
 
 #[derive(serde::Deserialize)]
@@ -204,6 +219,7 @@ impl<'de> serde::Deserialize<'de> for Objects {
                         match t {
                             "square" => out.squares.push(b),
                             "sea" | "lake" => out.water.push(b),
+                            "tower" => out.towers.push(b),
                             _ => {}
                         }
                     }
@@ -293,7 +309,13 @@ pub fn load(path: &Path) -> Result<WorldFile, String> {
         Terrain::default()
     });
     let boxes = |v: &[[f32; 4]]| Arc::new(v.iter().map(|b| Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }).collect::<Vec<_>>());
-    (terrain.houses, terrain.squares, terrain.water) = (boxes(&solids.houses), boxes(&solids.squares), boxes(&solids.water));
+    (terrain.houses, terrain.squares, terrain.water, terrain.towers) = (boxes(&solids.houses), boxes(&solids.squares), boxes(&solids.water), boxes(&solids.towers));
+    terrain.sea = v.water["sea"]["level"].as_f64().map(|l| l as f32);
+    let lake = |l: &Value| -> Option<Aabb> {
+        let b: Vec<f32> = l["b"].as_array()?.iter().filter_map(|n| n.as_f64().map(|n| n as f32)).collect();
+        (b.len() == 4).then(|| Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] })
+    };
+    terrain.lakes = Arc::new(v.water["lakes"].as_array().map_or_else(Vec::new, |ls| ls.iter().filter_map(lake).collect()));
     let h = blake3::hash(&bytes);
     let ver = u64::from_le_bytes(h.as_bytes()[..8].try_into().unwrap());
     // The head: the file as it is, with the object list cut down to the footprints.

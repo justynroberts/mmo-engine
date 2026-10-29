@@ -474,7 +474,7 @@ export function dequantize(a: { min: number; max: number; bits: number }, q: num
 
 export const MAX_TEXT = 120
 /** SAY and SHOUT are heard; NAME (client to server only) claims a display name (crates/proto/src/names.rs). */
-export const channel = { SAY: 0, SHOUT: 1, NAME: 2, BANNER: 3, EMOTE: 11 } as const
+export const channel = { SAY: 0, SHOUT: 1, NAME: 2, BANNER: 3, EMOTE: 11, LIT: 12, PLAGUE: 13 } as const
 
 export interface ChatMsg {
   seq: number

@@ -41,6 +41,8 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
       case 'zone':
       case 'wait':
       case 'defeat':
+      case 'gather':
+      case 'plague':
         return s
       case 'reward':
         if (kind === 'item' && s.item === from) return to === null ? null : { ...s, item: to }
@@ -384,7 +386,12 @@ export const STEP_KINDS: readonly { kind: Step['kind']; label: string }[] = [
   { kind: 'wait', label: 'Wait' },
   { kind: 'defeat', label: 'Wait until its bots are beaten' },
   { kind: 'reward', label: 'Reward the players' },
+  { kind: 'gather', label: 'Gather the town' },
+  { kind: 'plague', label: 'Bring the sickness' },
 ]
+
+/** Talk occasions a gathering may use (proto::talk). */
+export const GATHER_OCCASIONS = ['market', 'feast', 'wedding', 'cheer', 'mourn'] as const
 
 /** A new step of a kind, filled with things that exist (null where the game has none to offer). */
 export function defaultStep(kind: Step['kind'], g: GameFile): Step {
@@ -409,6 +416,10 @@ export function defaultStep(kind: Step['kind'], g: GameFile): Step {
       return { kind, within_secs: 300 }
     case 'reward':
       return { kind, item: g.items?.[0]?.name ?? '', count: 1 }
+    case 'gather':
+      return { kind, secs: 600, occasion: 'market' }
+    case 'plague':
+      return { kind, secs: 1500, spread_pct: 12, deaths_pct: 20, first: 3 }
   }
 }
 
@@ -434,6 +445,10 @@ export function describeStep(s: Step): string {
       return `wait until they are beaten${s.within_secs ? ` (within ${s.within_secs}s or it fails)` : ''}`
     case 'reward':
       return `give ${s.count} ${s.item} to ${s.everyone ? 'everyone online' : 'those who took part'}`
+    case 'gather':
+      return `the town out on its square for ${s.secs}s (${s.occasion}${s.dance ? ', dancing' : ''})`
+    case 'plague':
+      return `the sickness in the town for ${s.secs}s (${s.first} fall ill, ${s.spread_pct}% a minute to those close, ${s.deaths_pct}% die)`
   }
 }
 
@@ -454,7 +469,10 @@ export function directorProblems(g: GameFile): string[] {
     if (e.when?.kind === 'after' && (e.when.event === e.name || !evs.has(e.when.event))) out.push(`${e.name}: starts after “${e.when.event}”, which is not another event`)
     const all = [...e.steps.map((s, i) => [s, `${e.name} step ${i + 1}`] as const), ...(e.fail_steps ?? []).map((s, i) => [s, `${e.name} if it fails, step ${i + 1}`] as const)]
     all.forEach(([s, at]) => {
-      if (s.kind === 'announce' && s.nearby && !e.place) out.push(`${at}: “to those nearby” needs the event to have a place`)
+      if (s.kind === 'announce' && s.nearby && !e.place && !e.roams) out.push(`${at}: “to those nearby” needs the event to have a place`)
+      if (s.kind === 'gather' && !e.place && !e.roams) out.push(`${at}: a gathering needs the event to have a place`)
+      if (s.kind === 'plague' && !e.place && !e.roams) out.push(`${at}: a plague needs the event to have a place, or to roam`)
+      if (s.kind === 'plague' && (s.first < 1 || s.first > 50)) out.push(`${at}: between 1 and 50 fall ill first`)
       if (s.kind === 'reward' && !itm.has(s.item)) out.push(`${at}: no item called “${s.item}”`)
       if (s.kind === 'weather' && s.name && !wea.has(s.name)) out.push(`${at}: no weather called “${s.name}”`)
       if ((s.kind === 'spawn' || s.kind === 'clear') && !arch.has(s.archetype)) out.push(`${at}: no bot type called “${s.archetype}”`)
