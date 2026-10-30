@@ -1920,7 +1920,9 @@
    "speed_mult": 0.9,
    "sight": 60.0,
    "attack": "buille",
-   "attrs": {},
+   "attrs": {
+    "health": 300.0
+   },
    "home": "bru na boinne",
    "rules": [],
    "drops": [
@@ -1938,7 +1940,82 @@
     }
    ],
    "xp": 400,
-   "level": 12
+   "level": 12,
+   "leash": 80.0,
+   "boss": {
+    "phases": [
+     {
+      "below": 100,
+      "moves": [
+       {
+        "action": "mallacht",
+        "every_secs": 6,
+        "at": "tank"
+       },
+       {
+        "action": "ceo nimhe",
+        "every_secs": 9,
+        "warn_secs": 2.5,
+        "at": "random",
+        "radius": 7,
+        "say": "Crom Dubh breathes out the grave's air!"
+       }
+      ]
+     },
+     {
+      "below": 60,
+      "say": "Crom Dubh calls the dead out of the mound!",
+      "adds": [
+       {
+        "bot": "sluagh",
+        "count": 3
+       }
+      ],
+      "moves": [
+       {
+        "action": "mallacht",
+        "every_secs": 6,
+        "at": "tank"
+       },
+       {
+        "action": "ceo nimhe",
+        "every_secs": 8,
+        "warn_secs": 2.2,
+        "at": "random",
+        "radius": 7
+       },
+       {
+        "action": "tintreach",
+        "every_secs": 10,
+        "warn_secs": 2.0,
+        "at": "farthest",
+        "radius": 6
+       }
+      ]
+     },
+     {
+      "below": 25,
+      "say": "The dark god rages: the mound fills with poison!",
+      "moves": [
+       {
+        "action": "mallacht",
+        "every_secs": 5,
+        "at": "tank"
+       },
+       {
+        "action": "ceo nimhe",
+        "every_secs": 7,
+        "warn_secs": 2.5,
+        "at": "self",
+        "radius": 10
+       }
+      ]
+     }
+    ],
+    "enrage_secs": 300,
+    "enrage_might": 3,
+    "defeat": "Crom Dubh falls, and the mound is quiet."
+   }
   },
   {
    "name": "ceannai taistil",
@@ -4593,6 +4670,78 @@
     "Ó Néill"
    ],
    "healer": true
+  },
+  {
+   "name": "ri na ndibheirgeach",
+   "title": "Brigand King",
+   "color": "#3e2723",
+   "count": 0,
+   "behaviour": "chase",
+   "speed_mult": 1.0,
+   "sight": 45.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 300.0
+   },
+   "home": "dibheirgigh",
+   "drops": [
+    {
+     "item": "claiomh",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 1
+    },
+    {
+     "item": "pingin airgid",
+     "chance_pct": 100.0,
+     "min": 10,
+     "max": 25
+    }
+   ],
+   "xp": 300,
+   "level": 9,
+   "ambush": false,
+   "leash": 80.0,
+   "rules": [],
+   "boss": {
+    "phases": [
+     {
+      "below": 100,
+      "moves": [
+       {
+        "action": "liathroid tine",
+        "every_secs": 8,
+        "warn_secs": 2.0,
+        "at": "farthest",
+        "radius": 5,
+        "say": "The Brigand King hurls a firepot!"
+       }
+      ]
+     },
+     {
+      "below": 50,
+      "say": "To me, lads!",
+      "adds": [
+       {
+        "bot": "dibheirgeach",
+        "count": 3
+       }
+      ],
+      "moves": [
+       {
+        "action": "liathroid tine",
+        "every_secs": 6,
+        "warn_secs": 1.8,
+        "at": "random",
+        "radius": 5
+       }
+      ]
+     }
+    ],
+    "enrage_secs": 240,
+    "enrage_might": 3,
+    "defeat": "The Brigand King is down. The camp is yours."
+   }
   }
  ],
  "places": [
@@ -9361,6 +9510,46 @@
  ],
  "gods": [
   "27e5f44f38eb50e5"
+ ],
+ "dungeons": [
+  {
+   "name": "Brú na Bóinne",
+   "place": "bru na boinne",
+   "bots": [
+    {
+     "bot": "sluagh",
+     "count": 4
+    },
+    {
+     "bot": "crom dubh",
+     "count": 1
+    }
+   ],
+   "xp": 600,
+   "reward": {
+    "item": "fainne oir",
+    "count": 1
+   }
+  },
+  {
+   "name": "Campa na nDíbheirgeach",
+   "place": "dibheirgigh",
+   "bots": [
+    {
+     "bot": "dibheirgeach",
+     "count": 5
+    },
+    {
+     "bot": "ri na ndibheirgeach",
+     "count": 1
+    }
+   ],
+   "xp": 350,
+   "reward": {
+    "item": "deoch leighis",
+    "count": 3
+   }
+  }
  ],
  "start_place": "dublin"
 }

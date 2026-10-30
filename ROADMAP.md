@@ -36,7 +36,10 @@ letters rather than by the auction house's runner.
 
 `deploy/hibernia-65536/`: the seed world sixteen times bigger, with tiered roads, farmsteads, fields and hedgerows,
 and standing stones between the towns and the capital. Dungeons come separately, as their own maps joined by zone
-lines. Still to do: deploying it (a fresh volume), folk for the new farmsteads, waymarks and inns along the highways.
+lines. Deployed 2026-10-30. Since then: regions (flat lowland to rugged upland), mountains where the named ranges
+are (with a treeline and snow scaled to their height), heights twice as fine, lakes as one water, a sharp minimap.
+Two instanced dungeons with bosses (Brú na Bóinne, Campa na nDíbheirgeach). Still to do: folk for the new
+farmsteads, waymarks and inns along the highways, dungeons as maps of their own (zone lines).
 
 ## 3. Gathering and crafting skills
 

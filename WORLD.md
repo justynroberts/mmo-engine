@@ -72,6 +72,13 @@ One JSON object.
 | `roads` | Roads, below (optional) |
 | `settled` | Where each of the recipe's `settlements` went: `[{"t", "name", "asked": [x, y], "at": [x, y] or null}]` |
 | `farms` | `true` when the objects include `field`s: a theme draws those, and makes up no fields of its own |
+
+Past 16,384 units worldgen also varies the land by region (a slow noise from flat lowland to rugged upland), raises
+mountains where crags stand thick (a named range laid as a cluster of crags becomes a ridged mountain mass, a lone crag
+a knoll), thins the woods above 40 and stops them above 52, and keeps its heights twice as fine. Lakes laid as strips
+that overlap at their ends (at most 30 units, each at least 55 across) are one water: one level, the deepest bed
+where they overlap, and water boxes cut back to the middle of each overlap. A theme scales its snow and heath lines by
+the highest ground over 40 (`world_relief` in the fantasy theme).
 | `objects` | Everything else, below |
 
 Unknown fields are allowed everywhere and ignored by the engine, so a generator can add data for its own

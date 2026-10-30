@@ -61,6 +61,9 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 					_warming.append([f, pal])
 	LifeScript.ensure_globals() # before any shader that reads them is made
 	RenderingServer.global_shader_parameter_set("world_cold_band", land.cold_band)
+	# A world whose mountains stand far above 40 (a big one) keeps its snow and heath for its heights, not the
+	# hills of a small world: the lines are scaled by how much taller it is.
+	RenderingServer.global_shader_parameter_set("world_relief", maxf(1.0, world.height_top / 40.0))
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
@@ -170,6 +173,7 @@ global uniform float world_wet;     // life.gd: how wet the ground is after rain
 global uniform float world_puddles; // standing water, which lasts longer
 global uniform float world_snow;    // snow lying
 global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
+global uniform float world_relief;   // the snow and heath lines scaled for a world with taller land (1 for small ones)
 global uniform float world_autumn;  // life.gd: the year's turn to gold, 0 .. 1
 varying vec3 wp;
 varying vec3 wn;
@@ -191,7 +195,7 @@ void fragment() {
 	// Clover and darker sward in drifts, so the meadow is never one flat green.
 	c = mix(c, vec3(0.30, 0.50, 0.22), smoothstep(0.58, 0.72, fbm(q / 6.0 + 21.0)) * 0.35);
 	// High ground in the warm south: heath and dry gold.
-	float up = smoothstep(17.0, 27.0, wp.y + 4.0 * n(q * 0.05)) * (1.0 - cold);
+	float up = smoothstep(17.0 * world_relief, 27.0 * world_relief, wp.y + 4.0 * n(q * 0.05)) * (1.0 - cold);
 	c = mix(c, mix(vec3(0.56, 0.52, 0.29), vec3(0.45, 0.36, 0.31), smoothstep(0.4, 0.65, fbm(q / 20.0 + 5.0))), up * 0.4);
 	// The cold north: grey-green tussock, heather, stony ground and frost.
 	vec3 tun = mix(vec3(0.42, 0.48, 0.37), vec3(0.54, 0.56, 0.44), smoothstep(0.3, 0.7, fbm(q / 16.0)));
@@ -274,7 +278,7 @@ void fragment() {
 		c = mix(c, mix(dirt, cob, smoothstep(0.4, 0.6, lm.g)), road);
 	}
 	// Snow on high ground, coming down far lower in the north, and lying in drifts on the level up there.
-	float snow_line = mix(30.0, 18.0, cold);
+	float snow_line = mix(30.0, 18.0, cold) * world_relief;
 	c = mix(c, vec3(0.93, 0.95, 0.98), smoothstep(snow_line, snow_line + 12.0, wp.y + 6.0 * n(q * 0.05)) * (1.0 - smoothstep(0.55, 0.8, slope)));
 	// Weather that lies: snow on the level ground (roads trodden through), then rain darkening everything and
 	// shining on the roads, with puddles in the ruts and hollows that outlast it.
@@ -1326,31 +1330,79 @@ func zone_mist(z: Dictionary) -> Node3D:
 
 ## The map (M): the meadow shaded by the hills, water, and each object coloured by its type.
 func map_image(px: int) -> Image:
+	return await map_area(Rect2(0, 0, world.size, world.size), px)
+
+## The map of one square of the world, `px` pixels on a side: the land shaded by its slopes, water, roads, what is
+## built, and (close up, where they have streamed in) the fields in their crops and the trees. With `spread`, the
+## ground is drawn a few rows a frame (await it), so a close-up made while playing does not stall a frame.
+func map_area(area: Rect2, px: int, spread := false) -> Image:
 	var img := Image.create(px, px, false, Image.FORMAT_RGB8)
-	var step: float = world.size / px
+	var step: float = area.size.x / px
+	var o0 := area.position
+	# Slopes over at least a heights cell, so the shading follows the hills rather than the grid they are kept on.
+	var e := maxf(step, world.height_cell() if world.has_method("height_cell") else 2.0)
 	for j in px:
+		if spread and j % 8 == 7:
+			await get_tree().process_frame
 		for i in px:
-			var x := (i + 0.5) * step
-			var y := (j + 0.5) * step
-			var e := maxf(step, 2.0)
+			var x := o0.x + (i + 0.5) * step
+			var y := o0.y + (j + 0.5) * step
 			var slope := (height(x - e, y - e) - height(x + e, y + e)) / (2.0 * e)
 			var lit := 0.9 * (1.0 + clampf(slope * 1.2, -0.25, 0.25))
-			if world.has_sea and height(x, y) < world.sea_level + 0.1:
+			var hh := height(x, y)
+			if world.has_sea and hh < world.sea_level + 0.1:
 				img.set_pixel(i, j, Color("2f6f8f"))
 			else:
-				img.set_pixel(i, j, Color(0.36 * lit, 0.54 * lit, 0.2 * lit))
+				# High ground goes to heath and grey rock, so hills read on the map as well as by their shading.
+				var up := clampf((hh - 14.0) / 22.0, 0.0, 1.0)
+				var c := Color(0.36, 0.54, 0.2).lerp(Color(0.52, 0.5, 0.4), up)
+				img.set_pixel(i, j, Color(c.r * lit, c.g * lit, c.b * lit))
 	var px_of := func(x: float, y: float) -> Vector2i:
-		return Vector2i(clampi(int(x / step), 0, px - 1), clampi(int(y / step), 0, px - 1))
+		return Vector2i(clampi(int((x - o0.x) / step), 0, px - 1), clampi(int((y - o0.y) / step), 0, px - 1))
+	var near := area.grow(64.0)
+	var seg_in := func(a: Vector2, b: Vector2) -> bool:
+		return near.intersects(Rect2(a, Vector2.ZERO).expand(b))
+	# Close up: fields in their crops, and trees as dark specks.
+	if step < 16.0 and land != null:
+		var crop := {"pasture": Color(0.42, 0.6, 0.26), "hay": Color(0.6, 0.64, 0.33), "wheat": Color(0.8, 0.68, 0.36),
+			"barley": Color(0.74, 0.69, 0.42), "oats": Color(0.66, 0.66, 0.42), "potato": Color(0.48, 0.38, 0.26)}
+		for f in land.fields_in(area):
+			if f.size() < 5:
+				continue
+			var q: PackedVector2Array = f[3]
+			var c: Color = crop.get(f[4], Color(0.5, 0.6, 0.3))
+			var box: Rect2 = f[0]
+			var p0: Vector2i = px_of.call(box.position.x, box.position.y)
+			var p1: Vector2i = px_of.call(box.end.x, box.end.y)
+			for jj in range(p0.y, p1.y + 1):
+				for ii in range(p0.x, p1.x + 1):
+					if Geometry2D.is_point_in_polygon(Vector2(o0.x + (ii + 0.5) * step, o0.y + (jj + 0.5) * step), q):
+						img.set_pixel(ii, jj, c)
+		var cx0 := int(floor(area.position.x / world.CELL))
+		var cy0 := int(floor(area.position.y / world.CELL))
+		for cx in range(cx0, int(floor(area.end.x / world.CELL)) + 1):
+			for cy in range(cy0, int(floor(area.end.y / world.CELL)) + 1):
+				for o in world.in_cell(cx, cy):
+					var t := String(o.get("t", ""))
+					if t == "tree" or t == "tree_bare":
+						var p: Vector2i = px_of.call(o["p"][0], o["p"][1])
+						img.set_pixel(p.x, p.y, Color(0.16, 0.3, 0.13))
 	for r in world.rivers:
 		var pts: Array = r["pts"]
 		for k in pts.size() - 1:
-			for t in 6:
-				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], t / 6.0), lerpf(pts[k][1], pts[k + 1][1], t / 6.0))
-				img.fill_rect(Rect2i(p - Vector2i(1, 1), Vector2i(3, 3)), Color("2f7f8f"))
+			if not seg_in.call(Vector2(pts[k][0], pts[k][1]), Vector2(pts[k + 1][0], pts[k + 1][1])):
+				continue
+			var wide := maxi(3, int(2.0 * float(r.get("half_width", 5.0)) / step))
+			var segs := maxi(6, int(Vector2(pts[k][0], pts[k][1]).distance_to(Vector2(pts[k + 1][0], pts[k + 1][1])) / step))
+			for t in segs + 1:
+				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], float(t) / segs), lerpf(pts[k][1], pts[k + 1][1], float(t) / segs))
+				img.fill_rect(Rect2i(p - Vector2i(wide / 2, wide / 2), Vector2i(wide, wide)), Color("2f7f8f"))
 	for r in world.roads:
 		var pts: Array = r["pts"]
 		var wide := maxi(1, int(2.0 * float(r.get("half_width", 3.0)) / step))
 		for k in pts.size() - 1:
+			if not seg_in.call(Vector2(pts[k][0], pts[k][1]), Vector2(pts[k + 1][0], pts[k + 1][1])):
+				continue
 			var segs := maxi(1, int(Vector2(pts[k][0], pts[k][1]).distance_to(Vector2(pts[k + 1][0], pts[k + 1][1])) / step))
 			for t in segs + 1:
 				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], float(t) / segs), lerpf(pts[k][1], pts[k + 1][1], float(t) / segs))
@@ -1363,6 +1415,8 @@ func map_image(px: int) -> Image:
 			if not o.has("b") or not colours.has(t) or (pass_ == 0) != (t == "city" or t == "square"):
 				continue
 			var b: Array = o["b"]
+			if not near.intersects(Rect2(b[0], b[1], b[2] - b[0], b[3] - b[1])):
+				continue
 			var p0: Vector2i = px_of.call(b[0], b[1])
 			var p1: Vector2i = px_of.call(b[2], b[3])
 			img.fill_rect(Rect2i(p0, (p1 - p0).max(Vector2i(1, 1))), colours[t])
@@ -2140,6 +2194,8 @@ func _dock(b: Array, water: float, v: int) -> Node3D:
 	var sd: Array = sides[hsh % 4]
 	var shore: Vector3 = sd[0]
 	var into: Vector3 = sd[1]
+	if _in_any(Vector2(shore.x, shore.z) - Vector2(into.x, into.z) * 2.0, _lakes_touching(b)):
+		return Node3D.new() # that side is more of the same lake: no shore to build a dock on
 	var face := Basis(Vector3.UP, atan2(into.x, into.z)) * Basis.from_scale(Vector3.ONE * VS)
 	var per := {}
 	var add := func(name: String, xf: Transform3D):
@@ -2179,12 +2235,15 @@ func _rim_rocks(b: Array, ground: float, gap: float) -> Node3D:
 	var per := {}
 	var sides := [[Vector2(b[0], b[1]), Vector2(b[2], b[1])], [Vector2(b[2], b[1]), Vector2(b[2], b[3])],
 		[Vector2(b[2], b[3]), Vector2(b[0], b[3])], [Vector2(b[0], b[3]), Vector2(b[0], b[1])]]
+	var joined := _lakes_touching(b)
 	for sd in sides:
 		var a: Vector2 = sd[0]
 		var c: Vector2 = sd[1]
 		var n := maxi(1, int(a.distance_to(c) / gap))
 		for k in n + 1:
 			var p := a.lerp(c, (k + rng.randf() * 0.6) / (n + 1))
+			if _in_any(p, joined):
+				continue # the edge it shares with the rest of the lake is open water, not shore
 			var pick: String = picks[rng.randi() % picks.size()]
 			if not per.has(pick):
 				per[pick] = []
@@ -2196,6 +2255,23 @@ func _rim_rocks(b: Array, ground: float, gap: float) -> Node3D:
 		if m:
 			node.add_child(_multi(m, per[pick], Color(0.72, 0.69, 0.64)))
 	return node
+
+## The other lake boxes a lake box touches (a big lake is laid as strips side by side), slightly grown.
+func _lakes_touching(b: Array) -> Array:
+	var me := Rect2(float(b[0]), float(b[1]), float(b[2]) - float(b[0]), float(b[3]) - float(b[1]))
+	var out := []
+	for l in world.lakes:
+		var lb: Array = l["b"]
+		var r := Rect2(float(lb[0]), float(lb[1]), float(lb[2]) - float(lb[0]), float(lb[3]) - float(lb[1]))
+		if r != me and r.grow(1.5).intersects(me):
+			out.append(r.grow(1.5))
+	return out
+
+static func _in_any(p: Vector2, boxes: Array) -> bool:
+	for r in boxes:
+		if (r as Rect2).has_point(p):
+			return true
+	return false
 
 ## A river's water: a ribbon along its course at its level, a little wider than the channel so the banks hide the edge.
 func _river_mesh(r: Dictionary) -> Node3D:

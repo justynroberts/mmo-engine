@@ -17,6 +17,7 @@ var farms := false               # the file lays out its own fields (objects of 
 var sea_level := 0.0
 var _road_segs := {}             # cell key -> [[ax, ay, bx, by, half_width], ...] of the road segments reaching into it
 var has_heights := false
+var height_top := 0.0            # the highest ground in the heights
 var _hx0 := 0.0
 var _hy0 := 0.0
 var _hcell := 1.0
@@ -57,6 +58,7 @@ static func from_file(text: String) -> RefCounted:
 		var raw := Marshalls.base64_to_raw(String(h["u16le"]))
 		var lo := float(h["lo"])
 		var span := float(h["hi"]) - lo
+		w.height_top = float(h["hi"])
 		w._heights.resize(w._hw * w._hh)
 		for i in w._hw * w._hh:
 			w._heights[i] = lo + span * float(raw.decode_u16(i * 2)) / 65535.0
@@ -163,6 +165,10 @@ func drop_points(tx: int, ty: int) -> Array:
 		_points.erase(k)
 	_point_tiles.erase(key(tx, ty))
 	return cells
+
+## How far apart the heights are kept, in world units.
+func height_cell() -> float:
+	return _hcell
 
 func has_points(tx: int, ty: int) -> bool:
 	return _point_tiles.has(key(tx, ty))

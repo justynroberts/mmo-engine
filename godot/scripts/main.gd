@@ -460,8 +460,8 @@ func _start() -> void:
 	_apply_settings(settingsui.values) # the theme's lights are here now (shadows follow the graphics setting)
 	theme.set_zones(info.get("weather_zones", []) if info.get("weather_zones") is Array else [])
 	locations = info.get("locations", []) if info.get("locations") is Array else []
-	# One picture of the world serves the minimap and the world map (M).
-	var map_img: Image = theme.map_image(512)
+	# One picture of the world serves the minimap and the world map (M); a big world gets more pixels for it.
+	var map_img: Image = await theme.map_image(1024 if world.size > 16384.0 else 512)
 	hud.set_map(map_img, world.size)
 	world_map.build(map_img, world.size)
 	var w0 = info.get("weather")
@@ -948,6 +948,7 @@ func _process(delta: float) -> void:
 		if e["id"] != self_id:
 			others.append(e["position"])
 	hud.update_minimap(me_pos, heading, others)
+	_local_map()
 	if Input.is_key_pressed(KEY_SPACE) and not building and not hud.typing() and not smoke:
 		_attack() # holding Space keeps swinging, at the action's cooldown
 	# The server sends only the nearest max_visible within interest_radius; say so when that is what you are seeing.
@@ -2675,7 +2676,7 @@ func _on_chat(text: String) -> void:
 ## The world map (M): the theme paints the picture once; you and what is around you are drawn on top.
 func _toggle_map() -> void:
 	if not world_map.visible and not world_map.built:
-		world_map.build(theme.map_image(512), world.size)
+		world_map.build(await theme.map_image(512), world.size)
 	world_map.visible = not world_map.visible
 
 func _attack() -> void:
@@ -2775,6 +2776,30 @@ func _spell_cost(a: Dictionary, hz: float) -> String:
 	var t := ", ".join(costs)
 	return t.left(1).to_upper() + t.substr(1)
 
+## The minimap's close-up: the ground within LOCAL_MAP of us at a few units a pixel, drawn again when we have gone
+## a quarter of the way to its edge, and once more a little after arriving (fields and trees stream in).
+const LOCAL_MAP := 640.0
+const LOCAL_PX := 256
+var _local_at := Vector2.INF
+var _local_when := 0.0
+var _local_again := false
+var _local_busy := false
+func _local_map() -> void:
+	if theme == null or not theme.has_method("map_area") or world == null or _local_busy:
+		return
+	var moved := me_pos.distance_to(_local_at) > LOCAL_MAP * 0.25
+	if not moved and not (_local_again and t_total - _local_when > 3.0):
+		return
+	_local_again = moved # once more soon, when what streams in round the new spot is here
+	_local_at = me_pos
+	_local_when = t_total
+	var area := Rect2(me_pos - Vector2(LOCAL_MAP, LOCAL_MAP), Vector2(LOCAL_MAP, LOCAL_MAP) * 2.0)
+	_local_busy = true
+	var img: Image = await theme.map_area(area, LOCAL_PX, true)
+	_local_busy = false
+	if img != null:
+		hud.set_local_map(img, area)
+
 ## The bar kept for this server, or the first spells in the game's order; spells the game no longer has drop out.
 func _load_bar() -> Array:
 	var cfg := ConfigFile.new()
@@ -2782,7 +2807,8 @@ func _load_bar() -> Array:
 	var names := []
 	for a in all_spells:
 		names.append(a["name"])
-	var saved = cfg.get_value("bars", String(args["web"]), null)
+	# A null default counts as none to Godot (it reports an error), so look first.
+	var saved = cfg.get_value("bars", String(args["web"])) if cfg.has_section_key("bars", String(args["web"])) else null
 	if saved is Array:
 		return saved.filter(func(n): return names.has(n)).slice(0, SPELL_KEYS.size())
 	var mine := _class_spells()
@@ -2799,7 +2825,7 @@ func _class_spells() -> Array:
 func _has_saved_bar() -> bool:
 	var cfg := ConfigFile.new()
 	cfg.load("user://spellbar.cfg")
-	return cfg.get_value("bars", String(args["web"]), null) is Array
+	return cfg.has_section_key("bars", String(args["web"])) and cfg.get_value("bars", String(args["web"])) is Array
 
 func _save_bar() -> void:
 	var cfg := ConfigFile.new()

@@ -535,6 +535,13 @@ func set_map(img: Image, world_size: float) -> void:
 	minimap.tex = ImageTexture.create_from_image(img)
 	minimap.world = world_size
 
+## A close-up picture of the ground round us, for the minimap when what it shows fits inside (a big world's map of
+## the whole is too coarse to read up close).
+func set_local_map(img: Image, area: Rect2) -> void:
+	minimap.local_tex = ImageTexture.create_from_image(img)
+	minimap.local_area = area
+	minimap.queue_redraw()
+
 func update_minimap(me: Vector2, heading: float, others: Array) -> void:
 	minimap.me = me
 	minimap.facing = heading
@@ -959,6 +966,8 @@ class Minimap extends Control:
 	var facing := 0.0
 	var others: Array = []
 	var span := 240.0       # world units from the middle to the rim
+	var local_tex: ImageTexture
+	var local_area := Rect2()  # the world square local_tex shows
 
 	func _init() -> void:
 		custom_minimum_size = Vector2(SIDE, SIDE)
@@ -981,13 +990,17 @@ class Minimap extends Control:
 		var rad := SIDE / 2.0 - 4.0
 		var pts := PackedVector2Array()
 		var uvs := PackedVector2Array()
+		# The close-up picture when the whole view is inside it, else the map of the world.
+		var close := local_tex != null and local_area.encloses(Rect2(me - Vector2(span, span), Vector2(span, span) * 2.0))
 		for i in 64:
 			var a := TAU * i / 64.0
 			var d := Vector2(cos(a), sin(a))
 			pts.append(c + d * rad)
-			uvs.append((me + d * span) / world)
+			uvs.append((me + d * span - local_area.position) / local_area.size if close else (me + d * span) / world)
 		draw_circle(c, rad + 4.0, Color(0.03, 0.03, 0.03, 0.9))
-		if tex:
+		if close:
+			draw_colored_polygon(pts, Color(1, 1, 1), uvs, local_tex)
+		elif tex:
 			draw_colored_polygon(pts, Color(1, 1, 1), uvs, tex)
 		else:
 			draw_colored_polygon(pts, Color(0.2, 0.25, 0.18))

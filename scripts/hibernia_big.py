@@ -111,10 +111,12 @@ def big_recipe(seed_dir, size):
                 drift = max(-mid * 0.25, min(mid * 0.25, drift + rng.uniform(-0.08, 0.08) * mid))
                 c = mid + drift
                 lo, hi = max(0.0, c - half), min(across, c + half)
+                # Each strip runs on a little into the next, so the water is one (worldgen keeps the deepest bed).
+                a0, a1 = t0 * length - (12.0 if i > 0 else 0.0), t1 * length + (12.0 if i < n - 1 else 0.0)
                 if along:
-                    box = [b[0] + lo, b[1] + t0 * length, b[0] + hi, b[1] + t1 * length]
+                    box = [b[0] + lo, b[1] + a0, b[0] + hi, b[1] + a1]
                 else:
-                    box = [b[0] + t0 * length, b[1] + lo, b[0] + t1 * length, b[1] + hi]
+                    box = [b[0] + a0, b[1] + lo, b[0] + a1, b[1] + hi]
                 edits.append({"add": {"t": "lake", "b": [round(v, 1) for v in box]}})
         elif a["t"] == "crag":
             # A mountain: not one crag the size of a county, but a range of them over that ground, some way apart,
@@ -231,11 +233,73 @@ def big_game(seed_dir, world_path):
             g["places"].append({"name": stone_c, "x": round(sx, 1), "y": round(sy, 1), "r": 2.5, "title": f"Cloch go {t}"[:40],
                                 "exit": {"x": round(tx + 12.0, 1), "y": round(ty, 1)}})
             names |= {stone_t, stone_c}
+    add_dungeons(g)
+
     # New characters, and those whose saved spot was on the old map, come into the world at the capital.
     cap = by_title.get(capital) if capital else None
     if cap:
         g["start_place"] = cap["name"]
     return g
+
+
+def add_dungeons(g):
+    """Instanced dungeons with bosses (the realm's `dungeons`, the bot types' `boss`): each party that walks in gets its
+    own copy. They use the game's own spells for their moves, so the content hash is untouched."""
+    arch = {a["name"]: a for a in g["archetypes"]}
+    places = {p["name"] for p in g["places"]}
+    if "crom dubh" in arch and "bru na boinne" in places:
+        arch["crom dubh"].update({
+            "attrs": {**arch["crom dubh"].get("attrs", {}), "health": 300.0},
+            "leash": 80.0,
+            "boss": {
+                "phases": [
+                    {"below": 100, "moves": [
+                        {"action": "mallacht", "every_secs": 6, "at": "tank"},
+                        {"action": "ceo nimhe", "every_secs": 9, "warn_secs": 2.5, "at": "random", "radius": 7,
+                         "say": "Crom Dubh breathes out the grave's air!"}]},
+                    {"below": 60, "say": "Crom Dubh calls the dead out of the mound!", "adds": [{"bot": "sluagh", "count": 3}],
+                     "moves": [
+                        {"action": "mallacht", "every_secs": 6, "at": "tank"},
+                        {"action": "ceo nimhe", "every_secs": 8, "warn_secs": 2.2, "at": "random", "radius": 7},
+                        {"action": "tintreach", "every_secs": 10, "warn_secs": 2.0, "at": "farthest", "radius": 6}]},
+                    {"below": 25, "say": "The dark god rages: the mound fills with poison!",
+                     "moves": [
+                        {"action": "mallacht", "every_secs": 5, "at": "tank"},
+                        {"action": "ceo nimhe", "every_secs": 7, "warn_secs": 2.5, "at": "self", "radius": 10}]},
+                ],
+                "enrage_secs": 300, "enrage_might": 3,
+                "defeat": "Crom Dubh falls, and the mound is quiet.",
+            },
+        })
+    if "dibheirgeach" in arch and "dibheirgigh" in places and "ri na ndibheirgeach" not in arch:
+        king = {k: v for k, v in arch["dibheirgeach"].items() if k not in ("names", "surnames", "rules")}
+        king.update({
+            "name": "ri na ndibheirgeach", "title": "Brigand King", "count": 0, "level": 9, "xp": 300, "color": "#3e2723",
+            "ambush": False, "leash": 80.0, "rules": [],
+            "attrs": {"health": 300.0},
+            "drops": [{"item": "claiomh", "chance_pct": 60.0, "min": 1, "max": 1}, {"item": "pingin airgid", "chance_pct": 100.0, "min": 10, "max": 25}],
+            "boss": {
+                "phases": [
+                    {"below": 100, "moves": [
+                        {"action": "liathroid tine", "every_secs": 8, "warn_secs": 2.0, "at": "farthest", "radius": 5,
+                         "say": "The Brigand King hurls a firepot!"}]},
+                    {"below": 50, "say": "To me, lads!", "adds": [{"bot": "dibheirgeach", "count": 3}],
+                     "moves": [
+                        {"action": "liathroid tine", "every_secs": 6, "warn_secs": 1.8, "at": "random", "radius": 5}]},
+                ],
+                "enrage_secs": 240, "enrage_might": 3,
+                "defeat": "The Brigand King is down. The camp is yours.",
+            },
+        })
+        g["archetypes"].append(king)
+    dungeons = [
+        {"name": "Brú na Bóinne", "place": "bru na boinne", "bots": [{"bot": "sluagh", "count": 4}, {"bot": "crom dubh", "count": 1}],
+         "xp": 600, "reward": {"item": "fainne oir", "count": 1}},
+        {"name": "Campa na nDíbheirgeach", "place": "dibheirgigh", "bots": [{"bot": "dibheirgeach", "count": 5}, {"bot": "ri na ndibheirgeach", "count": 1}],
+         "xp": 350, "reward": {"item": "deoch leighis", "count": 3}},
+    ]
+    have = {d["place"] for d in g.get("dungeons", [])}
+    g["dungeons"] = g.get("dungeons", []) + [d for d in dungeons if d["place"] in places and d["place"] not in have]
 
 
 def main():

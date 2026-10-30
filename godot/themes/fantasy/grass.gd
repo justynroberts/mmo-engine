@@ -37,6 +37,7 @@ uniform float map_size = 96.0;
 uniform float wind = 0.3;
 uniform float sea_level = -1000.0;
 global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
+global uniform float world_relief;   // theme.gd: snow lines scaled for a world with taller land
 global uniform float world_autumn;  // life.gd: the year's turn to gold, 0 .. 1
 varying vec3 wp;
 varying float tip;
@@ -60,7 +61,7 @@ void vertex() {
 	cold = 1.0 - smoothstep(world_cold_band.x, world_cold_band.y, p.y + 220.0 * (fbm(p / 300.0) - 0.5)); // as the ground
 	float grow = g.y;
 	grow *= 1.0 - smoothstep(1.2, 2.0, slope);              // steep ground is rock
-	float snow_line = mix(26.0, 16.0, cold);
+	float snow_line = mix(26.0, 16.0, cold) * world_relief;
 	grow *= 1.0 - smoothstep(snow_line, snow_line + 6.0, g.x); // high ground is snow, lower in the north
 	grow *= step(sea_level + 0.4, g.x);                     // nothing on the beach or under the sea
 	grow *= 1.0 - smoothstep(0.55, 1.0, length(rel) / (patch_size * 0.5)); // thin out to the edge

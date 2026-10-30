@@ -89,6 +89,16 @@ struct Solid {
     solid: bool,
 }
 
+/// Two boxes that overlap only in a band at most `JOIN` across: the ends of two strips of one lake. Both must be
+/// strip-sized (at least `STRIP` each way), so a small pool at a big lake's edge is not taken for part of it.
+const JOIN: f32 = 30.0;
+const STRIP: f32 = 55.0;
+fn thin_overlap(a: &Box4, b: &Box4) -> bool {
+    let (ox, oy) = (a[2].min(b[2]) - a[0].max(b[0]), a[3].min(b[3]) - a[1].max(b[1]));
+    let big = |q: &Box4| (q[2] - q[0]).min(q[3] - q[1]) >= STRIP;
+    ox > 0.0 && oy > 0.0 && ox.min(oy) <= JOIN && big(a) && big(b)
+}
+
 fn overlaps(a: &Box4, b: &Box4, pad: f32) -> bool {
     a[0] < b[2] + pad && a[2] + pad > b[0] && a[1] < b[3] + pad && a[3] + pad > b[1]
 }
@@ -389,6 +399,66 @@ struct Land {
     /// How tall the hills are (1 = as designed, 0 = flat).
     hills: f32,
     coast: Option<Rc<coast::Coast>>,
+    /// A big world's mountains (`Relief`): where the crags stand thick, the ground rises into a range. With it, the
+    /// land also varies by region, flat lowland in one place and rugged upland in another.
+    relief: Option<Rc<Relief>>,
+}
+
+/// How mountainous each part of a big world is, 0..1: the crags laid out, counted on a coarse grid and blurred, so a
+/// named range (dozens of crags close together) is a mountain mass and a lone crag only a knoll. Read bilinearly.
+struct Relief {
+    cell: f32,
+    n: usize,
+    m: Vec<f32>,
+}
+
+impl Relief {
+    fn new(size: f32, crags: &[Box4]) -> Relief {
+        let cell = 96.0f32;
+        let n = (size / cell).ceil() as usize + 2;
+        let mut d = vec![0.0f32; n * n];
+        for b in crags {
+            let (cx, cy) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+            let (i, j) = ((cx / cell) as usize, (cy / cell) as usize);
+            if i < n && j < n {
+                d[j * n + i] += ((b[2] - b[0]) * (b[3] - b[1]) / (cell * cell)).min(1.0);
+            }
+        }
+        // A few box blurs, about a third of a range's width each.
+        for _ in 0..4 {
+            let r = 6i32;
+            let mut out = vec![0.0f32; n * n];
+            for j in 0..n as i32 {
+                for i in 0..n as i32 {
+                    let mut sum = 0.0;
+                    let mut cnt = 0.0;
+                    for dj in -r..=r {
+                        for di in -r..=r {
+                            let (a, b) = (i + di, j + dj);
+                            if a >= 0 && b >= 0 && (a as usize) < n && (b as usize) < n {
+                                sum += d[b as usize * n + a as usize];
+                                cnt += 1.0;
+                            }
+                        }
+                    }
+                    out[j as usize * n + i as usize] = sum / cnt;
+                }
+            }
+            d = out;
+        }
+        let m = d.iter().map(|&v| 1.0 - (-v * 14.0).exp()).collect();
+        Relief { cell, n, m }
+    }
+
+    fn at(&self, x: f32, y: f32) -> f32 {
+        let (fx, fy) = ((x / self.cell).max(0.0), (y / self.cell).max(0.0));
+        let (i, j) = ((fx as usize).min(self.n - 2), (fy as usize).min(self.n - 2));
+        let (tx, ty) = ((fx - i as f32).min(1.0), (fy - j as f32).min(1.0));
+        let g = |a: usize, b: usize| self.m[b * self.n + a];
+        let top = g(i, j) + (g(i + 1, j) - g(i, j)) * tx;
+        let bot = g(i, j + 1) + (g(i + 1, j + 1) - g(i, j + 1)) * tx;
+        top + (bot - top) * ty
+    }
 }
 
 /// The sea's surface, for land with a coast, and the height of the shore just above it.
@@ -402,6 +472,18 @@ impl Land {
     /// sea floor that falls away outside it.
     fn raw(&self, x: f32, y: f32) -> f32 {
         let mut h = ((fbm(x / 170.0, y / 170.0, self.seed + 31, 3) - 0.5) * 30.0 + (noise(x / 35.0, y / 35.0, self.seed + 7) - 0.5) * 1.8) * self.hills;
+        if let Some(r) = &self.relief {
+            // Regions: how rugged the land is changes slowly across the world, from flat lowland to upland; over it
+            // hills big enough to read at this scale; and mountains, ridged, where the crags stand thick.
+            let m = r.at(x, y);
+            // The foothills round a range are rough whatever region they are in.
+            let rug = 0.2 + 1.4 * smooth(0.32, 0.68, fbm(x / 9000.0, y / 9000.0, self.seed + 91, 3)) + 1.2 * smooth(0.05, 0.4, m);
+            h = h * rug.min(1.2) + (fbm(x / 1500.0, y / 1500.0, self.seed + 93, 3) - 0.5) * 36.0 * rug * self.hills;
+            if m > 0.01 {
+                let ridge = 1.0 - (noise(x / 380.0, y / 380.0, self.seed + 97) * 2.0 - 1.0).abs();
+                h += m.powf(1.1) * (70.0 + 60.0 * ridge) * self.hills;
+            }
+        }
         if let Some(c) = &self.coast {
             let d = c.d(x, y);
             return if d >= 0.0 {
@@ -582,6 +664,8 @@ fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverI
         }
     }
     let (mut best, mut target) = (0.0f32, h);
+    // Where lakes overlap (one water laid as strips) the bed is the deepest of them, so no shore shows at a join.
+    let mut lake_bed: Option<f32> = None;
     for &i in near {
         let s = &l.things[i];
         let b = &s.b;
@@ -597,7 +681,9 @@ fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverI
                 let ins = r - (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() - qx.max(qy).min(0.0);
                 let shore = 1.5 + 3.0 * noise(x / 3.0, y / 3.0, land.seed + 77);
                 let depth = ins - shore;
-                return if depth <= 0.0 { s.base - 0.15 * (ins / shore).clamp(0.0, 1.0) } else { s.base - 0.6 - (depth * 0.9).min(6.0) };
+                let bed = if depth <= 0.0 { s.base - 0.15 * (ins / shore).clamp(0.0, 1.0) } else { s.base - 0.6 - (depth * 0.9).min(6.0) };
+                lake_bed = Some(lake_bed.map_or(bed, |b| b.min(bed)));
+                continue;
             }
             "crag" if inside => {
                 let ins = (x - b[0]).min(b[2] - x).min(y - b[1]).min(b[3] - y);
@@ -609,12 +695,18 @@ fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverI
             "square" | "dock" => continue,
             _ => {}
         }
+        if lake_bed.is_some() {
+            continue;
+        }
         let pad = if s.t == "city" { 14.0 } else { FLAT_PAD };
         let w = 1.0 - smooth(0.0, pad, (dx * dx + dy * dy).sqrt());
         if w > best {
             best = w;
             target = s.base;
         }
+    }
+    if let Some(b) = lake_bed {
+        return b;
     }
     h + (target - h) * best
 }
@@ -825,7 +917,10 @@ impl Layout {
                 let b = [b[0].clamp(0.0, self.size), b[1].clamp(0.0, self.size), b[2].clamp(0.0, self.size), b[3].clamp(0.0, self.size)];
                 // A new open area keeps what stands in it; anything else clears the ground it covers.
                 if solid {
-                    self.things.retain(|s| !s.solid || !overlaps(&s.b, &b, -0.01));
+                    // A lake laid running on into another, a thin overlap at their ends, joins it (a big lake is laid as
+                    // strips like that); anything else it covers goes.
+                    let join = |s: &Solid| t == "lake" && s.t == "lake" && thin_overlap(&s.b, &b);
+                    self.things.retain(|s| !s.solid || join(s) || !overlaps(&s.b, &b, -0.01));
                     self.things.retain(|s| s.solid || s.t == "city" || !overlaps(&s.b, &b, -0.01));
                 }
                 let v = rng.v();
@@ -888,7 +983,7 @@ pub fn build(p: &Params) -> Generated {
     let size = p.size;
     let mut rng = Rng(p.seed ^ 0x5EED_0F_3A7);
     let coast = (!p.coast.is_empty()).then(|| Rc::new(coast::Coast::new(size, p.coast.clone())));
-    let land = Land { size, seed: p.seed, hills: p.hills, coast: coast.clone() };
+    let mut land = Land { size, seed: p.seed, hills: p.hills, coast: coast.clone(), relief: None };
     let mut l = Layout { size, things: Vec::new(), coast: coast.clone(), courses: p.courses.clone() };
     let mut city_at = None;
     let given = p.settlements.iter().find(|s| s.kind == "city");
@@ -955,6 +1050,13 @@ pub fn build(p: &Params) -> Generated {
     for e in &p.edits {
         l.apply(e, &mut erng);
     }
+    // A big world's mountains rise where its crags stand thick (and its regions vary): known before anything is set on
+    // the ground.
+    if size > roads::MAX_NETWORK_SIZE {
+        let crags: Vec<Box4> = l.things.iter().filter(|s| s.t == "crag").map(|s| s.b).collect();
+        land.relief = Some(Rc::new(Relief::new(size, &crags)));
+    }
+    let land = land;
     // Everything stands on the ground its middle is on; a city's buildings all stand on the city's level.
     let city_base = l.things.iter().find(|s| s.t == "city").map(|s| land.raw((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0));
     let city_box = l.things.iter().find(|s| s.t == "city").map(|s| s.b);
@@ -963,6 +1065,34 @@ pub fn build(p: &Params) -> Generated {
             (Some(cb), Some(h)) if overlaps(&cb, &s.b, 0.0) => h,
             _ => land.raw((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0),
         };
+    }
+    // Lakes that touch are one water (a big lake is laid as strips): all at the lowest level among them.
+    let lakes: Vec<usize> = (0..l.things.len()).filter(|&i| l.things[i].t == "lake").collect();
+    let mut group: Vec<usize> = (0..lakes.len()).collect();
+    fn root(g: &mut [usize], mut i: usize) -> usize {
+        while g[i] != i {
+            g[i] = g[g[i]];
+            i = g[i];
+        }
+        i
+    }
+    for a in 0..lakes.len() {
+        for b in a + 1..lakes.len() {
+            if overlaps(&l.things[lakes[a]].b, &l.things[lakes[b]].b, 1.0) {
+                let (ra, rb) = (root(&mut group, a), root(&mut group, b));
+                group[ra] = rb;
+            }
+        }
+    }
+    let mut low: HashMap<usize, f32> = HashMap::new();
+    for k in 0..lakes.len() {
+        let r = root(&mut group, k);
+        let e = low.entry(r).or_insert(f32::MAX);
+        *e = e.min(l.things[lakes[k]].base);
+    }
+    for k in 0..lakes.len() {
+        let r = root(&mut group, k);
+        l.things[lakes[k]].base = low[&r];
     }
     let rv = if p.courses.is_empty() { rivers(&land, &l, &mut rng, p.rivers) } else { courses(&land, &p.courses, p.seed) };
     let ri = RiverIndex::new(&rv);
@@ -1071,7 +1201,8 @@ pub fn build(p: &Params) -> Generated {
 
     // Heightfield over the world plus a margin past each edge, where the mountains are.
     let margin = 256.0f32.min(size / 4.0).max(64.0);
-    let cell = (4.0f32).max((size + 2.0 * margin) / 1024.0);
+    // Big worlds keep their heights twice as fine (hills and ranges need it), at four times the bytes.
+    let cell = (4.0f32).max((size + 2.0 * margin) / if size > roads::MAX_NETWORK_SIZE { 2048.0 } else { 1024.0 });
     let n = ((size + 2.0 * margin) / cell).ceil() as usize + 1;
     let mut hs = Vec::with_capacity(n * n);
     for j in 0..n {
@@ -1125,12 +1256,25 @@ pub fn build(p: &Params) -> Generated {
             if in_field.at(x, y) {
                 continue;
             }
+            // A big world's treeline: woods thin out up the mountains and stop short of the tops, which are rock and
+            // scrub (the theme's snow lies above that).
+            let high = if land.relief.is_some() && out <= 0.0 { smooth(40.0, 52.0, land.raw(x, y)) } else { 0.0 };
             let (t, s): (&str, f32) = if out > 70.0 {
                 if rng.f() < 0.12 { ("spire", rng.range(2.5, 6.0)) } else { continue }
             } else if out > 25.0 {
                 if rng.f() < 0.2 { ("boulder", rng.range(2.5, 6.0)) } else { continue }
             } else if out > -12.0 && rng.f() < 0.85 * wood {
                 ("tree", rng.range(1.3, 1.9))
+            } else if high > 0.0 && rng.f() < high {
+                // Above the trees: bare rock, and now and then a stunted bush.
+                let roll = rng.f();
+                if roll < 0.12 {
+                    ("rock", rng.range(1.4, 2.6))
+                } else if roll < 0.2 {
+                    ("bush", rng.range(1.6, 2.4))
+                } else {
+                    continue;
+                }
             } else {
                 let roll = rng.f();
                 if roll < 0.05 * wood + 0.6 * forest {
@@ -1200,7 +1344,28 @@ pub fn build(p: &Params) -> Generated {
         .iter()
         .map(|r| json!({ "half_width": r.half, "pts": r.pts.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>() }))
         .collect();
-    let lakes: Vec<Value> = l.things.iter().filter(|s| s.t == "lake").map(|s| json!({ "b": [r2(s.b[0]), r2(s.b[1]), r2(s.b[2]), r2(s.b[3])], "level": r2(s.base - 0.45) })).collect();
+    // Water surfaces: lakes laid overlapping (strips of one) are cut back to the middle of where they overlap, so two
+    // surfaces never lie on top of each other.
+    let mut wet: Vec<Box4> = l.things.iter().filter(|s| s.t == "lake").map(|s| s.b).collect();
+    let levels: Vec<f32> = l.things.iter().filter(|s| s.t == "lake").map(|s| s.base - 0.45).collect();
+    for a in 0..wet.len() {
+        for b in a + 1..wet.len() {
+            let (p, q) = (wet[a], wet[b]);
+            let (ox, oy) = (p[2].min(q[2]) - p[0].max(q[0]), p[3].min(q[3]) - p[1].max(q[1]));
+            if ox <= 0.0 || oy <= 0.0 || !thin_overlap(&p, &q) {
+                continue;
+            }
+            // Cut across the thinner way of the overlap: that is the way the two run on from each other.
+            if oy <= ox {
+                let mid = (p[1].max(q[1]) + p[3].min(q[3])) / 2.0;
+                if p[1] < q[1] { wet[a][3] = mid; wet[b][1] = mid } else { wet[b][3] = mid; wet[a][1] = mid }
+            } else {
+                let mid = (p[0].max(q[0]) + p[2].min(q[2])) / 2.0;
+                if p[0] < q[0] { wet[a][2] = mid; wet[b][0] = mid } else { wet[b][2] = mid; wet[a][0] = mid }
+            }
+        }
+    }
+    let lakes: Vec<Value> = wet.iter().zip(&levels).map(|(b, lvl)| json!({ "b": [r2(b[0]), r2(b[1]), r2(b[2]), r2(b[3])], "level": r2(*lvl) })).collect();
     let rivers: Vec<Value> = rv
         .iter()
         .map(|r| json!({ "half_width": RIVER_HALF, "pts": r.pts.iter().map(|&(x, y, lvl)| json!([r1(x), r1(y), r2(water_level(lvl))])).collect::<Vec<_>>() }))

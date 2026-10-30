@@ -71,6 +71,8 @@ static func ensure_globals() -> void:
 		RenderingServer.global_shader_parameter_add(n, RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
 	# land.gd: the band of latitude where the north turns cold (set by the theme once it knows the world).
 	RenderingServer.global_shader_parameter_add("world_cold_band", RenderingServer.GLOBAL_VAR_TYPE_VEC2, Vector2(-1e9, -1e9))
+	# How much taller the land runs than the small worlds the snow and heath lines were set for (1 for those).
+	RenderingServer.global_shader_parameter_add("world_relief", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 1.0)
 
 var seen := {}              # what the wildlife has done ("scatter", "crows", "bolt", "graze", "leap"): times, for the screenshot run
 var _placing: Array = []    # what is left to place after a survey, one a frame
