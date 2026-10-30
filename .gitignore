@@ -22,3 +22,6 @@ __pycache__/
 # Local copies of data/ taken before installing a build (they hold server.key)
 data.bak-*/
 .docker-bin/
+
+# Claude Code local settings and worktrees
+.claude/
