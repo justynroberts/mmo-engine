@@ -18,6 +18,7 @@ const HELD_COLORS := [Color(0, 0, 0, 0), Color("ff8ad8"), Color("ffe39a"), Color
 var _bolts: Array = []     # [{node, light, trail, from, to (Node3D), t, life, then (Callable)}]
 var _fading: Array = []    # [{node, t, life, grow, spin, rise, light}]: things that play out and go
 var _marks := {}           # "held:<id>" / "float:<id>" / "haste:<id>" -> node over or under that entity
+var _warnings := {}        # boss mark id -> {node, fill, t, life, fx, at}: ground a boss's blow is about to land on
 
 static var _dot: Texture2D
 
@@ -459,7 +460,77 @@ func prewarm(at: Vector3) -> void:
 	show_states({}, {}, {}, {})
 	me.queue_free()
 
+# ---------------------------------------------------------------- boss marks
+
+## A boss marks the ground (chat channel 14, "T|..."): a rim at the radius and a fill that grows to it over `secs`.
+## When the fill reaches the rim the blow lands there (the server decides on whom), so the burst plays then.
+func warn(id: int, at: Vector3, radius: float, secs: float, fx: String) -> void:
+	unwarn(id)
+	var c := color(fx) if fx != "" else Color("ff4a3a")
+	var root := Node3D.new()
+	root.position = at + Vector3(0, 0.12, 0)
+	add_child(root)
+	var rim_m := _mat(Color(c.r, c.g, c.b, 0.85), 2.2)
+	rim_m.render_priority = 1
+	var rim := MeshInstance3D.new()
+	rim.mesh = _ring(radius - 0.18, radius)
+	rim.material_override = rim_m
+	rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	rim.scale = Vector3(1, 0.05, 1)
+	root.add_child(rim)
+	var disc := CylinderMesh.new()
+	disc.top_radius = radius
+	disc.bottom_radius = radius
+	disc.height = 0.02
+	disc.radial_segments = 40
+	var floor_m := _mat(Color(c.r, c.g, c.b, 0.16), 0.6, true)
+	var under := MeshInstance3D.new()
+	under.mesh = disc
+	under.material_override = floor_m
+	under.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(under)
+	var fill := MeshInstance3D.new()
+	fill.mesh = disc
+	fill.material_override = _mat(Color(c.r, c.g, c.b, 0.38), 1.2, true)
+	fill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	fill.scale = Vector3(0.01, 1, 0.01)
+	fill.position.y = 0.02
+	root.add_child(fill)
+	_warnings[id] = {"node": root, "fill": fill, "t": 0.0, "life": maxf(secs, 0.1), "fx": fx, "at": at, "c": c, "r": radius}
+
+## The server took a mark back (the fight ended before it landed): it goes without a burst.
+func unwarn(id: int) -> void:
+	var w: Dictionary = _warnings.get(id, {})
+	if w.is_empty():
+		return
+	_warnings.erase(id)
+	if is_instance_valid(w["node"]):
+		(w["node"] as Node3D).queue_free()
+
+func _warnings_frame(delta: float) -> void:
+	for id in _warnings.keys():
+		var w: Dictionary = _warnings[id]
+		w["t"] += delta
+		var k := clampf(float(w["t"]) / float(w["life"]), 0.0, 1.0)
+		var fill: MeshInstance3D = w["fill"]
+		if is_instance_valid(fill):
+			fill.scale = Vector3(maxf(k, 0.01), 1, maxf(k, 0.01))
+		if k < 1.0:
+			continue
+		_warnings.erase(id)
+		var at: Vector3 = w["at"]
+		var c: Color = w["c"]
+		var r := float(w["r"])
+		if w["fx"] != "":
+			_impact(String(w["fx"]), at + Vector3(0, 0.8, 0), at, c)
+		var sweep := _mesh(_ring(maxf(r - 0.4, 0.05), r), _mat(c, 2.4), at + Vector3(0, 0.2, 0))
+		sweep.scale = Vector3(0.3, 0.1, 0.3)
+		_fade(sweep, 0.5, r * 1.15 / maxf(r, 0.01))
+		_light(at + Vector3(0, 1.0, 0), c, 3.0, r * 1.5 + 4.0, 0.4)
+		(w["node"] as Node3D).queue_free()
+
 func _process(delta: float) -> void:
+	_warnings_frame(delta)
 	for k in _marks:
 		var spin := (_marks[k] as Node3D).get_node_or_null("spin")
 		if spin:

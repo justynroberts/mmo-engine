@@ -1,7 +1,7 @@
 // Editing weather and events. They refer to attributes, bot types, places and each other by name, so renaming or
 // deleting any of those has to rewrite them, the same way the bot rules are kept honest in gameEdit.ts.
 
-import type { Archetype, EventDef, GameFile, ItemDef, Step, WeatherDef, WeatherZone } from './api'
+import type { Archetype, BossPhase, EventDef, GameFile, ItemDef, Step, WeatherDef, WeatherZone } from './api'
 import { classProblems, questProblems, rewriteQuestRefs, uniqueName } from './gameEdit'
 import { rewriteRealmRefs } from './realmEdit'
 
@@ -85,10 +85,24 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
           }),
         }))
       : g.archetypes
+  // A boss's adds name bot types: renamed with them, dropped with them.
+  const bossed: Archetype[] =
+    kind === 'arch'
+      ? ruled.map((a) => {
+          if (!a.boss?.phases.some((p) => p.adds?.some((x) => x.bot === from))) return a
+          const phases = a.boss.phases.map((p) => {
+            const adds = (p.adds ?? []).flatMap((x) => (x.bot !== from ? [x] : to === null ? [] : [{ ...x, bot: to }]))
+            const out: BossPhase = { ...p, adds }
+            if (adds.length === 0) delete out.adds
+            return out
+          })
+          return { ...a, boss: { ...a.boss, phases } }
+        })
+      : ruled
   // Loot tables and shops name items too, and so does the currency.
   const archetypes: Archetype[] =
     kind === 'item'
-      ? ruled.map((a) => {
+      ? bossed.map((a) => {
           if (!a.drops && !a.shop) return a
           const out = { ...a }
           if (a.drops) out.drops = a.drops.flatMap((d) => (d.item !== from ? [d] : to === null ? [] : [{ ...d, item: to }]))
@@ -99,10 +113,15 @@ export function rewriteRefs(g: GameFile, kind: RefKind, from: string, to: string
           }
           return out
         })
-      : ruled
+      : bossed
   // Quests name bot types, places and items (and each other, handled by renameQuest/removeQuest).
   const quests = g.quests ? { quests: rewriteQuestRefs(g.quests, kind, from, to) } : {}
   const next: GameFile = { ...g, archetypes, weather, events, ...(g.zones ? { zones } : {}), ...quests }
+  // Where players come into the world follows a renamed place; with it gone, they come in anywhere.
+  if (kind === 'place' && g.start_place === from) {
+    if (to === null) delete next.start_place
+    else next.start_place = to
+  }
   if (kind === 'item' && g.currency === from) {
     if (to === null) delete next.currency
     else next.currency = to

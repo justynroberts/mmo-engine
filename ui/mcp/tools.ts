@@ -333,6 +333,13 @@ export const TRADE_NOTE = [
 ].join(' ')
 
 /** How the realm sections work, for game_schema and upsert. */
+/** How bosses work, for game_schema and upsert. */
+const BOSS_NOTE = [
+  'A bot type with boss: BossFile fights by script as well as by its rules (applies live). It goes for whoever has the most threat: damage done to it adds threat, a heal on someone in the fight adds half to the healer, and an action with taunt: true used on it puts the user on top. It turns on someone new only when they pass the one it is on by a tenth.',
+  'phases (1..8, below a health percent, highest first, the first at 100): say is a banner as it begins, adds [{ bot, count 1..16 }] come to its side (not bosses), moves (0..8) are actions used every every_secs (0.5..600). A move with warn_secs (0..10) marks a circle (radius, else the action area, else 3) at the tank, a random or the farthest player in the fight, or round itself (at: self), and lands on whoever is still in it: players can walk out.',
+  'enrage_secs (0 never) makes its blows count enrage_might (default 3) times; defeat is a banner when it falls. With nobody left fighting it (fallen, past its leash, in a safe place) it heals fully and its adds go.',
+].join('\n')
+
 const REALM_NOTE = [
   'The realm sections all apply live (none restarts the world): loot, recipes, crops, dungeons (upsert by name), and plots (put_game, or the game file\'s plots: { size, per_player, cost, sizes: [{ size, cost }] }).',
   'factions (the same section as standing, see FactionFile): players may also join one as their side with /faction name (not one they stand below hostile with); the same side never harms each other, whatever pvp says, and its fighters never take a member for an enemy. color is #rrggbb. A game with a replicated attribute named "faction" (0..32, 8 bits) lets clients tell friend from foe.',
@@ -414,12 +421,12 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'game_schema',
     description:
-      'The TypeScript types of the game file (places, routes, bot types and their rules, items, weather, weather zones, events and their steps, quests and their steps, levels, attributes, actions and their spell fields, daylight), with comments, plus how spells work (aim, area, hits, hold, fx, bolt, school, effect secs, the reserved "held" attribute), how quests and experience work, how character classes work (and the reserved "class" attribute), how currency, shops, item value, gear (equip) and mounts work, the chat commands players can type, the realm (factions as sides players join, item rarity and loot tables, recipes, crops, land, dungeons, guilds), and the fx list. Read this before writing entries with upsert.',
+      'The TypeScript types of the game file (places, routes, bot types and their rules, items, weather, weather zones, events and their steps, quests and their steps, levels, attributes, actions and their spell fields, daylight), with comments, plus how spells work (aim, area, hits, hold, fx, bolt, school, effect secs, the reserved "held" attribute), how quests and experience work, how character classes work (and the reserved "class" attribute), how currency, shops, item value, gear (equip) and mounts work, the chat commands players can type, boss fights (threat, phases, telegraphed moves, adds, enrage), the realm (factions as sides players join, item rarity and loot tables, recipes, crops, land, dungeons, guilds), and the fx list. Read this before writing entries with upsert.',
     input: {},
     readOnly: true,
     async run() {
       const end = apiTypes.indexOf('export interface Perf')
-      return { types: apiTypes.slice(0, end < 0 ? undefined : end).trim(), block_materials: MATERIALS, spells: SPELLS_NOTE, quests: QUESTS_NOTE, classes: CLASSES_NOTE, trade: TRADE_NOTE, realm: REALM_NOTE, fx: FX }
+      return { types: apiTypes.slice(0, end < 0 ? undefined : end).trim(), block_materials: MATERIALS, spells: SPELLS_NOTE, quests: QUESTS_NOTE, classes: CLASSES_NOTE, trade: TRADE_NOTE, realm: REALM_NOTE, boss: BOSS_NOTE, fx: FX }
     },
   },
   {

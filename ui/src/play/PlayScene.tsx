@@ -308,6 +308,10 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
     disposables.push(beam.geometry, beam.material as THREE.Material)
     const waveGeo = new THREE.RingGeometry(0.86, 1, 48).rotateX(-Math.PI / 2)
     disposables.push(waveGeo)
+    const bossRimGeo = new THREE.RingGeometry(0.93, 1, 64).rotateX(-Math.PI / 2)
+    const bossDiscGeo = new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2)
+    disposables.push(bossRimGeo, bossDiscGeo)
+    const bossMeshes = new Map<number, { rim: THREE.Mesh; fill: THREE.Mesh }>()
     const waves: Wave[] = []
     const wave = (x: number, z: number, color: THREE.Color, size: number) => {
       const mat = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending })
@@ -544,6 +548,37 @@ export default function PlayScene({ client, info, shared, dark }: Props) {
           wave(pv.x, pv.z, pv.c.clone().multiplyScalar(1.4), 11)
         }
         prevPos.delete(id)
+      }
+
+      // A boss's marks on the ground: a rim, and a fill that reaches it as the blow lands (then a shockwave).
+      {
+        for (const [id, mk] of c.bossMarks) {
+          let m = bossMeshes.get(id)
+          const col = new THREE.Color(pal.hot)
+          if (!m) {
+            const rim = new THREE.Mesh(bossRimGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }))
+            const fill = new THREE.Mesh(bossDiscGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }))
+            rim.position.set(mk.x - half, 0.16, mk.y - half)
+            rim.scale.set(mk.r, 1, mk.r)
+            fill.position.set(mk.x - half, 0.14, mk.y - half)
+            scene.add(rim, fill)
+            m = { rim, fill }
+            bossMeshes.set(id, m)
+          }
+          const k = Math.min(1, Math.max(0, (now - mk.from) / Math.max(1, mk.until - mk.from)))
+          m.fill.scale.set(Math.max(k, 0.01) * mk.r, 1, Math.max(k, 0.01) * mk.r)
+          if (k >= 1) {
+            wave(mk.x - half, mk.y - half, col.multiplyScalar(1.4), mk.r * 1.2)
+            c.bossMarks.delete(id)
+          }
+        }
+        for (const [id, m] of bossMeshes) {
+          if (c.bossMarks.has(id)) continue
+          scene.remove(m.rim, m.fill)
+          ;(m.rim.material as THREE.Material).dispose()
+          ;(m.fill.material as THREE.Material).dispose()
+          bossMeshes.delete(id)
+        }
       }
 
       // Things on the ground.

@@ -203,6 +203,9 @@ func _gather(center: Vector2) -> void:
 				_segs.append([a, b, hw])
 	if land:
 		for f in land.fields_in(area):
+			# Grass grows on in pasture and hay; ploughed ground is bare.
+			if f.size() > 4 and String(f[4]) in ["pasture", "hay"]:
+				continue
 			_boxes.append(f[0])
 	_lakes = []
 	for l in world.lakes:

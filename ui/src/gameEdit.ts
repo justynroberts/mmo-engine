@@ -121,6 +121,7 @@ export function cleanAction(a: ActionFile): ActionFile {
   if (!out.school) delete out.school
   if (!out.desc) delete out.desc
   if (!out.lift) delete out.lift
+  if (!out.taunt) delete out.taunt
   if (!out.level || out.level <= 1) delete out.level
   return out
 }
@@ -132,14 +133,21 @@ function cleanEffect(e: EffectFile): EffectFile {
   return out
 }
 
-/** Rename an action and any bot that attacks with it. */
+/** A boss's moves that use the action `from`, renamed to `to` or (null) dropped. */
+function bossMoves(a: Archetype, from: string, to: string | null): Archetype {
+  if (!a.boss?.phases.some((p) => p.moves.some((m) => m.action === from))) return a
+  const phases = a.boss.phases.map((p) => ({ ...p, moves: p.moves.flatMap((m) => (m.action !== from ? [m] : to === null ? [] : [{ ...m, action: to }])) }))
+  return { ...a, boss: { ...a.boss, phases } }
+}
+
+/** Rename an action and any bot that attacks with it (or uses it as a boss move). */
 export function renameAction(g: GameFile, index: number, name: string): GameFile {
   const old = g.actions[index]?.name
   if (old === undefined || old === name) return g
   return {
     ...g,
     actions: g.actions.map((a, i) => (i === index ? { ...a, name } : a)),
-    archetypes: g.archetypes.map((a) => (a.attack === old ? { ...a, attack: name } : a)),
+    archetypes: g.archetypes.map((a) => bossMoves(a.attack === old ? { ...a, attack: name } : a, old, name)),
     ...(g.classes ? { classes: g.classes.map((c) => (c.spells?.includes(old) ? { ...c, spells: c.spells.map((n) => (n === old ? name : n)) } : c)) } : {}),
   }
 }
@@ -149,7 +157,7 @@ export function removeAction(g: GameFile, index: number): GameFile {
   return {
     ...g,
     actions: g.actions.filter((_, i) => i !== index),
-    archetypes: g.archetypes.map((a) => (a.attack === gone ? { ...a, attack: null } : a)),
+    archetypes: g.archetypes.map((a) => (gone === undefined ? a : bossMoves(a.attack === gone ? { ...a, attack: null } : a, gone, null))),
     // A class's spells drop it (a class left with none may then use every action, as an empty list means).
     ...(g.classes && gone !== undefined
       ? { classes: g.classes.map((c) => (c.spells?.includes(gone) ? cleanClass({ ...c, spells: c.spells.filter((n) => n !== gone) }) : c)) }
@@ -522,7 +530,7 @@ export function importArchetypes(g: GameFile, text: string): { game: GameFile; n
       return { error: 'Each bot type needs a name.' }
     }
     const r = raw as Partial<Archetype> & { name: string }
-    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction', 'title', 'names', 'homes', 'ambush', 'work', 'surnames', 'thief', 'pet', 'stray', 'healer'])
+    const known = new Set(['name', 'color', 'count', 'behaviour', 'speed_mult', 'sight', 'attack', 'attrs', 'home', 'rules', 'drops', 'xp', 'level', 'shop', 'leash', 'faction', 'title', 'names', 'homes', 'ambush', 'work', 'surnames', 'thief', 'pet', 'stray', 'healer', 'boss'])
     const stray = Object.keys(r).find((k) => !known.has(k))
     if (stray) return { error: `${r.name}: “${stray}” is not a bot field. Check the spelling.` }
     const a: Archetype = { ...newArchetype(g), ...r, name: r.name.trim() }

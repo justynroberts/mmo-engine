@@ -51,6 +51,8 @@ pub struct Rules {
     /// Hours a listing stays up at the auction house, and most listings per seller.
     pub listing_hours: f32,
     pub listings_per_seller: u16,
+    /// Most letters waiting for one character (`mail.rs`); more are refused.
+    pub mail_waiting: u16,
     /// What falling costs a player (all nothing by default): a share of the experience earned into their level (never
     /// a level), a share of the coin in their bag (gone), the chance each other stack of their bag is left where they
     /// fell, and seconds before they may rise.
@@ -120,6 +122,7 @@ impl Default for Rules {
             market_reach: 16.0,
             listing_hours: 48.0,
             listings_per_seller: 12,
+            mail_waiting: 50,
             fall_xp_loss_pct: 0.0,
             fall_coin_loss_pct: 0.0,
             fall_drop_pct: 0.0,
@@ -207,8 +210,8 @@ impl Rules {
         if self.trade_break < self.trade_reach {
             return Err("rules: trade_break must be at least trade_reach".into());
         }
-        if self.party_size < 2 || self.guild_size < 2 || self.listings_per_seller < 1 {
-            return Err("rules: party_size and guild_size are at least 2, listings_per_seller at least 1".into());
+        if self.party_size < 2 || self.guild_size < 2 || self.listings_per_seller < 1 || self.mail_waiting < 1 {
+            return Err("rules: party_size and guild_size are at least 2, listings_per_seller and mail_waiting at least 1".into());
         }
         Ok(())
     }

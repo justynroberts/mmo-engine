@@ -57,6 +57,9 @@ pub mod channel {
     pub const LIT: u8 = 12;
     /// The towns the sickness is in: "P|x,y,r;..." (`plague.rs`), sent when it changes.
     pub const PLAGUE: u8 = 13;
+    /// Server to client, from the server (0): a boss fight's marks on the ground (`boss.rs`). "T|id|x|y|r|secs|fx" marks
+    /// a circle that a blow lands in after `secs`; "C|id" takes one back. Not shown as chat.
+    pub const BOSS: u8 = 14;
 }
 
 pub mod kind {

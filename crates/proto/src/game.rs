@@ -176,6 +176,9 @@ pub struct ActionFile {
     /// The level a player must be to use it (a spell learnt later). Bots use what their type is given.
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     pub level: u8,
+    /// Used on a boss, it puts the user at the top of its threat (`Archetype::boss`): it turns on them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub taunt: bool,
 }
 
 fn is_zero_u8(v: &u8) -> bool {
@@ -393,6 +396,8 @@ pub struct Rule {
 
 pub const MAX_RULES: usize = 16;
 pub const MAX_PLACES: usize = 256;
+/// The widest a place may be (a lake, a mountain range, a weather zone's ground on a big map), in world units.
+pub const MAX_PLACE_R: f32 = 8192.0;
 /// Longest place title players see, in characters.
 pub const MAX_TITLE: usize = 40;
 pub const MAX_ROUTES: usize = 64;
@@ -509,7 +514,125 @@ pub struct Archetype {
     /// Tends the sick in a town the plague is in (a plague doctor): goes to them and, now and then, cures one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub healer: bool,
+    /// A boss: it fights by threat and a script of moves, phases and adds (`BossFile`) as well as its rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boss: Option<BossFile>,
 }
+
+/// How a boss fights (`Archetype::boss`, server `boss.rs`). Not in the content hash: it applies live.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BossFile {
+    /// In order of `below`, highest first; the first is where the fight starts. At least one.
+    pub phases: Vec<BossPhase>,
+    /// Seconds into a fight it enrages (0, never): its blows then count `enrage_might` times.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub enrage_secs: f32,
+    #[serde(default = "d_enrage_might")]
+    pub enrage_might: f32,
+    /// Said as a banner to those fighting it when it falls.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub defeat: String,
+}
+
+fn d_enrage_might() -> f32 {
+    3.0
+}
+
+/// One stretch of a boss fight: from when its health falls below `below` percent until the next phase.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BossPhase {
+    /// Health percent at which this phase begins (100 for the first).
+    pub below: f32,
+    /// A banner for those fighting it, as the phase begins.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub say: String,
+    #[serde(default)]
+    pub moves: Vec<BossMove>,
+    /// Bots that come to its side as the phase begins, round it, already in the fight; gone if it resets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adds: Vec<BossAdd>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BossAdd {
+    pub bot: String,
+    pub count: u32,
+}
+
+/// Who or where a boss move is aimed at.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MoveAt {
+    /// The one at the top of its threat.
+    #[default]
+    Tank,
+    /// Anyone in the fight, at random.
+    Random,
+    /// The one in the fight farthest from it.
+    Farthest,
+    /// The ground round the boss itself.
+    #[serde(rename = "self")]
+    Boss,
+}
+
+/// An action a boss uses every so often. With `warn_secs` the spot is marked on the ground first and the blow
+/// lands on whoever is still in it when the time is up.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BossMove {
+    /// An action (by name): its effects, hold, lift and look.
+    pub action: String,
+    pub every_secs: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub warn_secs: f32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub at: MoveAt,
+    /// The marked circle's radius (0: the action's own area, or a small circle if it has none).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub radius: f32,
+    /// A banner as it begins (the warning), for those fighting it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub say: String,
+}
+
+pub const MAX_BOSS_PHASES: usize = 8;
+pub const MAX_BOSS_MOVES: usize = 8;
+pub const MAX_BOSS_ADDS: u32 = 16;
+/// The longest warning a move may give, in seconds.
+pub const MAX_WARN_SECS: f32 = 10.0;
+
+/// A boss's script with names resolved: action ids and bot type indices.
+#[derive(Clone, Debug, Default)]
+pub struct BossRt {
+    pub phases: Vec<BossPhaseRt>,
+    pub enrage_secs: f32,
+    pub enrage_might: f32,
+    pub defeat: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BossPhaseRt {
+    /// As a fraction of full health (0..1).
+    pub below: f32,
+    pub say: String,
+    pub moves: Vec<BossMoveRt>,
+    /// (bot type index, count)
+    pub adds: Vec<(usize, u32)>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BossMoveRt {
+    pub action: u8,
+    pub every_secs: f32,
+    pub warn_secs: f32,
+    pub at: MoveAt,
+    pub radius: f32,
+    pub say: String,
+}
+
 /// The shortest leash a bot type gets when it gives none (so a short-sighted one still chases a little way).
 pub const MIN_LEASH: f32 = 60.0;
 fn d_color() -> String {
@@ -600,6 +723,10 @@ pub struct GameFile {
     /// What a new character starts with in their bag (a guest, each time they come). Not in the content hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub starter: Vec<crate::realm::Stack>,
+    /// Where new characters come into the world, and those whose saved spot is gone (a new map): a place by name.
+    /// Absent, anywhere free. Not in the content hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_place: Option<String>,
     /// "/" commands that act something out for those nearby (`/wave`, `/bow Name`). Not in the content hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emotes: Vec<Emote>,
@@ -1661,6 +1788,7 @@ pub struct ArchRt {
     pub pet: bool,
     pub stray: bool,
     pub healer: bool,
+    pub boss: Option<BossRt>,
 }
 
 impl ArchRt {
@@ -1730,6 +1858,8 @@ pub struct Game {
     pub rules: crate::rules::Rules,
     /// The starter kit, as (item index, count).
     pub starter: Vec<(usize, u8)>,
+    /// `GameFile::start_place`, as a place index.
+    pub start_place: Option<usize>,
     pub emotes: Vec<Emote>,
     pub gods: Vec<String>,
     pub talk: crate::talk::Talk,
@@ -1800,6 +1930,7 @@ impl GameFile {
             pet: false,
             stray: false,
             healer: false,
+            boss: None,
             color: color.into(),
             count,
             behaviour,
@@ -1881,6 +2012,7 @@ impl GameFile {
             dungeons: Vec::new(),
             rules: Default::default(),
             starter: Vec::new(),
+            start_place: None,
             emotes: Vec::new(),
             gods: Vec::new(),
             talk: Default::default(),
@@ -1919,6 +2051,65 @@ impl GameFile {
                 sentry,
             ],
         }
+    }
+
+    /// A bot type's `boss` section checked, with its names resolved.
+    fn boss_rt(&self, b: &BossFile, defs: &Defs, ctx: &str) -> Result<BossRt, String> {
+        if b.phases.is_empty() || b.phases.len() > MAX_BOSS_PHASES {
+            return Err(format!("{ctx}: a boss has 1..{MAX_BOSS_PHASES} phases"));
+        }
+        if !(b.enrage_secs.is_finite() && (0.0..=3600.0).contains(&b.enrage_secs)) || !(b.enrage_might.is_finite() && (1.0..=20.0).contains(&b.enrage_might)) {
+            return Err(format!("{ctx}: enrage_secs is 0..3600 and enrage_might 1..20"));
+        }
+        let line = |t: &str| t.chars().count() <= crate::chat::MAX_TEXT && !t.chars().any(char::is_control);
+        if !line(&b.defeat) {
+            return Err(format!("{ctx}: defeat is one line of at most {} characters", crate::chat::MAX_TEXT));
+        }
+        let mut phases = Vec::new();
+        let mut last = f32::INFINITY;
+        for (i, p) in b.phases.iter().enumerate() {
+            let pc = format!("{ctx}: phase {}", i + 1);
+            if !(p.below.is_finite() && p.below > 0.0 && p.below <= 100.0 && p.below < last) {
+                return Err(format!("{pc}: below is a health percent above 0 and at most 100, lower than the phase before"));
+            }
+            last = p.below;
+            if !line(&p.say) {
+                return Err(format!("{pc}: say is one line of at most {} characters", crate::chat::MAX_TEXT));
+            }
+            if p.moves.len() > MAX_BOSS_MOVES {
+                return Err(format!("{pc}: at most {MAX_BOSS_MOVES} moves"));
+            }
+            let mut moves = Vec::new();
+            for m in &p.moves {
+                let action = defs.actions.iter().find(|d| d.name == m.action).map(|d| d.id).ok_or_else(|| format!("{pc}: unknown action '{}'", m.action))?;
+                if !(m.every_secs.is_finite() && (0.5..=600.0).contains(&m.every_secs)) {
+                    return Err(format!("{pc}: '{}' every_secs is 0.5..600", m.action));
+                }
+                if !(m.warn_secs.is_finite() && (0.0..=MAX_WARN_SECS).contains(&m.warn_secs)) {
+                    return Err(format!("{pc}: '{}' warn_secs is 0..{MAX_WARN_SECS}", m.action));
+                }
+                if !(m.radius.is_finite() && (0.0..=MAX_AREA).contains(&m.radius)) {
+                    return Err(format!("{pc}: '{}' radius is 0..{MAX_AREA}", m.action));
+                }
+                if !line(&m.say) {
+                    return Err(format!("{pc}: '{}' say is one line of at most {} characters", m.action, crate::chat::MAX_TEXT));
+                }
+                moves.push(BossMoveRt { action, every_secs: m.every_secs, warn_secs: m.warn_secs, at: m.at, radius: m.radius, say: m.say.clone() });
+            }
+            let mut adds = Vec::new();
+            for a in &p.adds {
+                let k = self.archetypes.iter().position(|x| x.name == a.bot).ok_or_else(|| format!("{pc}: there is no bot type '{}' to add", a.bot))?;
+                if self.archetypes[k].boss.is_some() {
+                    return Err(format!("{pc}: an add cannot be a boss ('{}')", a.bot));
+                }
+                if a.count == 0 || a.count > MAX_BOSS_ADDS {
+                    return Err(format!("{pc}: '{}' count is 1..{MAX_BOSS_ADDS}", a.bot));
+                }
+                adds.push((k, a.count));
+            }
+            phases.push(BossPhaseRt { below: p.below / 100.0, say: p.say.clone(), moves, adds });
+        }
+        Ok(BossRt { phases, enrage_secs: b.enrage_secs, enrage_might: b.enrage_might, defeat: b.defeat.clone() })
     }
 
     /// Validate and resolve names. The error text is meant for a human in the UI.
@@ -2092,6 +2283,7 @@ impl GameFile {
                 desc: a.desc.clone(),
                 lift: a.lift,
                 level: a.level,
+                taunt: a.taunt,
             });
         }
 
@@ -2119,8 +2311,8 @@ impl GameFile {
             if p.name.is_empty() || p.name.len() > 32 || !pnames.insert(p.name.as_str()) {
                 return Err(format!("place names must be unique, 1..32 characters ('{}')", p.name));
             }
-            if !(coord(p.x) && coord(p.y) && p.r.is_finite() && (1.0..=512.0).contains(&p.r)) {
-                return Err(format!("place '{}': x and y must be 0..65536 and r 1..512", p.name));
+            if !(coord(p.x) && coord(p.y) && p.r.is_finite() && (1.0..=MAX_PLACE_R).contains(&p.r)) {
+                return Err(format!("place '{}': x and y must be 0..65536 and r 1..{MAX_PLACE_R}", p.name));
             }
             if let Some(e) = &p.exit {
                 if !(coord(e.x) && coord(e.y)) || e.zone.len() > 32 {
@@ -2403,7 +2595,12 @@ impl GameFile {
                 Some(f) => Some(self.factions.iter().position(|x| &x.name == f).ok_or_else(|| format!("{ctx}: there is no faction '{f}'"))?),
                 None => None,
             };
+            let boss = match &a.boss {
+                Some(b) => Some(self.boss_rt(b, &defs, &ctx)?),
+                None => None,
+            };
             archs.push(ArchRt {
+                boss,
                 leash,
                 faction,
                 loot: a.loot.as_ref().and_then(|l| self.loot.iter().position(|t| &t.name == l)),
@@ -2557,7 +2754,11 @@ impl GameFile {
             return Err("gods: at most 50 account tags, each 16 lowercase hex digits".into());
         }
         let talk = crate::talk::Talk::build(&self.talk)?;
-        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, emotes: self.emotes.clone(), gods: self.gods.clone(), talk })
+        let start_place = match &self.start_place {
+            Some(n) => Some(self.places.iter().position(|p| &p.name == n).ok_or_else(|| format!("start_place: there is no place '{n}'"))?),
+            None => None,
+        };
+        Ok(Game { defs, archs, items, places: self.places.clone(), routes: self.routes.clone(), daylight, pvp: self.pvp, levels: self.levels.clone(), quests: self.quests.clone(), currency, classes, building: self.building, factions: self.factions.clone(), realm, rules: self.rules, starter, start_place, emotes: self.emotes.clone(), gods: self.gods.clone(), talk })
     }
 
     /// Factions: names unique, numbers in range, and what they hate there.
@@ -2943,6 +3144,40 @@ mod tests {
     }
 
     #[test]
+    fn a_boss_is_checked_and_resolved() {
+        let boss = |phases: Vec<BossPhase>| BossFile { phases, enrage_secs: 0.0, enrage_might: 3.0, defeat: String::new() };
+        let phase = |below: f32, action: &str, add: Option<&str>| BossPhase {
+            below,
+            say: String::new(),
+            moves: vec![BossMove { action: action.into(), every_secs: 5.0, warn_secs: 2.0, ..Default::default() }],
+            adds: add.map(|b| vec![BossAdd { bot: b.into(), count: 2 }]).unwrap_or_default(),
+        };
+        let mut g = GameFile::default_game();
+        g.archetypes[2].boss = Some(boss(vec![phase(100.0, "zap", None), phase(40.0, "zap", Some("drifter"))]));
+        let built = g.build().unwrap();
+        let b = built.archs[2].boss.as_ref().unwrap();
+        assert_eq!((b.phases[1].below, b.phases[1].moves[0].action, b.phases[1].adds[0]), (0.4, 1, (0, 2)));
+        // It survives a round trip through JSON, and a file without it reads as before.
+        let back: GameFile = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(back.archetypes[2].boss, g.archetypes[2].boss);
+        assert!(err(|g| g.archetypes[2].boss = Some(boss(vec![]))).contains("1..8 phases"));
+        assert!(err(|g| g.archetypes[2].boss = Some(boss(vec![phase(100.0, "zap", None), phase(100.0, "zap", None)]))).contains("lower than the phase before"));
+        assert!(err(|g| g.archetypes[2].boss = Some(boss(vec![phase(100.0, "nuke", None)]))).contains("unknown action 'nuke'"));
+        assert!(err(|g| g.archetypes[2].boss = Some(boss(vec![phase(100.0, "zap", Some("nobody"))]))).contains("no bot type 'nobody'"));
+        assert!(err(|g| {
+            g.archetypes[0].boss = Some(boss(vec![phase(100.0, "zap", None)]));
+            g.archetypes[2].boss = Some(boss(vec![phase(100.0, "zap", Some("drifter"))]));
+        })
+        .contains("an add cannot be a boss"));
+        assert!(err(|g| {
+            let mut p = phase(100.0, "zap", None);
+            p.moves[0].warn_secs = 60.0;
+            g.archetypes[2].boss = Some(boss(vec![p]));
+        })
+        .contains("warn_secs"));
+    }
+
+    #[test]
     fn bad_input_gives_readable_errors() {
         assert!(err(|g| g.attrs[0].min = 500.0).contains("min must be below max"));
         assert!(err(|g| g.attrs[1].name = "health".into()).contains("duplicate attribute"));
@@ -3004,7 +3239,7 @@ mod tests {
             ("at most 16 rules", Box::new(move |g| { let i = guard(g); let r = g.archetypes[i].rules[1].clone(); g.archetypes[i].rules = vec![r; 17]; })),
             ("unique", Box::new(|g| g.places.push(g.places[0].clone()))),
             ("x and y", Box::new(|g| g.places[0].x = f32::NAN)),
-            ("r 1..512", Box::new(|g| g.places[0].r = 0.0)),
+            ("r 1..8192", Box::new(|g| g.places[0].r = 0.0)),
             ("a title is at most", Box::new(|g| g.places[0].title = "x".repeat(41))),
             ("a title is at most", Box::new(|g| g.places[0].title = " Market".into())),
             ("an exit goes to", Box::new(|g| g.places[0].exit = Some(Exit { zone: String::new(), x: -1.0, y: 5.0 }))),

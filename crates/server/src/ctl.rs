@@ -1129,6 +1129,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
         c.sim.building = game.building;
         c.sim.rules = game.rules;
         c.sim.starter = game.starter;
+        c.sim.start_place = game.start_place;
         c.sim.emotes = game.emotes;
         c.sim.gods = game.gods;
         c.sim.talk = game.talk;

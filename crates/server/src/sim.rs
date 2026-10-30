@@ -374,6 +374,8 @@ pub struct Sim {
     pub rules: proto::rules::Rules,
     /// What a new character starts with (`GameFile::starter`), as (item, count).
     pub starter: Vec<(usize, u8)>,
+    /// Where players come into the world (`GameFile::start_place`): a place index.
+    pub start_place: Option<usize>,
     /// The game's emotes (`GameFile::emotes`, `social::emote`).
     pub emotes: Vec<proto::game::Emote>,
     /// Account tags that may take god mode in game (`GameFile::gods`, `/god`).
@@ -504,6 +506,10 @@ pub struct Sim {
     pub immune: Vec<bool>,
     pub plagues: Vec<crate::plague::Plague>,
     pub plague_ver: u64,
+    /// Bosses in a fight (`boss.rs`), by entity id; the marks on the ground waiting to land, and the last mark id.
+    pub bosses: std::collections::BTreeMap<u32, crate::boss::Fight>,
+    pub marks: Vec<crate::boss::Mark>,
+    pub mark_seq: u32,
     pub plague_sent: Vec<u64>,
     /// Factions (`factions.rs`), and each player's standing with them by faction name.
     pub factions: Vec<proto::game::FactionFile>,
@@ -529,7 +535,7 @@ pub struct Sim {
     /// Actions used in the last few ticks, newest last, for the network layer to tell clients near them
     /// (`proto::wire::kind::CASTS`): (tick, caster slot, cast).
     pub casts: Vec<(u32, usize, proto::wire::Cast)>,
-    cast_seq: u32,
+    pub(crate) cast_seq: u32,
     /// Actions injected by the admin UI for the next tick.
     pub admin_actions: Vec<PendingAction>,
     /// This process's strip of the world (x range) when running as one zone of several: bots stay inside it.
@@ -622,7 +628,7 @@ impl Sim {
     }
 
     pub fn new(game: Game, world: World, cap: usize, tick_hz: u32, seed: u64) -> Self {
-        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, emotes, gods, talk } = game;
+        let Game { defs, archs, places, routes, items, daylight, pvp, levels, quests, currency, classes, building, factions, realm, rules, starter, start_place, emotes, gods, talk } = game;
         let mut world = world;
         world.road_speed = defs.road_speed;
         let ents = Entities::new(cap, defs.attrs.len());
@@ -649,6 +655,7 @@ impl Sim {
             building,
             rules,
             starter,
+            start_place,
             emotes,
             gods,
             talk,
@@ -724,6 +731,9 @@ impl Sim {
             immune: vec![false; cap],
             plagues: Vec::new(),
             plague_ver: 0,
+            bosses: std::collections::BTreeMap::new(),
+            marks: Vec::new(),
+            mark_seq: 0,
             plague_sent: vec![0; cap],
             factions,
             standing: vec![Vec::new(); cap],
@@ -780,7 +790,14 @@ impl Sim {
             self.ents.counted[slot] = true;
             self.ents.bots += 1;
         }
-        let home = if owner == NONE { self.home_for(arch, slot) } else { None };
+        // Bots in their home; players at the game's start place, if it has one (a saved spot overrides it later).
+        let home = if owner == NONE {
+            self.home_for(arch, slot)
+        } else if owner < DRIVEN {
+            self.start_place.filter(|&p| p < self.places.len())
+        } else {
+            None
+        };
         let (mut x, mut y) = match at {
             Some((x, y)) if !self.world.blocked_by_walls(x, y, r) => (x, y),
             _ => self.spawn_point(home, r),
@@ -1385,6 +1402,7 @@ impl Sim {
         let adm = std::mem::take(&mut self.admin_actions);
         self.system_actions(&adm);
         self.system_spells();
+        self.system_bosses();
         self.system_air();
         self.system_rules();
         if self.tick % self.tick_hz.max(1) == 0 {
@@ -1406,6 +1424,7 @@ impl Sim {
             }
             self.system_realm();
             self.system_market();
+            self.system_mail();
         }
         self.grid.rebuild(&self.ents);
         for slot in 0..self.ents.high {
@@ -2146,7 +2165,7 @@ impl Sim {
         }
         let def = &self.defs.actions[k];
         let own = p.slot * proto::game::MAX_ACTIONS + k;
-        let (aim, area, hits, hold, cooldown, range, lift) = (def.aim, def.area, def.hits, def.hold, def.cooldown_ticks, def.range, def.lift);
+        let (aim, area, hits, cooldown, range) = (def.aim, def.area, def.hits, def.cooldown_ticks, def.range);
         let e = &self.ents;
         if self.tick < e.cooldown_until[p.slot] || self.tick < e.ready_at[own] || matches!(e.held[p.slot], 1 | 2) {
             return false; // mezzed or stunned: no acting
@@ -2217,16 +2236,36 @@ impl Sim {
         } else if aim == Aim::Target || lands(at) {
             struck.push(at);
         }
-        let effects = self.defs.action(p.action).map(|d| d.effects.clone()).unwrap_or_default();
+        self.apply_action(p.slot, p.action, &struck);
+        if self.defs.action(p.action).is_some_and(|d| d.taunt) {
+            for &t in &struck {
+                self.add_threat(t, p.slot, 0.0, true);
+            }
+        }
+        let gcd = (self.rules.global_cooldown_secs * self.tick_hz as f32).round() as u32;
+        self.ents.cooldown_until[p.slot] = self.tick + (cooldown as u32).min(gcd);
+        self.ents.ready_at[own] = self.tick + cooldown as u32;
+        self.cast_seq = self.cast_seq.wrapping_add(1);
+        let target = if at != p.slot { self.ents.id_of(at) } else { 0 };
+        let cast = proto::wire::Cast { seq: self.cast_seq, caster: self.ents.id_of(p.slot), target, action: p.action };
+        self.casts.push((self.tick, p.slot, cast));
+        self.stats.zaps += 1;
+        true
+    }
+
+    /// An action's effects, lift and hold on those it struck (and its effects on the user), as `use_action` and a
+    /// boss's moves (`boss.rs`) land it.
+    pub(crate) fn apply_action(&mut self, caster: usize, action: u8, struck: &[usize]) {
+        let effects = self.defs.action(action).map(|d| d.effects.clone()).unwrap_or_default();
         for eff in &effects {
             let (attr, delta, secs, lasts, to_target) = match *eff {
                 Effect::AddToTarget { attr, delta, secs, lasts } => (attr as usize, delta, secs, lasts, true),
                 Effect::AddToSelf { attr, delta, secs, lasts } => (attr as usize, delta, secs, lasts, false),
             };
-            let on: &[usize] = if to_target { &struck } else { std::slice::from_ref(&p.slot) };
-            let src = self.ents.id_of(p.slot);
+            let on: &[usize] = if to_target { struck } else { std::slice::from_ref(&caster) };
+            let src = self.ents.id_of(caster);
             for &s in on {
-                let delta = if to_target { self.scaled(p.slot, s, attr, delta) } else { delta };
+                let delta = if to_target { self.scaled(caster, s, attr, delta) } else { delta };
                 if secs > 0.0 {
                     let ticks = ((secs * self.tick_hz as f32).round() as u32).max(1);
                     self.over_time.push(OverTime { id: self.ents.id_of(s), attr, per_tick: delta / ticks as f32, left: ticks, src });
@@ -2241,31 +2280,23 @@ impl Sim {
                 }
             }
         }
+        let (lift, hold) = self.defs.action(action).map_or((0.0, None), |d| (d.lift, d.hold));
         if lift > 0.0 {
             let (half, until) = (self.jump_ticks() / 2 + 1, self.tick + ((lift * self.tick_hz as f32).round() as u32).max(1));
-            for &s in &struck {
+            for &s in struck {
                 self.ents.air[s] = self.ents.air[s].max(half);
                 self.ents.lift_until[s] = until;
             }
         }
         if let Some((kind, secs)) = hold {
             let until = self.tick + ((secs * self.tick_hz as f32).round() as u32).max(1);
-            for &s in &struck {
-                if s != p.slot && !self.ents.god[s] {
+            for &s in struck {
+                if s != caster && !self.ents.god[s] {
                     self.ents.held[s] = kind as u8;
                     self.ents.held_until[s] = until;
                 }
             }
         }
-        let gcd = (self.rules.global_cooldown_secs * self.tick_hz as f32).round() as u32;
-        self.ents.cooldown_until[p.slot] = self.tick + (cooldown as u32).min(gcd);
-        self.ents.ready_at[own] = self.tick + cooldown as u32;
-        self.cast_seq = self.cast_seq.wrapping_add(1);
-        let target = if at != p.slot { self.ents.id_of(at) } else { 0 };
-        let cast = proto::wire::Cast { seq: self.cast_seq, caster: self.ents.id_of(p.slot), target, action: p.action };
-        self.casts.push((self.tick, p.slot, cast));
-        self.stats.zaps += 1;
-        true
     }
 
     /// A player's class, if they have chosen one.
@@ -2303,7 +2334,7 @@ impl Sim {
         let might = self.levels.as_ref().map_or(1.0, |l| l.might_at(self.ents.level[from])) + gm;
         let tough = self.levels.as_ref().map_or(1.0, |l| l.toughness_at(self.ents.level[to])) + gt;
         let d = delta * might;
-        if d < 0.0 { d / tough } else { d }
+        if d < 0.0 { d * self.boss_might(from) / tough } else { d }
     }
 
     /// Add to an attribute, within its range. Damage (health going down) breaks a mez, and a player who did it
@@ -2311,7 +2342,15 @@ impl Sim {
     pub(crate) fn add_to(&mut self, s: usize, attr: usize, delta: f32, src: u32) {
         let a = &self.defs.attrs[attr];
         let v = &mut self.ents.attrs[attr][s];
+        let was = *v;
         *v = (*v + delta).clamp(a.min, a.max);
+        if attr == proto::defs::ATTR_HEALTH as usize && delta > 0.0 && !self.bosses.is_empty() {
+            // Mending someone in a boss fight draws its eye (what the heal really mended, not what it could have).
+            let mended = self.ents.attrs[attr][s] - was;
+            if let Some(by) = self.ents.resolve(src).filter(|_| mended > 0.0) {
+                self.heal_threat(s, by, mended);
+            }
+        }
         if attr == proto::defs::ATTR_HEALTH as usize && delta < 0.0 {
             if self.ents.held[s] == proto::game::HoldKind::Mez as u8 {
                 self.ents.held[s] = 0;
@@ -2323,6 +2362,9 @@ impl Sim {
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s) {
                 self.engage(s, by);
                 self.last_hit[s] = Some(src);
+                if !self.bosses.is_empty() {
+                    self.add_threat(s, by, -delta, false);
+                }
             }
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s && self.ents.owner[b] < DRIVEN) {
                 if self.ents.owner[s] == NONE && self.ents.attrs[attr][s] > self.defs.attrs[attr].min {
@@ -2599,6 +2641,7 @@ impl Sim {
                             self.struck_townsfolk(p, s, true);
                         }
                         self.plea_kill(s, &killers);
+                        self.boss_fell(s);
                         self.credit(s);
                         self.loot_from(s);
                         self.drop_purse(s, by);
@@ -3498,6 +3541,7 @@ mod tests {
             pet: false,
             stray: false,
             healer: false,
+            boss: None,
             color: "#112233".into(),
             count: 0,
             behaviour,

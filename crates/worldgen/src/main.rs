@@ -14,6 +14,7 @@
 //! world file, so a world can be opened, edited and made again. Flags given after `--recipe` override it.
 
 mod coast;
+mod fields;
 mod roads;
 
 use serde_json::{json, Value};
@@ -905,12 +906,22 @@ pub fn build(p: &Params) -> Generated {
     // The recipe's own places go in first, where it wants them; then the seed lays out the rest round them.
     let mut srng = Rng(p.seed ^ 0x5E77);
     let mut settled: Vec<Value> = Vec::new();
+    // How much of a place each high street is (`roads::Place`): towns 1, named villages 2, the rest 3; and where
+    // the named forts stand, so their keeps rank with the named villages.
+    let mut street_rank: Vec<u8> = Vec::new();
+    let mut named_forts: Vec<(f32, f32)> = Vec::new();
     for s in &p.settlements {
         let at = if s.kind == "city" {
             city_at.as_ref().map(|c| (c.0, c.1))
         } else {
             settle(&mut l, &mut srng, s).map(|(at, ends)| {
-                streets.extend(ends);
+                if let Some(e) = ends {
+                    streets.push(e);
+                    street_rank.push(if s.kind == "town" { 1 } else { 2 });
+                }
+                if s.kind == "fort" {
+                    named_forts.push(at);
+                }
                 at
             })
         };
@@ -957,7 +968,7 @@ pub fn build(p: &Params) -> Generated {
     let ri = RiverIndex::new(&rv);
     // Roads, once the rivers are known (they cross them as little as they can), and then the houses that line the
     // roads out of the city's gates. Their own random stream leaves everything else as it was.
-    let (road_list, road_cells, fords) = if p.roads {
+    let (mut road_list, mut road_cells, fords) = if p.roads {
         let mut net = roads::Net::new(&land, &l, &rv, &ri);
         let mut places = Vec::new();
         if let Some((cx, cy, h, plaza, streets)) = &city_at {
@@ -970,18 +981,30 @@ pub fn build(p: &Params) -> Generated {
                 net.lay(roads::Road { half: roads::STREET_HALF, pts: s.to_vec() });
             }
         }
-        places.extend(streets.iter().map(|&e| roads::Place::Village(e)));
+        let big = size > roads::MAX_NETWORK_SIZE;
+        if big {
+            if let Some((cx, cy, h, _, _)) = &city_at {
+                let g = |dx: f32, dy: f32| (cx + dx * (h + 18.0), cy + dy * (h + 18.0));
+                places.push(roads::Place::City([g(0.0, -1.0), g(0.0, 1.0), g(-1.0, 0.0), g(1.0, 0.0)]));
+            }
+        }
+        places.extend(streets.iter().enumerate().map(|(i, &e)| roads::Place::Village(e, street_rank.get(i).copied().unwrap_or(3))));
         // A fort's track comes to its door, on the side facing the middle of the world.
         for s in l.things.iter().filter(|s| s.t == "keep") {
             let (kx, ky) = ((s.b[0] + s.b[2]) / 2.0, (s.b[1] + s.b[3]) / 2.0);
             let (mx, my) = city_at.as_ref().map_or((size / 2.0, size / 2.0), |c| (c.0, c.1));
             let (dx, dy) = (mx - kx, my - ky);
             let at = if dx.abs() > dy.abs() { (if dx > 0.0 { s.b[2] + 8.0 } else { s.b[0] - 8.0 }, ky) } else { (kx, if dy > 0.0 { s.b[3] + 8.0 } else { s.b[1] - 8.0 }) };
-            places.push(roads::Place::Fort(at));
+            let named = named_forts.iter().any(|f| (f.0 - kx).hypot(f.1 - ky) < 60.0);
+            places.push(roads::Place::Fort(at, if named { 2 } else { 4 }));
         }
         let mut rrng = Rng(p.seed ^ 0x40AD);
         let centre = city_at.as_ref().map_or((size / 2.0, size / 2.0), |c| (c.0, c.1));
-        roads::network(&mut net, &places, &mut rrng, centre);
+        if big {
+            roads::network_big(&mut net, &places, &mut rrng);
+        } else {
+            roads::network(&mut net, &places, &mut rrng, centre);
+        }
         let fords = roads::fords(&net);
         let roads::Net { roads: list, cells, .. } = net;
         (list, cells, fords)
@@ -1019,6 +1042,20 @@ pub fn build(p: &Params) -> Generated {
             }
         }
     }
+    // A big world's farms: farmsteads along the lanes, fields round them and the villages, hedgerows between.
+    let farms = if size > roads::MAX_NETWORK_SIZE && p.roads {
+        let city = city_at.as_ref().map(|&(cx, cy, h, _, _)| [cx - h, cy - h, cx + h, cy + h]);
+        let g = fields::Ground { land: &land, rivers: &rv, ri: &ri, roads: &road_cells, city };
+        let mut frng = Rng(p.seed ^ 0xFA4E);
+        fields::lay(&mut l, &g, &road_list, &streets, &mut frng)
+    } else {
+        fields::Farms { fields: Vec::new(), tracks: Vec::new(), hedges: Vec::new() }
+    };
+    for t in farms.tracks {
+        road_cells.add(&t, road_list.len());
+        road_list.push(t);
+    }
+    let in_field = fields::FieldIndex::new(&farms.fields);
     // Things by 64 unit cell (padded), so each height sample checks only those nearby.
     let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (i, s) in l.things.iter().enumerate() {
@@ -1084,6 +1121,10 @@ pub fn build(p: &Params) -> Generated {
             if land.coast.as_ref().is_some_and(|c| c.d(x, y) < 3.0) {
                 continue;
             }
+            // Fields are kept clear: their hedgerows are laid with them.
+            if in_field.at(x, y) {
+                continue;
+            }
             let (t, s): (&str, f32) = if out > 70.0 {
                 if rng.f() < 0.12 { ("spire", rng.range(2.5, 6.0)) } else { continue }
             } else if out > 25.0 {
@@ -1128,6 +1169,23 @@ pub fn build(p: &Params) -> Generated {
             objects.push(o.to_string());
         }
     }
+    for f in &farms.fields {
+        let q: Vec<f64> = f.q.iter().flat_map(|&(x, y)| [r1(x), r1(y)]).collect();
+        let (cx, cy) = (f.q.iter().map(|p| p.0).sum::<f32>() / 4.0, f.q.iter().map(|p| p.1).sum::<f32>() / 4.0);
+        objects.push(json!({ "t": "field", "p": [r1(cx), r1(cy)], "q": q, "k": f.kind, "r": r2(f.furrow), "v": (cx.to_bits() ^ cy.to_bits().rotate_left(7)) }).to_string());
+    }
+    let mut hrng = Rng(p.seed ^ 0x4ED6);
+    for &(t, x, y, s) in &farms.hedges {
+        let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(hrng.range(0.0, std::f32::consts::TAU)), "v": hrng.v() });
+        if let Some(h) = scenery_half(t, s) {
+            let (x0, y0, x1, y1) = (r2(x - h), r2(y - h), r2(x + h), r2(y + h));
+            o["solid"] = true.into();
+            o["scenery"] = true.into();
+            o["b"] = json!([x0, y0, x1, y1]);
+            solid += 1;
+        }
+        objects.push(o.to_string());
+    }
     for &(x, y, a) in &fords {
         objects.push(json!({ "t": "ford", "p": [r1(x), r1(y)], "r": r2(a), "v": (x.to_bits() ^ y.to_bits()) }).to_string());
     }
@@ -1159,6 +1217,11 @@ pub fn build(p: &Params) -> Generated {
         "settled": settled,
         "objects": [],
     });
+    let mut head = head;
+    if !farms.fields.is_empty() {
+        // Fields are in the objects (`t: "field"`): a theme draws those rather than making up its own round farms.
+        head["farms"] = true.into();
+    }
     Generated { head, objects, solid }
 }
 
@@ -1323,6 +1386,37 @@ mod tests {
                     assert!(!solids.iter().any(|b| x > b[0] + 0.5 && x < b[2] - 0.5 && y > b[1] + 0.5 && y < b[3] - 0.5), "seed {seed}: a road runs through something solid at ({x}, {y})");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_big_world_has_tiered_roads_farms_and_fields() {
+        // Past the fine-grid limit: highways between the city and the towns, lanes and tracks, and farms.
+        let p = Params::from_recipe(&json!({
+            "size": 17000, "seed": 3, "villages": 0.3, "forts": 0.2, "crags": 0.2, "lakes": 0.2, "forest": 0.6,
+            "settlements": [
+                { "t": "city", "at": [8500, 8500], "name": "Capital" },
+                { "t": "town", "at": [3500, 4000], "name": "West" },
+                { "t": "town", "at": [13500, 12500], "name": "East" },
+                { "t": "village", "at": [8000, 14000], "name": "South" }
+            ]
+        }))
+        .unwrap();
+        let w = generate(&p);
+        let roads = roads_of(&w);
+        let wide = |lo: f32, hi: f32| roads.iter().filter(|(h, _)| (lo..=hi).contains(h)).count();
+        assert!(wide(3.4, 3.6) >= 2, "highways between the city and the towns");
+        assert!(wide(1.7, 1.9) > 0 && wide(1.2, 1.4) > 0, "lanes and farm tracks");
+        assert_eq!(w["farms"], true);
+        let fields: Vec<&Value> = w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == "field").collect();
+        assert!(fields.len() > 100, "{} fields", fields.len());
+        // A field is never laid over a road: no road runs through its middle.
+        for f in fields.iter().step_by(7) {
+            let (x, y) = (f["p"][0].as_f64().unwrap() as f32, f["p"][1].as_f64().unwrap() as f32);
+            for (half, pts) in &roads {
+                assert!(!samples(pts).iter().any(|s| (s.0 - x).hypot(s.1 - y) < *half), "a road through the field at ({x}, {y})");
+            }
+            assert_eq!(f["q"].as_array().unwrap().len(), 8);
         }
     }
 

@@ -1,8 +1,9 @@
 // A game session over the web gateway: handshake, input loop, snapshots, chat, reconnect.
 import {
-  ChatClient, ClientHs, ClientView, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
+  channel, ChatClient, ClientHs, ClientView, decodeChatBatch, decodeRedirect, decodeSnapshot, decodeWelcome, dequantize, dpos, encodeInput, fromHex,
   kind, reject, decodeCrowd, decodeGround, decodeInventory, type BagSlot, type ChatMsg, type CrowdEntry, type Defs, type GroundItem, type Session,
 } from './protocol'
+import { applyBossLine, type BossMark } from './boss'
 import { Interpolator } from './interp'
 import { GROUND, Predictor, World } from './sim'
 import { decodeRegions, maskOf, regionAsk, REGION, type BlockCol } from './blocks'
@@ -138,6 +139,8 @@ export class GameClient {
   readonly walls: WallStore
   private worldRev = -1
   ground: GroundItem[] = []
+  /** A boss fight's marks on the ground near us, by id (`boss.ts`). */
+  readonly bossMarks = new Map<number, BossMark>()
   /** The crowd past our snapshot, by part (each part replaced when it comes again). */
   crowdParts: CrowdEntry[][] = []
   /** Blocks players have built, by cy << 15 | cx; `blocksRev` counts changes. */
@@ -380,7 +383,11 @@ export class GameClient {
         if (!inner) return
         if (inner[0] === kind.CHAT_BATCH) {
           const b = decodeChatBatch(inner)
-          if (b) for (const m of this.chat.onBatch(b.ack, b.msgs)) this.h.onChat(m)
+          if (b)
+            for (const m of this.chat.onBatch(b.ack, b.msgs)) {
+              if (m.channel === channel.BOSS && m.from === 0) applyBossLine(this.bossMarks, m.text, performance.now())
+              else this.h.onChat(m)
+            }
         } else if (inner[0] === kind.INVENTORY) {
           const b = decodeInventory(inner)
           if (b) this.bag = b

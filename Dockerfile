@@ -22,6 +22,8 @@ COPY --from=build /src/target/release/server /src/target/release/bots /src/targe
 COPY --from=ui /ui/dist /opt/ui
 # What a fresh /data volume starts with: the game file, the world and the blocks built so far.
 COPY deploy/seed /opt/seed
+# Other worlds to start from, picked by MMO_SEED (entrypoint.sh); a big one ships its recipe and is made on first start.
+COPY deploy/hibernia-65536 /opt/seeds/hibernia-65536
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 USER app
 WORKDIR /data

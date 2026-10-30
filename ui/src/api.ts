@@ -65,6 +65,8 @@ export interface ActionFile {
   lift?: number
   /** The level a player must be to use it. */
   level?: number
+  /** Used on a boss, it puts the user at the top of its threat. */
+  taunt?: boolean
 }
 /** Experience and levels (GameFile.levels). Level L needs base * (L - 1) ^ exponent experience in all. */
 export interface Levels {
@@ -343,6 +345,8 @@ export interface Archetype {
   stray?: boolean
   /** Tends the sick while a plague is in town (a plague doctor). */
   healer?: boolean
+  /** A boss: it fights by threat and a script of moves, phases and adds. */
+  boss?: BossFile
   /** More places it lives in besides home: its bots are shared out over all of them. */
   homes?: string[]
   /** It comes for players out in the dark (rules.night_ambush_pct), and is gone by day. */
@@ -482,6 +486,8 @@ export interface DirectorState {
 }
 
 export interface GameFile {
+  /** Where new characters come into the world, and those whose saved spot is gone: a place by name. */
+  start_place?: string
   move_speed: number
   /** How much faster everyone moves on a road (1 to 4; absent: 1.5). */
   road_speed?: number
@@ -531,6 +537,34 @@ export interface GameFile {
   crops?: CropDef[]
   plots?: PlotRules
   dungeons?: DungeonDef[]
+}
+
+/** How a boss fights (Archetype.boss). Phases are in order of `below`, highest first. */
+export interface BossFile {
+  phases: BossPhase[]
+  /** Seconds into a fight it enrages (0, never): its blows then count enrage_might times. */
+  enrage_secs?: number
+  enrage_might?: number
+  /** A banner for those fighting it when it falls. */
+  defeat?: string
+}
+export interface BossPhase {
+  /** Health percent this phase begins at (100 for the first). */
+  below: number
+  say?: string
+  moves: BossMove[]
+  /** Bots that come to its side as the phase begins. */
+  adds?: { bot: string; count: number }[]
+}
+export type MoveAt = 'tank' | 'random' | 'farthest' | 'self'
+/** An action used every so often; with warn_secs the spot is marked first and can be walked out of. */
+export interface BossMove {
+  action: string
+  every_secs: number
+  warn_secs?: number
+  at?: MoveAt
+  radius?: number
+  say?: string
 }
 
 export interface Perf {
@@ -732,6 +766,8 @@ export interface Rules {
   /** How long an auction listing stays up, in hours. */
   listing_hours: number
   listings_per_seller: number
+  /** Most letters waiting for one character. */
+  mail_waiting: number
   /** What falling costs: a share (%) of the experience earned into the level, of the coin in the bag (gone), the
    *  chance (%) each other bag stack is left where they fell, and seconds before rising. All 0 by default. */
   fall_xp_loss_pct: number
@@ -789,6 +825,7 @@ export const RULE_DEFAULTS: Rules = {
   market_reach: 16,
   listing_hours: 48,
   listings_per_seller: 12,
+  mail_waiting: 50,
   fall_xp_loss_pct: 0,
   fall_coin_loss_pct: 0,
   fall_drop_pct: 0,

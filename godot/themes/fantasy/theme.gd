@@ -163,6 +163,8 @@ uniform float rocky = 0.0; // 1 on crags: rock except in the flattest hollows
 uniform sampler2D land_map : filter_linear, repeat_disable; // land.gd ground_map: r road, g paved or field, b wet, a woodland
 uniform vec2 land_origin;
 uniform float land_on = 0.0;
+uniform sampler2D field_map : filter_nearest, repeat_disable; // land.gd field_map: r crop (times 40), g furrow angle
+uniform float field_on = 0.0;
 uniform float sea_level = -1000.0;
 global uniform float world_wet;     // life.gd: how wet the ground is after rain
 global uniform float world_puddles; // standing water, which lasts longer
@@ -218,6 +220,36 @@ void fragment() {
 	crop = mix(crop, crop * vec3(0.85, 0.9, 0.92) + vec3(0.04), cold);
 	crop *= 0.8 + 0.28 * (0.5 + 0.5 * sin(across * 3.4)) + 0.08 * (n(q * 1.3) - 0.5);
 	c = mix(c, crop, smoothstep(0.05, 0.35, field + 0.1 * (n(q * 0.9) - 0.5)) * step(0.02, field));
+	// A world file's own fields: each its crop, furrowed (or mown) along its own angle.
+	if (field_on > 0.5) {
+		vec2 fm = texture(field_map, (q - land_origin) / 128.0).rg;
+		float kind = floor(fm.r * 255.0 / 40.0 + 0.5);
+		if (kind > 0.5) {
+			float ang = fm.g * 3.14159265;
+			float across = dot(q, vec2(-sin(ang), cos(ang)));
+			float rows = 0.5 + 0.5 * sin(across * 3.4);
+			vec3 fc;
+			if (kind < 1.5) { // pasture: lush, grazed in patches
+				fc = mix(vec3(0.30, 0.52, 0.19), vec3(0.40, 0.60, 0.22), smoothstep(0.3, 0.7, fbm(q / 9.0 + 4.0)));
+				fc = mix(fc, vec3(0.45, 0.50, 0.26), smoothstep(0.6, 0.8, fbm(q / 4.0)) * 0.3);
+			} else if (kind < 2.5) { // hay: mown in broad stripes
+				fc = mix(vec3(0.52, 0.60, 0.27), vec3(0.62, 0.64, 0.32), 0.5 + 0.5 * sin(across * 0.45));
+			} else if (kind < 3.5) { // wheat
+				fc = vec3(0.80, 0.67, 0.33) * (0.82 + 0.25 * rows);
+			} else if (kind < 4.5) { // barley
+				fc = vec3(0.71, 0.67, 0.39) * (0.84 + 0.22 * rows);
+			} else if (kind < 5.5) { // oats
+				fc = vec3(0.62, 0.64, 0.38) * (0.84 + 0.22 * rows);
+			} else { // potatoes: ridged earth with green tops
+				float ridge = 0.5 + 0.5 * sin(across * 2.6);
+				fc = mix(vec3(0.40, 0.31, 0.21), vec3(0.30, 0.47, 0.19), smoothstep(0.45, 0.7, ridge + 0.2 * (n(q * 2.0) - 0.5)));
+			}
+			fc = mix(fc, mix(vec3(0.62, 0.52, 0.24), vec3(0.50, 0.40, 0.24), step(2.5, kind)), world_autumn * 0.5);
+			fc = mix(fc, fc * vec3(0.85, 0.9, 0.92) + vec3(0.04), cold);
+			fc *= 0.94 + 0.12 * n(q * 1.3);
+			c = mix(c, fc, 0.94);
+		}
+	}
 	// Steep ground is bare rock.
 	float slope = 1.0 - clamp(wn.y, 0.0, 1.0);
 	vec3 rock = vec3(0.47, 0.45, 0.42) * (0.8 + 0.4 * fbm(q * 0.25 + wp.y * 0.1));
@@ -437,12 +469,17 @@ func ground_material() -> Material:
 ## land.gd draws for it (refreshed by build_cell once the cell's trees have streamed in).
 func ground_material_at(cx: int, cy: int) -> Material:
 	var map := land.ground_map(cx, cy)
-	if map.is_empty():
+	var fields := land.field_map(cx, cy)
+	if map.is_empty() and fields.is_empty():
 		return terrain_mat
 	var m := terrain_mat.duplicate() as ShaderMaterial
-	m.set_shader_parameter("land_map", ImageTexture.create_from_image(Image.create_from_data(land.MAP_N, land.MAP_N, false, Image.FORMAT_RGBA8, map)))
 	m.set_shader_parameter("land_origin", Vector2(cx * world.CELL, cy * world.CELL))
-	m.set_shader_parameter("land_on", 1.0)
+	if not map.is_empty():
+		m.set_shader_parameter("land_map", ImageTexture.create_from_image(Image.create_from_data(land.MAP_N, land.MAP_N, false, Image.FORMAT_RGBA8, map)))
+		m.set_shader_parameter("land_on", 1.0)
+	if not fields.is_empty():
+		m.set_shader_parameter("field_map", ImageTexture.create_from_image(Image.create_from_data(land.MAP_N, land.MAP_N, false, Image.FORMAT_RG8, fields)))
+		m.set_shader_parameter("field_on", 1.0)
 	return m
 
 ## Building blocks from the Medieval Village textures, tiled so each block shows one texture repeat: the eight
@@ -1087,6 +1124,8 @@ func _fences(cx: int, cy: int, put: Callable) -> void:
 	for f in land.fields_of_cell(cx, cy):
 		var r: Rect2 = f[0]
 		var side: int = f[2]
+		if side < 0:
+			continue # a world file's field: hedgerows bound it, not fences
 		var c := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
 		var edges := {0: [c[0], c[1]], 1: [c[1], c[2]], 2: [c[2], c[3]], 3: [c[3], c[0]]} # N, E, S, W
 		var open: int = [2, 0, 1, 3][side] # the edge facing the house: a north field opens south, and so on

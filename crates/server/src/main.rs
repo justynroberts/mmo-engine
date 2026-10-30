@@ -4,6 +4,7 @@
 //! rate, build interest-filtered delta snapshots, send them in batches.
 
 mod blocks;
+mod boss;
 mod botdir;
 mod ctl;
 mod director;
@@ -13,6 +14,7 @@ mod hail;
 mod homes;
 mod items;
 mod life;
+mod mail;
 mod market;
 mod io;
 mod nav;

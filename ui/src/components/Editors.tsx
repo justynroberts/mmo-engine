@@ -138,7 +138,7 @@ const RULE_FIELDS: [string, [keyof Rules, string][]][] = [
   ['Town life', [['brawl_pct', 'Brawl % a minute'], ['lift_pct', 'Cutpurse % a second'], ['inn_pct', 'To the inn % an evening'], ['newcomer_secs', 'Newcomer after (s, 0 = none)'], ['plea_pct', 'Asks for help % a minute']]],
   ['Seasons', [['season_days', 'Days a season (0 = none)'], ['season_shift', 'Shift the year (days)']]],
   ['Company', [['party_size', 'Party size'], ['party_share_reach', 'Party XP reach'], ['quest_share_reach', 'Quest share reach'], ['guild_size', 'Guild size']]],
-  ['Trade', [['trade_reach', 'Trade reach'], ['trade_break', 'Trade breaks at'], ['listing_hours', 'Listing hours'], ['listings_per_seller', 'Listings each']]],
+  ['Trade', [['trade_reach', 'Trade reach'], ['trade_break', 'Trade breaks at'], ['listing_hours', 'Listing hours'], ['listings_per_seller', 'Listings each'], ['mail_waiting', 'Letters waiting']]],
 ]
 
 function LevelRewards({ game, setGame }: Edit) {
@@ -450,6 +450,7 @@ export function ActionsEditor({ game, setGame }: Edit) {
           </div>
           <div className="grid grid-cols-4 gap-x-2 pt-1">
             <NumField label="Learnt at level" value={a.level ?? 1} onCommit={(n) => patch(i, { level: Math.min(100, Math.max(1, Math.round(n))) })} />
+            <Toggle label="Taunts a boss" checked={!!a.taunt} onChange={(on) => patch(i, { taunt: on || undefined })} />
           </div>
           <div className="pt-1">
             <p className="lbl">Needs</p>

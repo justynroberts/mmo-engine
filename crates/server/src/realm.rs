@@ -89,6 +89,9 @@ pub struct Saved {
     pub post: Vec<crate::market::Post>,
     #[serde(default)]
     pub next_listing: u32,
+    /// Letters waiting to be read (`mail.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mail: Vec<crate::mail::Letter>,
 }
 
 /// One party's copy of a dungeon.
@@ -424,6 +427,7 @@ impl Sim {
             listings: self.market.listings.clone(),
             post: self.market.post.clone(),
             next_listing: self.market.next_id,
+            mail: self.market.mail.clone(),
         }
     }
 
@@ -433,6 +437,7 @@ impl Sim {
         self.rs.plots = saved.plots;
         self.market.listings = saved.listings;
         self.market.post = saved.post;
+        self.market.mail = saved.mail;
         self.market.next_id = saved.next_listing.max(self.market.listings.iter().map(|l| l.id + 1).max().unwrap_or(1)).max(1);
         self.rs.crops.clear();
         for c in saved.crops {

@@ -26,6 +26,7 @@ import {
   reorderRules,
   updateRule,
 } from '../gameEdit'
+import { BossSection } from './BossSection'
 import { Empty, LF, NumField, SelectField, Strip, TextField, Toggle } from './Fields'
 
 export type Tool = 'select' | 'place' | 'route' | 'wall' | 'spawn'
@@ -753,6 +754,7 @@ export function Builder(p: Props) {
         <>
           <BotSection game={game} setGame={setGame} arch={arch} a={a} />
           <RuleStack game={game} setGame={setGame} arch={arch} a={a} />
+          <BossSection game={game} setGame={setGame} arch={arch} a={a} />
         </>
       ) : (
         <Empty>Add a bot type in the Bots tab first.</Empty>

@@ -54,6 +54,8 @@ pub struct ActionDef {
     pub lift: f32,
     /// The level a player must be to use it.
     pub level: u8,
+    /// Puts the user at the top of a boss's threat.
+    pub taunt: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +140,7 @@ impl Defs {
             desc: String::new(),
             lift: 0.0,
             level: 0,
+            taunt: false,
         }];
         let replicated = attrs
             .iter()

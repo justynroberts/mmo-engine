@@ -13,6 +13,7 @@ var rivers: Array = []           # [{half_width, pts: [[x, y, level], ...]}]
 var lakes: Array = []            # [{b, level}]
 var roads: Array = []            # [{half_width, pts: [[x, y], ...]}]
 var has_sea := false             # land with a coast: open sea round it at sea_level
+var farms := false               # the file lays out its own fields (objects of type "field"); a theme draws those
 var sea_level := 0.0
 var _road_segs := {}             # cell key -> [[ax, ay, bx, by, half_width], ...] of the road segments reaching into it
 var has_heights := false
@@ -44,6 +45,7 @@ static func from_file(text: String) -> RefCounted:
 		w.has_sea = true
 		w.sea_level = float(water["sea"].get("level", 0.0))
 	w.roads = d.get("roads", [])
+	w.farms = bool(d.get("farms", false))
 	w._index_roads()
 	var h: Dictionary = d.get("heights", {})
 	if h.has("u16le"):
@@ -164,6 +166,12 @@ func drop_points(tx: int, ty: int) -> Array:
 
 func has_points(tx: int, ty: int) -> bool:
 	return _point_tiles.has(key(tx, ty))
+
+## Whether a cell's point objects are all here: always, for a world read whole; once its tile is in, when streamed.
+func points_in(cx: int, cy: int) -> bool:
+	if _point_tiles.is_empty() and _points.is_empty():
+		return true
+	return has_points(int(floor(cx * CELL / TILE)), int(floor(cy * CELL / TILE)))
 
 ## How many point objects are in.
 func point_count() -> int:

@@ -73,6 +73,8 @@ pub struct Market {
     pub listings: Vec<Listing>,
     pub post: Vec<Post>,
     pub next_id: u32,
+    /// Letters waiting to be read (`mail.rs`).
+    pub mail: Vec<crate::mail::Letter>,
 }
 
 impl Market {

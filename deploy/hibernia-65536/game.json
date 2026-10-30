@@ -1,0 +1,9366 @@
+{
+ "move_speed": 12.0,
+ "road_speed": 1.25,
+ "entity_radius": 0.5,
+ "interest_radius": 128.0,
+ "max_visible": 52,
+ "attrs": [
+  {
+   "name": "health",
+   "min": 0.0,
+   "max": 300.0,
+   "default": 100.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 0.0,
+   "on_zero": "respawn"
+  },
+  {
+   "name": "energy",
+   "min": 0.0,
+   "max": 100.0,
+   "default": 100.0,
+   "bits": 8,
+   "replicated": false,
+   "regen_per_sec": 5.0,
+   "on_zero": "none"
+  },
+  {
+   "name": "airborne",
+   "min": 0.0,
+   "max": 100.0,
+   "default": 0.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 0.0,
+   "on_zero": "none"
+  },
+  {
+   "name": "mana",
+   "min": 0.0,
+   "max": 250.0,
+   "default": 100.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 4.0,
+   "on_zero": "none"
+  },
+  {
+   "name": "held",
+   "min": 0.0,
+   "max": 3.0,
+   "default": 0.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 0.0,
+   "on_zero": "none"
+  },
+  {
+   "name": "speed",
+   "min": 0.5,
+   "max": 12.0,
+   "default": 1.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 0.0,
+   "on_zero": "none"
+  },
+  {
+   "name": "level",
+   "min": 0.0,
+   "max": 100.0,
+   "default": 1.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 0.0,
+   "on_zero": "none"
+  },
+  {
+   "name": "class",
+   "min": 0.0,
+   "max": 15.0,
+   "default": 0.0,
+   "bits": 8,
+   "replicated": true,
+   "regen_per_sec": 0.0,
+   "on_zero": "none"
+  }
+ ],
+ "actions": [
+  {
+   "id": 1,
+   "name": "buille",
+   "cooldown_ticks": 10,
+   "range": 8.0,
+   "requires": {
+    "attr": "energy",
+    "min": 5.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -10.0
+    },
+    {
+     "to": "self",
+     "attr": "energy",
+     "delta": -5.0
+    }
+   ],
+   "desc": "A plain blow with whatever you hold."
+  },
+  {
+   "id": 2,
+   "name": "liathroid tine",
+   "cooldown_ticks": 40,
+   "range": 24.0,
+   "requires": {
+    "attr": "mana",
+    "min": 15.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -22.0
+    },
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -10.0,
+     "secs": 4.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -15.0
+    }
+   ],
+   "hits": "foes",
+   "fx": "fire",
+   "bolt": true,
+   "school": "black",
+   "desc": "Fireball: hurls fire at a foe for 22 damage, then it burns for 10 more over 4 seconds."
+  },
+  {
+   "id": 3,
+   "name": "sioc",
+   "cooldown_ticks": 50,
+   "range": 22.0,
+   "requires": {
+    "attr": "mana",
+    "min": 12.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -14.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -12.0
+    }
+   ],
+   "hits": "foes",
+   "hold": {
+    "kind": "root",
+    "secs": 3.0
+   },
+   "fx": "frost",
+   "bolt": true,
+   "school": "black",
+   "desc": "Frost: an icy bolt for 14 damage that roots the foe to the spot for 3 seconds.",
+   "level": 2
+  },
+  {
+   "id": 4,
+   "name": "tintreach",
+   "cooldown_ticks": 100,
+   "range": 20.0,
+   "requires": {
+    "attr": "mana",
+    "min": 25.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -18.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -25.0
+    }
+   ],
+   "area": 6.0,
+   "hits": "foes",
+   "hold": {
+    "kind": "stun",
+    "secs": 1.0
+   },
+   "fx": "shock",
+   "school": "black",
+   "desc": "Lightning: strikes a foe and everyone within 6 paces of it for 18, stunning them for a second.",
+   "level": 5
+  },
+  {
+   "id": 5,
+   "name": "mallacht",
+   "cooldown_ticks": 60,
+   "range": 24.0,
+   "requires": {
+    "attr": "mana",
+    "min": 10.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -30.0,
+     "secs": 10.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -10.0
+    }
+   ],
+   "hits": "foes",
+   "fx": "shadow",
+   "school": "black",
+   "desc": "Curse: a slow rot that drains 30 health from a foe over 10 seconds.",
+   "level": 4
+  },
+  {
+   "id": 6,
+   "name": "sui fola",
+   "cooldown_ticks": 60,
+   "range": 16.0,
+   "requires": {
+    "attr": "mana",
+    "min": 15.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -15.0
+    },
+    {
+     "to": "self",
+     "attr": "health",
+     "delta": 12.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -15.0
+    }
+   ],
+   "hits": "foes",
+   "fx": "blood",
+   "bolt": true,
+   "school": "black",
+   "desc": "Blood drain: rips 15 health from a foe and heals you for 12.",
+   "level": 3
+  },
+  {
+   "id": 7,
+   "name": "ceo nimhe",
+   "cooldown_ticks": 160,
+   "range": 0.0,
+   "requires": {
+    "attr": "mana",
+    "min": 30.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": -24.0,
+     "secs": 6.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -30.0
+    }
+   ],
+   "aim": "self",
+   "area": 9.0,
+   "hits": "foes",
+   "fx": "poison",
+   "school": "black",
+   "desc": "Poison cloud: everything hostile within 9 paces of you takes 24 damage over 6 seconds.",
+   "level": 8
+  },
+  {
+   "id": 8,
+   "name": "codladh",
+   "cooldown_ticks": 200,
+   "range": 24.0,
+   "requires": {
+    "attr": "mana",
+    "min": 20.0
+   },
+   "effects": [
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -20.0
+    }
+   ],
+   "hits": "foes",
+   "hold": {
+    "kind": "mez",
+    "secs": 8.0
+   },
+   "fx": "mind",
+   "school": "black",
+   "desc": "Sleep: the foe cannot move or act for 8 seconds, until something hurts it.",
+   "level": 6
+  },
+  {
+   "id": 9,
+   "name": "leigheas",
+   "cooldown_ticks": 60,
+   "range": 24.0,
+   "requires": {
+    "attr": "mana",
+    "min": 20.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": 35.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -20.0
+    }
+   ],
+   "hits": "friends",
+   "fx": "holy",
+   "school": "white",
+   "desc": "Heal: mends 35 health on the friend you have targeted, or on you."
+  },
+  {
+   "id": 10,
+   "name": "athbheochan",
+   "cooldown_ticks": 100,
+   "range": 24.0,
+   "requires": {
+    "attr": "mana",
+    "min": 15.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": 40.0,
+     "secs": 10.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -15.0
+    }
+   ],
+   "hits": "friends",
+   "fx": "nature",
+   "school": "white",
+   "desc": "Renewal: restores 40 health over 10 seconds to a friend, or to you.",
+   "level": 5
+  },
+  {
+   "id": 11,
+   "name": "beannacht",
+   "cooldown_ticks": 200,
+   "range": 0.0,
+   "requires": {
+    "attr": "mana",
+    "min": 35.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "health",
+     "delta": 20.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -35.0
+    }
+   ],
+   "aim": "self",
+   "area": 12.0,
+   "hits": "friends",
+   "fx": "holy",
+   "school": "white",
+   "desc": "Blessing: heals you and every player within 12 paces for 20.",
+   "level": 10
+  },
+  {
+   "id": 12,
+   "name": "luas",
+   "cooldown_ticks": 400,
+   "range": 0.0,
+   "requires": {
+    "attr": "mana",
+    "min": 20.0
+   },
+   "effects": [
+    {
+     "to": "target",
+     "attr": "speed",
+     "delta": 0.6,
+     "lasts": 10.0
+    },
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -20.0
+    }
+   ],
+   "aim": "self",
+   "hits": "friends",
+   "fx": "nature",
+   "school": "white",
+   "desc": "Swiftness: you run 60% faster for 10 seconds.",
+   "level": 3
+  },
+  {
+   "id": 13,
+   "name": "foluain",
+   "cooldown_ticks": 300,
+   "range": 0.0,
+   "requires": {
+    "attr": "mana",
+    "min": 25.0
+   },
+   "effects": [
+    {
+     "to": "self",
+     "attr": "mana",
+     "delta": -25.0
+    }
+   ],
+   "aim": "self",
+   "hits": "friends",
+   "fx": "arcane",
+   "school": "white",
+   "desc": "Levitate: you float above the ground for 6 seconds; blows and spells on the ground pass under you.",
+   "lift": 6.0,
+   "level": 7
+  }
+ ],
+ "archetypes": [
+  {
+   "name": "laoch",
+   "title": "Arms Trader",
+   "color": "#3f6e5a",
+   "count": 8,
+   "behaviour": "wander",
+   "speed_mult": 0.7,
+   "sight": 45.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 40.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 40.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "God be with you, stranger.",
+       "Quiet night. Too quiet.",
+       "Keep your blade sheathed in the town."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "patrol",
+      "route": "timpeall an chaisleain"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 25.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "shop": [
+    {
+     "item": "claiomh",
+     "price": 22
+    },
+    {
+     "item": "tua chatha",
+     "price": 50
+    },
+    {
+     "item": "luireach",
+     "price": 40
+    }
+   ],
+   "names": [
+    "Conor",
+    "Fergus",
+    "Brian",
+    "Niall",
+    "Donal",
+    "Rory",
+    "Cormac",
+    "Dermot"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "tuathanach",
+   "title": "Seed Trader",
+   "color": "#8d6e4a",
+   "count": 16,
+   "behaviour": "wander",
+   "speed_mult": 0.6,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "tine",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Up with the cockerel again.",
+       "A fine morning for the fields."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Soaked through, and the hay still out!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "The oats are coming on.",
+       "Another row and I'll rest.",
+       "Mind the furrows."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "God and Mary be with you.",
+       "Rain's good for the barley, they say.",
+       "Mind where you step, the cows were through here.",
+       "They say Norse longships were seen off Loch Garman.",
+       "Something stirs under Brú na Bóinne at night.",
+       "The road south past Cill Dara is no place to be alone."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 40.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "shop": [
+    {
+     "item": "siol cruithneachta",
+     "price": 1
+    },
+    {
+     "item": "siol coirce",
+     "price": 1
+    },
+    {
+     "item": "siol meacan",
+     "price": 1
+    },
+    {
+     "item": "siol cabaiste",
+     "price": 2
+    }
+   ],
+   "names": [
+    "Patrick",
+    "Mary",
+    "Michael",
+    "Bridget",
+    "John",
+    "Kathleen",
+    "Thomas",
+    "Margaret",
+    "James",
+    "Nora",
+    "Hugh",
+    "Ellen",
+    "Owen",
+    "Anne",
+    "Daniel",
+    "Rose"
+   ],
+   "work": "fields",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "ceannai",
+   "title": "Trader",
+   "color": "#b5651d",
+   "count": 5,
+   "behaviour": "wander",
+   "speed_mult": 0.4,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "tine",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Fresh from the oven this morning!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Come in out of the wet and buy something!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Fresh bread! Fair prices!",
+       "Take a look, no harm in looking.",
+       "Wool and cloth, best in the town!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Fine goods! Bread and mead!",
+       "Best bread in Áth Cliath, and that's no lie.",
+       "They say Norse longships were seen off Loch Garman.",
+       "Something stirs under Brú na Bóinne at night.",
+       "The road south past Cill Dara is no place to be alone."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 3
+    },
+    {
+     "item": "miodh",
+     "chance_pct": 30.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "shop": [
+    {
+     "item": "aran",
+     "price": 2
+    },
+    {
+     "item": "miodh",
+     "price": 3
+    },
+    {
+     "item": "deoch leighis",
+     "price": 6
+    },
+    {
+     "item": "claiomh",
+     "price": 25
+    },
+    {
+     "item": "luireach",
+     "price": 45
+    },
+    {
+     "item": "capall",
+     "price": 60
+    },
+    {
+     "item": "siol cruithneachta",
+     "price": 1
+    },
+    {
+     "item": "siol coirce",
+     "price": 1
+    },
+    {
+     "item": "siol meacan",
+     "price": 1
+    },
+    {
+     "item": "siol cabaiste",
+     "price": 2
+    }
+   ],
+   "names": [
+    "Martin",
+    "Agnes",
+    "Peter",
+    "Alice",
+    "Richard"
+   ],
+   "work": "square",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "aoire",
+   "title": "Shepherd",
+   "color": "#9c8a5a",
+   "count": 5,
+   "behaviour": "wander",
+   "speed_mult": 0.5,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "kildare",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "tine",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Early start with this lot."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Wet wool, the smell of it!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Easy now, easy.",
+       "One's always straying.",
+       "Good grazing up this way."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "The sheep know the way home better than I do.",
+       "God be with you.",
+       "They say Norse longships were seen off Loch Garman.",
+       "Something stirs under Brú na Bóinne at night.",
+       "The road south past Cill Dara is no place to be alone."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 50.0,
+     "min": 1,
+     "max": 2
+    }
+   ],
+   "names": [
+    "Colm",
+    "Jane",
+    "Kevin",
+    "Sarah",
+    "Liam"
+   ],
+   "work": "fields",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "iascaire",
+   "title": "Fish Trader",
+   "color": "#5b8fa8",
+   "count": 5,
+   "behaviour": "wander",
+   "speed_mult": 0.5,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "wexford",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "tine",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Out before the tide turns."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "No fishing in this, not today."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "The tide's turning.",
+       "Nets won't mend themselves."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "The catch is thin this week.",
+       "God be with you, friend.",
+       "They say Norse longships were seen off Loch Garman.",
+       "Something stirs under Brú na Bóinne at night.",
+       "The road south past Cill Dara is no place to be alone."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 40.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "shop": [
+    {
+     "item": "aran",
+     "price": 1
+    },
+    {
+     "item": "miodh",
+     "price": 2
+    }
+   ],
+   "names": [
+    "Sean",
+    "Grace",
+    "Tom",
+    "Molly",
+    "Ned"
+   ],
+   "work": "water",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "manach",
+   "title": "Monk",
+   "color": "#d8d0bc",
+   "count": 5,
+   "behaviour": "wander",
+   "speed_mult": 0.4,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "clonmacnoise",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "tine",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Matins was cold this morning."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Even the rain is a blessing, some say."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "God's blessing on you.",
+       "Peace be with you, traveller.",
+       "Wolves in Coill na Mac Tíre, hungrier every winter.",
+       "There's a fair in Áth Cliath when the week turns.",
+       "The monks at Cluain Mhic Nóis will bless you for a kindness."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "deoch leighis",
+     "chance_pct": 40.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "names": [
+    "Brother Aidan",
+    "Brother Kieran",
+    "Brother Finian",
+    "Brother Columba",
+    "Brother Brendan"
+   ]
+  },
+  {
+   "name": "fia",
+   "title": "Deer",
+   "color": "#a0522d",
+   "count": 480,
+   "behaviour": "wander",
+   "speed_mult": 1.0,
+   "sight": 40.0,
+   "attack": null,
+   "attrs": {},
+   "home": null,
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "any",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 30.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 8,
+   "level": 1
+  },
+  {
+   "name": "mac tire",
+   "title": "Wolf",
+   "color": "#6b6b6b",
+   "count": 56,
+   "behaviour": "chase",
+   "speed_mult": 1.1,
+   "sight": 55.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "coill na mac tire",
+   "rules": [],
+   "drops": [
+    {
+     "item": "craiceann mic tire",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 20,
+   "level": 2,
+   "ambush": true
+  },
+  {
+   "name": "dibheirgeach",
+   "title": "Brigand",
+   "color": "#5d4037",
+   "count": 8,
+   "behaviour": "chase",
+   "speed_mult": 1.0,
+   "sight": 45.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "dibheirgigh",
+   "rules": [],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 70.0,
+     "min": 1,
+     "max": 3
+    },
+    {
+     "item": "aran",
+     "chance_pct": 30.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 35,
+   "level": 4,
+   "ambush": true
+  },
+  {
+   "name": "lochlannach",
+   "title": "Viking Raider",
+   "color": "#8a9aa8",
+   "count": 0,
+   "behaviour": "chase",
+   "speed_mult": 1.05,
+   "sight": 55.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": null,
+   "rules": [],
+   "drops": [
+    {
+     "item": "clogad lochlannach",
+     "chance_pct": 50.0,
+     "min": 1,
+     "max": 1
+    },
+    {
+     "item": "pingin airgid",
+     "chance_pct": 80.0,
+     "min": 2,
+     "max": 5
+    },
+    {
+     "item": "tua chatha",
+     "chance_pct": 10.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 60,
+   "level": 8
+  },
+  {
+   "name": "sluagh",
+   "title": "Restless Dead",
+   "color": "#7fbf7f",
+   "count": 6,
+   "behaviour": "idle",
+   "speed_mult": 0.8,
+   "sight": 30.0,
+   "attack": "mallacht",
+   "attrs": {},
+   "home": "bru na boinne",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "chase"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "miodh",
+     "chance_pct": 25.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 50,
+   "level": 6,
+   "ambush": true
+  },
+  {
+   "name": "crom dubh",
+   "title": "Crom Dubh",
+   "color": "#3a2a4a",
+   "count": 0,
+   "behaviour": "chase",
+   "speed_mult": 0.9,
+   "sight": 60.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "bru na boinne",
+   "rules": [],
+   "drops": [
+    {
+     "item": "fainne oir",
+     "chance_pct": 100.0,
+     "min": 1,
+     "max": 1
+    },
+    {
+     "item": "deoch leighis",
+     "chance_pct": 100.0,
+     "min": 1,
+     "max": 2
+    }
+   ],
+   "xp": 400,
+   "level": 12
+  },
+  {
+   "name": "ceannai taistil",
+   "title": "Travelling Merchant",
+   "color": "#b0803a",
+   "count": 2,
+   "behaviour": "wander",
+   "speed_mult": 0.55,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 20.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 16.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Gee up, there.",
+       "Wares from Áth Cliath for Loch Garman.",
+       "Bad stretch of road, this, past Cill Dara.",
+       "Fair roads to you, traveller."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "patrol",
+      "route": "bothar loch garman"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 100.0,
+     "min": 1,
+     "max": 3
+    }
+   ],
+   "names": [
+    "Simon",
+    "Henry"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "fear cairte",
+   "title": "Carter",
+   "color": "#a07040",
+   "count": 2,
+   "behaviour": "wander",
+   "speed_mult": 0.5,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 20.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 16.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Barley for Cill Dara, and back with wool.",
+       "This wheel wants mending.",
+       "God be with you."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "patrol",
+      "route": "bothar chill dara"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 80.0,
+     "min": 1,
+     "max": 2
+    }
+   ],
+   "names": [
+    "Barney",
+    "Francis"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "oilithreach",
+   "title": "Pilgrim",
+   "color": "#9a9aa8",
+   "count": 3,
+   "behaviour": "wander",
+   "speed_mult": 0.45,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "To Teamhair, to see where the kings were crowned.",
+       "Bless the road and all on it.",
+       "My feet will not forgive me."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "patrol",
+      "route": "bothar na teamhrach"
+     }
+    }
+   ],
+   "names": [
+    "Edmund",
+    "Joan",
+    "Walter"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "oilithreach cluana",
+   "title": "Clonmacnoise Pilgrim",
+   "color": "#a8a8b4",
+   "count": 2,
+   "behaviour": "wander",
+   "speed_mult": 0.45,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "athlone",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "To Cluain Mhic Nóis, God willing.",
+       "A blessing on you, friend."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "patrol",
+      "route": "bothar chluain"
+     }
+    }
+   ],
+   "names": [
+    "Matthew",
+    "Cecily"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "maor bothair",
+   "title": "Road Warden",
+   "color": "#5b7aa0",
+   "count": 2,
+   "behaviour": "wander",
+   "speed_mult": 0.7,
+   "sight": 30.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Keep to the road and you'll keep your purse.",
+       "Seen any bandits about?"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "patrol",
+      "route": "bothar dhroichead atha"
+     }
+    }
+   ],
+   "level": 6,
+   "names": [
+    "William",
+    "Robert"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "meirleach",
+   "title": "Robber",
+   "color": "#5a4632",
+   "count": 4,
+   "behaviour": "idle",
+   "speed_mult": 1.0,
+   "sight": 35.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "bealach na gcreach",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "ceannai taistil",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "fear cairte",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "oilithreach",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 18.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "goto",
+      "place": "bealach na gcreach"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 4
+    }
+   ],
+   "xp": 30,
+   "level": 4
+  },
+  {
+   "name": "tine",
+   "title": "Fire",
+   "color": "#ff7a1a",
+   "count": 0,
+   "behaviour": "idle",
+   "speed_mult": 0.0,
+   "sight": 1.0,
+   "attack": null,
+   "attrs": {
+    "health": 60.0
+   },
+   "home": null,
+   "rules": [],
+   "xp": 5,
+   "lasts_secs": 2400
+  },
+  {
+   "name": "ceoltoir",
+   "title": "Musician",
+   "color": "#c8a0e0",
+   "count": 0,
+   "behaviour": "wander",
+   "speed_mult": 0.3,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 20.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "♪ Oh-ro, welcome home! ♪",
+       "♪ Walk on, my love... ♪",
+       "A tune for a penny, a jig for two!",
+       "♪ Were you at the Rock? ♪"
+      ]
+     }
+    }
+   ],
+   "lasts_secs": 1800,
+   "names": [
+    "Turlough",
+    "Eileen"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "ceannai aonaigh",
+   "title": "Fair Trader",
+   "color": "#d0a040",
+   "count": 0,
+   "behaviour": "wander",
+   "speed_mult": 0.2,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Fair prices on fair day!",
+       "Bread, mead, and a cure for what ails you!",
+       "Fresh loaves! Who'll have a loaf?",
+       "Mead by the cup, mead by the jug!",
+       "Swords from Dublin's best smith, come and see!",
+       "Seed for the spring sowing, a penny a bag!"
+      ]
+     }
+    }
+   ],
+   "shop": [
+    {
+     "item": "aran",
+     "price": 2
+    },
+    {
+     "item": "miodh",
+     "price": 3
+    },
+    {
+     "item": "deoch leighis",
+     "price": 6
+    },
+    {
+     "item": "claiomh",
+     "price": 25
+    },
+    {
+     "item": "luireach",
+     "price": 45
+    },
+    {
+     "item": "capall",
+     "price": 60
+    },
+    {
+     "item": "deoch leighis",
+     "price": 5
+    },
+    {
+     "item": "siol cruithneachta",
+     "price": 1
+    },
+    {
+     "item": "siol coirce",
+     "price": 1
+    },
+    {
+     "item": "siol meacan",
+     "price": 1
+    },
+    {
+     "item": "siol cabaiste",
+     "price": 2
+    }
+   ],
+   "lasts_secs": 1800,
+   "names": [
+    "Kate",
+    "Jack",
+    "Moll"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "sluagh mairseala",
+   "title": "Marching Dead",
+   "color": "#3a3048",
+   "count": 0,
+   "behaviour": "idle",
+   "speed_mult": 0.7,
+   "sight": 30.0,
+   "attack": "mallacht",
+   "attrs": {},
+   "home": "bru na boinne",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 22.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "always"
+     },
+     "then": {
+      "kind": "goto",
+      "place": "kells"
+     }
+    }
+   ],
+   "xp": 60,
+   "level": 7,
+   "lasts_secs": 1200
+  },
+  {
+   "name": "mac tire ban",
+   "title": "White Wolf",
+   "color": "#dfe6ee",
+   "count": 40,
+   "behaviour": "chase",
+   "speed_mult": 1.15,
+   "sight": 55.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "an tuaisceart 3",
+   "rules": [],
+   "drops": [
+    {
+     "item": "craiceann mic tire",
+     "chance_pct": 70.0,
+     "min": 1,
+     "max": 2
+    }
+   ],
+   "xp": 28,
+   "level": 3
+  },
+  {
+   "name": "mac tire ban thiar",
+   "title": "White Wolf",
+   "color": "#dfe6ee",
+   "count": 32,
+   "behaviour": "chase",
+   "speed_mult": 1.15,
+   "sight": 55.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "an tuaisceart 1",
+   "rules": [],
+   "drops": [
+    {
+     "item": "craiceann mic tire",
+     "chance_pct": 70.0,
+     "min": 1,
+     "max": 2
+    }
+   ],
+   "xp": 28,
+   "level": 3
+  },
+  {
+   "name": "villager",
+   "title": "Villager",
+   "color": "#7a6a55",
+   "count": 111,
+   "behaviour": "wander",
+   "speed_mult": 0.6,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "dibheirgeach",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "villager",
+      "within": 6.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Did you hear about the miller's daughter?",
+       "Prices at the market are a scandal.",
+       "My back's not what it was.",
+       "They say there's weather coming.",
+       "Have you seen my goat anywhere?",
+       "The priest went on and on this Sunday.",
+       "I told him, I said, not in my field!",
+       "Your mother's well, I hope?",
+       "Another wedding in the spring, they say.",
+       "That roof of mine leaks like a sieve."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Morning! Another day, another penny.",
+       "Cold one this morning.",
+       "The well's low again.",
+       "Off to market, then."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Getting dark. Best be indoors soon.",
+       "Wolves will be about tonight.",
+       "Bar your door tonight, friend.",
+       "I don't go past the last house after dark."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Good day to you.",
+       "You're not from round here, are you?",
+       "Mind the wolves if you go out at night.",
+       "Sleeping rough? Build yourself a roof before dark.",
+       "The Watch keep the town safe at night.",
+       "Looking for work? Ask the traders."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 25.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "names": [
+    "Patrick",
+    "Mary",
+    "Michael",
+    "Bridget",
+    "John",
+    "Kathleen",
+    "Thomas",
+    "Margaret",
+    "James",
+    "Nora",
+    "Hugh",
+    "Ellen",
+    "Owen",
+    "Anne",
+    "Daniel",
+    "Rose",
+    "Brian",
+    "Sheila",
+    "Conor",
+    "Maeve",
+    "Dermot",
+    "Siobhan",
+    "Liam",
+    "Aoife",
+    "Sean",
+    "Grainne",
+    "Kevin",
+    "Deirdre",
+    "Martin",
+    "Fiona",
+    "Peter",
+    "Una",
+    "Francis",
+    "Sinead",
+    "Joseph",
+    "Orla",
+    "Denis",
+    "Roisin",
+    "Cormac",
+    "Eileen",
+    "Fergus",
+    "Brigid",
+    "Niall",
+    "Agnes",
+    "Ronan",
+    "Joan",
+    "Declan",
+    "Catherine",
+    "Aidan",
+    "Honora",
+    "Colm",
+    "Winifred",
+    "Eamon",
+    "Johanna",
+    "Ciaran",
+    "Alice",
+    "Donal",
+    "Ita",
+    "Brendan",
+    "Fionnuala",
+    "Cathal",
+    "Clodagh",
+    "Malachy",
+    "Niamh",
+    "Tadhg",
+    "Muireann",
+    "Ruairi",
+    "Eithne",
+    "Oisin",
+    "Sorcha",
+    "Lorcan",
+    "Aisling",
+    "Fintan",
+    "Caoimhe",
+    "Tomas",
+    "Ailbhe",
+    "Diarmuid",
+    "Dervla",
+    "Seamus",
+    "Treasa"
+   ],
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone",
+    "dundalk",
+    "kells",
+    "clonmel",
+    "tralee",
+    "downpatrick",
+    "ennis",
+    "roscommon",
+    "kildare",
+    "carlow",
+    "monaghan",
+    "donegal",
+    "westport",
+    "lismore",
+    "coleraine",
+    "enniskillen",
+    "belfast",
+    "mullingar",
+    "thurles",
+    "killarney",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "ardee",
+    "listowel"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "farmer",
+   "title": "Farmer",
+   "color": "#6b7a3a",
+   "count": 48,
+   "behaviour": "wander",
+   "speed_mult": 0.55,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dundalk",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "dibheirgeach",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "villager",
+      "within": 6.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Crows at the seed again!",
+       "The oats are coming on well.",
+       "A dry week would do us good.",
+       "Have you a spare hand for the harvest?"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Cows won't milk themselves.",
+       "Up with the lark again."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Rain or no, the barley wants cutting.",
+       "Mind the furrows, friend.",
+       "Long day in the field.",
+       "The soil's good here, if you work it."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Fine land, this.",
+       "You'll want seed from the traders if you've a plot.",
+       "Don't go wandering the bog at night."
+      ]
+     }
+    }
+   ],
+   "names": [
+    "Seamus",
+    "Diarmuid",
+    "Tomas",
+    "Fintan",
+    "Lorcan",
+    "Oisin",
+    "Ruairi",
+    "Tadhg",
+    "Malachy",
+    "Cathal",
+    "Brendan",
+    "Donal",
+    "Ciaran",
+    "Eamon",
+    "Colm",
+    "Aidan",
+    "Declan",
+    "Ronan",
+    "Niall",
+    "Fergus",
+    "Cormac",
+    "Denis",
+    "Joseph",
+    "Francis",
+    "Peter",
+    "Martin",
+    "Kevin",
+    "Sean",
+    "Liam",
+    "Dermot",
+    "Conor",
+    "Brian",
+    "Daniel",
+    "Owen",
+    "Hugh",
+    "James",
+    "Thomas",
+    "John",
+    "Michael",
+    "Patrick"
+   ],
+   "homes": [
+    "kells",
+    "clonmel",
+    "tralee",
+    "downpatrick",
+    "ennis",
+    "roscommon",
+    "kildare",
+    "carlow",
+    "monaghan",
+    "donegal",
+    "westport",
+    "lismore",
+    "coleraine",
+    "enniskillen",
+    "belfast",
+    "mullingar",
+    "thurles",
+    "killarney",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "ardee",
+    "listowel"
+   ],
+   "work": "fields",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "fisher",
+   "title": "Fisher",
+   "color": "#4a6a7a",
+   "count": 34,
+   "behaviour": "wander",
+   "speed_mult": 0.6,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "cork",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "dibheirgeach",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "villager",
+      "within": 6.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Fresh herring this morning!",
+       "Sea's rough today.",
+       "Nets to mend, always nets to mend."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Tide's right, I'm away.",
+       "Red sky this morning. Watch yourself."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Nets won't mend themselves.",
+       "The tide's turning.",
+       "Herring today, if we're lucky.",
+       "Mind the lines on the quay."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Never whistle on a boat.",
+       "Saw a seal take a whole salmon yesterday.",
+       "Fish is cheap at the quay today."
+      ]
+     }
+    }
+   ],
+   "names": [
+    "Treasa",
+    "Dervla",
+    "Ailbhe",
+    "Caoimhe",
+    "Aisling",
+    "Sorcha",
+    "Eithne",
+    "Muireann",
+    "Niamh",
+    "Clodagh",
+    "Fionnuala",
+    "Ita",
+    "Alice",
+    "Johanna",
+    "Winifred",
+    "Honora",
+    "Catherine",
+    "Joan",
+    "Agnes",
+    "Brigid",
+    "Patrick",
+    "Michael",
+    "John",
+    "Thomas",
+    "James",
+    "Hugh",
+    "Owen",
+    "Daniel",
+    "Brian",
+    "Conor",
+    "Dermot",
+    "Liam",
+    "Sean",
+    "Kevin",
+    "Martin",
+    "Peter",
+    "Francis",
+    "Joseph",
+    "Denis",
+    "Cormac"
+   ],
+   "homes": [
+    "galway",
+    "wexford",
+    "waterford",
+    "drogheda",
+    "derry",
+    "sligo",
+    "dundalk",
+    "tralee",
+    "downpatrick",
+    "westport",
+    "coleraine",
+    "belfast",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "dublin"
+   ],
+   "work": "water",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "child",
+   "title": "Child",
+   "color": "#a08060",
+   "count": 13,
+   "behaviour": "wander",
+   "speed_mult": 0.9,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "dibheirgeach",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "child",
+      "within": 8.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Tag! You're it!",
+       "Race you to the well!",
+       "I'm telling Mam!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Are you a knight?",
+       "Mam says I'm not to talk to strangers.",
+       "I saw a wolf once. Honest!",
+       "Have you got a penny?"
+      ]
+     }
+    }
+   ],
+   "names": [
+    "Paddy",
+    "Molly",
+    "Jimmy",
+    "Katie",
+    "Mick",
+    "Nell",
+    "Tommy",
+    "Biddy",
+    "Johnny",
+    "Peggy",
+    "Danny",
+    "Nancy",
+    "Seanie",
+    "Maggie",
+    "Hughie",
+    "Annie"
+   ],
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone"
+   ],
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ],
+   "work": "play"
+  },
+  {
+   "name": "watchman",
+   "title": "Watchman",
+   "color": "#5a5a6a",
+   "count": 26,
+   "behaviour": "wander",
+   "speed_mult": 0.7,
+   "sight": 40.0,
+   "attack": "buille",
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 40.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "dibheirgeach",
+      "within": 40.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh",
+      "within": 40.0
+     },
+     "then": {
+      "kind": "attack"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "All's well!",
+       "Keep to the streets tonight.",
+       "Who goes there? Ah, it's you.",
+       "Lantern's low. Long night."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Move along, now.",
+       "Trouble? Come to the Watch.",
+       "Wolves come close to the walls at night."
+      ]
+     }
+    }
+   ],
+   "names": [
+    "Dermot",
+    "Liam",
+    "Sean",
+    "Kevin",
+    "Martin",
+    "Peter",
+    "Francis",
+    "Joseph",
+    "Denis",
+    "Cormac",
+    "Fergus",
+    "Niall",
+    "Ronan",
+    "Declan",
+    "Aidan",
+    "Colm",
+    "Eamon",
+    "Ciaran",
+    "Donal",
+    "Brendan"
+   ],
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone"
+   ],
+   "work": "streets",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ]
+  },
+  {
+   "name": "gadai",
+   "color": "#4a4a52",
+   "count": 8,
+   "behaviour": "wander",
+   "speed_mult": 1.15,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "watchman",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Spare a penny, friend?",
+       "Lovely day for it, isn't it?",
+       "Mind how you go, now."
+      ]
+     }
+    }
+   ],
+   "names": [
+    "Ned",
+    "Kit",
+    "Moll",
+    "Dick",
+    "Nan",
+    "Jem",
+    "Bess",
+    "Davy",
+    "Peg",
+    "Tom",
+    "Sal",
+    "Rob"
+   ],
+   "homes": [
+    "cork",
+    "limerick",
+    "galway",
+    "waterford",
+    "wexford",
+    "kilkenny",
+    "drogheda"
+   ],
+   "title": "Cutpurse",
+   "work": "square",
+   "thief": true,
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ],
+   "respawn_secs": 120.0
+  },
+  {
+   "name": "madra",
+   "title": "Dog",
+   "color": "#8b6b4a",
+   "count": 30,
+   "behaviour": "wander",
+   "speed_mult": 1.15,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone",
+    "dundalk",
+    "kells",
+    "clonmel",
+    "tralee",
+    "downpatrick",
+    "ennis",
+    "roscommon",
+    "kildare",
+    "carlow",
+    "monaghan",
+    "donegal",
+    "westport",
+    "lismore",
+    "coleraine",
+    "enniskillen",
+    "belfast",
+    "mullingar",
+    "thurles",
+    "killarney",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "ardee",
+    "listowel"
+   ],
+   "rules": [],
+   "pet": true,
+   "names": [
+    "Bran",
+    "Sceolan",
+    "Lúath",
+    "Cú",
+    "Faol",
+    "Rua",
+    "Dubh",
+    "Smut",
+    "Gearr",
+    "Bric",
+    "Fionn",
+    "Donn",
+    "Liath",
+    "Sionnach",
+    "Grá",
+    "Óg",
+    "Tóla",
+    "Ailbe",
+    "Fiach",
+    "Bláth",
+    "Caoimh",
+    "Púca",
+    "Gaoth",
+    "Réalt",
+    "Spota",
+    "Coileán",
+    "Ceann",
+    "Lasair",
+    "Scáth",
+    "Saoi"
+   ]
+  },
+  {
+   "name": "bo",
+   "title": "Cow",
+   "color": "#6b3f22",
+   "count": 0,
+   "behaviour": "idle",
+   "speed_mult": 0.6,
+   "sight": 10.0,
+   "attack": null,
+   "attrs": {},
+   "home": null,
+   "rules": [],
+   "stray": true,
+   "lasts_secs": 900
+  },
+  {
+   "name": "lochran",
+   "title": "Lantern",
+   "color": "#ffc070",
+   "count": 0,
+   "behaviour": "idle",
+   "speed_mult": 0.0,
+   "sight": 1.0,
+   "attack": null,
+   "attrs": {},
+   "home": null,
+   "rules": [],
+   "lasts_secs": 1800
+  },
+  {
+   "name": "dochtuir",
+   "title": "Plague Doctor",
+   "color": "#2f2a24",
+   "count": 0,
+   "behaviour": "wander",
+   "speed_mult": 0.8,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "dublin",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Keep your distance, friend. And your draughts handy.",
+       "Vinegar and prayer. It's all we have.",
+       "Bring me any you find with the fever.",
+       "Breathe through a cloth, if you must come near."
+      ]
+     }
+    }
+   ],
+   "lasts_secs": 1800,
+   "names": [
+    "Tomás",
+    "Seán",
+    "Peadar",
+    "Muiris"
+   ],
+   "surnames": [
+    "Ó Dálaigh",
+    "Mac Craith",
+    "Ó Néill"
+   ],
+   "healer": true
+  }
+ ],
+ "places": [
+  {
+   "name": "dublin",
+   "x": 46416.0,
+   "y": 31492.8,
+   "r": 125.0,
+   "title": "Áth Cliath",
+   "sound": "market",
+   "music": "city",
+   "safe": true
+  },
+  {
+   "name": "waterford",
+   "x": 40288.0,
+   "y": 48913.6,
+   "r": 105.0,
+   "title": "Port Láirge",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "cork",
+   "x": 28398.2,
+   "y": 54057.0,
+   "r": 105.0,
+   "title": "Corcaigh",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "limerick",
+   "x": 27138.0,
+   "y": 43290.0,
+   "r": 105.0,
+   "title": "Luimneach",
+   "sound": "town",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "galway",
+   "x": 23689.2,
+   "y": 34456.0,
+   "r": 105.0,
+   "title": "Gaillimh",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "wexford",
+   "x": 45899.4,
+   "y": 47778.0,
+   "r": 105.0,
+   "title": "Loch Garman",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "armagh",
+   "x": 43736.0,
+   "y": 19313.6,
+   "r": 105.0,
+   "title": "Ard Mhacha",
+   "sound": "town",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "derry",
+   "x": 38062.5,
+   "y": 10084.7,
+   "r": 105.0,
+   "title": "Doire",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "kilkenny",
+   "x": 38974.5,
+   "y": 43366.3,
+   "r": 105.0,
+   "title": "Cill Chainnigh",
+   "sound": "town",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "drogheda",
+   "x": 46438.8,
+   "y": 28278.8,
+   "r": 105.0,
+   "title": "Droichead Átha",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "sligo",
+   "x": 28662.4,
+   "y": 20446.4,
+   "r": 105.0,
+   "title": "Sligeach",
+   "sound": "sea",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "athlone",
+   "x": 33022.5,
+   "y": 32460.7,
+   "r": 105.0,
+   "title": "Áth Luain",
+   "sound": "town",
+   "music": "town",
+   "safe": true
+  },
+  {
+   "name": "dundalk",
+   "x": 45916.8,
+   "y": 24270.4,
+   "r": 70.0,
+   "title": "Dún Dealgan",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "kells",
+   "x": 41968.0,
+   "y": 28094.4,
+   "r": 70.0,
+   "title": "Ceanannas",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "clonmel",
+   "x": 35170.6,
+   "y": 47602.2,
+   "r": 70.0,
+   "title": "Cluain Meala",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "tralee",
+   "x": 17774.4,
+   "y": 48771.2,
+   "r": 70.0,
+   "title": "Trá Lí",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "downpatrick",
+   "x": 51444.8,
+   "y": 19596.8,
+   "r": 70.0,
+   "title": "Dún Pádraig",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "ennis",
+   "x": 24145.6,
+   "y": 40699.2,
+   "r": 70.0,
+   "title": "Inis",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "roscommon",
+   "x": 30956.8,
+   "y": 29510.4,
+   "r": 70.0,
+   "title": "Ros Comáin",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "kildare",
+   "x": 41836.8,
+   "y": 36166.4,
+   "r": 70.0,
+   "title": "Cill Dara",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "carlow",
+   "x": 41691.3,
+   "y": 40675.1,
+   "r": 70.0,
+   "title": "Ceatharlach",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "monaghan",
+   "x": 41107.2,
+   "y": 20729.6,
+   "r": 70.0,
+   "title": "Muineachán",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "donegal",
+   "x": 31659.2,
+   "y": 15065.6,
+   "r": 70.0,
+   "title": "Dún na nGall",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "westport",
+   "x": 19808.0,
+   "y": 27102.4,
+   "r": 70.0,
+   "title": "Cathair na Mart",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "lismore",
+   "x": 33127.8,
+   "y": 50658.6,
+   "r": 70.0,
+   "title": "Lios Mór",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "coleraine",
+   "x": 43332.6,
+   "y": 8313.0,
+   "r": 70.0,
+   "title": "Cúil Raithin",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "enniskillen",
+   "x": 35593.2,
+   "y": 19444.8,
+   "r": 70.0,
+   "title": "Inis Ceithleann",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "belfast",
+   "x": 49593.6,
+   "y": 15772.8,
+   "r": 70.0,
+   "title": "Béal Feirste",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "mullingar",
+   "x": 38129.6,
+   "y": 30926.4,
+   "r": 70.0,
+   "title": "An Muileann gCearr",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "thurles",
+   "x": 34326.0,
+   "y": 42953.6,
+   "r": 70.0,
+   "title": "Durlas",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "killarney",
+   "x": 19363.2,
+   "y": 51745.6,
+   "r": 70.0,
+   "title": "Cill Airne",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "bantry",
+   "x": 19807.7,
+   "y": 57139.0,
+   "r": 70.0,
+   "title": "Beanntraí",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "youghal",
+   "x": 33862.4,
+   "y": 53161.6,
+   "r": 70.0,
+   "title": "Eochaill",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "kinsale",
+   "x": 27971.2,
+   "y": 56702.4,
+   "r": 70.0,
+   "title": "Ceann tSáile",
+   "sound": "sea",
+   "music": "explore"
+  },
+  {
+   "name": "ardee",
+   "x": 44788.8,
+   "y": 26252.8,
+   "r": 70.0,
+   "title": "Baile Átha Fhirdhia",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "listowel",
+   "x": 19654.4,
+   "y": 46222.4,
+   "r": 70.0,
+   "title": "Lios Tuathail",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "dublin the black pool",
+   "x": 47230.4,
+   "y": 33760.0,
+   "r": 70.0,
+   "title": "Duibhlinn",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "tara",
+   "x": 44278.4,
+   "y": 30219.2,
+   "r": 35.0,
+   "title": "Teamhair",
+   "music": "holy"
+  },
+  {
+   "name": "cashel",
+   "x": 33502.4,
+   "y": 45230.4,
+   "r": 35.0,
+   "title": "Caiseal",
+   "music": "holy"
+  },
+  {
+   "name": "clonmacnoise",
+   "x": 32640.0,
+   "y": 33760.0,
+   "r": 35.0,
+   "title": "Cluain Mhic Nóis",
+   "sound": "holy",
+   "music": "holy",
+   "safe": true
+  },
+  {
+   "name": "glendalough",
+   "x": 46825.6,
+   "y": 38291.2,
+   "r": 35.0,
+   "title": "Gleann Dá Loch",
+   "sound": "holy",
+   "music": "holy",
+   "safe": true
+  },
+  {
+   "name": "grianan of aileach",
+   "x": 37206.4,
+   "y": 9825.6,
+   "r": 35.0,
+   "title": "Ailech",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "rathcroghan",
+   "x": 30041.6,
+   "y": 27102.4,
+   "r": 35.0,
+   "title": "Ráth Cruachan",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "dun ailinne",
+   "x": 42968.0,
+   "y": 37584.0,
+   "r": 35.0,
+   "title": "Dún Ailinne",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "kincora",
+   "x": 28776.0,
+   "y": 41123.2,
+   "r": 35.0,
+   "title": "Ceann Choradh",
+   "sound": "town",
+   "music": "explore"
+  },
+  {
+   "name": "bru na boinne",
+   "x": 44335.8,
+   "y": 30135.3,
+   "r": 30.0,
+   "title": "Brú na Bóinne",
+   "sound": "crypt",
+   "music": "eerie"
+  },
+  {
+   "name": "coill na mac tire",
+   "x": 35803.2,
+   "y": 38433.6,
+   "r": 1280.0,
+   "title": "Coill na Mac Tíre",
+   "sound": "forest",
+   "music": "night",
+   "safe": true
+  },
+  {
+   "name": "dibheirgigh",
+   "x": 41843.2,
+   "y": 40650.6,
+   "r": 30.0,
+   "title": "Campa na nDíbheirgeach",
+   "sound": "fire",
+   "music": "battle"
+  },
+  {
+   "name": "tobar",
+   "x": 41827.0,
+   "y": 36219.0,
+   "r": 14.0,
+   "title": "Tobar Bríde",
+   "sound": "holy",
+   "music": "holy"
+  },
+  {
+   "name": "loch neathach",
+   "x": 45555.2,
+   "y": 15489.6,
+   "r": 992.0,
+   "title": "Loch nEathach",
+   "sound": "river"
+  },
+  {
+   "name": "loch coirib",
+   "x": 21979.2,
+   "y": 32342.4,
+   "r": 608.0,
+   "title": "Loch Coirib",
+   "sound": "river"
+  },
+  {
+   "name": "loch measca",
+   "x": 20934.4,
+   "y": 29510.4,
+   "r": 512.0,
+   "title": "Loch Measca",
+   "sound": "river"
+  },
+  {
+   "name": "loch deirgeirt",
+   "x": 29987.2,
+   "y": 39140.8,
+   "r": 928.0,
+   "title": "Loch Deirgeirt",
+   "sound": "river"
+  },
+  {
+   "name": "loch ri",
+   "x": 32726.4,
+   "y": 30643.2,
+   "r": 736.0,
+   "title": "Loch Rí",
+   "sound": "river"
+  },
+  {
+   "name": "loch ailin",
+   "x": 32144.0,
+   "y": 22571.2,
+   "r": 384.0,
+   "title": "Loch Ailín",
+   "sound": "river"
+  },
+  {
+   "name": "loch eirne",
+   "x": 34048.0,
+   "y": 17897.6,
+   "r": 512.0,
+   "title": "Loch Éirne",
+   "sound": "river"
+  },
+  {
+   "name": "loch gile",
+   "x": 28688.2,
+   "y": 20464.1,
+   "r": 40.0,
+   "title": "Loch Gile",
+   "sound": "river"
+  },
+  {
+   "name": "loch lein",
+   "x": 19340.8,
+   "y": 51772.2,
+   "r": 32.0,
+   "title": "Loch Léin",
+   "sound": "river"
+  },
+  {
+   "name": "beanna boirche",
+   "x": 49350.4,
+   "y": 21721.6,
+   "r": 464.0,
+   "title": "Beanna Boirche",
+   "sound": "wind"
+  },
+  {
+   "name": "sleibhte chill mhantain",
+   "x": 46035.2,
+   "y": 37299.2,
+   "r": 496.0,
+   "title": "Sléibhte Chill Mhantáin",
+   "sound": "wind"
+  },
+  {
+   "name": "na cruacha dubha",
+   "x": 17240.0,
+   "y": 52878.4,
+   "r": 528.0,
+   "title": "Na Cruacha Dubha",
+   "sound": "wind"
+  },
+  {
+   "name": "na gaibhlte",
+   "x": 31251.2,
+   "y": 47355.2,
+   "r": 464.0,
+   "title": "Na Gaibhlte",
+   "sound": "wind"
+  },
+  {
+   "name": "sleibhte an chomaraigh",
+   "x": 36464.0,
+   "y": 49054.4,
+   "r": 336.0,
+   "title": "Sléibhte an Chomaraigh",
+   "sound": "wind"
+  },
+  {
+   "name": "na beanna beola",
+   "x": 16928.0,
+   "y": 31352.0,
+   "r": 400.0,
+   "title": "Na Beanna Beola",
+   "sound": "wind"
+  },
+  {
+   "name": "cruach phadraig",
+   "x": 19733.7,
+   "y": 27137.8,
+   "r": 30.0,
+   "title": "Cruach Phádraig",
+   "sound": "wind"
+  },
+  {
+   "name": "binn ghulbain",
+   "x": 28663.0,
+   "y": 20357.9,
+   "r": 34.0,
+   "title": "Binn Ghulbain",
+   "sound": "wind"
+  },
+  {
+   "name": "earagail",
+   "x": 31750.4,
+   "y": 9683.2,
+   "r": 336.0,
+   "title": "Earagail",
+   "sound": "wind"
+  },
+  {
+   "name": "sliabh speirin",
+   "x": 40750.4,
+   "y": 12940.8,
+   "r": 592.0,
+   "title": "Sliabh Speirín",
+   "sound": "wind"
+  },
+  {
+   "name": "sliabh bladhma",
+   "x": 35966.4,
+   "y": 37016.0,
+   "r": 400.0,
+   "title": "Sliabh Bladhma",
+   "sound": "wind"
+  },
+  {
+   "name": "na staighri dubha",
+   "x": 42915.2,
+   "y": 44806.4,
+   "r": 336.0,
+   "title": "Na Staighrí Dubha",
+   "sound": "wind"
+  },
+  {
+   "name": "cnoc mhaoldomhnaigh",
+   "x": 33420.8,
+   "y": 49337.6,
+   "r": 400.0,
+   "title": "Cnoc Mhaoldomhnaigh",
+   "sound": "wind"
+  },
+  {
+   "name": "sliabh gcuillinn",
+   "x": 45881.9,
+   "y": 24174.9,
+   "r": 30.0,
+   "title": "Sliabh gCuillinn",
+   "sound": "wind"
+  },
+  {
+   "name": "binn chuilceach",
+   "x": 34222.4,
+   "y": 21438.4,
+   "r": 304.0,
+   "title": "Binn Chuilceach",
+   "sound": "wind"
+  },
+  {
+   "name": "sliabh mis",
+   "x": 16881.6,
+   "y": 49763.2,
+   "r": 336.0,
+   "title": "Sliabh Mis",
+   "sound": "wind"
+  },
+  {
+   "name": "cnoc breanainn",
+   "x": 12977.6,
+   "y": 49337.6,
+   "r": 240.0,
+   "title": "Cnoc Bréanainn",
+   "sound": "wind"
+  },
+  {
+   "name": "bealach na gcreach",
+   "x": 41634.9,
+   "y": 40771.4,
+   "r": 25.0,
+   "title": "Bealach na gCreach",
+   "sound": "wind",
+   "music": "battle"
+  },
+  {
+   "name": "an tuaisceart 1",
+   "x": 11200.0,
+   "y": 10400.0,
+   "r": 8192.0,
+   "title": "An Tuaisceart",
+   "sound": "wind"
+  },
+  {
+   "name": "an tuaisceart 2",
+   "x": 22400.0,
+   "y": 10400.0,
+   "r": 8192.0,
+   "title": "An Tuaisceart",
+   "sound": "wind"
+  },
+  {
+   "name": "an tuaisceart 3",
+   "x": 33600.0,
+   "y": 10400.0,
+   "r": 8192.0,
+   "title": "An Tuaisceart",
+   "sound": "wind"
+  },
+  {
+   "name": "an tuaisceart 4",
+   "x": 44800.0,
+   "y": 10400.0,
+   "r": 8192.0,
+   "title": "An Tuaisceart",
+   "sound": "wind"
+  },
+  {
+   "name": "an tuaisceart 5",
+   "x": 56000.0,
+   "y": 10400.0,
+   "r": 8192.0,
+   "title": "An Tuaisceart",
+   "sound": "wind"
+  },
+  {
+   "name": "cloch waterford home",
+   "x": 40294.0,
+   "y": 48913.6,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46440.0,
+    "y": 31492.8
+   }
+  },
+  {
+   "name": "cloch waterford",
+   "x": 46434.0,
+   "y": 31492.8,
+   "r": 2.5,
+   "title": "Cloch go Port Láirge",
+   "exit": {
+    "x": 40300.0,
+    "y": 48913.6
+   }
+  },
+  {
+   "name": "cloch cork home",
+   "x": 28404.2,
+   "y": 54057.0,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46436.2,
+    "y": 31505.8
+   }
+  },
+  {
+   "name": "cloch cork",
+   "x": 46431.1,
+   "y": 31502.5,
+   "r": 2.5,
+   "title": "Cloch go Corcaigh",
+   "exit": {
+    "x": 28410.2,
+    "y": 54057.0
+   }
+  },
+  {
+   "name": "cloch limerick home",
+   "x": 27144.0,
+   "y": 43290.0,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46426.0,
+    "y": 31514.6
+   }
+  },
+  {
+   "name": "cloch limerick",
+   "x": 46423.5,
+   "y": 31509.2,
+   "r": 2.5,
+   "title": "Cloch go Luimneach",
+   "exit": {
+    "x": 27150.0,
+    "y": 43290.0
+   }
+  },
+  {
+   "name": "cloch galway home",
+   "x": 23695.2,
+   "y": 34456.0,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46412.6,
+    "y": 31516.6
+   }
+  },
+  {
+   "name": "cloch galway",
+   "x": 46413.4,
+   "y": 31510.6,
+   "r": 2.5,
+   "title": "Cloch go Gaillimh",
+   "exit": {
+    "x": 23701.2,
+    "y": 34456.0
+   }
+  },
+  {
+   "name": "cloch wexford home",
+   "x": 45905.4,
+   "y": 47778.0,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46400.3,
+    "y": 31510.9
+   }
+  },
+  {
+   "name": "cloch wexford",
+   "x": 46404.2,
+   "y": 31506.4,
+   "r": 2.5,
+   "title": "Cloch go Loch Garman",
+   "exit": {
+    "x": 45911.4,
+    "y": 47778.0
+   }
+  },
+  {
+   "name": "cloch armagh home",
+   "x": 43742.0,
+   "y": 19313.6,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46393.0,
+    "y": 31499.6
+   }
+  },
+  {
+   "name": "cloch armagh",
+   "x": 46398.7,
+   "y": 31497.9,
+   "r": 2.5,
+   "title": "Cloch go Ard Mhacha",
+   "exit": {
+    "x": 43748.0,
+    "y": 19313.6
+   }
+  },
+  {
+   "name": "cloch derry home",
+   "x": 38068.5,
+   "y": 10084.7,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46393.0,
+    "y": 31486.0
+   }
+  },
+  {
+   "name": "cloch derry",
+   "x": 46398.7,
+   "y": 31487.7,
+   "r": 2.5,
+   "title": "Cloch go Doire",
+   "exit": {
+    "x": 38074.5,
+    "y": 10084.7
+   }
+  },
+  {
+   "name": "cloch kilkenny home",
+   "x": 38980.5,
+   "y": 43366.3,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46400.3,
+    "y": 31474.7
+   }
+  },
+  {
+   "name": "cloch kilkenny",
+   "x": 46404.2,
+   "y": 31479.2,
+   "r": 2.5,
+   "title": "Cloch go Cill Chainnigh",
+   "exit": {
+    "x": 38986.5,
+    "y": 43366.3
+   }
+  },
+  {
+   "name": "cloch drogheda home",
+   "x": 46444.8,
+   "y": 28278.8,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46412.6,
+    "y": 31469.0
+   }
+  },
+  {
+   "name": "cloch drogheda",
+   "x": 46413.4,
+   "y": 31475.0,
+   "r": 2.5,
+   "title": "Cloch go Droichead Átha",
+   "exit": {
+    "x": 46450.8,
+    "y": 28278.8
+   }
+  },
+  {
+   "name": "cloch sligo home",
+   "x": 28668.4,
+   "y": 20446.4,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46426.0,
+    "y": 31471.0
+   }
+  },
+  {
+   "name": "cloch sligo",
+   "x": 46423.5,
+   "y": 31476.4,
+   "r": 2.5,
+   "title": "Cloch go Sligeach",
+   "exit": {
+    "x": 28674.4,
+    "y": 20446.4
+   }
+  },
+  {
+   "name": "cloch athlone home",
+   "x": 33028.5,
+   "y": 32460.7,
+   "r": 2.5,
+   "title": "Cloch go Áth Cliath",
+   "exit": {
+    "x": 46436.2,
+    "y": 31479.8
+   }
+  },
+  {
+   "name": "cloch athlone",
+   "x": 46431.1,
+   "y": 31483.1,
+   "r": 2.5,
+   "title": "Cloch go Áth Luain",
+   "exit": {
+    "x": 33034.5,
+    "y": 32460.7
+   }
+  }
+ ],
+ "routes": [
+  {
+   "name": "timpeall an chaisleain",
+   "points": [
+    [
+     46358.0,
+     31438.8
+    ],
+    [
+     46474.0,
+     31438.8
+    ],
+    [
+     46474.0,
+     31546.8
+    ],
+    [
+     46358.0,
+     31546.8
+    ]
+   ],
+   "loop": true
+  },
+  {
+   "name": "bothar chill dara",
+   "points": [
+    [
+     46416.0,
+     32048.0
+    ],
+    [
+     46040.0,
+     32096.0
+    ],
+    [
+     45656.0,
+     32096.0
+    ],
+    [
+     45272.0,
+     32096.0
+    ],
+    [
+     44888.0,
+     32096.0
+    ],
+    [
+     44768.0,
+     31790.4
+    ],
+    [
+     44636.8,
+     31488.0
+    ],
+    [
+     44384.0,
+     31656.0
+    ],
+    [
+     44363.2,
+     32038.4
+    ],
+    [
+     44259.2,
+     32406.4
+    ],
+    [
+     44076.8,
+     32742.4
+    ],
+    [
+     43888.0,
+     33076.8
+    ],
+    [
+     43728.0,
+     33424.0
+    ],
+    [
+     43572.8,
+     33774.4
+    ],
+    [
+     43443.2,
+     34136.0
+    ],
+    [
+     43337.6,
+     34504.0
+    ],
+    [
+     43251.2,
+     34878.4
+    ],
+    [
+     43198.4,
+     35256.0
+    ],
+    [
+     43145.6,
+     35635.2
+    ],
+    [
+     43088.0,
+     36006.4
+    ],
+    [
+     42742.4,
+     36128.0
+    ],
+    [
+     42358.4,
+     36128.0
+    ],
+    [
+     41977.6,
+     36150.4
+    ],
+    [
+     42022.4,
+     36160.0
+    ],
+    [
+     42406.4,
+     36160.0
+    ],
+    [
+     42764.8,
+     36220.8
+    ],
+    [
+     42854.4,
+     36584.0
+    ],
+    [
+     42920.0,
+     36960.0
+    ],
+    [
+     42865.6,
+     37292.8
+    ],
+    [
+     42638.4,
+     37560.0
+    ],
+    [
+     42576.0,
+     37937.6
+    ],
+    [
+     42544.0,
+     38318.4
+    ],
+    [
+     42544.0,
+     38702.4
+    ],
+    [
+     42544.0,
+     39086.4
+    ],
+    [
+     42544.0,
+     39470.4
+    ],
+    [
+     42544.0,
+     39854.4
+    ],
+    [
+     42544.0,
+     40238.4
+    ],
+    [
+     42544.0,
+     40528.0
+    ]
+   ],
+   "loop": false
+  },
+  {
+   "name": "bothar dhroichead atha",
+   "points": [
+    [
+     46416.0,
+     31527.5
+    ],
+    [
+     46439.3,
+     31530.5
+    ],
+    [
+     46463.3,
+     31530.5
+    ],
+    [
+     46487.3,
+     31530.5
+    ],
+    [
+     46511.3,
+     31530.5
+    ],
+    [
+     46519.0,
+     31511.4
+    ],
+    [
+     46519.0,
+     31487.4
+    ],
+    [
+     46519.0,
+     31463.4
+    ],
+    [
+     46519.0,
+     31439.4
+    ],
+    [
+     46505.1,
+     31426.5
+    ],
+    [
+     46481.1,
+     31426.5
+    ],
+    [
+     46457.1,
+     31426.5
+    ],
+    [
+     46433.1,
+     31426.5
+    ],
+    [
+     46416.0,
+     31416.4
+    ],
+    [
+     46416.0,
+     31392.4
+    ],
+    [
+     46416.0,
+     31368.5
+    ],
+    [
+     46451.0,
+     28395.7
+    ],
+    [
+     46438.9,
+     28376.4
+    ],
+    [
+     46438.9,
+     28352.4
+    ],
+    [
+     46438.9,
+     28328.4
+    ],
+    [
+     46438.9,
+     28304.4
+    ],
+    [
+     46438.9,
+     28280.5
+    ]
+   ],
+   "loop": false
+  },
+  {
+   "name": "bothar loch garman",
+   "points": [
+    [
+     46416.0,
+     32048.0
+    ],
+    [
+     46040.0,
+     32096.0
+    ],
+    [
+     45656.0,
+     32096.0
+    ],
+    [
+     45272.0,
+     32096.0
+    ],
+    [
+     44888.0,
+     32096.0
+    ],
+    [
+     44768.0,
+     31790.4
+    ],
+    [
+     44636.8,
+     31488.0
+    ],
+    [
+     44384.0,
+     31656.0
+    ],
+    [
+     44363.2,
+     32038.4
+    ],
+    [
+     44259.2,
+     32406.4
+    ],
+    [
+     44076.8,
+     32742.4
+    ],
+    [
+     43888.0,
+     33076.8
+    ],
+    [
+     43728.0,
+     33424.0
+    ],
+    [
+     43572.8,
+     33774.4
+    ],
+    [
+     43443.2,
+     34136.0
+    ],
+    [
+     43337.6,
+     34504.0
+    ],
+    [
+     43251.2,
+     34878.4
+    ],
+    [
+     43198.4,
+     35256.0
+    ],
+    [
+     43145.6,
+     35635.2
+    ],
+    [
+     43088.0,
+     36006.4
+    ],
+    [
+     42806.4,
+     36244.8
+    ],
+    [
+     42856.0,
+     36620.8
+    ],
+    [
+     42928.0,
+     36996.8
+    ],
+    [
+     42830.4,
+     37304.0
+    ],
+    [
+     42628.8,
+     37596.8
+    ],
+    [
+     42574.4,
+     37974.4
+    ],
+    [
+     42544.0,
+     38355.2
+    ],
+    [
+     42544.0,
+     38739.2
+    ],
+    [
+     42544.0,
+     39123.2
+    ],
+    [
+     42544.0,
+     39507.2
+    ],
+    [
+     42544.0,
+     39891.2
+    ],
+    [
+     42544.0,
+     40275.2
+    ],
+    [
+     42544.0,
+     40659.2
+    ],
+    [
+     42544.0,
+     41043.2
+    ],
+    [
+     42542.4,
+     41427.2
+    ],
+    [
+     42307.2,
+     41724.8
+    ],
+    [
+     42123.2,
+     42060.8
+    ],
+    [
+     42009.6,
+     42425.6
+    ],
+    [
+     41920.0,
+     42800.0
+    ],
+    [
+     41841.6,
+     43163.2
+    ],
+    [
+     42108.8,
+     43436.8
+    ],
+    [
+     42412.8,
+     43670.4
+    ],
+    [
+     42723.2,
+     43896.0
+    ],
+    [
+     43041.6,
+     44110.4
+    ],
+    [
+     43332.8,
+     44356.8
+    ],
+    [
+     43604.8,
+     44628.8
+    ],
+    [
+     43876.8,
+     44900.8
+    ],
+    [
+     44155.2,
+     45163.2
+    ],
+    [
+     44435.2,
+     45427.2
+    ],
+    [
+     44718.4,
+     45683.2
+    ],
+    [
+     45001.6,
+     45940.8
+    ],
+    [
+     45265.6,
+     46212.8
+    ],
+    [
+     45344.0,
+     46580.8
+    ],
+    [
+     45344.0,
+     46964.8
+    ],
+    [
+     45376.0,
+     47344.0
+    ],
+    [
+     45376.0,
+     47728.0
+    ],
+    [
+     45376.0,
+     47968.0
+    ]
+   ],
+   "loop": false
+  },
+  {
+   "name": "bothar na teamhrach",
+   "points": [
+    [
+     46416.0,
+     31527.5
+    ],
+    [
+     46392.5,
+     31530.5
+    ],
+    [
+     46368.5,
+     31530.5
+    ],
+    [
+     46344.5,
+     31530.5
+    ],
+    [
+     46320.5,
+     31530.5
+    ],
+    [
+     46313.0,
+     31511.4
+    ],
+    [
+     44316.6,
+     30301.3
+    ],
+    [
+     44296.8,
+     30294.8
+    ],
+    [
+     44297.8,
+     30270.8
+    ],
+    [
+     44297.8,
+     30246.8
+    ],
+    [
+     44297.7,
+     30223.0
+    ],
+    [
+     44290.6,
+     30200.1
+    ],
+    [
+     44282.5,
+     30177.6
+    ],
+    [
+     44273.8,
+     30155.4
+    ],
+    [
+     44263.1,
+     30133.9
+    ],
+    [
+     42068.6,
+     28118.9
+    ],
+    [
+     42054.6,
+     28099.4
+    ],
+    [
+     42032.3,
+     28094.5
+    ],
+    [
+     42008.3,
+     28094.5
+    ],
+    [
+     41984.3,
+     28094.5
+    ],
+    [
+     41970.0,
+     28094.5
+    ]
+   ],
+   "loop": false
+  },
+  {
+   "name": "bothar chluain",
+   "points": [
+    [
+     33022.2,
+     32460.6
+    ],
+    [
+     32998.2,
+     32460.6
+    ],
+    [
+     32974.2,
+     32460.6
+    ],
+    [
+     32950.2,
+     32460.6
+    ],
+    [
+     32663.5,
+     33696.4
+    ],
+    [
+     32663.5,
+     33720.4
+    ],
+    [
+     32664.5,
+     33744.3
+    ],
+    [
+     32664.5,
+     33760.1
+    ]
+   ],
+   "loop": false
+  }
+ ],
+ "walls": [
+  [
+   1323.96,
+   193.3,
+   1368.85,
+   230.13
+  ],
+  [
+   81.19,
+   372.82,
+   96.71,
+   399.29
+  ],
+  [
+   571.14,
+   109.05,
+   603.35,
+   131.7
+  ],
+  [
+   32.28,
+   433.96,
+   44.5,
+   476.89
+  ],
+  [
+   1297.62,
+   1511.28,
+   1318.61,
+   1555.91
+  ],
+  [
+   1853.22,
+   1663.29,
+   1897.77,
+   1684.32
+  ],
+  [
+   1907.84,
+   1532.47,
+   1942.84,
+   1576.07
+  ],
+  [
+   1649.47,
+   44.06,
+   1660.37,
+   72.7
+  ],
+  [
+   1634.73,
+   1649.67,
+   1649.28,
+   1659.4
+  ],
+  [
+   1603.31,
+   1568.81,
+   1641.41,
+   1611.55
+  ],
+  [
+   13.26,
+   1567.26,
+   59.54,
+   1600.4
+  ],
+  [
+   842.81,
+   1326.24,
+   880.47,
+   1361.82
+  ],
+  [
+   217.08,
+   636.26,
+   264.39,
+   660.41
+  ],
+  [
+   1112.75,
+   1596.81,
+   1139.19,
+   1634.0
+  ],
+  [
+   140.39,
+   1493.39,
+   177.36,
+   1533.76
+  ],
+  [
+   729.3,
+   1008.0,
+   743.5,
+   1021.59
+  ],
+  [
+   1978.95,
+   505.11,
+   1998.9,
+   523.73
+  ],
+  [
+   1588.76,
+   1843.28,
+   1632.93,
+   1874.63
+  ],
+  [
+   374.7,
+   586.19,
+   403.02,
+   604.43
+  ],
+  [
+   1915.21,
+   1786.95,
+   1932.9,
+   1816.83
+  ],
+  [
+   1644.4,
+   2010.96,
+   1670.88,
+   2025.64
+  ],
+  [
+   23.06,
+   240.15,
+   38.75,
+   273.64
+  ],
+  [
+   1476.76,
+   1265.66,
+   1497.76,
+   1303.75
+  ],
+  [
+   766.54,
+   807.74,
+   801.44,
+   840.18
+  ],
+  [
+   1922.22,
+   550.35,
+   1961.83,
+   572.11
+  ],
+  [
+   994.6,
+   960.08,
+   1039.29,
+   994.92
+  ],
+  [
+   1693.61,
+   23.82,
+   1733.49,
+   37.15
+  ],
+  [
+   912.47,
+   922.35,
+   945.72,
+   936.72
+  ],
+  [
+   616.02,
+   1991.5,
+   645.84,
+   2030.38
+  ],
+  [
+   1919.98,
+   1347.81,
+   1928.51,
+   1375.96
+  ],
+  [
+   1381.91,
+   1760.93,
+   1415.39,
+   1773.27
+  ],
+  [
+   286.87,
+   355.75,
+   311.63,
+   399.53
+  ],
+  [
+   1324.47,
+   583.09,
+   1344.41,
+   593.99
+  ],
+  [
+   972.84,
+   880.12,
+   996.33,
+   892.28
+  ],
+  [
+   318.63,
+   3.06,
+   342.94,
+   25.14
+  ],
+  [
+   247.23,
+   1200.15,
+   258.0,
+   1239.66
+  ],
+  [
+   279.9,
+   1079.42,
+   300.55,
+   1088.27
+  ],
+  [
+   916.66,
+   832.19,
+   925.39,
+   872.39
+  ],
+  [
+   808.99,
+   1923.73,
+   847.35,
+   1952.28
+  ],
+  [
+   1090.33,
+   528.49,
+   1131.21,
+   541.42
+  ],
+  [
+   1361.72,
+   400.44,
+   1389.7,
+   424.47
+  ],
+  [
+   1003.65,
+   1505.38,
+   1044.95,
+   1526.1
+  ],
+  [
+   703.29,
+   327.04,
+   743.47,
+   355.89
+  ],
+  [
+   1859.57,
+   52.93,
+   1890.82,
+   93.66
+  ],
+  [
+   486.6,
+   549.16,
+   503.84,
+   573.63
+  ],
+  [
+   1154.28,
+   577.9,
+   1187.06,
+   592.48
+  ],
+  [
+   1400.45,
+   1656.68,
+   1410.57,
+   1681.01
+  ],
+  [
+   169.54,
+   916.17,
+   188.32,
+   929.52
+  ],
+  [
+   828.15,
+   1894.23,
+   875.43,
+   1939.04
+  ],
+  [
+   917.03,
+   176.99,
+   962.14,
+   202.37
+  ],
+  [
+   892.36,
+   64.9,
+   903.94,
+   75.68
+  ],
+  [
+   1290.81,
+   142.76,
+   1333.48,
+   173.38
+  ],
+  [
+   1913.14,
+   483.24,
+   1958.16,
+   499.05
+  ],
+  [
+   1265.5,
+   943.88,
+   1306.74,
+   991.08
+  ],
+  [
+   941.55,
+   284.48,
+   971.97,
+   331.49
+  ],
+  [
+   532.16,
+   1416.58,
+   568.49,
+   1431.1
+  ],
+  [
+   149.88,
+   1171.59,
+   169.62,
+   1193.24
+  ],
+  [
+   1835.77,
+   683.79,
+   1861.22,
+   700.22
+  ],
+  [
+   270.6,
+   101.0,
+   304.85,
+   140.79
+  ],
+  [
+   832.31,
+   821.13,
+   875.58,
+   833.73
+  ],
+  [
+   1294.36,
+   1737.7,
+   1333.53,
+   1748.59
+  ],
+  [
+   125.28,
+   907.51,
+   155.08,
+   950.6
+  ],
+  [
+   1211.01,
+   1163.25,
+   1247.97,
+   1177.63
+  ],
+  [
+   296.83,
+   800.1,
+   333.27,
+   834.32
+  ],
+  [
+   576.36,
+   1.06,
+   589.33,
+   15.87
+  ],
+  [
+   23.86,
+   3.7,
+   50.29,
+   17.21
+  ],
+  [
+   378.79,
+   785.54,
+   416.49,
+   794.68
+  ],
+  [
+   1827.75,
+   610.25,
+   1862.88,
+   653.14
+  ],
+  [
+   1987.9,
+   1519.1,
+   2033.93,
+   1539.15
+  ],
+  [
+   911.39,
+   1777.36,
+   919.57,
+   1805.55
+  ],
+  [
+   612.33,
+   1627.23,
+   642.74,
+   1673.12
+  ],
+  [
+   1064.43,
+   1082.93,
+   1105.34,
+   1104.1
+  ],
+  [
+   812.1,
+   962.87,
+   827.65,
+   1006.16
+  ],
+  [
+   706.76,
+   1272.65,
+   732.33,
+   1310.68
+  ],
+  [
+   126.09,
+   101.06,
+   161.27,
+   131.44
+  ],
+  [
+   901.72,
+   1689.21,
+   933.59,
+   1734.22
+  ],
+  [
+   1287.44,
+   1700.14,
+   1298.41,
+   1742.94
+  ],
+  [
+   133.56,
+   687.94,
+   177.83,
+   705.13
+  ],
+  [
+   1229.64,
+   677.3,
+   1268.84,
+   721.35
+  ],
+  [
+   811.61,
+   1433.49,
+   854.81,
+   1461.35
+  ],
+  [
+   1280.09,
+   650.68,
+   1290.54,
+   665.44
+  ],
+  [
+   851.13,
+   1003.08,
+   877.86,
+   1049.46
+  ],
+  [
+   1807.59,
+   1025.5,
+   1845.93,
+   1067.01
+  ],
+  [
+   1698.3,
+   1150.83,
+   1738.92,
+   1173.57
+  ],
+  [
+   1084.79,
+   2000.05,
+   1105.07,
+   2020.18
+  ],
+  [
+   1798.17,
+   884.84,
+   1810.32,
+   895.63
+  ],
+  [
+   1183.26,
+   844.18,
+   1212.2,
+   858.01
+  ],
+  [
+   1495.58,
+   110.5,
+   1507.7,
+   135.81
+  ],
+  [
+   2019.57,
+   1494.24,
+   2040.6,
+   1510.88
+  ],
+  [
+   736.52,
+   1918.37,
+   772.9,
+   1943.05
+  ],
+  [
+   1422.98,
+   225.51,
+   1441.51,
+   269.96
+  ],
+  [
+   321.98,
+   993.08,
+   331.21,
+   1036.08
+  ],
+  [
+   1556.71,
+   1611.63,
+   1570.31,
+   1622.92
+  ],
+  [
+   579.92,
+   648.48,
+   593.68,
+   661.42
+  ],
+  [
+   753.04,
+   144.3,
+   761.06,
+   159.9
+  ],
+  [
+   9.7,
+   1155.1,
+   27.99,
+   1183.54
+  ],
+  [
+   430.1,
+   1831.78,
+   448.74,
+   1866.27
+  ],
+  [
+   391.82,
+   1067.35,
+   438.95,
+   1102.84
+  ],
+  [
+   1916.84,
+   849.2,
+   1953.79,
+   865.23
+  ],
+  [
+   757.85,
+   329.18,
+   802.4,
+   351.69
+  ],
+  [
+   1847.04,
+   1304.3,
+   1884.26,
+   1326.19
+  ],
+  [
+   1392.91,
+   1387.2,
+   1432.97,
+   1400.94
+  ],
+  [
+   242.59,
+   1569.4,
+   261.18,
+   1590.79
+  ],
+  [
+   423.03,
+   337.33,
+   463.36,
+   371.01
+  ],
+  [
+   1570.0,
+   123.5,
+   1731.0,
+   126.5
+  ],
+  [
+   1749.0,
+   123.5,
+   1910.0,
+   126.5
+  ],
+  [
+   1570.0,
+   463.5,
+   1731.0,
+   466.5
+  ],
+  [
+   1749.0,
+   463.5,
+   1910.0,
+   466.5
+  ],
+  [
+   1568.5,
+   125.0,
+   1571.5,
+   286.0
+  ],
+  [
+   1568.5,
+   304.0,
+   1571.5,
+   465.0
+  ],
+  [
+   1908.5,
+   125.0,
+   1911.5,
+   286.0
+  ],
+  [
+   1908.5,
+   304.0,
+   1911.5,
+   465.0
+  ],
+  [
+   1565.5,
+   120.5,
+   1574.5,
+   129.5
+  ],
+  [
+   1905.5,
+   120.5,
+   1914.5,
+   129.5
+  ],
+  [
+   1565.5,
+   460.5,
+   1574.5,
+   469.5
+  ],
+  [
+   1905.5,
+   460.5,
+   1914.5,
+   469.5
+  ],
+  [
+   1722.0,
+   121.5,
+   1731.0,
+   130.5
+  ],
+  [
+   1749.0,
+   120.5,
+   1758.0,
+   129.5
+  ],
+  [
+   1722.0,
+   461.5,
+   1731.0,
+   470.5
+  ],
+  [
+   1749.0,
+   460.5,
+   1758.0,
+   469.5
+  ],
+  [
+   1565.5,
+   278.0,
+   1574.5,
+   287.0
+  ],
+  [
+   1565.5,
+   304.0,
+   1574.5,
+   313.0
+  ],
+  [
+   1905.5,
+   278.0,
+   1914.5,
+   287.0
+  ],
+  [
+   1905.5,
+   304.0,
+   1914.5,
+   313.0
+  ],
+  [
+   1672.83,
+   121.5,
+   1681.83,
+   130.5
+  ],
+  [
+   1672.83,
+   461.5,
+   1681.83,
+   470.5
+  ],
+  [
+   1565.5,
+   228.83,
+   1574.5,
+   237.83
+  ],
+  [
+   1905.5,
+   228.83,
+   1914.5,
+   237.83
+  ],
+  [
+   1798.17,
+   121.5,
+   1807.17,
+   130.5
+  ],
+  [
+   1798.17,
+   461.5,
+   1807.17,
+   470.5
+  ],
+  [
+   1565.5,
+   354.17,
+   1574.5,
+   363.17
+  ],
+  [
+   1905.5,
+   354.17,
+   1914.5,
+   363.17
+  ],
+  [
+   1619.17,
+   120.5,
+   1628.17,
+   129.5
+  ],
+  [
+   1619.17,
+   460.5,
+   1628.17,
+   469.5
+  ],
+  [
+   1565.5,
+   174.17,
+   1574.5,
+   183.17
+  ],
+  [
+   1905.5,
+   174.17,
+   1914.5,
+   183.17
+  ],
+  [
+   1851.83,
+   120.5,
+   1860.83,
+   129.5
+  ],
+  [
+   1851.83,
+   460.5,
+   1860.83,
+   469.5
+  ],
+  [
+   1565.5,
+   406.83,
+   1574.5,
+   415.83
+  ],
+  [
+   1905.5,
+   406.83,
+   1914.5,
+   415.83
+  ],
+  [
+   1722.0,
+   282.0,
+   1758.0,
+   310.0
+  ],
+  [
+   1713.5,
+   272.5,
+   1722.5,
+   281.5
+  ],
+  [
+   1713.5,
+   308.5,
+   1722.5,
+   317.5
+  ],
+  [
+   1757.5,
+   272.5,
+   1766.5,
+   281.5
+  ],
+  [
+   1757.5,
+   308.5,
+   1766.5,
+   317.5
+  ],
+  [
+   1583.5,
+   141.5,
+   1629.5,
+   153.5
+  ],
+  [
+   1583.5,
+   151.5,
+   1629.5,
+   163.5
+  ],
+  [
+   1639.5,
+   139.5,
+   1685.5,
+   151.5
+  ],
+  [
+   1639.5,
+   153.5,
+   1685.5,
+   165.5
+  ],
+  [
+   1583.5,
+   173.5,
+   1629.5,
+   185.5
+  ],
+  [
+   1583.5,
+   187.5,
+   1629.5,
+   199.5
+  ],
+  [
+   1639.5,
+   173.5,
+   1685.5,
+   185.5
+  ],
+  [
+   1639.5,
+   187.5,
+   1685.5,
+   199.5
+  ],
+  [
+   1583.5,
+   211.5,
+   1629.5,
+   223.5
+  ],
+  [
+   1583.5,
+   221.5,
+   1629.5,
+   233.5
+  ],
+  [
+   1639.5,
+   209.5,
+   1685.5,
+   221.5
+  ],
+  [
+   1639.5,
+   223.5,
+   1685.5,
+   235.5
+  ],
+  [
+   1583.5,
+   243.5,
+   1629.5,
+   255.5
+  ],
+  [
+   1583.5,
+   257.5,
+   1629.5,
+   269.5
+  ],
+  [
+   1639.5,
+   243.5,
+   1685.5,
+   255.5
+  ],
+  [
+   1639.5,
+   257.5,
+   1685.5,
+   269.5
+  ],
+  [
+   1583.5,
+   303.0,
+   1629.5,
+   315.0
+  ],
+  [
+   1583.5,
+   317.0,
+   1629.5,
+   329.0
+  ],
+  [
+   1639.5,
+   303.0,
+   1685.5,
+   315.0
+  ],
+  [
+   1639.5,
+   317.0,
+   1685.5,
+   329.0
+  ],
+  [
+   1583.5,
+   341.0,
+   1629.5,
+   353.0
+  ],
+  [
+   1583.5,
+   351.0,
+   1629.5,
+   363.0
+  ],
+  [
+   1639.5,
+   339.0,
+   1685.5,
+   351.0
+  ],
+  [
+   1639.5,
+   353.0,
+   1685.5,
+   365.0
+  ],
+  [
+   1583.5,
+   373.0,
+   1629.5,
+   385.0
+  ],
+  [
+   1583.5,
+   387.0,
+   1629.5,
+   399.0
+  ],
+  [
+   1639.5,
+   373.0,
+   1685.5,
+   385.0
+  ],
+  [
+   1639.5,
+   387.0,
+   1685.5,
+   399.0
+  ],
+  [
+   1583.5,
+   411.0,
+   1629.5,
+   423.0
+  ],
+  [
+   1583.5,
+   421.0,
+   1629.5,
+   433.0
+  ],
+  [
+   1639.5,
+   409.0,
+   1685.5,
+   421.0
+  ],
+  [
+   1639.5,
+   423.0,
+   1685.5,
+   435.0
+  ],
+  [
+   1748.0,
+   138.5,
+   1794.0,
+   150.5
+  ],
+  [
+   1748.0,
+   152.5,
+   1794.0,
+   164.5
+  ],
+  [
+   1804.0,
+   138.5,
+   1850.0,
+   150.5
+  ],
+  [
+   1804.0,
+   152.5,
+   1850.0,
+   164.5
+  ],
+  [
+   1748.0,
+   176.5,
+   1794.0,
+   188.5
+  ],
+  [
+   1748.0,
+   186.5,
+   1794.0,
+   198.5
+  ],
+  [
+   1804.0,
+   174.5,
+   1850.0,
+   186.5
+  ],
+  [
+   1804.0,
+   188.5,
+   1850.0,
+   200.5
+  ],
+  [
+   1748.0,
+   208.5,
+   1794.0,
+   220.5
+  ],
+  [
+   1748.0,
+   222.5,
+   1794.0,
+   234.5
+  ],
+  [
+   1804.0,
+   208.5,
+   1850.0,
+   220.5
+  ],
+  [
+   1804.0,
+   222.5,
+   1850.0,
+   234.5
+  ],
+  [
+   1804.0,
+   244.5,
+   1850.0,
+   256.5
+  ],
+  [
+   1804.0,
+   258.5,
+   1850.0,
+   270.5
+  ],
+  [
+   1748.0,
+   338.0,
+   1794.0,
+   350.0
+  ],
+  [
+   1748.0,
+   352.0,
+   1794.0,
+   364.0
+  ],
+  [
+   1804.0,
+   338.0,
+   1850.0,
+   350.0
+  ],
+  [
+   1804.0,
+   352.0,
+   1850.0,
+   364.0
+  ],
+  [
+   1748.0,
+   376.0,
+   1794.0,
+   388.0
+  ],
+  [
+   1748.0,
+   386.0,
+   1794.0,
+   398.0
+  ],
+  [
+   1804.0,
+   374.0,
+   1850.0,
+   386.0
+  ],
+  [
+   1804.0,
+   388.0,
+   1850.0,
+   400.0
+  ],
+  [
+   1748.0,
+   408.0,
+   1794.0,
+   420.0
+  ],
+  [
+   1748.0,
+   422.0,
+   1794.0,
+   434.0
+  ],
+  [
+   1804.0,
+   408.0,
+   1850.0,
+   420.0
+  ],
+  [
+   1804.0,
+   422.0,
+   1850.0,
+   434.0
+  ]
+ ],
+ "items": [
+  {
+   "name": "aran",
+   "title": "Bread",
+   "color": "#c8a165",
+   "stack_max": 10,
+   "uses": [
+    {
+     "attr": "energy",
+     "delta": 30.0
+    }
+   ],
+   "consume": true,
+   "value": 1
+  },
+  {
+   "name": "miodh",
+   "title": "Mead",
+   "color": "#e0b84a",
+   "stack_max": 5,
+   "uses": [
+    {
+     "attr": "health",
+     "delta": 10.0
+    },
+    {
+     "attr": "energy",
+     "delta": 20.0
+    }
+   ],
+   "consume": true,
+   "value": 1
+  },
+  {
+   "name": "deoch leighis",
+   "title": "Healing Draught",
+   "color": "#c0392b",
+   "stack_max": 5,
+   "uses": [
+    {
+     "attr": "health",
+     "delta": 40.0
+    }
+   ],
+   "consume": true,
+   "value": 3
+  },
+  {
+   "name": "pingin airgid",
+   "title": "Silver Penny",
+   "color": "#c0c0c8",
+   "stack_max": 99,
+   "uses": [],
+   "consume": false
+  },
+  {
+   "name": "craiceann mic tire",
+   "title": "Wolf Pelt",
+   "color": "#8a7560",
+   "stack_max": 10,
+   "uses": [],
+   "consume": false,
+   "value": 2
+  },
+  {
+   "name": "clogad lochlannach",
+   "title": "Viking Helm",
+   "color": "#7d8a96",
+   "stack_max": 5,
+   "uses": [],
+   "consume": false,
+   "value": 8,
+   "equip": {
+    "slot": "armour",
+    "toughness": 0.12
+   }
+  },
+  {
+   "name": "fainne oir",
+   "title": "Gold Ring",
+   "color": "#f1c40f",
+   "stack_max": 1,
+   "uses": [],
+   "consume": false,
+   "value": 30,
+   "equip": {
+    "slot": "trinket",
+    "might": 0.1,
+    "toughness": 0.05
+   }
+  },
+  {
+   "name": "claiomh",
+   "title": "Sword",
+   "color": "#c9ccd6",
+   "stack_max": 1,
+   "uses": [],
+   "consume": false,
+   "value": 10,
+   "equip": {
+    "slot": "weapon",
+    "might": 0.15
+   }
+  },
+  {
+   "name": "tua chatha",
+   "title": "Battle Axe",
+   "color": "#9aa0a8",
+   "stack_max": 1,
+   "uses": [],
+   "consume": false,
+   "value": 18,
+   "equip": {
+    "slot": "weapon",
+    "might": 0.25
+   }
+  },
+  {
+   "name": "luireach",
+   "title": "Mail Shirt",
+   "color": "#7d8a99",
+   "stack_max": 1,
+   "uses": [],
+   "consume": false,
+   "value": 20,
+   "equip": {
+    "slot": "armour",
+    "toughness": 0.2
+   }
+  },
+  {
+   "name": "capall",
+   "title": "Horse",
+   "color": "#7a4a2a",
+   "stack_max": 1,
+   "uses": [],
+   "consume": false,
+   "value": 20,
+   "mount": 0.8
+  },
+  {
+   "name": "siol cruithneachta",
+   "title": "Wheat Seed",
+   "color": "#b89b5e",
+   "stack_max": 20,
+   "uses": [],
+   "consume": false,
+   "value": 1
+  },
+  {
+   "name": "cruithneacht",
+   "title": "Wheat",
+   "color": "#e3c16f",
+   "stack_max": 20,
+   "uses": [],
+   "consume": false,
+   "value": 1
+  },
+  {
+   "name": "siol coirce",
+   "title": "Oat Seed",
+   "color": "#a9925a",
+   "stack_max": 20,
+   "uses": [],
+   "consume": false,
+   "value": 1
+  },
+  {
+   "name": "coirce",
+   "title": "Oats",
+   "color": "#d8c48a",
+   "stack_max": 20,
+   "uses": [
+    {
+     "attr": "energy",
+     "delta": 8.0
+    }
+   ],
+   "consume": true,
+   "value": 1
+  },
+  {
+   "name": "siol meacan",
+   "title": "Carrot Seed",
+   "color": "#c98b4a",
+   "stack_max": 20,
+   "uses": [],
+   "consume": false,
+   "value": 1
+  },
+  {
+   "name": "meacan",
+   "title": "Carrot",
+   "color": "#e67e22",
+   "stack_max": 20,
+   "uses": [
+    {
+     "attr": "health",
+     "delta": 6.0
+    },
+    {
+     "attr": "energy",
+     "delta": 10.0
+    }
+   ],
+   "consume": true,
+   "value": 1
+  },
+  {
+   "name": "siol cabaiste",
+   "title": "Cabbage Seed",
+   "color": "#7fa35a",
+   "stack_max": 20,
+   "uses": [],
+   "consume": false,
+   "value": 2
+  },
+  {
+   "name": "cabaiste",
+   "title": "Cabbage",
+   "color": "#6ab04c",
+   "stack_max": 10,
+   "uses": [
+    {
+     "attr": "health",
+     "delta": 14.0
+    }
+   ],
+   "consume": true,
+   "value": 3
+  },
+  {
+   "name": "leite",
+   "title": "Porridge",
+   "color": "#efe2c2",
+   "stack_max": 10,
+   "uses": [
+    {
+     "attr": "health",
+     "delta": 8.0
+    },
+    {
+     "attr": "energy",
+     "delta": 35.0
+    }
+   ],
+   "consume": true,
+   "value": 3
+  }
+ ],
+ "weather": [
+  {
+   "name": "ceo",
+   "color": "#8fa3b5",
+   "intensity": 0.8,
+   "sight_mult": 0.5,
+   "drain": []
+  },
+  {
+   "name": "baisteach",
+   "color": "#5b7fa6",
+   "intensity": 0.5,
+   "sight_mult": 0.8,
+   "drain": []
+  },
+  {
+   "name": "ceo na marbh",
+   "color": "#3fbf4a",
+   "intensity": 1.0,
+   "sight_mult": 0.4,
+   "drain": []
+  },
+  {
+   "name": "solas bhride",
+   "color": "#ffd86b",
+   "intensity": 0.35,
+   "sight_mult": 1.0,
+   "drain": [
+    {
+     "attr": "health",
+     "per_sec": 5.0
+    }
+   ]
+  },
+  {
+   "name": "sneachta",
+   "color": "#dfe7ef",
+   "intensity": 0.3,
+   "sight_mult": 0.85,
+   "drain": []
+  }
+ ],
+ "events": [
+  {
+   "name": "ruathar lochlannach",
+   "every_secs": 1800,
+   "chance_pct": 50.0,
+   "cooldown_secs": 600,
+   "place": "wexford",
+   "limit_secs": 300,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! Longa Lochlannach! Norse longships are landing at Loch Garman!",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochlannach",
+     "count": 6,
+     "place": "wexford"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "tine",
+     "count": 5,
+     "place": "wexford"
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 300
+    },
+    {
+     "kind": "announce",
+     "text": "The Norsemen are beaten back into the sea.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "pingin airgid",
+     "count": 3
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "The Norsemen sail off with the plunder of Loch Garman.",
+     "banner": true
+    }
+   ]
+  },
+  {
+   "name": "longphort",
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "when": {
+    "kind": "players",
+    "count": 3
+   },
+   "cooldown_secs": 1800,
+   "place": "waterford",
+   "limit_secs": 420,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! A Norse fleet rows up the Siúir to Port Láirge!",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochlannach",
+     "count": 10,
+     "place": "waterford"
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 420
+    },
+    {
+     "kind": "announce",
+     "text": "Port Láirge stands. The longships burn on the strand.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "clogad lochlannach",
+     "count": 1
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "The Norse make a longphort of Port Láirge.",
+     "banner": true
+    }
+   ]
+  },
+  {
+   "name": "oiche na mac tire",
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "when": {
+    "kind": "time",
+    "at": "night"
+   },
+   "cooldown_secs": 1800,
+   "place": "kildare",
+   "limit_secs": 300,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! Wolves come down out of the wood upon Cill Dara!",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "mac tire",
+     "count": 8,
+     "place": "kildare"
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 300
+    },
+    {
+     "kind": "announce",
+     "text": "The wolves are driven off. Cill Dara sleeps.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "miodh",
+     "count": 1
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "The wolves slink back into the trees, fed.",
+     "banner": true
+    }
+   ]
+  },
+  {
+   "name": "eiri chrom dubh",
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "when": {
+    "kind": "players",
+    "count": 2
+   },
+   "cooldown_secs": 1800,
+   "place": "bru na boinne",
+   "limit_secs": 600,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! Under Brú na Bóinne, Crom Dubh wakes!",
+     "banner": true
+    },
+    {
+     "kind": "weather",
+     "name": "ceo",
+     "duration_secs": 600
+    },
+    {
+     "kind": "spawn",
+     "archetype": "crom dubh",
+     "count": 1,
+     "place": "bru na boinne",
+     "name": "Crom Dubh"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "sluagh",
+     "count": 4,
+     "place": "bru na boinne"
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 600
+    },
+    {
+     "kind": "announce",
+     "text": "Crom Dubh is thrown down into the dark again.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "fainne oir",
+     "count": 1
+    },
+    {
+     "kind": "weather",
+     "name": null,
+     "duration_secs": 0
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "Crom Dubh sinks back beneath the mound, unbeaten.",
+     "banner": true
+    },
+    {
+     "kind": "weather",
+     "name": null,
+     "duration_secs": 0
+    }
+   ]
+  },
+  {
+   "name": "aonach",
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "when": {
+    "kind": "time",
+    "at": "dawn"
+   },
+   "cooldown_secs": 15000,
+   "place": "dublin",
+   "limit_secs": 0,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! It is fair day in Áth Cliath. Come to the aonach!",
+     "banner": true
+    },
+    {
+     "kind": "drop",
+     "item": "aran",
+     "count": 8,
+     "place": "dublin"
+    },
+    {
+     "kind": "drop",
+     "item": "miodh",
+     "count": 4,
+     "place": "dublin"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceoltoir",
+     "count": 3,
+     "place": "dublin"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceannai aonaigh",
+     "count": 4,
+     "place": "dublin"
+    }
+   ]
+  },
+  {
+   "name": "stoirm",
+   "every_secs": 2400,
+   "chance_pct": 40.0,
+   "cooldown_secs": 600,
+   "limit_secs": 0,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "A storm blows in off the Atlantic."
+    },
+    {
+     "kind": "weather",
+     "name": "baisteach",
+     "duration_secs": 300
+    }
+   ]
+  },
+  {
+   "name": "tus an domhain",
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "cooldown_secs": 600,
+   "limit_secs": 600,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! Dawn breaks over Hibernia. The age begins.",
+     "banner": true
+    },
+    {
+     "kind": "wait",
+     "secs": 8
+    },
+    {
+     "kind": "announce",
+     "text": "Norse longships are sighted off Áth Cliath, Loch Garman and Port Láirge!",
+     "banner": true
+    },
+    {
+     "kind": "weather",
+     "name": "ceo",
+     "duration_secs": 180
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochlannach",
+     "count": 5,
+     "place": "dublin"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochlannach",
+     "count": 4,
+     "place": "wexford"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochlannach",
+     "count": 4,
+     "place": "waterford"
+    },
+    {
+     "kind": "announce",
+     "text": "To arms! Drive the Norse back into the sea within ten minutes."
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 600
+    },
+    {
+     "kind": "announce",
+     "text": "The Norse are broken. Hibernia is free, and the High King feasts at Teamhair.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "miodh",
+     "count": 2,
+     "everyone": true
+    },
+    {
+     "kind": "reward",
+     "item": "pingin airgid",
+     "count": 5,
+     "everyone": true
+    },
+    {
+     "kind": "weather",
+     "name": null,
+     "duration_secs": 0
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "The Norse hold the coast. Longphoirt rise where the towns stood.",
+     "banner": true
+    },
+    {
+     "kind": "weather",
+     "name": null,
+     "duration_secs": 0
+    }
+   ]
+  },
+  {
+   "name": "mairseail an tsluaigh",
+   "every_secs": 2400,
+   "chance_pct": 25.0,
+   "when": {
+    "kind": "time",
+    "at": "night"
+   },
+   "cooldown_secs": 7200,
+   "place": "bru na boinne",
+   "limit_secs": 900,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! The host of Crom Dubh marches out of Brú na Bóinne on Ceanannas!",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "sluagh mairseala",
+     "count": 6,
+     "place": "bru na boinne"
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 900
+    },
+    {
+     "kind": "announce",
+     "text": "The host is broken on the road to Ceanannas.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "pingin airgid",
+     "count": 5
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "The host of Crom Dubh burns Ceanannas and melts into the dark.",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "tine",
+     "count": 5,
+     "place": "kells"
+    }
+   ]
+  },
+  {
+   "every_secs": 1500,
+   "chance_pct": 70.0,
+   "cooldown_secs": 600,
+   "limit_secs": 0,
+   "name": "la margaidh",
+   "roams": true,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "It is market day in {place}! Traders are setting out their stalls.",
+     "nearby": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceannai aonaigh",
+     "count": 3
+    },
+    {
+     "kind": "gather",
+     "secs": 900,
+     "occasion": "market"
+    }
+   ]
+  },
+  {
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "cooldown_secs": 2000,
+   "limit_secs": 0,
+   "name": "oiche cheoil",
+   "when": {
+    "kind": "time",
+    "at": "dusk"
+   },
+   "roams": true,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Music on the square in {place} tonight! Come and dance.",
+     "nearby": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceoltoir",
+     "count": 2
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochran",
+     "count": 8
+    },
+    {
+     "kind": "gather",
+     "secs": 900,
+     "occasion": "feast",
+     "dance": true
+    }
+   ]
+  },
+  {
+   "every_secs": 2700,
+   "chance_pct": 40.0,
+   "cooldown_secs": 600,
+   "limit_secs": 0,
+   "name": "bainis",
+   "roams": true,
+   "steps": [
+    {
+     "kind": "gather",
+     "secs": 600,
+     "occasion": "wedding",
+     "dance": true,
+     "announce": "Bells ring in {place}: {who} and {other} are wed today! All are welcome."
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceoltoir",
+     "count": 1
+    },
+    {
+     "kind": "drop",
+     "item": "miodh",
+     "count": 3
+    }
+   ]
+  },
+  {
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "cooldown_secs": 3600,
+   "limit_secs": 0,
+   "name": "samhain",
+   "when": {
+    "kind": "season",
+    "is": "winter"
+   },
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Samhain. Winter comes down on Hibernia, and the nights grow hungry.",
+     "banner": true
+    },
+    {
+     "kind": "weather",
+     "name": "sneachta",
+     "duration_secs": 900
+    }
+   ]
+  },
+  {
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "cooldown_secs": 3600,
+   "limit_secs": 0,
+   "name": "imbolc",
+   "when": {
+    "kind": "season",
+    "is": "spring"
+   },
+   "place": "tobar",
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Imbolc. Brigid's light returns to the land: spring is here.",
+     "banner": true
+    },
+    {
+     "kind": "weather",
+     "name": "solas bhride",
+     "duration_secs": 600
+    }
+   ]
+  },
+  {
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "cooldown_secs": 3600,
+   "limit_secs": 0,
+   "name": "bealtaine",
+   "when": {
+    "kind": "season",
+    "is": "summer"
+   },
+   "place": "tara",
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Bealtaine! Fires are lit on Teamhair to welcome the summer.",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "tine",
+     "count": 4
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceoltoir",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "cooldown_secs": 3600,
+   "limit_secs": 0,
+   "name": "lughnasa",
+   "when": {
+    "kind": "season",
+    "is": "autumn"
+   },
+   "place": "dublin",
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Lughnasa: the harvest is in! A feast in Áth Cliath, and bread for all.",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceoltoir",
+     "count": 3
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochran",
+     "count": 10
+    },
+    {
+     "kind": "gather",
+     "secs": 900,
+     "occasion": "feast",
+     "dance": true
+    },
+    {
+     "kind": "reward",
+     "item": "aran",
+     "count": 2,
+     "everyone": true
+    }
+   ]
+  },
+  {
+   "name": "an phla",
+   "roams": true,
+   "every_secs": 5400,
+   "chance_pct": 30.0,
+   "cooldown_secs": 5400,
+   "limit_secs": 0,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "The sickness has come to {place}! Keep your distance, and pray.",
+     "banner": true
+    },
+    {
+     "kind": "plague",
+     "secs": 1500,
+     "spread_pct": 40.0,
+     "deaths_pct": 20.0,
+     "first": 5
+    },
+    {
+     "kind": "wait",
+     "secs": 240
+    },
+    {
+     "kind": "announce",
+     "text": "A plague doctor has come to {place}, in a beaked mask, with vinegar and herbs.",
+     "nearby": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "dochtuir",
+     "count": 1
+    }
+   ]
+  }
+ ],
+ "quests": [
+  {
+   "name": "wolves at the fold",
+   "title": "Wolves at the Fold",
+   "text": "The wolves have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
+   "done_text": "The flock is quiet tonight. Take this, and my thanks.",
+   "giver": "aoire",
+   "steps": [
+    {
+     "kind": "kill",
+     "archetype": "mac tire",
+     "count": 5
+    }
+   ],
+   "xp": 120,
+   "reward": [
+    {
+     "item": "aran",
+     "count": 3
+    }
+   ]
+  },
+  {
+   "name": "pelts for the winter",
+   "title": "Pelts for the Winter",
+   "text": "Winter is coming hard. Bring me four wolf pelts and the children will sleep warm.",
+   "done_text": "Fine pelts. The little ones will thank you.",
+   "giver": "aoire",
+   "after": "wolves at the fold",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "craiceann mic tire",
+     "count": 4
+    }
+   ],
+   "xp": 150,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "deer for the pot",
+   "title": "Deer for the Pot",
+   "text": "The harvest was thin. Hunt three deer from the woods and the village eats this week.",
+   "done_text": "Venison! We'll eat well. Come back if you're passing again.",
+   "giver": "tuathanach",
+   "steps": [
+    {
+     "kind": "kill",
+     "archetype": "fia",
+     "count": 3
+    }
+   ],
+   "xp": 60,
+   "reward": [
+    {
+     "item": "miodh",
+     "count": 1
+    }
+   ],
+   "repeatable": true
+  },
+  {
+   "name": "the road to glendalough",
+   "title": "The Road to Gleann Dá Loch",
+   "text": "Brother Ciarán has not written from Gleann Dá Loch in a month. Walk there, see that all is well, and come back to me.",
+   "done_text": "He is well? God be thanked. You have a good heart.",
+   "giver": "manach",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "glendalough"
+    }
+   ],
+   "xp": 100
+  },
+  {
+   "name": "relics of the saints",
+   "title": "Relics of the Saints",
+   "text": "Brigands robbed a pilgrim of the abbey's silver. Take back five silver pennies from them, and bring them to me.",
+   "done_text": "The abbey's silver, returned. Your name goes in our prayers.",
+   "giver": "manach",
+   "level": 3,
+   "after": "the road to glendalough",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "pingin airgid",
+     "count": 5
+    }
+   ],
+   "xp": 220,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 3
+    }
+   ]
+  },
+  {
+   "name": "brigands on the road",
+   "title": "Brigands on the Road",
+   "text": "Brigands rob anyone on the road south. Find their camp and put four of them in the ground.",
+   "done_text": "The road is safer for it. You fight like one of the Fianna.",
+   "giver": "laoch",
+   "level": 3,
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "dibheirgigh"
+    },
+    {
+     "kind": "kill",
+     "archetype": "dibheirgeach",
+     "count": 4
+    }
+   ],
+   "xp": 260,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 5
+    }
+   ]
+  },
+  {
+   "name": "word to the merchant",
+   "title": "Word to the Merchant",
+   "text": "Tell the merchants the south road is open again. Find a merchant and give them the word.",
+   "done_text": "Good news travels fast with you.",
+   "giver": "laoch",
+   "turn_in": "ceannai",
+   "after": "brigands on the road",
+   "steps": [
+    {
+     "kind": "talk",
+     "archetype": "ceannai"
+    }
+   ],
+   "xp": 80,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 3
+    }
+   ]
+  },
+  {
+   "name": "the fishers worry",
+   "title": "The Fisher's Worry",
+   "text": "Strange lights on Loch nEathach at night. Go and look, and come back and tell me what you saw.",
+   "done_text": "Only marsh-fire? Well, I'll sleep easier.",
+   "giver": "iascaire",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "loch neathach"
+    }
+   ],
+   "xp": 90
+  },
+  {
+   "name": "the restless dead",
+   "title": "The Restless Dead",
+   "text": "The sluagh rise from Brú na Bóinne and walk the land at night. Go to the mound and lay four of them to rest.",
+   "done_text": "The dead sleep again. You have done holy work.",
+   "giver": "manach",
+   "level": 5,
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "bru na boinne"
+    },
+    {
+     "kind": "kill",
+     "archetype": "sluagh",
+     "count": 4
+    }
+   ],
+   "xp": 450,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 3
+    }
+   ]
+  },
+  {
+   "name": "the hill of tara",
+   "title": "The Hill of Tara",
+   "text": "The High King asks for fighters. Go to Teamhair, then find a monk to bless your road.",
+   "done_text": "The King will hear your name.",
+   "giver": "laoch",
+   "turn_in": "laoch",
+   "level": 8,
+   "after": "brigands on the road",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "tara"
+    },
+    {
+     "kind": "talk",
+     "archetype": "manach"
+    }
+   ],
+   "xp": 500,
+   "reward": [
+    {
+     "item": "fainne oir",
+     "count": 1
+    }
+   ]
+  },
+  {
+   "name": "the first furrow",
+   "title": "The First Furrow",
+   "text": "Grow me three sheaves of wheat. Buy wheat seed from me, lay soil in build mode (B, then \\), plant the seed beside it, and break the ripe crop to bring it in.",
+   "done_text": "Good wheat. You have the knack of it.",
+   "giver": "tuathanach",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "cruithneacht",
+     "count": 3
+    }
+   ],
+   "xp": 80,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 5
+    },
+    {
+     "item": "siol cruithneachta",
+     "count": 4
+    }
+   ]
+  },
+  {
+   "name": "oats for the horses",
+   "title": "Oats for the Horses",
+   "text": "The carters’ horses are hungry. Six sheaves of oats, if you can grow them.",
+   "done_text": "They will eat well tonight.",
+   "giver": "tuathanach",
+   "after": "the first furrow",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "coirce",
+     "count": 6
+    }
+   ],
+   "xp": 150,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 15
+    }
+   ]
+  },
+  {
+   "name": "carrots for the fair",
+   "title": "Carrots for the Fair",
+   "text": "The fair is coming and I have nothing fresh to sell. Bring me five carrots.",
+   "done_text": "Fine carrots. Here is your share.",
+   "giver": "ceannai",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "meacan",
+     "count": 5
+    }
+   ],
+   "xp": 120,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 10
+    }
+   ]
+  },
+  {
+   "name": "a cabbage for the abbot",
+   "title": "A Cabbage for the Abbot",
+   "text": "The abbot has a fondness for cabbage, and our garden failed. Two heads, grown by your own hand.",
+   "done_text": "He will be pleased. Bless you.",
+   "giver": "manach",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "cabaiste",
+     "count": 2
+    }
+   ],
+   "xp": 140,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "a hunters living",
+   "title": "A Hunter's Living",
+   "text": "There is always a market for venison. Three deer, and I will pay.",
+   "done_text": "Fair pay for fair work.",
+   "giver": "tuathanach",
+   "after": "deer for the pot",
+   "steps": [
+    {
+     "kind": "kill",
+     "archetype": "fia",
+     "count": 3
+    }
+   ],
+   "xp": 50,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 3
+    }
+   ],
+   "repeatable": true
+  },
+  {
+   "name": "pelts for coin",
+   "title": "Pelts for Coin",
+   "text": "Wolf pelts keep a shepherd warm. Three more, whenever you have them.",
+   "done_text": "Warm nights ahead.",
+   "giver": "aoire",
+   "after": "pelts for the winter",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "craiceann mic tire",
+     "count": 3
+    }
+   ],
+   "xp": 70,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 6
+    }
+   ],
+   "repeatable": true
+  },
+  {
+   "name": "the robbers pass",
+   "title": "The Robbers' Pass",
+   "text": "Robbers hold the pass at Bealach na gCreach. Go there and drive three of them off.",
+   "done_text": "The road is safer for it.",
+   "giver": "maor bothair",
+   "level": 3,
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "bealach na gcreach"
+    },
+    {
+     "kind": "kill",
+     "archetype": "meirleach",
+     "count": 3
+    }
+   ],
+   "xp": 240,
+   "reward": [
+    {
+     "item": "claiomh",
+     "count": 1
+    }
+   ]
+  },
+  {
+   "name": "white wolves of the north",
+   "title": "White Wolves of the North",
+   "text": "White wolves are coming down out of the snowy north. Go up there and thin them out: five will do.",
+   "done_text": "You have the north in your bones now.",
+   "giver": "laoch",
+   "level": 4,
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "an tuaisceart 3"
+    },
+    {
+     "kind": "kill",
+     "archetype": "mac tire ban",
+     "count": 5
+    }
+   ],
+   "xp": 320,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 20
+    },
+    {
+     "item": "deoch leighis",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "a pilgrims way",
+   "title": "A Pilgrim's Way",
+   "text": "Walk the holy road with me in spirit: Gleann Dá Loch, Cluain Mhic Nóis and the Rock of Caiseal.",
+   "done_text": "You have walked where the saints walked.",
+   "giver": "oilithreach",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "glendalough"
+    },
+    {
+     "kind": "visit",
+     "place": "clonmacnoise"
+    },
+    {
+     "kind": "visit",
+     "place": "cashel"
+    }
+   ],
+   "xp": 300,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 5
+    },
+    {
+     "item": "deoch leighis",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "the holy well",
+   "title": "The Holy Well",
+   "text": "Drink at Tobar Bríde, then tell a monk you have been.",
+   "done_text": "The well remembers you.",
+   "giver": "oilithreach",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "tobar"
+    },
+    {
+     "kind": "talk",
+     "archetype": "manach"
+    }
+   ],
+   "xp": 150,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 1
+    }
+   ]
+  },
+  {
+   "name": "news from the coast",
+   "title": "News from the Coast",
+   "text": "Go down the coast to Port Láirge and Corcaigh, see how the boats fare, and bring the news to a trader in Áth Cliath.",
+   "done_text": "So the boats are safe. Good.",
+   "giver": "iascaire",
+   "after": "the fishers worry",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "waterford"
+    },
+    {
+     "kind": "visit",
+     "place": "cork"
+    },
+    {
+     "kind": "talk",
+     "archetype": "ceannai"
+    }
+   ],
+   "xp": 200,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 8
+    }
+   ]
+  },
+  {
+   "name": "the four provinces",
+   "title": "The Four Provinces",
+   "text": "A merchant should know the country. See Gaillimh, Luimneach, Doire and Ard Mhacha, and you will know it too.",
+   "done_text": "Now you know Ireland.",
+   "giver": "ceannai taistil",
+   "level": 2,
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "galway"
+    },
+    {
+     "kind": "visit",
+     "place": "limerick"
+    },
+    {
+     "kind": "visit",
+     "place": "derry"
+    },
+    {
+     "kind": "visit",
+     "place": "armagh"
+    }
+   ],
+   "xp": 400,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 20
+    }
+   ]
+  },
+  {
+   "name": "the shepherds errand",
+   "title": "The Shepherd's Errand",
+   "text": "Go to Áth Cliath and ask a seed trader if they have any seed to spare for a shepherd.",
+   "done_text": "Seed for the spring. Thank you.",
+   "giver": "aoire",
+   "steps": [
+    {
+     "kind": "talk",
+     "archetype": "tuathanach"
+    }
+   ],
+   "xp": 60,
+   "reward": [
+    {
+     "item": "aran",
+     "count": 3
+    },
+    {
+     "item": "pingin airgid",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "the northmen",
+   "title": "The Northmen",
+   "text": "When the longships come, stand with us. Beat three of the raiders.",
+   "done_text": "They will think twice before coming again.",
+   "giver": "laoch",
+   "level": 8,
+   "after": "the hill of tara",
+   "steps": [
+    {
+     "kind": "kill",
+     "archetype": "lochlannach",
+     "count": 3
+    }
+   ],
+   "xp": 700,
+   "reward": [
+    {
+     "item": "tua chatha",
+     "count": 1
+    }
+   ]
+  }
+ ],
+ "zones": [
+  {
+   "name": "ceo na marbh",
+   "place": "bru na boinne",
+   "weather": "ceo na marbh",
+   "active": true,
+   "height": 30.0
+  },
+  {
+   "name": "solas bhride",
+   "place": "tobar",
+   "weather": "solas bhride",
+   "active": true,
+   "height": 20.0
+  },
+  {
+   "name": "sneachta an tuaiscirt 1",
+   "place": "an tuaisceart 1",
+   "weather": "sneachta",
+   "active": true,
+   "height": 30.0
+  },
+  {
+   "name": "sneachta an tuaiscirt 2",
+   "place": "an tuaisceart 2",
+   "weather": "sneachta",
+   "active": true,
+   "height": 30.0
+  },
+  {
+   "name": "sneachta an tuaiscirt 3",
+   "place": "an tuaisceart 3",
+   "weather": "sneachta",
+   "active": true,
+   "height": 30.0
+  },
+  {
+   "name": "sneachta an tuaiscirt 4",
+   "place": "an tuaisceart 4",
+   "weather": "sneachta",
+   "active": true,
+   "height": 30.0
+  },
+  {
+   "name": "sneachta an tuaiscirt 5",
+   "place": "an tuaisceart 5",
+   "weather": "sneachta",
+   "active": true,
+   "height": 30.0
+  }
+ ],
+ "daylight": {
+  "mode": "cycle",
+  "day_minutes": 40.0,
+  "night_share": 0.35,
+  "offset": 0.8014721407089382
+ },
+ "levels": {
+  "cap": 20,
+  "base": 100.0,
+  "exponent": 1.6,
+  "might": 0.06,
+  "toughness": 0.05,
+  "discover_xp": 10,
+  "life": {
+   "walk": 1.5,
+   "act": 0.5,
+   "build": 0.5,
+   "deed": 1.0,
+   "plant": 1.0,
+   "harvest": 3.0,
+   "minute": 1.0,
+   "company": 1.0,
+   "per_min": 30,
+   "trail": 64,
+   "repeat": 8
+  },
+  "rewards": [
+   {
+    "level": 2,
+    "items": [
+     {
+      "item": "pingin airgid",
+      "count": 5
+     }
+    ],
+    "text": "Level 2: five silver pennies to spend."
+   },
+   {
+    "level": 3,
+    "items": [
+     {
+      "item": "deoch leighis",
+      "count": 2
+     },
+     {
+      "item": "siol cabaiste",
+      "count": 3
+     }
+    ],
+    "text": "Level 3: healing drinks, and cabbage seed for the garden."
+   },
+   {
+    "level": 4,
+    "items": [
+     {
+      "item": "pingin airgid",
+      "count": 10
+     }
+    ],
+    "text": "Level 4: ten silver pennies."
+   },
+   {
+    "level": 5,
+    "items": [
+     {
+      "item": "claiomh",
+      "count": 1
+     }
+    ],
+    "text": "Level 5: a sword of your own."
+   },
+   {
+    "level": 7,
+    "items": [
+     {
+      "item": "pingin airgid",
+      "count": 20
+     },
+     {
+      "item": "deoch leighis",
+      "count": 3
+     }
+    ],
+    "text": "Level 7: twenty pennies and drink for the road."
+   },
+   {
+    "level": 10,
+    "items": [
+     {
+      "item": "capall",
+      "count": 1
+     }
+    ],
+    "text": "Level 10: a horse. Ride well."
+   },
+   {
+    "level": 12,
+    "items": [
+     {
+      "item": "luireach",
+      "count": 1
+     }
+    ],
+    "text": "Level 12: a mail shirt."
+   },
+   {
+    "level": 15,
+    "items": [
+     {
+      "item": "fainne oir",
+      "count": 1
+     },
+     {
+      "item": "pingin airgid",
+      "count": 50
+     }
+    ],
+    "text": "Level 15: a gold ring, and a purse."
+   }
+  ],
+  "grow": {
+   "health": 10.0,
+   "mana": 7.0
+  }
+ },
+ "currency": "pingin airgid",
+ "classes": [
+  {
+   "name": "ridire",
+   "title": "Ridire (Knight)",
+   "desc": "A sworn knight in mail: hard to bring down, and blessed with healing. Stands in front so others need not.",
+   "look": "knight",
+   "might": 0.05,
+   "toughness": 0.3,
+   "spells": [
+    "leigheas",
+    "athbheochan",
+    "beannacht",
+    "luas",
+    "sioc"
+   ]
+  },
+  {
+   "name": "laoch",
+   "title": "Laoch (Warrior)",
+   "desc": "A warrior of the Fianna: the hardest blows in Hibernia, and the strength to drain a foe and leap clear.",
+   "look": "barbarian",
+   "might": 0.3,
+   "toughness": 0.15,
+   "spells": [
+    "luas",
+    "tintreach",
+    "sui fola",
+    "foluain"
+   ]
+  },
+  {
+   "name": "draoi",
+   "title": "Draoi (Druid)",
+   "desc": "A druid of the old ways: fire, frost, storm and curse, sleep for the wary, and renewal for friends.",
+   "look": "mage",
+   "might": 0.15,
+   "spells": [
+    "liathroid tine",
+    "sioc",
+    "tintreach",
+    "mallacht",
+    "ceo nimhe",
+    "codladh",
+    "foluain",
+    "athbheochan"
+   ]
+  },
+  {
+   "name": "ceithearnach",
+   "title": "Ceithearnach (Kern)",
+   "desc": "A light-footed kern: swift, poisonous and patient, putting foes to sleep before the knife.",
+   "look": "rogue",
+   "might": 0.2,
+   "toughness": 0.05,
+   "spells": [
+    "luas",
+    "ceo nimhe",
+    "codladh",
+    "sui fola",
+    "mallacht"
+   ]
+  }
+ ],
+ "recipes": [
+  {
+   "name": "aran",
+   "needs": [
+    {
+     "item": "cruithneacht",
+     "count": 3
+    }
+   ],
+   "makes": "aran",
+   "count": 2
+  },
+  {
+   "name": "leite",
+   "needs": [
+    {
+     "item": "coirce",
+     "count": 2
+    },
+    {
+     "item": "miodh",
+     "count": 1
+    }
+   ],
+   "makes": "leite",
+   "count": 2
+  }
+ ],
+ "crops": [
+  {
+   "name": "cruithneacht",
+   "seed": "siol cruithneachta",
+   "yields": "cruithneacht",
+   "min": 2,
+   "max": 4,
+   "grow_secs": 240.0
+  },
+  {
+   "name": "coirce",
+   "seed": "siol coirce",
+   "yields": "coirce",
+   "min": 2,
+   "max": 4,
+   "grow_secs": 180.0
+  },
+  {
+   "name": "meacan",
+   "seed": "siol meacan",
+   "yields": "meacan",
+   "min": 1,
+   "max": 3,
+   "grow_secs": 300.0
+  },
+  {
+   "name": "cabaiste",
+   "seed": "siol cabaiste",
+   "yields": "cabaiste",
+   "min": 1,
+   "max": 2,
+   "grow_secs": 420.0
+  }
+ ],
+ "plots": {
+  "size": 12,
+  "per_player": 2,
+  "sizes": [
+   {
+    "size": 16,
+    "cost": 20,
+    "level": 3
+   },
+   {
+    "size": 24,
+    "cost": 60,
+    "level": 6
+   },
+   {
+    "size": 32,
+    "cost": 150,
+    "level": 10
+   }
+  ]
+ },
+ "rules": {
+  "talk_reach": 8.0,
+  "pickup_reach": 3.0,
+  "global_cooldown_secs": 0.5,
+  "item_cooldown_secs": 0.25,
+  "ground_item_secs": 300.0,
+  "sneak_sight": 0.35,
+  "chase_give_up_secs": 10.0,
+  "pvp_quiet_secs": 8.0,
+  "kill_credit_secs": 30.0,
+  "party_size": 5,
+  "party_share_reach": 80.0,
+  "quest_share_reach": 40.0,
+  "say_reach": 64.0,
+  "shout_reach": 0.0,
+  "remark_reach": 24.0,
+  "bot_say_secs": 6.0,
+  "guild_size": 200,
+  "dungeon_idle_secs": 30.0,
+  "trade_reach": 12.0,
+  "trade_break": 24.0,
+  "market_reach": 16.0,
+  "listing_hours": 48.0,
+  "listings_per_seller": 12,
+  "fall_xp_loss_pct": 0.0,
+  "fall_coin_loss_pct": 0.0,
+  "fall_drop_pct": 0.0,
+  "rise_delay_secs": 0.0,
+  "hail_reach": 30.0,
+  "hail_secs": 30.0,
+  "wander_linger_secs": 6.0,
+  "wander_range": 30.0,
+  "remark_pause_secs": 4.0,
+  "night_sight": 1.4,
+  "night_ambush_pct": 30.0,
+  "night_pack": 3,
+  "brawl_pct": 15.0,
+  "lift_pct": 20.0,
+  "inn_pct": 35.0,
+  "newcomer_secs": 2400.0,
+  "plea_pct": 40.0,
+  "season_days": 3.0,
+  "season_shift": 0.0
+ },
+ "starter": [
+  {
+   "item": "pingin airgid",
+   "count": 10
+  },
+  {
+   "item": "aran",
+   "count": 3
+  },
+  {
+   "item": "deoch leighis",
+   "count": 1
+  },
+  {
+   "item": "siol coirce",
+   "count": 4
+  }
+ ],
+ "emotes": [
+  {
+   "cmd": "wave",
+   "text": "{name} waves.",
+   "at": "{name} waves at {target}.",
+   "anim": "Interact"
+  },
+  {
+   "cmd": "cheer",
+   "text": "{name} cheers!",
+   "at": "{name} cheers for {target}!",
+   "anim": "Cheer"
+  },
+  {
+   "cmd": "bow",
+   "text": "{name} bows.",
+   "at": "{name} bows to {target}.",
+   "anim": "Use_Item"
+  },
+  {
+   "cmd": "dance",
+   "text": "{name} dances a jig.",
+   "at": "{name} dances a jig with {target}.",
+   "anim": "Cheer"
+  },
+  {
+   "cmd": "sit",
+   "text": "{name} sits down.",
+   "anim": "Sit_Floor_Idle"
+  },
+  {
+   "cmd": "rest",
+   "text": "{name} lies down for a rest.",
+   "anim": "Lie_Idle"
+  },
+  {
+   "cmd": "thank",
+   "text": "{name} gives thanks.",
+   "at": "{name} thanks {target}.",
+   "anim": "Interact"
+  },
+  {
+   "cmd": "laugh",
+   "text": "{name} laughs.",
+   "at": "{name} laughs at {target}.",
+   "anim": "Cheer"
+  }
+ ],
+ "gods": [
+  "27e5f44f38eb50e5"
+ ],
+ "start_place": "dublin"
+}

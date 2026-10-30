@@ -88,11 +88,30 @@ func junctions(cx: int, cy: int) -> Array:
 ## The fields of the farmhouses in a cell (farmsteads, and the houses of farming villages): one or two strips beside
 ## each where there is room, kept clear
 ## of roads, water, buildings and steep ground. [[Rect2, furrows along z, side of the house (0 N, 1 S, 2 W, 3 E)], ...]
+## A world file that lays out its own fields (world.farms) gives those instead, as [bounding Rect2, furrows nearer z
+## than x, -1 (no house side: hedgerows, not fences, bound them), corners, crop, furrow angle].
 func fields_of_cell(cx: int, cy: int) -> Array:
 	var k: Variant = world.key(cx, cy)
 	if _fields.has(k):
 		return _fields[k]
 	var out := []
+	if world.farms:
+		for o in world.in_cell(cx, cy):
+			if String(o.get("t", "")) != "field":
+				continue
+			var q: Array = o.get("q", [])
+			if q.size() != 8:
+				continue
+			var quad := PackedVector2Array([Vector2(q[0], q[1]), Vector2(q[2], q[3]), Vector2(q[4], q[5]), Vector2(q[6], q[7])])
+			var box := Rect2(quad[0], Vector2.ZERO)
+			for p in quad:
+				box = box.expand(p)
+			var ang := float(o.get("r", 0.0))
+			out.append([box, absf(sin(ang)) > absf(cos(ang)), -1, quad, String(o.get("k", "pasture")), ang])
+		# Fields stream in with the trees: an empty list is only kept once this cell's points are in.
+		if world.points_in(cx, cy):
+			_fields[k] = out
+		return out
 	var boxes := _boxes_near(cx, cy)
 	for o in world.in_cell(cx, cy):
 		if String(o.get("t", "")) != "house":
@@ -130,8 +149,9 @@ func fields_of_cell(cx: int, cy: int) -> Array:
 ## The fields reaching into an area (a cell's map, the grass round us).
 func fields_in(area: Rect2) -> Array:
 	var out := []
-	var c0 := Vector2i(int(floor((area.position.x - 40.0) / world.CELL)), int(floor((area.position.y - 40.0) / world.CELL)))
-	var c1 := Vector2i(int(floor((area.end.x + 40.0) / world.CELL)), int(floor((area.end.y + 40.0) / world.CELL)))
+	var pad := 100.0 if world.farms else 40.0 # a world file's fields are bigger, and kept by their middles
+	var c0 := Vector2i(int(floor((area.position.x - pad) / world.CELL)), int(floor((area.position.y - pad) / world.CELL)))
+	var c1 := Vector2i(int(floor((area.end.x + pad) / world.CELL)), int(floor((area.end.y + pad) / world.CELL)))
 	for cx in range(c0.x, c1.x + 1):
 		for cy in range(c0.y, c1.y + 1):
 			for f in fields_of_cell(cx, cy):
@@ -245,8 +265,9 @@ func ground_map(cx: int, cy: int) -> PackedByteArray:
 		stamp.call(box, 0, road)
 		if hw >= 3.4:
 			stamp.call(box, 1, road)
-	# Fields (g where there is no road): 0.5 for furrows along x, 1.0 along z.
-	for f in fields_in(cell):
+	# Fields (g where there is no road): 0.5 for furrows along x, 1.0 along z. A world file's own fields go in the
+	# field map instead (field_map), which carries their crop and the angle of their furrows.
+	for f in ([] if world.farms else fields_in(cell)):
 		var r: Rect2 = f[0]
 		var along: float = 1.0 if f[1] else 0.5
 		any = true
@@ -294,3 +315,45 @@ func ground_map(cx: int, cy: int) -> PackedByteArray:
 				any = true
 				stamp.call(box, 3, func(q: Vector2) -> float: return 1.0 - q.distance_to(p) / rr)
 	return map if any else PackedByteArray()
+
+# ------------------------------------------------------------------------------------- the field map
+
+## What grows in a world file's fields, as the field map's red channel (sampled nearest, so codes stay whole).
+const CROPS := {"pasture": 1, "hay": 2, "wheat": 3, "barley": 4, "oats": 5, "potato": 6}
+
+## A cell's field map (MAP_N x MAP_N, RG8): r the crop (CROPS, times 40), g the furrows' angle (0..PI as 0..255).
+## Empty when no world-file field reaches the cell.
+func field_map(cx: int, cy: int) -> PackedByteArray:
+	if not world.farms:
+		return PackedByteArray()
+	var n := MAP_N
+	var px: float = world.CELL / n
+	var ox: float = cx * world.CELL
+	var oy: float = cy * world.CELL
+	var cell := Rect2(ox, oy, world.CELL, world.CELL)
+	var map := PackedByteArray()
+	var any := false
+	for f in fields_in(cell):
+		if f.size() < 6:
+			continue
+		var box: Rect2 = f[0]
+		if not box.intersects(cell):
+			continue
+		if not any:
+			map.resize(n * n * 2)
+			any = true
+		var quad: PackedVector2Array = f[3]
+		var code := int(CROPS.get(f[4], 1)) * 40
+		var ang := fposmod(float(f[5]), PI)
+		var g := int(ang / PI * 255.0)
+		var i0 := clampi(int((box.position.x - ox) / px), 0, n - 1)
+		var i1 := clampi(int((box.end.x - ox) / px), 0, n - 1)
+		var j0 := clampi(int((box.position.y - oy) / px), 0, n - 1)
+		var j1 := clampi(int((box.end.y - oy) / px), 0, n - 1)
+		for j in range(j0, j1 + 1):
+			for i in range(i0, i1 + 1):
+				if Geometry2D.is_point_in_polygon(Vector2(ox + (i + 0.5) * px, oy + (j + 0.5) * px), quad):
+					var at := (j * n + i) * 2
+					map[at] = code
+					map[at + 1] = g
+	return map

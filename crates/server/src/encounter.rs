@@ -39,6 +39,7 @@ impl Sim {
         } else {
             return;
         };
+        self.boss_engaged(bot, player);
         let pid = self.ents.id_of(player);
         match self.foe[bot] {
             Some(f) if f == pid => {

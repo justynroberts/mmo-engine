@@ -71,6 +71,7 @@ One JSON object.
 | `water` | Rivers and lakes, below |
 | `roads` | Roads, below (optional) |
 | `settled` | Where each of the recipe's `settlements` went: `[{"t", "name", "asked": [x, y], "at": [x, y] or null}]` |
+| `farms` | `true` when the objects include `field`s: a theme draws those, and makes up no fields of its own |
 | `objects` | Everything else, below |
 
 Unknown fields are allowed everywhere and ignored by the engine, so a generator can add data for its own
@@ -109,7 +110,11 @@ so it cannot be entered.
 covers, and everything moves the game file's `road_speed` times as fast (1.5 by default) on them. A theme draws them.
 
 worldgen lays the city's avenues (half width 4) and streets (3.5, paved), each village's high street, roads between
-places (3) and tracks to forts (2.2). The network grows outward from the city: each village and fort in turn is joined
+places (3) and tracks to forts (2.2). Past 16,384 units it lays the network in tiers instead: highways (3.5) joining
+the city and the towns, roads (3) to the named villages and forts, every other village joined to the nearest road (2.2)
+with lanes (1.8) to some of its neighbours, and tracks to forts (1.7) and farmsteads (1.3). Each tier is a
+neighbourhood web over its places (no third place nearer both ends than they are to each other), and each link is
+found on a grid coarse enough for its length inside a window round it, so the size of the world does not matter. The network grows outward from the city: each village and fort in turn is joined
 to the nearest road already laid by the cheapest path over the land (gentle slopes, round anything solid, across as
 little river as it can, along an existing road where one goes the same way), straightened and rounded off. Where a
 road crosses a river the bed is raised to just under the water, a ford (an object of type `ford` marks each), and
@@ -138,6 +143,7 @@ pieces). Only `solid` footprints matter to the engine; `t` is for themes. The ty
 | `lake` | footprint, solid | Deep water |
 | `city` | footprint | A city's extent (open ground inside is street) |
 | `square` | footprint | An open square: a plaza, market or village green (a village is a green on a high street lined with houses, with a church tower and a back lane) |
+| `field` | point | A field (worlds past 16,384 units): `q: [x0, y0, ... x3, y3]` its corners in order, `k` what grows (`pasture`, `hay`, `wheat`, `barley`, `oats`, `potato`), `r` the angle its furrows run at. Not solid. Its hedgerow is ordinary `bush` and `tree` objects along its edges |
 | `ford` | point | Where a road wades a river: `r` is the road's direction there |
 | `sea` | footprint, solid, scenery | Open sea past the shallows, as boxes: solid so nobody walks the sea floor, drawn as water (not as a wall) |
 | `tree`, `tree_bare`, `rock` | point, solid | Scenery; the footprint is the trunk or the stone, so it is solid where it stands |

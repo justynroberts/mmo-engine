@@ -552,6 +552,8 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 14: # a boss marks the ground: "T|id|x|y|r|secs|fx", or "C|id" takes one back
+			_boss_mark(text)
 		elif from == 0:
 			hud.say("[color=#ffd27a]%s[/color]" % HudScript.esc(text))
 			if text.begins_with("God mode on"):
@@ -2281,6 +2283,26 @@ func _show_weather() -> void:
 		# A change eases in over ten seconds, but the weather we find on joining is simply there.
 		if t_total < 3.0:
 			theme.snap_weather()
+
+## A boss fight's mark on the ground (the server's `boss.rs`): drawn filling up until the blow lands, which we
+## hear as it does. Walk out of it before then.
+func _boss_mark(text: String) -> void:
+	var f := text.split("|")
+	if f.size() >= 2 and f[0] == "C":
+		spellfx.unwarn(int(f[1]))
+		return
+	if f.size() < 7 or f[0] != "T":
+		return
+	var x := float(f[2])
+	var y := float(f[3])
+	var secs := float(f[5])
+	var fx := f[6]
+	spellfx.warn(int(f[1]), Vector3(x, _height(x, y), y), float(f[4]), secs, fx)
+	var d := Vector2(x, y).distance_to(me_pos)
+	sound.play("cast_" + fx if fx != "" else "horn", SoundScript.at_distance(d) - 4.0)
+	get_tree().create_timer(secs).timeout.connect(func():
+		if fx != "":
+			sound.play("impact_" + fx, SoundScript.at_distance(Vector2(x, y).distance_to(me_pos))))
 
 func _height(x: float, y: float) -> float:
 	return theme.height(x, y) if theme else 0.0

@@ -2,7 +2,8 @@
 //!
 //! A chat line that starts with "/" is a command, not something said aloud: `/w Name text` whispers, `/r text`
 //! answers the last whisper, `/who` lists who is on, `/rep` shows your standing with the factions, and
-//! `/invite Name`, `/accept`, `/decline`, `/leave`, `/p text` and `/party` make and run a party. A party shares the experience of a bot that falls near its
+//! `/invite Name`, `/accept`, `/decline`, `/leave`, `/p text` and `/party` make and run a party. `/mail`, `/send` and
+//! `/mailbox` are mail (`mail.rs`). A party shares the experience of a bot that falls near its
 //! members and their "beat N" quest steps, and its members see each other in a PARTY packet.
 
 use crate::net::Clients;
@@ -46,6 +47,17 @@ fn find(sim: &Sim, name: &str) -> Option<usize> {
     (0..sim.ents.high).find(|&s| {
         sim.ents.alive[s] && sim.ents.owner[s] < DRIVEN && sim.ents.name[s].as_deref().is_some_and(|n| n.to_lowercase() == want)
     })
+}
+
+/// Whom a letter goes to: a claimed name (on or not), else someone on now by name. Their account tag.
+fn recipient(sim: &Sim, clients: &Clients, name: &str) -> Option<String> {
+    if name.trim().is_empty() {
+        return None;
+    }
+    if let Some(id) = clients.names.get(&proto::names::key(name)) {
+        return Some(proto::secure::account_tag(id));
+    }
+    find(sim, name).and_then(|s| sim.tag_of(s))
 }
 
 fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
@@ -246,11 +258,37 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             let line = if sim.party[slot] == 0 { "You are not in a party. /invite Name".to_string() } else { format!("Your party: {}", mates.join(", ")) };
             say(clients, slot, &line);
         }
+        "mail" | "letter" | "send" => {
+            let (name, words) = target_and_text(&rest);
+            let Some(to) = recipient(sim, clients, &name) else {
+                say(clients, slot, if name.is_empty() { "/mail Name words, or at a market /send Name 10 gold" } else { "There is nobody of that name." });
+                return true;
+            };
+            let line = if cmd == "send" {
+                let (n, item) = words.split_once(' ').unwrap_or((&words, ""));
+                match n.parse::<u32>() {
+                    Ok(n) if !item.trim().is_empty() => sim.send_goods(slot, &to, &name, n, item),
+                    _ => "Send what? /send Name 10 gold".to_string(),
+                }
+            } else {
+                sim.send_letter(slot, &to, &name, &words)
+            };
+            say(clients, slot, &line);
+            // Someone on now hears of it at once.
+            if line.contains("on its way") {
+                sim.system_mail_now();
+            }
+        }
+        "mailbox" | "letters" | "inbox" => {
+            for line in sim.read_mail(slot) {
+                say(clients, slot, &line);
+            }
+        }
         _ if crate::realm::command(sim, clients, slot, text) => {}
         _ if emote(sim, clients, slot, &cmd, &rest) => {}
         _ => {
             let emotes: String = sim.emotes.iter().map(|e| format!(", /{}", e.cmd)).collect();
-            say(clients, slot, &format!("Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /name New Name, {}{emotes}", crate::realm::HELP));
+            say(clients, slot, &format!("Commands: /w Name words, /r words, /who, /rep, /invite Name, /accept, /decline, /leave, /p words, /party, /mail Name words, /send Name 10 gold, /mailbox, /name New Name, {}{emotes}", crate::realm::HELP));
             return false;
         }
     }

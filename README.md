@@ -319,6 +319,25 @@ Steps are `kill` (beat N of a type: it counts for everyone who hurt the one that
 
 **Loot by click.** A left click on a pile on the ground walks you to it and picks up that pile (action 250 with the pile's GROUND id as `target`; 0 still takes the nearest). Any movement key cancels the walk.
 
+## Boss fights
+
+A bot type with a `boss` section fights by script as well as by its rules (`crates/server/src/boss.rs`):
+
+```json
+{"name": "warlord", "attack": "cleave", "leash": 80, "boss": {
+  "enrage_secs": 300, "defeat": "The warlord falls!",
+  "phases": [
+    {"below": 100, "moves": [{"action": "slam", "every_secs": 8, "warn_secs": 2, "at": "random", "radius": 5}]},
+    {"below": 40, "say": "The warlord calls his guard!", "adds": [{"bot": "raider", "count": 3}],
+     "moves": [{"action": "slam", "every_secs": 5, "warn_secs": 1.5, "at": "farthest"}]}]}}
+```
+
+It goes for whoever has the most **threat**: damage done to it adds threat, a heal on someone in the fight adds half of what it mended to the healer, and an action with `taunt: true` used on it puts the user on top. It turns only when someone passes the one it is on by a tenth, so a tank can hold it. **Moves** are actions used on timers; one with `warn_secs` marks a circle on the ground (at the tank, a random player in the fight, the farthest, or round itself) and lands on whoever is still in it, so it can be walked out of. Clients hear of marks on chat channel 14 (`T|id|x|y|r|secs|fx`, `C|id` to take one back). Health thresholds move it through **phases** (each with its own moves, a banner and adds that come to its side already in the fight); past `enrage_secs` its blows count `enrage_might` (3) times. With nobody left fighting it (fallen, past its leash, in a safe place) it **resets**: whole again, its adds gone. None of it is in the content hash; edit it in the bot builder's Boss fight section or through the MCP.
+
+## Mail
+
+`/mail Name words` writes to a character by name, whether they are on or not. At a market (a safe place, or beside a merchant) `/send Name 20 gold` sends goods from your bag; the game's currency is an item, so that sends coin. `/mailbox` reads what has come: the words anywhere, and at a market what was sent along goes into the bag (what does not fit waits). Players are told when a letter comes and again when they next join. Letters are kept with the realm's save by account tag (`crates/server/src/mail.rs`); `rules.mail_waiting` (50) caps a mailbox.
+
 ## Parties, whispers, shops, gear and mounts
 
 **Whispers and who.** A chat line starting with `/` is a command: `/w Name words` whispers (a name with spaces goes in quotes), `/r words` answers the last whisper, `/who` lists who is on with their levels, `/name New Name` renames you.
