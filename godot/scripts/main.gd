@@ -7,11 +7,12 @@ extends Node3D
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue. --guest plays a throwaway character, not this machine's own.
-## Screenshots: --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
+## Screenshots: --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
 const SoundScript := preload("res://scripts/sound.gd")
+const Blueprints := preload("res://scripts/blueprints.gd")
 const JoinScript := preload("res://scripts/join.gd")
 const BubblesScript := preload("res://scripts/bubbles.gd")
 const SpellFx := preload("res://scripts/spellfx.gd")
@@ -642,6 +643,14 @@ func _start() -> void:
 				_open_auction()
 			else:
 				bagui.toggle(net.bag()))
+	if args.has("blueprint"): # --blueprint N: in build mode, lay blueprint N out a few blocks south of us (with --shot)
+		get_tree().create_timer(3.0).timeout.connect(func():
+			_set_building(true)
+			blueprint = int(args["blueprint"])
+			var bs := float(build["block"])
+			var c := Vector2i(int(floor(me_pos.x / bs)), int(floor(me_pos.y / bs)) + 3)
+			aim_place = Vector3i(c.x, c.y, _col_base(c.x, c.y))
+			_lay_blueprint())
 	if args.has("fpv"):
 		_set_fpv(true)
 		if args.has("pitch"):
@@ -875,6 +884,7 @@ func _process(delta: float) -> void:
 	_poll_world(delta)
 	t = theme.lap("tiles", t)
 	_aim()
+	_blueprint_step(delta)
 	_mine(delta)
 	_fly_debris(delta)
 	t = theme.lap("aim", t)
@@ -977,7 +987,7 @@ func _process(delta: float) -> void:
 	if _goal_in <= 0.0:
 		_goal_in = 0.25
 		questui.update_distances(me_pos, homes)
-		hud.set_prompt("" if building or fallen.down else _f_prompt())
+		hud.set_prompt(_blueprint_words() if building else ("" if fallen.down else _f_prompt()))
 	hud.update_minimap(me_pos, heading, others)
 	_local_map()
 	if Input.is_key_pressed(KEY_SPACE) and not building and not hud.typing() and not smoke:
@@ -2624,7 +2634,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif building:
 			# The right button breaks by being held (_mine), not by a click.
 			if ev.button_index == MOUSE_BUTTON_LEFT and not ev.shift_pressed:
-				_build(true)
+				if blueprint >= 0 and bp_cells.is_empty():
+					_lay_blueprint()
+				else:
+					_build(true)
 		elif ev.button_index == MOUSE_BUTTON_LEFT:
 			_pick(_pointer())
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
@@ -2681,6 +2694,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 				_set_building(false)
 			elif MATERIAL_KEYS.has(k) and MATERIAL_KEYS.find(k) < int(build.get("kinds", 4)):
 				build_kind = MATERIAL_KEYS.find(k)
+			elif k == KEY_T:
+				_next_blueprint()
+			elif k == KEY_R and blueprint >= 0 and bp_cells.is_empty():
+				bp_turns += 1
 		else:
 			# Action mode: fight, target and items.
 			if k == KEY_ESCAPE and fpv:
@@ -2702,6 +2719,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 ## Switch between action mode and build mode. There is no build mode when the server offers no building.
 func _set_building(on: bool) -> void:
 	building = on and not build.is_empty()
+	if not building:
+		_end_blueprint()
 
 func _on_chat(text: String) -> void:
 	if text.begins_with("/name "):
@@ -3216,6 +3235,132 @@ func _show_goal(goals: Array) -> void:
 		return
 	var w := Vector3(p.x, theme.height(p.x, p.y) + 2.0, p.y)
 	hud.goal_mark.show_goal(true, cam.unproject_position(w), cam.is_position_behind(w), "%s  %d u" % [g[1], int(d)])
+
+# ------------------------------------------------------------------------------------------------- blueprints
+
+var blueprint := -1              # the blueprint picked in build mode (index in Blueprints.all()), -1 for none
+var bp_turns := 0                # quarter turns
+var bp_cells: Array = []         # laid out: [[Vector3i cell, material], ...] still to build; empty until placed
+var bp_total := 0
+var _bp_sent := {}               # cell -> when we last asked for it (the server's word takes a moment)
+var _bp_in := 0.0
+var _bp_ghost: MultiMeshInstance3D
+
+## T in build mode: the next blueprint (after the last, none).
+func _next_blueprint() -> void:
+	_end_blueprint()
+	var all := Blueprints.all()
+	blueprint = blueprint + 1 if blueprint + 1 < all.size() else -1
+	if blueprint >= 0:
+		_notice("Blueprint: %s, %s. Click to lay it out, R to turn it, T for the next." % [all[blueprint][0], all[blueprint][1]])
+
+func _end_blueprint() -> void:
+	bp_cells.clear()
+	_bp_sent.clear()
+	if _bp_ghost:
+		_bp_ghost.visible = false
+
+## Where the blueprint's blocks go when laid out at `aim_place`: walls on the ground of their own column, a roof
+## over the highest ground under the whole.
+func _blueprint_cells(at: Vector3i) -> Array:
+	var cells: Array = Blueprints.turned(Blueprints.all()[blueprint][2], bp_turns)
+	var top := -1000000
+	for c in cells:
+		top = maxi(top, _col_base(at.x + int(c[0]), at.y + int(c[1])))
+	var out := []
+	for c in cells:
+		var x: int = at.x + int(c[0])
+		var y: int = at.y + int(c[1])
+		var z: int = (top if c[4] else _col_base(x, y)) + int(c[2])
+		out.append([Vector3i(x, y, z), int(c[3])])
+	return out
+
+func _lay_blueprint() -> void:
+	if aim_place.x < 0:
+		return
+	bp_cells = _blueprint_cells(aim_place)
+	bp_total = bp_cells.size()
+	_notice("Laid out: stand near it and it builds itself, block by block. T or Esc to stop.")
+
+## Each frame in build mode: the ghost of the blueprint (where it would go, or what is left of it once laid out),
+## and a few times a second the next block in reach asked for, lowest first so each rests on the one below.
+func _blueprint_step(delta: float) -> void:
+	if blueprint < 0 or not building:
+		if _bp_ghost:
+			_bp_ghost.visible = false
+		return
+	var show: Array = bp_cells if not bp_cells.is_empty() else (_blueprint_cells(aim_place) if aim_place.x >= 0 else [])
+	if not bp_cells.is_empty():
+		bp_cells = bp_cells.filter(func(c): return not _solid(c[0].x, c[0].y, c[0].z))
+		if bp_cells.is_empty():
+			_notice("%s finished." % Blueprints.all()[blueprint][0])
+			sound.play("chime", -6.0, 0.0)
+			_end_blueprint()
+			return
+		_bp_in -= delta
+		if _bp_in <= 0.0:
+			_bp_in = 0.22
+			_blueprint_place()
+	_draw_blueprint(show)
+
+func _blueprint_place() -> void:
+	if fallen.down:
+		return
+	var counts := _material_counts(net.bag())
+	var best := []
+	for c in bp_cells:
+		var cell: Vector3i = c[0]
+		if t_total - float(_bp_sent.get(cell, -9.0)) < 1.5 or not _in_reach(cell) or _on_me(cell):
+			continue
+		if int(c[1]) < counts.size() and counts[int(c[1])] == 0:
+			continue
+		var held := cell.z == _col_base(cell.x, cell.y) or _solid(cell.x, cell.y, cell.z - 1) or _solid(cell.x, cell.y, cell.z + 1) \
+			or _solid(cell.x - 1, cell.y, cell.z) or _solid(cell.x + 1, cell.y, cell.z) or _solid(cell.x, cell.y - 1, cell.z) or _solid(cell.x, cell.y + 1, cell.z)
+		if held and (best.is_empty() or cell.z < (best[0] as Vector3i).z):
+			best = c
+	if best.is_empty():
+		return
+	var cell: Vector3i = best[0]
+	_bp_sent[cell] = t_total
+	net.act_arg(int(build["act_build"]), cell.x | cell.y << 15, _build_arg(cell.z, int(best[1])))
+	sound.play("place", -8.0)
+	blocks_poll = minf(blocks_poll, 0.12)
+
+## What the prompt line says in build mode with a blueprint picked.
+func _blueprint_words() -> String:
+	if blueprint < 0:
+		return "T  blueprints"
+	var name: String = Blueprints.all()[blueprint][0]
+	if bp_cells.is_empty():
+		return "%s: click to lay it out, R to turn, T for the next" % name
+	var reach := bp_cells.any(func(c): return _in_reach(c[0]))
+	return "%s: %d of %d blocks%s" % [name, bp_total - bp_cells.size(), bp_total, "" if reach else "  (walk closer)"]
+
+func _draw_blueprint(cells: Array) -> void:
+	if _bp_ghost == null:
+		_bp_ghost = MultiMeshInstance3D.new()
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		var bm := BoxMesh.new()
+		var bs := float(build["block"])
+		bm.size = Vector3(bs, bs, bs) * 0.96
+		mm.mesh = bm
+		_bp_ghost.multimesh = mm
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.albedo_color = Color(0.55, 0.8, 1.0, 0.28)
+		_bp_ghost.material_override = m
+		_bp_ghost.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_bp_ghost)
+	var mm2 := _bp_ghost.multimesh
+	_bp_ghost.visible = not cells.is_empty()
+	if mm2.instance_count != cells.size():
+		mm2.instance_count = cells.size()
+	var bs2 := float(build["block"])
+	for i in cells.size():
+		var cell: Vector3i = cells[i][0]
+		mm2.set_instance_transform(i, Transform3D(Basis(), Vector3((cell.x + 0.5) * bs2, (cell.z + 0.5) * bs2, (cell.y + 0.5) * bs2)))
 
 ## The land held near us, from the server: a first line ("L0|") starts the list again, "L1|" adds to it.
 func _on_land(text: String) -> void:

@@ -31,7 +31,9 @@ a row in the bag)
 2. Crops show their stage and time to harvest when looked at; seeds plant from the bag's quick slots.
 3. A crafting window over `/craft` (recipes, what you have, make), with cooking recipes for the crops.
 
-**D. Building** — 1 and 2 done (the build bar already showed costs; quests have a `build` step); blueprints to do
+**D. Building** — done (the build bar already showed costs; quests have a `build` step; T in build mode picks a
+blueprint, `godot/scripts/blueprints.gd`: shelter, cottage, field, watchtower, laid out as a ghost and built a
+block at a time while you stand in reach)
 1. The build bar shows each material's cost and how many you carry; free ones marked.
 2. A quest step "build N blocks (of a material) in your plot", so quests can ask for building.
 3. Blueprints: a few small buildings laid out as a ghost to fill in.
