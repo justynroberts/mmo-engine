@@ -88,6 +88,8 @@ pub struct Director {
     /// Where the day was when last looked (for `When::Time`), and the season (for `When::Season`).
     last_phase: Option<f64>,
     last_season: Option<Option<proto::game::Season>>,
+    /// The minute (since 1970, UTC) last looked at, for `When::Calendar`.
+    last_minute: Option<u64>,
 }
 
 impl Director {
@@ -296,6 +298,9 @@ impl Director {
         }
         // The year turns: one season to another (not the first look at start up, nor seasons being switched on).
         let turned = now % hz == 0 && matches!((self.last_season.replace(sim.season), sim.season), (Some(Some(was)), Some(is)) if was != is);
+        // A new minute by the clock (not the first look at start up, so a restart at 20:00 does not start 20:00's).
+        let minute = (unix_ms() / 60_000.0) as u64;
+        let new_minute = now % hz == 0 && self.last_minute.replace(minute).is_some_and(|m| m != minute);
         for i in 0..self.events.len() {
             let Some(when) = self.events[i].when.clone() else { continue };
             let name = self.events[i].name.clone();
@@ -313,6 +318,9 @@ impl Director {
                     _ => None,
                 },
                 When::Season { is } if turned && sim.season == Some(is) => Some(format!("as {} comes", is.name())),
+                When::Calendar { weekday, hour, minute: m } if new_minute && When::calendar_at(weekday, hour, m, minute) => {
+                    Some(format!("at {hour:02}:{m:02} by the calendar"))
+                }
                 When::After { event, outcome } => finished.iter().find(|(n, ok)| n == &event && match outcome {
                     Outcome::Success => *ok,
                     Outcome::Failure => !*ok,
@@ -966,4 +974,15 @@ mod tests {
         step(&mut s, &mut d, &mut c, 40);
         assert!(c.chat_log.iter().any(|l| l.3 == "Winter"), "winter came");
     }
+    #[test]
+    fn a_calendar_time_is_the_right_minute_of_the_right_day() {
+        // 2026-10-31 19:00 UTC is a Saturday (weekday 5).
+        let sat_19 = 1_793_473_200 / 60;
+        assert!(When::calendar_at(Some(5), 19, 0, sat_19));
+        assert!(When::calendar_at(None, 19, 0, sat_19), "every day");
+        assert!(!When::calendar_at(Some(4), 19, 0, sat_19), "a Friday event");
+        assert!(!When::calendar_at(Some(5), 19, 0, sat_19 + 1), "a minute late");
+        assert!(When::calendar_at(Some(6), 0, 0, sat_19 + 5 * 60), "midnight is Sunday");
+    }
+
 }

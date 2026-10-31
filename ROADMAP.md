@@ -108,13 +108,14 @@ party queues together. When the dungeon's `group` (default 3) have queued, a tan
 there after `rules.finder_wait_secs`), they become a party (a raid past `party_size`) and are put at the
 dungeon's door. `crates/server/src/finder.rs`; the queue's state on chat channel 16.
 
-## 9. Daily and weekly rhythm — dailies and weekly boss spoils done
+## 9. Daily and weekly rhythm — done
 
 Quests that reset each day — done: a quest with `daily` can be taken again each UTC day once handed in (the day is
 kept in its saved count); three in both worlds (the watch's bounty, bread for the poor, the brigand toll). Boss
 loot once a week per character — done: a boss's drops and loot table are rolled for each player credited with it,
-into their own bag, once a week per boss (`items.rs` `loot_from`, `Record::spoils`). Still to do: events on a
-calendar.
+into their own bag, once a week per boss (`items.rs` `loot_from`, `Record::spoils`). Events on a calendar — done:
+an event's `when` may be `calendar` (hour and minute UTC, every day or one weekday); both worlds hold a Great Fair
+on Saturdays at 19:00 and a great raid on Fridays at 20:00.
 
 ## 10. Swimming and boats
 

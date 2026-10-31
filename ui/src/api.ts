@@ -443,6 +443,8 @@ export type When =
   | { kind: 'time'; at: DayPart }
   | { kind: 'season'; is: Season }
   | { kind: 'after'; event: string; outcome?: 'success' | 'failure' | 'either' }
+  /** A set time by the calendar (UTC): hour:minute every day, or only on weekday (0 Monday .. 6 Sunday). */
+  | { kind: 'calendar'; weekday?: number; hour: number; minute?: number }
 /** A weather that stays over one place: drawn as mist there, in effect only inside. */
 export interface WeatherZone {
   name: string

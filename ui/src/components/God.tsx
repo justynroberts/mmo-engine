@@ -344,7 +344,7 @@ function swap<T>(a: T[], i: number, j: number): T[] {
   return b
 }
 
-type Start = 'hand' | 'timer' | 'players' | 'time' | 'season' | 'after'
+type Start = 'hand' | 'timer' | 'players' | 'time' | 'season' | 'after' | 'calendar'
 /** The "Where" choice for an event that comes round the towns (`roams`). */
 const ROAMS = '*towns*'
 const START_OPTS: { value: Start; label: string }[] = [
@@ -354,6 +354,11 @@ const START_OPTS: { value: Start; label: string }[] = [
   { value: 'time', label: 'at a time of day' },
   { value: 'season', label: 'as a season comes' },
   { value: 'after', label: 'after another event' },
+  { value: 'calendar', label: 'at a set time (UTC)' },
+]
+const WEEKDAYS: { value: string; label: string }[] = [
+  { value: '', label: 'every day' },
+  ...['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((d, i) => ({ value: String(i), label: d })),
 ]
 const SEASONS: { value: Season; label: string }[] = [
   { value: 'spring', label: 'spring' },
@@ -407,7 +412,9 @@ function EventEditor({
             ? { kind: 'season', is: 'winter' }
             : k === 'after'
               ? { kind: 'after', event: others[0] ?? '', outcome: 'success' }
-              : null
+              : k === 'calendar'
+                ? { kind: 'calendar', hour: 20, minute: 0 }
+                : null
     set({ ...e, when, every_secs: k === 'timer' ? Math.max(e.every_secs, 300) : 0 })
   }
   const failing = (e.fail_steps?.length ?? 0) > 0 || (e.limit_secs ?? 0) > 0 || e.steps.some((s) => s.kind === 'defeat')
@@ -456,6 +463,21 @@ function EventEditor({
         )}
         {e.when?.kind === 'time' && <SelectField label="At" value={e.when.at} options={DAY_PARTS} onChange={(at) => set({ ...e, when: { kind: 'time', at } })} />}
         {e.when?.kind === 'season' && <SelectField label="As comes" value={e.when.is} options={SEASONS} onChange={(is) => set({ ...e, when: { kind: 'season', is } })} />}
+        {e.when?.kind === 'calendar' && (
+          <>
+            <SelectField
+              label="On"
+              value={e.when.weekday === undefined ? '' : String(e.when.weekday)}
+              options={WEEKDAYS}
+              onChange={(v) => {
+                const c = e.when as Extract<When, { kind: 'calendar' }>
+                set({ ...e, when: { kind: 'calendar', hour: c.hour, minute: c.minute, ...(v === '' ? {} : { weekday: Number(v) }) } })
+              }}
+            />
+            <NumField label="Hour (UTC)" value={e.when.hour} onCommit={(n) => set({ ...e, when: { ...(e.when as Extract<When, { kind: 'calendar' }>), hour: clamp(Math.round(n), 0, 23) } })} />
+            <NumField label="Minute" value={e.when.minute ?? 0} onCommit={(n) => set({ ...e, when: { ...(e.when as Extract<When, { kind: 'calendar' }>), minute: clamp(Math.round(n), 0, 59) } })} />
+          </>
+        )}
         {e.when?.kind === 'after' && (
           <>
             <SelectField label="After" value={e.when.event} options={opts(others)} onChange={(event) => set({ ...e, when: { ...(e.when as Extract<When, { kind: 'after' }>), event } })} />

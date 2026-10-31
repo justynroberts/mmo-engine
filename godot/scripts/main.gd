@@ -7,7 +7,7 @@ extends Node3D
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue. --guest plays a throwaway character, not this machine's own.
-## Screenshots: --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
+## Screenshots: --say TEXT says it (or runs a "/" command) five seconds in, --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
@@ -667,6 +667,8 @@ func _start() -> void:
 				socialui.toggle()
 			else:
 				bagui.toggle(net.bag()))
+	if args.has("say"): # --say TEXT: say it (a "/" command too) a few seconds in (with --shot)
+		get_tree().create_timer(5.0).timeout.connect(func(): net.say(String(args["say"]), false))
 	if args.has("blueprint"): # --blueprint N: in build mode, lay blueprint N out a few blocks south of us (with --shot)
 		get_tree().create_timer(3.0).timeout.connect(func():
 			_set_building(true)

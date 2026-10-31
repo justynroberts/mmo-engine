@@ -1660,6 +1660,23 @@ pub enum When {
         #[serde(default)]
         outcome: Outcome,
     },
+    /// A set time by the calendar (UTC): `hour`:`minute` every day, or only on `weekday` (0 Monday .. 6 Sunday).
+    Calendar {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weekday: Option<u8>,
+        hour: u8,
+        #[serde(default)]
+        minute: u8,
+    },
+}
+
+impl When {
+    /// Whether a calendar time is the minute `unix_min` (minutes since 1970, UTC). 1 January 1970 was a Thursday.
+    pub fn calendar_at(weekday: Option<u8>, hour: u8, minute: u8, unix_min: u64) -> bool {
+        let day_min = unix_min % 1440;
+        let wd = ((unix_min / 1440) + 3) % 7; // 0 Monday
+        day_min == hour as u64 * 60 + minute as u64 && weekday.is_none_or(|w| w as u64 == wd)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -3053,6 +3070,9 @@ impl GameFile {
                 }
                 Some(When::After { event, .. }) if event == &e.name || !self.events.iter().any(|x| &x.name == event) => {
                     return Err(format!("event '{}': starts after '{event}', which is not another event", e.name));
+                }
+                Some(When::Calendar { weekday, hour, minute }) if *hour > 23 || *minute > 59 || weekday.is_some_and(|w| w > 6) => {
+                    return Err(format!("event '{}': a calendar time is hour 0..23, minute 0..59, weekday 0 (Monday)..6", e.name));
                 }
                 _ => {}
             }

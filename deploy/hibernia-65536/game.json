@@ -8498,6 +8498,105 @@
      "count": 1
     }
    ]
+  },
+  {
+   "name": "aonach mor",
+   "every_secs": 0,
+   "chance_pct": 100.0,
+   "when": {
+    "kind": "calendar",
+    "weekday": 5,
+    "hour": 19,
+    "minute": 0
+   },
+   "cooldown_secs": 3600,
+   "place": "dublin",
+   "limit_secs": 0,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! It is fair day in Áth Cliath. Come to the aonach!",
+     "banner": true
+    },
+    {
+     "kind": "drop",
+     "item": "aran",
+     "count": 8,
+     "place": "dublin"
+    },
+    {
+     "kind": "drop",
+     "item": "miodh",
+     "count": 4,
+     "place": "dublin"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceoltoir",
+     "count": 3,
+     "place": "dublin"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "ceannai aonaigh",
+     "count": 4,
+     "place": "dublin"
+    }
+   ]
+  },
+  {
+   "name": "ruathar mor",
+   "every_secs": 0,
+   "chance_pct": 50.0,
+   "cooldown_secs": 3600,
+   "place": "wexford",
+   "limit_secs": 300,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "Éist! Longa Lochlannach! Norse longships are landing at Loch Garman!",
+     "banner": true
+    },
+    {
+     "kind": "spawn",
+     "archetype": "lochlannach",
+     "count": 6,
+     "place": "wexford"
+    },
+    {
+     "kind": "spawn",
+     "archetype": "tine",
+     "count": 5,
+     "place": "wexford"
+    },
+    {
+     "kind": "defeat",
+     "within_secs": 300
+    },
+    {
+     "kind": "announce",
+     "text": "The Norsemen are beaten back into the sea.",
+     "banner": true
+    },
+    {
+     "kind": "reward",
+     "item": "pingin airgid",
+     "count": 3
+    }
+   ],
+   "fail_steps": [
+    {
+     "kind": "announce",
+     "text": "The Norsemen sail off with the plunder of Loch Garman.",
+     "banner": true
+    }
+   ],
+   "when": {
+    "kind": "calendar",
+    "weekday": 4,
+    "hour": 20,
+    "minute": 0
+   }
   }
  ],
  "quests": [
