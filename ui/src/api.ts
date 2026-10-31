@@ -155,6 +155,8 @@ export interface QuestFile {
   reward?: QuestItem[]
   /** May be taken again once done. */
   repeatable?: boolean
+  /** May be taken again each day (UTC) once handed in. */
+  daily?: boolean
 }
 /** The models the Godot fantasy theme draws classes with (ClassFile.look may be any other key a client knows). */
 export const CLASS_LOOKS = ['knight', 'barbarian', 'mage', 'rogue'] as const

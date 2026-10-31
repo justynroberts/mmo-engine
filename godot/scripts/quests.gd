@@ -137,7 +137,7 @@ func update(mine: Array, offer: int) -> void:
 			_redraw_log()
 
 func _show_offer(q: Dictionary) -> void:
-	_d_title.text = String(q["title"])
+	_d_title.text = String(q["title"]) + ("   (daily)" if bool(q.get("daily", false)) else "")
 	_d_text.text = String(q.get("text", ""))
 	var steps := []
 	for st in q.get("steps", []):
@@ -301,12 +301,13 @@ func escape() -> bool:
 		return true
 	return false
 
-## Whether a quest could be offered to us now (for the ! over a giver): not held, or done and repeatable; our
-## level high enough; the quest before it done.
+## Whether a quest could be offered to us now (for the ! over a giver): not held, or done and repeatable (or daily
+## and handed in on another day, the day kept in its count); our level high enough; the quest before it done.
 func available(index: int, my_level: int) -> bool:
 	var q: Dictionary = _quests[index]
 	for m in _mine:
-		if int(m["quest"]) == index and not (int(m["state"]) == 2 and bool(q.get("repeatable", false))):
+		var again: bool = bool(q.get("repeatable", false)) or (bool(q.get("daily", false)) and int(m["count"]) != int(Time.get_unix_time_from_system() / 86400.0))
+		if int(m["quest"]) == index and not (int(m["state"]) == 2 and again):
 			return false
 	if my_level > 0 and int(q.get("level", 0)) > my_level:
 		return false

@@ -9173,6 +9173,77 @@
      "count": 1
     }
    ]
+  },
+  {
+   "name": "the watchs bounty",
+   "title": "The Watch's Bounty",
+   "giver": "watchman",
+   "daily": true,
+   "text": "The watch pays a bounty on wolves taken near the roads. Six pelts' worth of trouble, and the coin is yours. Come back tomorrow and there'll be more.",
+   "done_text": "Six fewer wolves. Here's your bounty.",
+   "steps": [
+    {
+     "kind": "kill",
+     "archetype": "mac tire",
+     "count": 6
+    }
+   ],
+   "xp": 80,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 8
+    }
+   ]
+  },
+  {
+   "name": "bread for the poor",
+   "title": "Bread for the Poor",
+   "giver": "manach",
+   "daily": true,
+   "text": "The poor come to the abbey door every morning. Bring us three loaves and we'll see they're fed.",
+   "done_text": "God keep you. They'll eat tonight.",
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "aran",
+     "count": 3
+    }
+   ],
+   "xp": 60,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 1
+    },
+    {
+     "item": "pingin airgid",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "the brigand toll",
+   "title": "The Brigand Toll",
+   "giver": "laoch",
+   "daily": true,
+   "level": 3,
+   "text": "The brigands take a toll off every cart on the road. Take one off them: five of their number, and the roads are ours for the day.",
+   "done_text": "That'll quiet them till morning.",
+   "steps": [
+    {
+     "kind": "kill",
+     "archetype": "dibheirgeach",
+     "count": 5
+    }
+   ],
+   "xp": 160,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 15
+    }
+   ]
   }
  ],
  "zones": [

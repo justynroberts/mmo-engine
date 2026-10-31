@@ -796,6 +796,9 @@ export function QuestsEditor({ game, setGame }: Edit) {
               <div className="pb-1">
                 <Toggle label="Repeatable" checked={!!q.repeatable} onChange={(v) => patch(i, { repeatable: v || undefined })} />
               </div>
+              <div className="pb-1">
+                <Toggle label="Daily" checked={!!q.daily} onChange={(v) => patch(i, { daily: v || undefined })} />
+              </div>
             </div>
             <div className="pt-1">
               <p className="lbl">Rewards</p>

@@ -295,7 +295,7 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: 
     json!({"name": q.name, "title": q.title, "text": q.text, "done_text": q.done_text, "giver": bot(&q.giver),
         "turn_in": bot(q.turn_in.as_ref().unwrap_or(&q.giver)), "level": q.level, "after": q.after, "steps": steps,
         "xp": q.xp, "reward": q.reward.iter().map(|r| json!({"item": r.item, "count": r.count})).collect::<Vec<_>>(),
-        "repeatable": q.repeatable})
+        "repeatable": q.repeatable, "daily": q.daily})
 }
 
 /// What clients are told about an action: enough to draw it (fx, bolt, area), aim it, and show its cost and cooldown.

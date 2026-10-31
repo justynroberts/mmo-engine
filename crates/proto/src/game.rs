@@ -1138,6 +1138,9 @@ pub struct QuestFile {
     /// May be taken again once done.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repeatable: bool,
+    /// May be taken again once a day (the UTC day), after it is handed in.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub daily: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

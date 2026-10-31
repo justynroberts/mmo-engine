@@ -19,6 +19,11 @@ pub struct QuestRun {
 }
 
 
+/// Today, as days since 1970 (UTC), for daily quests.
+fn today() -> u16 {
+    (proto::daylight::now_ms() / 86_400_000.0) as u16
+}
+
 impl Sim {
     fn quest(&self, name: &str) -> Option<(usize, &proto::game::QuestFile)> {
         self.quests.iter().enumerate().find(|(_, q)| q.name == name)
@@ -59,7 +64,8 @@ impl Sim {
         let had = mine.iter().find(|r| r.name == q.name);
         let open = match had {
             None => true,
-            Some(r) => r.state == QUEST_DONE && q.repeatable,
+            // A daily quest done keeps the day it was handed in where its count was.
+            Some(r) => r.state == QUEST_DONE && (q.repeatable || (q.daily && r.count != today())),
         };
         let level_ok = self.levels.is_none() || q.level <= self.ents.level[s];
         let after_ok = q.after.as_ref().is_none_or(|a| mine.iter().any(|r| &r.name == a && r.state == QUEST_DONE));
@@ -125,6 +131,9 @@ impl Sim {
                 }
             }
             self.ents.quests[s][i].state = QUEST_DONE;
+            if q.daily {
+                self.ents.quests[s][i].count = today();
+            }
             if let Some(h) = self.town_of_bot(t) {
                 self.change_repute(s, h, 10); // a good turn for one of its folk
             }
@@ -405,6 +414,20 @@ mod tests {
         assert_eq!(s.ents.quests[me][0].step, 1, "on to building anything");
         s.quest_build(me, 0);
         assert_eq!(s.ents.quests[me][0].state, QUEST_READY);
+    }
+
+    #[test]
+    fn a_daily_quest_comes_back_the_next_day() {
+        let mut g = GameFile::default_game();
+        g.quests.push(QuestFile { name: "bounty".into(), title: "Bounty".into(), giver: "merchant".into(), steps: vec![QuestStep::Talk { archetype: "drifter".into() }], daily: true, ..Default::default() });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        let q = s.quests[0].clone();
+        assert!(s.can_take(me, &q));
+        s.ents.quests[me].push(QuestRun { name: "bounty".into(), step: 1, count: super::today(), state: QUEST_DONE });
+        assert!(!s.can_take(me, &q), "done today");
+        s.ents.quests[me][0].count = super::today() - 1;
+        assert!(s.can_take(me, &q), "done yesterday");
     }
 
     #[test]
