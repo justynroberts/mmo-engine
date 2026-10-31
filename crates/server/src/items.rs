@@ -130,7 +130,7 @@ impl Sim {
                 }
                 self.spoils[p].retain(|(n, w)| *n != name && *w == wk);
                 self.spoils[p].push((name.clone(), wk));
-                let won = self.rolled(slot);
+                let won: Vec<(usize, u32)> = self.rolled(slot, false).into_iter().map(|(i, n, _)| (i, n)).collect();
                 let words: Vec<String> = won.iter().map(|&(i, n)| format!("{n} {}", self.items[i].shown())).collect();
                 for (i, n) in won {
                     self.give_or_drop(p, i, n);
@@ -140,14 +140,15 @@ impl Sim {
             return;
         }
         let (x, y) = (self.ents.x[slot], self.ents.y[slot]);
-        for (item, n) in self.rolled(slot) {
-            let (jx, jy) = ((self.rng.f32() - 0.5) * 2.0, (self.rng.f32() - 0.5) * 2.0);
+        for (item, n, (jx, jy)) in self.rolled(slot, true) {
             self.put_ground(x + jx, y + jy, item, n.min(99) as u8);
         }
     }
 
-    /// One roll of a fallen bot's drops and loot table: (item, count) for each that came up.
-    fn rolled(&mut self, slot: usize) -> Vec<(usize, u32)> {
+    /// One roll of a fallen bot's drops and loot table: (item, count, where it lands beside it) for each that came
+    /// up. With `scatter` each pile's place is drawn straight after it, so the random numbers go in the order they
+    /// always have (a seeded world plays out the same).
+    fn rolled(&mut self, slot: usize, scatter: bool) -> Vec<(usize, u32, (f32, f32))> {
         let drops = self.archs[self.ents.arch[slot] as usize].drops.clone();
         let mut out = Vec::new();
         for d in drops {
@@ -155,10 +156,16 @@ impl Sim {
                 continue;
             }
             let span = (d.max - d.min) as u32 + 1;
-            out.push((d.item, d.min as u32 + self.rng.next_u32() % span));
+            let n = d.min as u32 + self.rng.next_u32() % span;
+            out.push((d.item, n, if scatter { self.jitter() } else { (0.0, 0.0) }));
         }
-        out.extend(self.roll_table(slot));
+        out.extend(self.roll_table(slot, scatter));
         out
+    }
+
+    /// Where a dropped pile lands, within a unit of the spot.
+    pub(crate) fn jitter(&mut self) -> (f32, f32) {
+        ((self.rng.f32() - 0.5) * 2.0, (self.rng.f32() - 0.5) * 2.0)
     }
 
     /// Use, drop or pick up, as the action byte says. A pickup takes the pile `target` names (a ground item id) when

@@ -194,14 +194,14 @@ impl Sim {
     #[cfg(test)]
     pub fn roll_loot(&mut self, slot: usize) {
         let (x, y) = (self.ents.x[slot], self.ents.y[slot]);
-        for (item, n) in self.roll_table(slot) {
-            self.put_ground(x, y, item, n.min(99) as u8);
+        for (item, n, (jx, jy)) in self.roll_table(slot, true) {
+            self.put_ground(x + jx, y + jy, item, n.min(99) as u8);
         }
     }
 
-    /// Roll a fallen bot's loot table: (item, count) for each that came up, anything rare announced to the
-    /// players near it.
-    pub fn roll_table(&mut self, slot: usize) -> Vec<(usize, u32)> {
+    /// Roll a fallen bot's loot table: (item, count, where it lands) for each that came up (drawn straight after it
+    /// with `scatter`), anything rare announced to the players near it.
+    pub fn roll_table(&mut self, slot: usize, scatter: bool) -> Vec<(usize, u32, (f32, f32))> {
         let mut out = Vec::new();
         let Some(t) = self.archs.get(self.ents.arch[slot] as usize).and_then(|a| a.loot) else { return out };
         let Some(table) = self.realm.loot.get(t).cloned() else { return out };
@@ -224,7 +224,8 @@ impl Sim {
                 continue;
             };
             let n = min as u32 + self.rng.next_u32() % ((max - min) as u32 + 1);
-            out.push((item, n));
+            let at = if scatter { self.jitter() } else { (0.0, 0.0) };
+            out.push((item, n, at));
             let rarity = self.items[item].rarity;
             if rarity >= proto::realm::Rarity::Rare {
                 let line = format!("A {} {} falls from the {}!", rarity.title(), self.items[item].shown(), self.name_of(slot));
