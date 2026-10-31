@@ -33,6 +33,7 @@ var _list: Array = []
 var _items: Array = []            # /play/info items: tag - 1 -> {name, color, value, rarity}
 var _currency := ""
 var _recipes: Array = []          # /play/info realm recipes: {name, makes, count, needs: [[item, n], ...]}
+var _makers := {}                 # bag slot -> who made what is in it (chat channel 20)
 var _make := HBoxContainer.new()  # under the bag: a button per recipe, lit when you carry what it needs
 
 func _ready() -> void:
@@ -113,6 +114,16 @@ static func title(text: String, size: int, grow: bool) -> Label:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return l
 
+## Who made what is in each bag slot (chat channel 20): "K0|slot,name;...", more in "K1|".
+func on_makers(text: String) -> void:
+	if text.begins_with("K0|"):
+		_makers.clear()
+	for e in text.substr(3).split(";", false):
+		var f := e.split(",", true, 1)
+		if f.size() == 2 and not f[0].begins_with("g"):
+			_makers[int(f[0])] = f[1]
+	refresh(_list)
+
 ## What can be made (from /play/info "realm" "recipes").
 func set_recipes(recipes: Array) -> void:
 	_recipes = recipes
@@ -178,7 +189,7 @@ func refresh(bag: Array) -> void:
 			money += n
 		var b := _slots[i]
 		b.text = "" if name == "" else ("%s\n%d" % [HUD.item(name), n] if n > 1 else HUD.item(name))
-		b.tooltip_text = HUD.item(name)
+		b.tooltip_text = HUD.item(name) + (("\nMade by " + String(_makers[i])) if i < SLOTS and _makers.has(i) and name != "" else "")
 		var s := StyleBoxFlat.new()
 		s.bg_color = Color(0.09, 0.09, 0.1, 0.95) if name == "" else Color(d.get("color", "#888888")).darkened(0.62)
 		s.border_color = HUD.ACCENT if at == _picked else Color(1, 1, 1, 0.08)
@@ -228,6 +239,8 @@ func _show_picked() -> void:
 		if String(it.get("name", "")) == name:
 			info = it
 	var bits := ["%s x%d" % [name, int(d["count"])]]
+	if _picked < BANK and _makers.has(_picked):
+		bits.append("made by " + String(_makers[_picked]))
 	if info.has("rarity"):
 		bits.append(String(info["rarity"]))
 	if int(info.get("value", 0)) > 0:

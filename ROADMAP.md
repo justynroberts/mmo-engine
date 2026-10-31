@@ -78,14 +78,17 @@ are (with a treeline and snow scaled to their height), heights twice as fine, la
 Two instanced dungeons with bosses (Brú na Bóinne, Campa na nDíbheirgeach). Still to do: folk for the new
 farmsteads, waymarks and inns along the highways, dungeons as maps of their own (zone lines).
 
-## 3. Gathering and crafting skills — done but for the crafter's name
+## 3. Gathering and crafting skills — done
 
 Skills that rise with use (`GameFile::skills`, `crates/server/src/skills.rs`): a recipe's `skill` and `level` gate it
 and making it teaches while the maker is under the level plus 25, and past the level now and then makes a second
 batch (the "quality" here, since items are stacks without one-off properties); a crop's `skill` rises on harvest
 and gives a sheaf more per 25; a bot type's `skill` rises for whoever beats one (gathering). `/skills`, the F6
 window's Skills column, and the Make row's buttons show them; kept per character by name. Both worlds have Cooking,
-Farming and Hunting. Not done: a crafter's name on what they make, which needs items with one-off properties.
+Farming and Hunting. A crafter's name on what they make: a made stack carries its maker's name beside its bag slot
+(and gear slot when worn), following it through moves, splits, wearing and taking off, saved with the character
+and shown in the bag ("made by"); trading, selling or posting it leaves the name behind (`crafted.rs`, chat channel
+20).
 
 ## 4. Faction war — done
 

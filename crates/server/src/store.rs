@@ -82,6 +82,9 @@ pub struct Record {
     /// Their look: "cape,helmet" (`looks.rs`), "" for the model as it comes.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub look: String,
+    /// Who made what they carry and wear (`crafted.rs`): bag slot (or "g0".."g2") and maker.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub made: Vec<(String, String)>,
 }
 
 fn is_zero(v: &u32) -> bool {

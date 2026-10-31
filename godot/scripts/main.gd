@@ -579,6 +579,8 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 20: # who made what we carry: "K0|slot,name;..."
+			bagui.on_makers(text)
 		elif channel == 19: # furniture near us: "U0|x,y,turns,piece;...", more in "U1|"
 			if text.begins_with("U0|"):
 				furniture.clear()

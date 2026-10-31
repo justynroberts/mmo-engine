@@ -189,6 +189,7 @@ impl Sim {
                 let max = self.stack_max(bag[a].0.max(1));
                 move_stack(&mut bag, a, b, max);
                 self.inv[s] = bag;
+                self.makers_moved(s, a, b);
                 self.bump_bag(s);
                 true
             }
@@ -200,6 +201,7 @@ impl Sim {
                 }
                 self.inv[s][a].1 = n - n / 2;
                 self.inv[s][e] = (tag, n / 2);
+                self.makers_split(s, a, e);
                 self.bump_bag(s);
                 true
             }

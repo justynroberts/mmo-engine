@@ -81,6 +81,9 @@ pub mod channel {
     /// Server to client, from the server (0): the furniture set down near a player (`furnish.rs`), when it changes:
     /// "U0|x,y,quarter turns,piece;...", going on in "U1|" lines; an empty "U0|" for none. Not shown as chat.
     pub const FURNITURE: u8 = 19;
+    /// Server to client, from the server (0): who made what a player carries and wears (`crafted.rs`), when it
+    /// changes: "K0|slot,name;..." (bag slots by number, gear as g0..g2), going on in "K1|"; "K0|" for none.
+    pub const MAKERS: u8 = 20;
 }
 
 pub mod kind {

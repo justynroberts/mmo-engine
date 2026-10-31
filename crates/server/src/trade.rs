@@ -127,6 +127,7 @@ impl Sim {
                 self.give_or_drop(s, was as usize - 1, 1);
             }
         }
+        self.makers_worn(s, i, g, was);
         self.inv_ver[s] = self.inv_ver[s].wrapping_add(1);
         self.bump_gear(s);
         true
@@ -144,6 +145,7 @@ impl Sim {
             return false;
         }
         self.gear[s][g] = 0;
+        self.makers_taken_off(s, g, tag);
         self.bump_gear(s);
         true
     }

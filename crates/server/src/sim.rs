@@ -494,6 +494,10 @@ pub struct Sim {
     pub look: Vec<crate::looks::Look>,
     /// Faction war (`holds.rs`): who holds each seat, who is taking it, and who has been told.
     pub holds: crate::holds::Holds,
+    /// A crafter's name on what they made (`crafted.rs`): per slot, by bag slot and by gear slot, and what was told.
+    pub maker: Vec<Vec<crate::crafted::Mark>>,
+    pub gear_maker: Vec<Vec<crate::crafted::Mark>>,
+    pub makers_sent: Vec<String>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -745,6 +749,9 @@ impl Sim {
             talents: vec![Vec::new(); cap],
             look: vec![Default::default(); cap],
             holds: Default::default(),
+            maker: vec![vec![(0, String::new()); proto::game::INV_SLOTS]; cap],
+            gear_maker: vec![vec![(0, String::new()); proto::game::GEAR_SLOTS]; cap],
+            makers_sent: vec![String::new(); cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -951,6 +958,7 @@ impl Sim {
             title: self.title[slot].clone(),
             talents: self.talents[slot].clone(),
             look: self.look[slot].code(),
+            made: self.makers_saved(slot),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -1053,6 +1061,7 @@ impl Sim {
         self.title[slot] = rec.title.clone();
         self.talents[slot] = rec.talents.clone();
         self.look[slot] = crate::looks::Look::parse(&rec.look);
+        self.makers_restore(slot, &rec.made);
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 

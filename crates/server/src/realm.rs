@@ -346,6 +346,7 @@ impl Sim {
         self.system_finder();
         self.system_holds();
         self.system_furniture();
+        self.system_makers();
     }
 
     /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel
@@ -1009,7 +1010,8 @@ fn craft(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
     // span, making it teaches.
     let extra = r.skill.is_some() && sim.rng.f32() < ((lv - r.level) as f32 / 200.0).min(0.5);
     let count = r.count as u32 * if extra { 2 } else { 1 };
-    sim.give_or_drop(slot, r.makes, count);
+    let maker = sim.name_of(slot).to_string();
+    sim.give_made(slot, r.makes, count, &maker);
     let what = sim.items[r.makes].shown().to_string();
     say(clients, slot, &format!("You make {count} {what}{}.", if extra { ", your skill making the most of it" } else { "" }));
     if let Some(k) = r.skill.filter(|_| lv < r.level + crate::skills::GAIN_SPAN) {

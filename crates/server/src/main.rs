@@ -7,6 +7,7 @@ mod blocks;
 mod boats;
 mod boss;
 mod botdir;
+mod crafted;
 mod ctl;
 mod deeds;
 mod director;
