@@ -438,6 +438,8 @@ export interface Archetype {
   loot?: string
   /** A skill (GameFile.skills) beating one raises: gathering from quarries, trees and game. */
   skill?: string
+  /** Guards of a hold among its homes: they fight for whoever holds it, and it cannot be taken while one stands. */
+  guards?: boolean
 }
 /** A faction (GameFile.factions, at most 32). Beating one of its members moves a player's standing by `kill`
  * (default -10), and with every faction that `hates` it by that faction's `bounty` (default 2). Below `hostile`

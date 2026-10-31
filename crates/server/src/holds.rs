@@ -31,6 +31,15 @@ pub struct Holds {
 }
 
 impl Sim {
+    /// The faction a hold's guard fights for: whoever holds its home (index in `factions`), none if nobody does.
+    pub fn guard_side(&self, b: usize) -> Option<usize> {
+        let home = self.home_of(b)?;
+        let p = self.places.get(home)?;
+        let first = p.hold.clone()?;
+        let f = self.holds.by_place.get(&p.name).map_or(first, |h| h.faction.clone());
+        self.factions.iter().position(|x| x.name == f)
+    }
+
     /// The places that are holds, with the faction holding each at first.
     fn hold_places(&self) -> Vec<(usize, String)> {
         self.places.iter().enumerate().filter_map(|(i, p)| p.hold.clone().map(|f| (i, f))).collect()
@@ -64,7 +73,17 @@ impl Sim {
                     None => sides.push((f, vec![s])),
                 }
             }
-            let defended = sides.iter().any(|e| e.0 == state.faction);
+            // Its holder's people there, or a guard of it still on its feet.
+            let guarded = !state.faction.is_empty()
+                && (0..self.ents.high).any(|b| {
+                    self.ents.alive[b]
+                        && self.ents.owner[b] == crate::sim::NONE
+                        && !self.ents.fallen[b]
+                        && self.archs.get(self.ents.arch[b] as usize).is_some_and(|a| a.guards)
+                        && self.home_of(b) == Some(pi)
+                        && (self.ents.x[b] - p.x).powi(2) + (self.ents.y[b] - p.y).powi(2) <= (p.r * 1.5).powi(2)
+                });
+            let defended = sides.iter().any(|e| e.0 == state.faction) || guarded;
             let mut next = state.clone();
             match sides.as_slice() {
                 [(f, who)] if !defended => {
@@ -225,4 +244,37 @@ mod tests {
         assert!(s.notes.iter().any(|n| n.0 == b && n.2 == proto::chat::channel::HOLDS && n.3.contains("plaza,Blue,#0000ff")), "{:?}", s.notes);
         assert_eq!(s.holds_saved(), vec![("plaza".to_string(), "blue".to_string())]);
     }
+
+    #[test]
+    fn a_holds_guards_fight_for_its_holder_and_must_fall_before_it_is_taken() {
+        let mut g = GameFile::default_game();
+        g.factions = vec![
+            FactionFile { name: "red".into(), color: "#ff0000".into(), ..Default::default() },
+            FactionFile { name: "blue".into(), color: "#0000ff".into(), ..Default::default() },
+        ];
+        g.rules.capture_secs = 2.0;
+        g.places.iter_mut().find(|p| p.name == "plaza").unwrap().hold = Some("red".into());
+        for a in g.archetypes.iter_mut() {
+            a.count = 0;
+        }
+        g.archetypes[0].guards = true;
+        g.archetypes[0].home = Some("plaza".into());
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let guard = s.spawn_as(crate::sim::NONE, 0, Some((200.0, 200.0))).unwrap();
+        let (b, r) = (s.spawn(0).unwrap(), s.spawn(1).unwrap());
+        (s.rs.faction[b], s.rs.faction[r]) = (2, 1);
+        assert!(s.hostile_to(guard, b) && !s.hostile_to(guard, r), "against the holder's rivals only");
+        (s.ents.x[b], s.ents.y[b]) = (200.0, 200.0);
+        for _ in 0..4 {
+            s.system_holds();
+        }
+        assert_eq!(s.holds.by_place["plaza"].faction, "red", "a guard stands: not taken");
+        s.ents.fallen[guard] = true;
+        for _ in 0..3 {
+            s.system_holds();
+        }
+        assert_eq!(s.holds.by_place["plaza"].faction, "blue");
+        assert!(s.hostile_to(guard, r) && !s.hostile_to(guard, b), "and its guards change sides");
+    }
+
 }

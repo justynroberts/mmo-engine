@@ -4786,6 +4786,28 @@
         "Ó Néill"
       ],
       "healer": true
+    },
+    {
+      "name": "garda",
+      "title": "Hold Guard",
+      "color": "#5a5a6a",
+      "count": 10,
+      "behaviour": "wander",
+      "speed_mult": 0.7,
+      "attack": "buille",
+      "attrs": {},
+      "sight": 40.0,
+      "home": "tara",
+      "homes": [
+        "tara",
+        "dun ailinne",
+        "grianan of aileach",
+        "rathcroghan",
+        "cashel"
+      ],
+      "guards": true,
+      "rules": [],
+      "respawn_secs": 180
     }
   ],
   "places": [

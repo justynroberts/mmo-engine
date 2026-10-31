@@ -87,15 +87,17 @@ and gives a sheaf more per 25; a bot type's `skill` rises for whoever beats one 
 window's Skills column, and the Make row's buttons show them; kept per character by name. Both worlds have Cooking,
 Farming and Hunting. Not done: a crafter's name on what they make, which needs items with one-off properties.
 
-## 4. Faction war — done but for guards who change sides
+## 4. Faction war — done
 
 Places marked `hold` (`Place::hold`, the first holder) are seats a faction can take: its members (`/faction`)
 standing in one, with none of the holder's there and no third side, take it after `rules.capture_secs`, and the
 whole world is told. Holding pays: every ten minutes each online member of a holder gets `rules.hold_tithe` coin a
 hold. Who holds what is saved with the realm, sent on chat channel 18 and drawn as coloured flags on the Godot map;
 `/holds` lists it (`crates/server/src/holds.rs`). Both worlds: the four provinces (Laighin, Ulaidh, Connachta,
-Mumhain) as factions, their royal seats as holds and Tara held by nobody. Not done: guards who change sides (no bot
-type belongs to a province yet).
+Mumhain) as factions, their royal seats as holds and Tara held by nobody. Guards who change sides: a bot type with
+`guards` living at a hold fights for whoever holds it, sets on its rivals' members (`hostile_to`, `guard_side`),
+and while one stands there the hold cannot be taken; ten Hold Guards (back three minutes after falling) at the five
+seats in both worlds.
 
 ## 5. Achievements and titles — done
 

@@ -492,6 +492,10 @@ pub struct Archetype {
     /// A skill (`GameFile::skills`) that rises for whoever beats one: gathering from quarries, trees and game.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill: Option<String>,
+    /// Guards of a hold (a place with `hold` among its homes): they fight for whichever faction holds it, set on
+    /// its rivals' members, and while one stands there the hold cannot be taken (`holds.rs`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub guards: bool,
     /// Given names for the bots of this type, one each ("Bridget" the Seed Trader): absent, they go by the type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
@@ -1858,6 +1862,7 @@ pub struct ArchRt {
     pub faction: Option<usize>,
     /// Its loot table (`Realm::loot`).
     pub loot: Option<usize>,
+    pub guards: bool,
     /// `Archetype::names` and `surnames`.
     pub names: Vec<String>,
     pub surnames: Vec<String>,
@@ -2037,6 +2042,7 @@ impl GameFile {
             faction: None,
             loot: None,
             skill: None,
+            guards: false,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -2704,6 +2710,7 @@ impl GameFile {
                 leash,
                 faction,
                 loot: a.loot.as_ref().and_then(|l| self.loot.iter().position(|t| &t.name == l)),
+                guards: a.guards,
                 drops,
                 home,
                 rules,

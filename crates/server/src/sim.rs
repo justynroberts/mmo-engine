@@ -1744,7 +1744,7 @@ impl Sim {
         }
 
         // A player its faction is hostile to, in sight: it goes for them (a fighter only).
-        if self.foe[s].is_none() && attack.is_some() && self.archs[a].faction.is_some() {
+        if self.foe[s].is_none() && attack.is_some() && (self.archs[a].faction.is_some() || self.archs[a].guards) {
             let sight = self.archs[a].sight * m;
             if let Some((d2, p)) = near[0] {
                 if d2 <= sight * sight && self.hostile_to(s, p) {
@@ -3638,6 +3638,7 @@ mod tests {
             faction: None,
             loot: None,
             skill: None,
+            guards: false,
         }
     }
 

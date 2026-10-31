@@ -60,6 +60,11 @@ impl Sim {
         if self.ents.owner[p] >= DRIVEN {
             return false;
         }
+        // A hold's guard: for whichever faction holds its home, against members of any other.
+        if self.archs.get(self.ents.arch[b] as usize).is_some_and(|a| a.guards) {
+            let mine = self.rs.faction[p] as usize;
+            return mine != 0 && self.guard_side(b).is_some_and(|f| f + 1 != mine);
+        }
         let Some(f) = self.archs.get(self.ents.arch[b] as usize).and_then(|a| a.faction) else { return false };
         // A player who joined the faction (`/faction`) is one of its own.
         self.rs.faction[p] as usize != f + 1 && self.standing(p, f) < self.factions[f].hostile
