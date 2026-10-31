@@ -234,6 +234,8 @@ export interface Place {
   music?: string
   /** Players cannot harm each other inside it, even with pvp on. */
   safe?: boolean
+  /** A seat factions fight over (faction war): present, the faction holding it at first ('' for none). */
+  hold?: string
 }
 /** What a place's sound and music may be (proto::game::SOUNDS, MUSIC). */
 export const SOUNDS = ['sea', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town', 'market', 'crypt', 'holy', 'battle'] as const
@@ -825,6 +827,9 @@ export interface Rules {
   mail_waiting: number
   /** Coin it costs to take back every talent point at a market (/respec). */
   respec_cost: number
+  /** Seconds a faction stands in a hold, unopposed, to take it; coin each online member of its holder gets a hold every ten minutes. */
+  capture_secs: number
+  hold_tithe: number
   /** What falling costs: a share (%) of the experience earned into the level, of the coin in the bag (gone), the
    *  chance (%) each other bag stack is left where they fell, and seconds before rising. All 0 by default. */
   fall_xp_loss_pct: number
@@ -886,6 +891,8 @@ export const RULE_DEFAULTS: Rules = {
   listings_per_seller: 12,
   mail_waiting: 50,
   respec_cost: 20,
+  capture_secs: 60,
+  hold_tithe: 3,
   fall_xp_loss_pct: 0,
   fall_coin_loss_pct: 0,
   fall_drop_pct: 0,

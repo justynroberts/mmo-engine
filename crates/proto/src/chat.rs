@@ -75,6 +75,9 @@ pub mod channel {
     /// "A|achievement|earned|so far|count|title it grants" per achievement, "W|title" for the title worn,
     /// "TP|points|respec cost" and "TL|name|title|rank|ranks|level|text" per talent of their class; "E|" ends it. Not shown as chat.
     pub const SOCIAL: u8 = 17;
+    /// Server to client, from the server (0): who holds each hold of the faction war (`holds.rs`), when it changes:
+    /// "H0|place,faction title,colour;..." (an empty title for nobody), going on in "H1|" lines. Not shown as chat.
+    pub const HOLDS: u8 = 18;
 }
 
 pub mod kind {

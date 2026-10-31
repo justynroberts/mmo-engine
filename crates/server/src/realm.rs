@@ -94,6 +94,9 @@ pub struct Saved {
     /// Letters waiting to be read (`mail.rs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mail: Vec<crate::mail::Letter>,
+    /// Who holds each hold (`holds.rs`), by place name and faction name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holds: Vec<(String, String)>,
 }
 
 /// One party's copy of a dungeon.
@@ -332,6 +335,7 @@ impl Sim {
         self.system_plot_names();
         self.system_land();
         self.system_finder();
+        self.system_holds();
     }
 
     /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel
@@ -508,6 +512,7 @@ impl Sim {
             post: self.market.post.clone(),
             next_listing: self.market.next_id,
             mail: self.market.mail.clone(),
+            holds: self.holds_saved(),
         }
     }
 
@@ -518,6 +523,7 @@ impl Sim {
         self.market.listings = saved.listings;
         self.market.post = saved.post;
         self.market.mail = saved.mail;
+        self.holds_restore(&saved.holds);
         self.market.next_id = saved.next_listing.max(self.market.listings.iter().map(|l| l.id + 1).max().unwrap_or(1)).max(1);
         self.rs.crops.clear();
         for c in saved.crops {
@@ -543,7 +549,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /look cape|helmet, /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /look cape|helmet, /holds, /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -553,6 +559,10 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "class" => class(sim, clients, slot, &rest),
         "title" | "titles" => sim.title_command(slot, &rest),
         "look" | "appearance" => sim.look_command(slot, &rest),
+        "holds" | "war" => {
+            let line = sim.holds_line();
+            say(clients, slot, &line);
+        }
         "talents" | "talent" | "respec" => sim.talent_command(slot, if cmd == "talents" { "list" } else { cmd.as_str() }, &rest),
         "claim" => claim(sim, clients, slot),
         "unclaim" => unclaim(sim, clients, slot),
@@ -1279,7 +1289,7 @@ mod tests {
     #[test]
     fn a_dungeon_gives_each_party_its_own_monsters() {
         let mut s = sim_with(|g| {
-            g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+            g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
             g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3 }];
         });
         let (a, b) = (player(&mut s, 300.0, 300.0, "a"), player(&mut s, 305.0, 300.0, "b"));

@@ -429,6 +429,8 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             "factions": &sim.factions,
             "recipes": recipes,
             "crops": crops,
+            // The faction war's holds: where they are (who holds them comes on chat channel 18).
+            "holds": sim.places.iter().filter(|p| p.hold.is_some()).map(|p| json!({"name": p.name, "title": p.title, "x": p.x, "y": p.y, "r": p.r})).collect::<Vec<_>>(),
             "skills": sim.realm.skills.iter().map(|k| json!({"name": k.name, "title": k.shown(), "max": k.max})).collect::<Vec<_>>(),
             "plots": sim.realm.plots.as_ref().map(|p| json!({"size": p.size, "per_player": p.per_player})),
             "dungeons": dungeons,

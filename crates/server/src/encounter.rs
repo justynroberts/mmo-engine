@@ -250,7 +250,7 @@ mod tests {
         assert!(s.tells.iter().any(|t| t.0 == me && t.1.contains("gives up the chase")), "{:?}", s.tells);
         // Into a safe place.
         let (mut s, me, d) = fight();
-        s.places.push(Place { name: "sanctuary".into(), x: 320.0, y: 300.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true });
+        s.places.push(Place { name: "sanctuary".into(), x: 320.0, y: 300.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None });
         s.engage(d, me);
         (s.ents.x[me], s.ents.y[me]) = (320.0, 300.0);
         s.system_encounters();

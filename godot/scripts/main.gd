@@ -236,6 +236,7 @@ var crumbled := 0                       # blocks seen to crumble (the smoke test
 var names := {}           # entity id -> name (a bot's kind, "Trader": what shops, quests and looks go by)
 var given := {}           # entity id -> a bot's own name ("Bridget"), for its nameplate and its words
 var looks := {}           # entity id -> a player's look, "cape,helmet" (/play/looks): what their model wears
+var holds := {}           # the faction war (chat channel 18): place name -> [holder's title ("" nobody), colour]
 var _looks_shown := {}    # entity id -> the look its node was last dressed in
 var bubbles: CanvasLayer  # speech bubbles over whoever speaks: scripts/bubbles.gd
 var _names_want := {}     # ids to ask about next
@@ -575,6 +576,13 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 18: # who holds the faction war's holds: "H0|place,faction,colour;...", more in "H1|"
+			if text.begins_with("H0|"):
+				holds.clear()
+			for e in text.substr(3).split(";", false):
+				var hf := e.split(",")
+				if hf.size() >= 3:
+					holds[hf[0]] = [hf[1], hf[2]]
 		elif channel == 17: # the social window's answer to /social
 			socialui.on_line(text)
 		elif channel == 16: # the group finder's queue: "Q|dungeon|queued|wanted|role", "Q|" once out
@@ -3586,6 +3594,11 @@ func _map_marks() -> Array:
 	for g in questui.goals(homes):
 		if not g.is_empty():
 			out.append([g[0], "goal", g[1]])
+	var realm_info = info.get("realm", {})
+	for h in (realm_info.get("holds", []) if realm_info is Dictionary else []):
+		var who: Array = holds.get(String(h.get("name", "")), ["", ""])
+		var title := String(h.get("title", "")) if String(h.get("title", "")) != "" else String(h.get("name", ""))
+		out.append([Vector2(float(h["x"]), float(h["y"])), "hold", "%s (%s)" % [title, who[0] if who[0] != "" else "unheld"], String(who[1])])
 	return out
 
 ## What F would do now, in a few words: talk to a quest giver in reach, trade with a merchant, ask a player to trade.

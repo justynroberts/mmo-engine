@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn a_townsperson_welcomes_a_stranger_then_greets_them_by_name_and_tells_the_news() {
         let mut g = GameFile::default_game();
-        g.places.push(Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Ceanannas".into(), exit: None, sound: String::new(), music: String::new(), safe: true });
+        g.places.push(Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Ceanannas".into(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None });
         let mut folk = g.archetypes[0].clone();
         (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.names) = ("folk".into(), Behaviour::Idle, None, 0, Some("kells".into()), vec![], vec!["Aoife".into()]);
         g.archetypes.push(folk);
@@ -231,7 +231,7 @@ mod tests {
         };
         let first = said(&mut s);
         assert!(s.talk.lines("greet_new").iter().any(|l| proto::talk::fill(l, &[("place", "Ceanannas"), ("greeting", "Good day")]) == first), "a welcome: {first}");
-        s.places.push(Place { name: "trim".into(), x: 800.0, y: 800.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false });
+        s.places.push(Place { name: "trim".into(), x: 800.0, y: 800.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
         s.terrain.houses = Arc::new(vec![Aabb { x0: 520.0, y0: 520.0, x1: 530.0, y1: 530.0 }, Aabb { x0: 800.0, y0: 800.0, x1: 805.0, y1: 805.0 }]);
         s.find_towns();
         s.tell_news("news_caught", "Brian".into(), String::new(), 790.0, 800.0);

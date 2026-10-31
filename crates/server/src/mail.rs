@@ -210,7 +210,7 @@ mod tests {
         g.items.push(ItemDef { name: "gold".into(), color: "#ffd700".into(), stack_max: 99, uses: Vec::new(), consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None });
         let gold = g.items.len() - 1;
         g.currency = Some("gold".into());
-        g.places.push(Place { name: "square".into(), x: 100.0, y: 100.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true });
+        g.places.push(Place { name: "square".into(), x: 100.0, y: 100.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None });
         for a in g.archetypes.iter_mut() {
             a.count = 0;
         }
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn players_come_into_the_world_at_the_start_place_and_a_lost_spot_sends_them_there() {
         let mut g = GameFile::default_game();
-        g.places.push(Place { name: "gate".into(), x: 800.0, y: 200.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true });
+        g.places.push(Place { name: "gate".into(), x: 800.0, y: 200.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None });
         g.start_place = Some("gate".into());
         for a in g.archetypes.iter_mut() {
             a.count = 0;

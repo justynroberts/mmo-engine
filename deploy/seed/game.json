@@ -5112,7 +5112,8 @@
       "y": 1885.9,
       "r": 35.0,
       "title": "Teamhair",
-      "music": "holy"
+      "music": "holy",
+      "hold": ""
     },
     {
       "name": "cashel",
@@ -5120,7 +5121,8 @@
       "y": 2840.6,
       "r": 35.0,
       "title": "Caiseal",
-      "music": "holy"
+      "music": "holy",
+      "hold": "mumhain"
     },
     {
       "name": "clonmacnoise",
@@ -5149,7 +5151,8 @@
       "r": 35.0,
       "title": "Ailech",
       "sound": "town",
-      "music": "explore"
+      "music": "explore",
+      "hold": "ulaidh"
     },
     {
       "name": "rathcroghan",
@@ -5158,7 +5161,8 @@
       "r": 35.0,
       "title": "Ráth Cruachan",
       "sound": "town",
-      "music": "explore"
+      "music": "explore",
+      "hold": "connachta"
     },
     {
       "name": "dun ailinne",
@@ -5167,7 +5171,8 @@
       "r": 35.0,
       "title": "Dún Ailinne",
       "sound": "town",
-      "music": "explore"
+      "music": "explore",
+      "hold": "laighin"
     },
     {
       "name": "kincora",
@@ -9984,6 +9989,60 @@
       "deed": "falls",
       "count": 5,
       "grants": "the Unlucky"
+    }
+  ],
+  "factions": [
+    {
+      "name": "laighin",
+      "title": "Laighin",
+      "color": "#3f7a3a",
+      "kill": -5,
+      "hostile": -60,
+      "hates": [
+        "ulaidh",
+        "connachta",
+        "mumhain"
+      ],
+      "bounty": 1
+    },
+    {
+      "name": "ulaidh",
+      "title": "Ulaidh",
+      "color": "#a8322d",
+      "kill": -5,
+      "hostile": -60,
+      "hates": [
+        "laighin",
+        "connachta",
+        "mumhain"
+      ],
+      "bounty": 1
+    },
+    {
+      "name": "connachta",
+      "title": "Connachta",
+      "color": "#2f4f8f",
+      "kill": -5,
+      "hostile": -60,
+      "hates": [
+        "laighin",
+        "ulaidh",
+        "mumhain"
+      ],
+      "bounty": 1
+    },
+    {
+      "name": "mumhain",
+      "title": "Mumhain",
+      "color": "#c9a227",
+      "kill": -5,
+      "hostile": -60,
+      "hates": [
+        "laighin",
+        "ulaidh",
+        "connachta"
+      ],
+      "bounty": 1
     }
   ]
 }

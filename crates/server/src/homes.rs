@@ -245,7 +245,7 @@ mod tests {
     fn townsfolk_with_a_trade_go_to_their_work_by_day_and_the_square_at_dusk() {
         use proto::game::Work;
         let mut g = GameFile::default_game();
-        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false });
+        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
         let base = g.archetypes[0].clone();
         for (name, work) in [("trader", Work::Square), ("fisher", Work::Water), ("farmer", Work::Fields)] {
             let mut a = base.clone();
@@ -291,7 +291,7 @@ mod tests {
     fn townsfolk_are_shared_over_their_homes_and_go_in_at_their_own_door() {
         let mut g = GameFile::default_game();
         for (name, x) in [("north", 200.0), ("south", 700.0)] {
-            g.places.push(Place { name: name.into(), x, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false });
+            g.places.push(Place { name: name.into(), x, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
         }
         let mut a = g.archetypes[0].clone();
         (a.name, a.behaviour, a.attack, a.count, a.home, a.homes) = ("folk".into(), Behaviour::Wander, None, 0, Some("north".into()), vec!["south".into()]);

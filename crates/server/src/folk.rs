@@ -633,7 +633,7 @@ mod tests {
         let mut g = GameFile::default_game();
         g.rules.inn_pct = 100.0;
         g.rules.newcomer_secs = 60.0;
-        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
+        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
         let base = g.archetypes[0].clone();
         let mut folk = base.clone();
         (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules) = ("folk".into(), Behaviour::Wander, None, 0, Some("town".into()), vec![]);

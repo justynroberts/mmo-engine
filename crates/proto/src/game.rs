@@ -276,6 +276,10 @@ pub struct Place {
     /// Players cannot harm each other inside it, even with `pvp` on (a town, a sanctuary).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub safe: bool,
+    /// A seat a faction can take and hold (faction war, `holds.rs`): present, the faction holding it at first ("" for
+    /// none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
 }
 /// The ambiences a place may have, and its music (the client's sounds: godot/sounds, made by scripts/make_audio.py).
 pub const SOUNDS: [&str; 12] = ["sea", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy", "battle"];
@@ -2052,9 +2056,9 @@ impl GameFile {
         ];
         GameFile {
             places: vec![
-                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None, sound: String::new(), music: String::new(), safe: false },
-                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None, sound: String::new(), music: String::new(), safe: false },
-                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None, sound: String::new(), music: String::new(), safe: false },
+                Place { name: "plaza".into(), x: 200.0, y: 200.0, r: 20.0, title: "The Plaza".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None },
+                Place { name: "market".into(), x: 420.0, y: 160.0, r: 16.0, title: "Market Square".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None },
+                Place { name: "watchtower".into(), x: 330.0, y: 430.0, r: 10.0, title: "The Watchtower".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None },
             ],
             routes: vec![
                 Route { name: "ring road".into(), points: vec![[180.0, 180.0], [300.0, 180.0], [300.0, 300.0], [180.0, 300.0]], looped: true },
@@ -2401,6 +2405,9 @@ impl GameFile {
             }
             if !p.sound.is_empty() && !SOUNDS.contains(&p.sound.as_str()) {
                 return Err(format!("place '{}': sound is one of {}", p.name, SOUNDS.join(", ")));
+            }
+            if p.hold.as_deref().is_some_and(|f| !f.is_empty() && !self.factions.iter().any(|x| x.name == f)) {
+                return Err(format!("place '{}': held by a faction the game does not have", p.name));
             }
             if !p.music.is_empty() && !MUSIC.contains(&p.music.as_str()) {
                 return Err(format!("place '{}': music is one of {}", p.name, MUSIC.join(", ")));
