@@ -92,6 +92,12 @@ fn social_window(sim: &Sim, clients: &mut Clients, slot: usize) {
     if !sim.title[slot].is_empty() {
         lines.push(format!("W|{}", clip(&sim.title[slot], 32)));
     }
+    if let Some(c) = sim.class_of(slot).filter(|c| !c.talents.is_empty()) {
+        lines.push(format!("TP|{}|{}", sim.talent_points(slot), sim.rules.respec_cost));
+        for t in c.talents.iter() {
+            lines.push(format!("TL|{}|{}|{}|{}|{}|{}", clip(&t.name, 24), clip(&t.title, 40), sim.talent_rank(slot, &t.name), t.ranks, t.level, clip(&t.text, 40)));
+        }
+    }
     for k in 0..sim.realm.skills.len() {
         lines.push(format!("K|{}|{}|{}", clip(sim.realm.skills[k].shown(), 30), sim.skill_level(slot, k), sim.realm.skills[k].max));
     }

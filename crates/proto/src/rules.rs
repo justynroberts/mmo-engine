@@ -57,6 +57,8 @@ pub struct Rules {
     pub listings_per_seller: u16,
     /// Most letters waiting for one character (`mail.rs`); more are refused.
     pub mail_waiting: u16,
+    /// Coin it costs to take back every talent point at a market (`/respec`).
+    pub respec_cost: u32,
     /// What falling costs a player (all nothing by default): a share of the experience earned into their level (never
     /// a level), a share of the coin in their bag (gone), the chance each other stack of their bag is left where they
     /// fell, and seconds before they may rise.
@@ -129,6 +131,7 @@ impl Default for Rules {
             listing_hours: 48.0,
             listings_per_seller: 12,
             mail_waiting: 50,
+            respec_cost: 20,
             fall_xp_loss_pct: 0.0,
             fall_coin_loss_pct: 0.0,
             fall_drop_pct: 0.0,

@@ -543,7 +543,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -552,6 +552,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "faction" | "side" => faction(sim, clients, slot, &rest),
         "class" => class(sim, clients, slot, &rest),
         "title" | "titles" => sim.title_command(slot, &rest),
+        "talents" | "talent" | "respec" => sim.talent_command(slot, if cmd == "talents" { "list" } else { cmd.as_str() }, &rest),
         "claim" => claim(sim, clients, slot),
         "unclaim" => unclaim(sim, clients, slot),
         "plot" => plot(sim, clients, slot, &rest),

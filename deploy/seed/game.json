@@ -9298,6 +9298,32 @@
         "beannacht",
         "luas",
         "sioc"
+      ],
+      "talents": [
+        {
+          "name": "sciath",
+          "title": "Shield Wall",
+          "text": "Harm taken is lessened.",
+          "ranks": 3,
+          "level": 2,
+          "toughness": 0.05
+        },
+        {
+          "name": "lann",
+          "title": "Bright Blade",
+          "text": "Blows land harder.",
+          "ranks": 3,
+          "level": 3,
+          "might": 0.03
+        },
+        {
+          "name": "dilseacht",
+          "title": "Steadfast",
+          "text": "Harder still to bring down.",
+          "ranks": 2,
+          "level": 6,
+          "toughness": 0.06
+        }
       ]
     },
     {
@@ -9312,6 +9338,32 @@
         "tintreach",
         "sui fola",
         "foluain"
+      ],
+      "talents": [
+        {
+          "name": "fearg",
+          "title": "Battle Fury",
+          "text": "Blows land harder.",
+          "ranks": 3,
+          "level": 2,
+          "might": 0.05
+        },
+        {
+          "name": "cruas",
+          "title": "Hardiness",
+          "text": "Harm taken is lessened.",
+          "ranks": 3,
+          "level": 3,
+          "toughness": 0.03
+        },
+        {
+          "name": "ar",
+          "title": "Slaughter",
+          "text": "A killer's edge.",
+          "ranks": 2,
+          "level": 6,
+          "might": 0.06
+        }
       ]
     },
     {
@@ -9329,6 +9381,32 @@
         "codladh",
         "foluain",
         "athbheochan"
+      ],
+      "talents": [
+        {
+          "name": "draiocht",
+          "title": "Old Craft",
+          "text": "Spells land harder.",
+          "ranks": 3,
+          "level": 2,
+          "might": 0.05
+        },
+        {
+          "name": "cosaint",
+          "title": "Ward",
+          "text": "Harm taken is lessened.",
+          "ranks": 3,
+          "level": 3,
+          "toughness": 0.03
+        },
+        {
+          "name": "doimhneacht",
+          "title": "Deep Lore",
+          "text": "Spells land harder still.",
+          "ranks": 2,
+          "level": 6,
+          "might": 0.06
+        }
       ]
     },
     {
@@ -9344,6 +9422,32 @@
         "codladh",
         "sui fola",
         "mallacht"
+      ],
+      "talents": [
+        {
+          "name": "luas",
+          "title": "Quick Hands",
+          "text": "Blows land harder.",
+          "ranks": 3,
+          "level": 2,
+          "might": 0.04
+        },
+        {
+          "name": "seachaint",
+          "title": "Slip Aside",
+          "text": "Harm taken is lessened.",
+          "ranks": 3,
+          "level": 3,
+          "toughness": 0.04
+        },
+        {
+          "name": "ga",
+          "title": "Spearcraft",
+          "text": "A spear thrown true.",
+          "ranks": 2,
+          "level": 5,
+          "might": 0.05
+        }
       ]
     }
   ],

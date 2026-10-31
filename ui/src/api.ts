@@ -163,6 +163,16 @@ export const CLASS_LOOKS = ['knight', 'barbarian', 'mage', 'rogue'] as const
 /** A character class (GameFile.classes, at most 15). A player picks one once, in game, and keeps it; the reserved
  *  attribute "class" (replicated, 0..15) shows its index + 1 (0: none, and every bot). Not in the content hash:
  *  edits apply live, nobody is disconnected. */
+/** A class's talent: up to `ranks` (1..5) points from level `level`, each adding `might` and `toughness` (0..0.5). */
+export interface TalentFile {
+  name: string
+  title: string
+  text?: string
+  ranks?: number
+  level?: number
+  might?: number
+  toughness?: number
+}
 export interface ClassFile {
   /** Unique id, at most 32 bytes. */
   name: string
@@ -181,6 +191,8 @@ export interface ClassFile {
   /** Schools of spells (ActionFile.school) it may use too: every action of these, and those of no school. Players
    * can also choose a class over chat with /class Name. */
   schools?: string[]
+  /** Talents its players spend a point a level on (past the first); each rank adds might and toughness shares. */
+  talents?: TalentFile[]
 }
 export type Seek = 'player' | 'bot' | 'any'
 export type Cond =
@@ -806,6 +818,8 @@ export interface Rules {
   listings_per_seller: number
   /** Most letters waiting for one character. */
   mail_waiting: number
+  /** Coin it costs to take back every talent point at a market (/respec). */
+  respec_cost: number
   /** What falling costs: a share (%) of the experience earned into the level, of the coin in the bag (gone), the
    *  chance (%) each other bag stack is left where they fell, and seconds before rising. All 0 by default. */
   fall_xp_loss_pct: number
@@ -866,6 +880,7 @@ export const RULE_DEFAULTS: Rules = {
   listing_hours: 48,
   listings_per_seller: 12,
   mail_waiting: 50,
+  respec_cost: 20,
   fall_xp_loss_pct: 0,
   fall_coin_loss_pct: 0,
   fall_drop_pct: 0,

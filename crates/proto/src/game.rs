@@ -1366,6 +1366,28 @@ pub struct ClassFile {
     /// actions with no school (plain blows). `/class Name` picks a class over chat, as the class picker does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub schools: Vec<String>,
+    /// Talents its players spend a point a level on (past the first): each rank adds `might` and `toughness`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub talents: Vec<TalentFile>,
+}
+
+/// A talent of a class: up to `ranks` points spent in it (from level `level`), each adding `might` to the blows dealt
+/// and `toughness` against the blows taken, as shares like a class's own.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TalentFile {
+    pub name: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    #[serde(default = "d_one_u8")]
+    pub ranks: u8,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub might: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub toughness: f32,
 }
 
 /// A class as the server uses it: its bonuses and the action ids it may use (`any`: all of them).
@@ -1380,6 +1402,7 @@ pub struct ClassRt {
     pub spells: Vec<u8>,
     /// It names neither spells nor schools: every action is its to use.
     pub any: bool,
+    pub talents: Vec<TalentFile>,
 }
 
 pub const MAX_CLASSES: usize = 15;
@@ -2691,6 +2714,14 @@ impl GameFile {
             if c.desc.chars().count() > 300 || !(c.might.is_finite() && c.toughness.is_finite() && (0.0..=2.0).contains(&c.might) && (0.0..=2.0).contains(&c.toughness)) {
                 return Err(format!("class '{}': desc at most 300 characters, might and toughness 0..2", c.name));
             }
+            let mut seen = std::collections::HashSet::new();
+            for t in &c.talents {
+                let ok = !t.name.is_empty() && seen.insert(t.name.as_str()) && !t.title.is_empty() && t.title.chars().count() <= 40 && (1..=5).contains(&t.ranks)
+                    && t.might.is_finite() && t.toughness.is_finite() && (0.0..=0.5).contains(&t.might) && (0.0..=0.5).contains(&t.toughness);
+                if !ok || c.talents.len() > 16 {
+                    return Err(format!("class '{}' talent '{}': a unique name, a title of at most 40, ranks 1..5, might and toughness 0..0.5 a rank, at most 16 talents", c.name, t.name));
+                }
+            }
             let mut spells = c
                 .spells
                 .iter()
@@ -2708,7 +2739,7 @@ impl GameFile {
                     }
                 }
             }
-            classes.push(ClassRt { name: c.name.clone(), title: c.title.clone(), desc: c.desc.clone(), look: c.look.clone(), might: c.might, toughness: c.toughness, spells, any: c.spells.is_empty() && c.schools.is_empty() });
+            classes.push(ClassRt { name: c.name.clone(), title: c.title.clone(), desc: c.desc.clone(), look: c.look.clone(), might: c.might, toughness: c.toughness, spells, any: c.spells.is_empty() && c.schools.is_empty(), talents: c.talents.clone() });
         }
         self.check_factions()?;
         let currency = match &self.currency {

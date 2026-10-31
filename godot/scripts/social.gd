@@ -20,7 +20,10 @@ var _towns: Array = []
 var _skills: Array = []            # [[title, level, max], ...]
 var _feats: Array = []             # achievements: [[title, earned, so far, count, title it grants], ...]
 var _worn := ""                    # the title worn
-var _cols := HBoxContainer.new()
+var _cols := GridContainer.new()
+var _talents: Array = []           # [[name, title, rank, ranks, level, text], ...]
+var _points := 0
+var _respec_cost := 0
 
 func _ready() -> void:
 	layer = 6
@@ -28,14 +31,16 @@ func _ready() -> void:
 	panel.visible = false
 	panel.add_theme_stylebox_override("panel", BagScript.box())
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(1180, 460)
-	panel.position = Vector2(-590, -260)
+	panel.custom_minimum_size = Vector2(1180, 560)
+	panel.position = Vector2(-590, -300)
 	add_child(panel)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	panel.add_child(v)
-	v.add_child(BagScript.title("Company, standing, skills and deeds", 26, false))
-	_cols.add_theme_constant_override("separation", 28)
+	v.add_child(BagScript.title("Company, standing, skills, talents and deeds", 26, false))
+	_cols.columns = 3
+	_cols.add_theme_constant_override("h_separation", 28)
+	_cols.add_theme_constant_override("v_separation", 18)
 	_cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(_cols)
 	var hint := Label.new()
@@ -57,6 +62,8 @@ func on_line(text: String) -> void:
 			_skills.clear()
 			_feats.clear()
 			_worn = ""
+			_talents.clear()
+			_points = 0
 		"G":
 			_guild = [f[1], f[2], int(f[3]), f[4] == "1"] if f.size() >= 5 else []
 		"GM":
@@ -80,6 +87,13 @@ func on_line(text: String) -> void:
 				_feats.append([f[1], f[2] == "1", int(f[3]), int(f[4]), f[5]])
 		"W":
 			_worn = f[1] if f.size() > 1 else ""
+		"TP":
+			if f.size() >= 3:
+				_points = int(f[1])
+				_respec_cost = int(f[2])
+		"TL":
+			if f.size() >= 7:
+				_talents.append([f[1], f[2], int(f[3]), int(f[4]), int(f[5]), f[6]])
 		"E":
 			_rebuild()
 
@@ -87,6 +101,7 @@ func _column(title: String) -> VBoxContainer:
 	var c := VBoxContainer.new()
 	c.add_theme_constant_override("separation", 6)
 	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	c.custom_minimum_size = Vector2(360, 0)
 	c.add_child(BagScript.title(title, 17, false))
 	_cols.add_child(c)
 	return c
@@ -148,6 +163,19 @@ func _rebuild() -> void:
 		for e in _skills:
 			_text(k, "%s  %d / %d" % [e[0], e[1], e[2]], HUD.ACCENT if int(e[1]) > 0 else HUD.TEXT, 14)
 		_text(k, "Skills rise with use: making (the bag's Make row), harvesting and gathering.", HUD.MUTED, 12)
+	if not _talents.is_empty():
+		var tc := _column("Talents")
+		_text(tc, "%d point%s to spend (one a level)" % [_points, "" if _points == 1 else "s"], HUD.ACCENT if _points > 0 else HUD.MUTED, 13)
+		for t in _talents:
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			_text(row, "%s  %d/%d%s" % [t[1], t[2], t[3], ("  (level %d)" % t[4]) if t[4] > 1 else ""], HUD.ACCENT if t[2] > 0 else HUD.TEXT, 13)
+			if _points > 0 and t[2] < t[3]:
+				var tname: String = t[0]
+				_button(row, "+", func(): command.emit("/talent " + tname))
+			tc.add_child(row)
+		if _talents.any(func(t): return t[2] > 0):
+			_button(tc, "Unlearn all (%d coin, at a market)" % _respec_cost, func(): command.emit("/respec"))
 	if not _feats.is_empty():
 		var a := _column("Achievements")
 		_text(a, ("Called " + _worn) if _worn != "" else "No title worn.", HUD.ACCENT if _worn != "" else HUD.MUTED, 13)

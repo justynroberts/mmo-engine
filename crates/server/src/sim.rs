@@ -488,6 +488,8 @@ pub struct Sim {
     pub deeds: Vec<Vec<(String, u32)>>,
     pub earned: Vec<Vec<String>>,
     pub title: Vec<String>,
+    /// Per slot: points spent in their class's talents, by talent name (`talents.rs`).
+    pub talents: Vec<Vec<(String, u8)>>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -736,6 +738,7 @@ impl Sim {
             deeds: vec![Vec::new(); cap],
             earned: vec![Vec::new(); cap],
             title: vec![String::new(); cap],
+            talents: vec![Vec::new(); cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -940,6 +943,7 @@ impl Sim {
             deeds: self.deeds[slot].clone(),
             earned: self.earned[slot].clone(),
             title: self.title[slot].clone(),
+            talents: self.talents[slot].clone(),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -1040,6 +1044,7 @@ impl Sim {
         self.deeds[slot] = rec.deeds.clone();
         self.earned[slot] = rec.earned.clone();
         self.title[slot] = rec.title.clone();
+        self.talents[slot] = rec.talents.clone();
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 
@@ -2368,8 +2373,8 @@ impl Sim {
         // Level and gear together: what each adds, on top of 1.
         let (gm, _) = self.gear_bonus(from);
         let (_, gt) = self.gear_bonus(to);
-        let gm = gm + self.class_of(from).map_or(0.0, |c| c.might);
-        let gt = gt + self.class_of(to).map_or(0.0, |c| c.toughness);
+        let gm = gm + self.class_of(from).map_or(0.0, |c| c.might) + self.talent_bonus(from).0;
+        let gt = gt + self.class_of(to).map_or(0.0, |c| c.toughness) + self.talent_bonus(to).1;
         let might = self.levels.as_ref().map_or(1.0, |l| l.might_at(self.ents.level[from])) + gm;
         let tough = self.levels.as_ref().map_or(1.0, |l| l.toughness_at(self.ents.level[to])) + gt;
         let d = delta * might;

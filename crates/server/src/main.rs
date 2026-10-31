@@ -35,6 +35,7 @@ mod skills;
 mod social;
 mod statics;
 mod store;
+mod talents;
 mod trade;
 mod web;
 mod worldfile;

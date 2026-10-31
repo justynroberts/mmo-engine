@@ -72,7 +72,8 @@ pub mod channel {
     /// answer to "/social" (`social.rs`). "X|" starts it; then "G|name|leader|members|mine" (or "G|" for none),
     /// "GM|name" per member, "M|waiting", "ML|from|count item|text" per letter (the first few), "S|faction|value|mood"
     /// and "T|town|value|tier" per standing, "K|skill|level|max" per skill,
-    /// "A|achievement|earned|so far|count|title it grants" per achievement, "W|title" for the title worn; "E|" ends it. Not shown as chat.
+    /// "A|achievement|earned|so far|count|title it grants" per achievement, "W|title" for the title worn,
+    /// "TP|points|respec cost" and "TL|name|title|rank|ranks|level|text" per talent of their class; "E|" ends it. Not shown as chat.
     pub const SOCIAL: u8 = 17;
 }
 

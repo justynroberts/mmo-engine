@@ -76,6 +76,9 @@ pub struct Record {
     pub earned: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+    /// Points spent in their class's talents, by talent name (`talents.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub talents: Vec<(String, u8)>,
 }
 
 fn is_zero(v: &u32) -> bool {

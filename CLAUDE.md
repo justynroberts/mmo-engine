@@ -98,7 +98,7 @@ Spells are actions with optional fields (`aim`, `area`, `hits`, `hold`, `fx`, `b
 
 ## Classes
 
-`GameFile::classes` (`ClassFile`, built into `ClassRt`); a player's class is `Sim::class` (index + 1), chosen once with `ACT_CLASS` or `/class Name`, saved by name in `store::Record`, added in `Sim::scaled` and enforced in `use_action` (its `spells`, plus every action of its `schools` and those of no school); the reserved attribute `class` shows it. In the Godot client `scripts/classpick.gd` is the picker, and `main.gd` `_look_of` draws players by their class's `look`.
+`GameFile::classes` (`ClassFile`, built into `ClassRt`); a player's class is `Sim::class` (index + 1), chosen once with `ACT_CLASS` or `/class Name`, saved by name in `store::Record`, added in `Sim::scaled` and enforced in `use_action` (its `spells`, plus every action of its `schools` and those of no school); the reserved attribute `class` shows it. Talents (`ClassFile::talents`, `talents.rs`: a point a level, `/talent`, `/respec` at a market, added in `Sim::scaled`) are kept by name as `Record::talents`. In the Godot client `scripts/classpick.gd` is the picker, and `main.gd` `_look_of` draws players by their class's `look`.
 
 ## Settlements and dressing (Godot fantasy theme)
 

@@ -100,9 +100,12 @@ experience, a title it grants), and a title worn with `/title` and shown with th
 "Name|Title"; the Godot client puts it on the name plate). The F6 window lists achievements with progress and
 buttons to wear a title. Eleven in both worlds.
 
-## 6. Talents
+## 6. Talents — done
 
-Points per level spent in a class's trees; respec at a trainer for coin.
+`ClassFile::talents` (ranks, a level, might and toughness a rank): a point a level past the first, spent with
+`/talent Name` or the F6 window's "+" buttons, added in `Sim::scaled`; `/respec` takes them back at a market for
+`rules.respec_cost` coin (`crates/server/src/talents.rs`). Three talents for each of the four classes in both worlds.
+A trainer bot type was not needed: any market will do.
 
 ## 7. Appearance and dyes
 
