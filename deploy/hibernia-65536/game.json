@@ -8502,6 +8502,106 @@
  ],
  "quests": [
   {
+   "name": "a new arrival",
+   "title": "A New Arrival",
+   "giver": "watchman",
+   "text": "New to these parts? You'll want a trade and a roof before the nights draw in. The Seed Trader at the market in Áth Cliath sets up newcomers. Go and speak to them.",
+   "done_text": "Good. Tell the Seed Trader the watch sent you.",
+   "turn_in": "tuathanach",
+   "steps": [
+    {
+     "kind": "talk",
+     "archetype": "tuathanach"
+    }
+   ],
+   "xp": 40,
+   "reward": [
+    {
+     "item": "siol cruithneachta",
+     "count": 4
+    },
+    {
+     "item": "pingin airgid",
+     "count": 3
+    }
+   ]
+  },
+  {
+   "name": "a plot of your own",
+   "title": "A Plot of Your Own",
+   "giver": "tuathanach",
+   "after": "a new arrival",
+   "text": "Land first. Type /claim where you stand to make a plot yours. Then press B, pick soil and lay four blocks of tilled earth. Plant the oat seeds in your bag beside it and bring me three sheaves of oats when they ripen.",
+   "done_text": "Oats! You'll not go hungry now.",
+   "steps": [
+    {
+     "kind": "build",
+     "count": 4,
+     "material": "soil"
+    },
+    {
+     "kind": "collect",
+     "item": "coirce",
+     "count": 3
+    }
+   ],
+   "xp": 100,
+   "reward": [
+    {
+     "item": "pingin airgid",
+     "count": 10
+    }
+   ]
+  },
+  {
+   "name": "a roof over your head",
+   "title": "A Roof Over Your Head",
+   "giver": "tuathanach",
+   "after": "a plot of your own",
+   "text": "Nobody sleeps out in the open with wolves and worse about at night. Build yourself a shelter: walls on three sides and a roof over your head, and the night raiders will pass you by.",
+   "done_text": "Snug as a monk in his cell.",
+   "steps": [
+    {
+     "kind": "build",
+     "count": 12
+    }
+   ],
+   "xp": 120,
+   "reward": [
+    {
+     "item": "deoch leighis",
+     "count": 2
+    }
+   ]
+  },
+  {
+   "name": "the brigand king",
+   "title": "The Brigand King",
+   "giver": "watchman",
+   "after": "a roof over your head",
+   "level": 3,
+   "text": "The brigands south of Kildare have crowned themselves a king. Their camp gives every company that walks in a fight of its own. Don't go alone: gather a party (the Invite button over a player, or /invite Name) and bring him down.",
+   "done_text": "The roads will be safer for it. Take this blade; you've earned it.",
+   "steps": [
+    {
+     "kind": "visit",
+     "place": "dibheirgigh"
+    },
+    {
+     "kind": "kill",
+     "archetype": "ri na ndibheirgeach",
+     "count": 1
+    }
+   ],
+   "xp": 400,
+   "reward": [
+    {
+     "item": "claiomh",
+     "count": 1
+    }
+   ]
+  },
+  {
    "name": "wolves at the fold",
    "title": "Wolves at the Fold",
    "text": "The wolves have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
