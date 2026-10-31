@@ -1084,6 +1084,34 @@
     {
      "item": "croch",
      "price": 12
+    },
+    {
+     "item": "stol",
+     "price": 8
+    },
+    {
+     "item": "bord",
+     "price": 20
+    },
+    {
+     "item": "cofra",
+     "price": 25
+    },
+    {
+     "item": "bairille",
+     "price": 10
+    },
+    {
+     "item": "coinnle",
+     "price": 6
+    },
+    {
+     "item": "meirge",
+     "price": 15
+    },
+    {
+     "item": "ceig",
+     "price": 12
     }
    ],
    "names": [
@@ -7862,6 +7890,62 @@
    "stack_max": 10,
    "value": 6,
    "dye": "#e0a020"
+  },
+  {
+   "name": "stol",
+   "title": "Stool",
+   "color": "#8a6a44",
+   "stack_max": 5,
+   "value": 4,
+   "furniture": "d:stool"
+  },
+  {
+   "name": "bord",
+   "title": "Table",
+   "color": "#a8322d",
+   "stack_max": 5,
+   "value": 10,
+   "furniture": "d:table_medium_tablecloth"
+  },
+  {
+   "name": "cofra",
+   "title": "Chest",
+   "color": "#6b4a2f",
+   "stack_max": 5,
+   "value": 12,
+   "furniture": "d:chest"
+  },
+  {
+   "name": "bairille",
+   "title": "Barrel",
+   "color": "#7a5a3a",
+   "stack_max": 5,
+   "value": 5,
+   "furniture": "d:barrel_small"
+  },
+  {
+   "name": "coinnle",
+   "title": "Candles",
+   "color": "#f0d65a",
+   "stack_max": 5,
+   "value": 3,
+   "furniture": "d:candle_triple"
+  },
+  {
+   "name": "meirge",
+   "title": "Banner",
+   "color": "#a8322d",
+   "stack_max": 5,
+   "value": 7,
+   "furniture": "d:banner_red"
+  },
+  {
+   "name": "ceig",
+   "title": "Keg",
+   "color": "#6b4a2f",
+   "stack_max": 5,
+   "value": 6,
+   "furniture": "d:keg"
   }
  ],
  "weather": [

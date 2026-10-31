@@ -239,6 +239,18 @@ func height(x: float, y: float) -> float:
 ## A character's body. The client adds the name and health bar on top, and drives it through these optional
 ## methods if the node has them: set_speed(float), attack(), hurt(), jump(seconds), set_dead(bool).
 ## opts: {"class": String} for the player's own character.
+## A piece of furniture set down on a player's land (a theme's piece name, like "d:stool"): a plain crate here;
+## the fantasy theme draws the piece itself. Its base rests at the node's origin.
+func furniture_node(_piece: String) -> Node3D:
+	var m := MeshInstance3D.new()
+	var b := BoxMesh.new()
+	b.size = Vector3(0.8, 0.8, 0.8)
+	m.mesh = b
+	m.position.y = 0.4
+	var n := Node3D.new()
+	n.add_child(m)
+	return n
+
 func entity_node(id: int, mine: bool, opts: Dictionary) -> Node3D:
 	var n := Node3D.new()
 	var mi := MeshInstance3D.new()

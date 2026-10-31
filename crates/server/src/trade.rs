@@ -213,7 +213,7 @@ mod tests {
     use proto::world::World;
 
     fn item(name: &str, value: u16) -> ItemDef {
-        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None }
+        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None }
     }
 
     #[test]

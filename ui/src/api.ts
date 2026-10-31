@@ -273,6 +273,8 @@ export interface ItemDef {
   block?: string
   /** A dye: using one colours the user's cape this (#rrggbb), used up. */
   dye?: string
+  /** Furniture: using one sets this piece (a theme piece name, like "d:stool") down on your own land. */
+  furniture?: string
 }
 
 /** The block materials a player can build, by number (proto::game::BLOCK_NAMES up to the crops). */

@@ -152,6 +152,10 @@ says its `done_text` aloud. "The Stone of Destiny" in both worlds: six quests fr
 Clonmacnoise and Glendalough, the sluagh, Crom Dubh in Brú na Bóinne (with a company), and the Lia Fáil roaring
 again.
 
-## 12. Furnishing houses
+## 12. Furnishing houses — done
 
-Furniture items placed inside a house on a plot, seen by visitors.
+Items with `furniture` (a theme piece, "d:stool") are set down where you stand on your own land (or your guild's)
+by using them, a quarter turn more each time, and picked up again with `/unfurnish`; kept with the realm's save
+and told to everyone near on chat channel 19, so visitors see them; the Godot client draws each piece on the ground
+or the floor built under it (`crates/server/src/furnish.rs`, `main.gd` `_draw_furniture`). Seven pieces at the
+merchant in both worlds.

@@ -78,6 +78,9 @@ pub mod channel {
     /// Server to client, from the server (0): who holds each hold of the faction war (`holds.rs`), when it changes:
     /// "H0|place,faction title,colour;..." (an empty title for nobody), going on in "H1|" lines. Not shown as chat.
     pub const HOLDS: u8 = 18;
+    /// Server to client, from the server (0): the furniture set down near a player (`furnish.rs`), when it changes:
+    /// "U0|x,y,quarter turns,piece;...", going on in "U1|" lines; an empty "U0|" for none. Not shown as chat.
+    pub const FURNITURE: u8 = 19;
 }
 
 pub mod kind {

@@ -97,6 +97,9 @@ pub struct Saved {
     /// Who holds each hold (`holds.rs`), by place name and faction name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holds: Vec<(String, String)>,
+    /// Furniture set down on players' land (`furnish.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub furniture: Vec<crate::furnish::Piece>,
 }
 
 /// One party's copy of a dungeon.
@@ -125,6 +128,9 @@ pub struct State {
     pub plot_here: Vec<String>,
     /// Per slot: the land near them as last told (chat channel LAND), so it goes again only when it changes.
     pub land_sent: Vec<String>,
+    /// Furniture set down (`furnish.rs`), and per slot what of it was last told.
+    pub furniture: Vec<crate::furnish::Piece>,
+    pub furniture_sent: Vec<String>,
     pub guilds: Vec<Guild>,
     pub plots: Vec<Plot>,
     /// Growing and ripe crops: (column key, layer) -> (crop name, tick it ripens).
@@ -146,6 +152,9 @@ impl State {
         self.guild_invite[slot] = 0;
         self.plot_here[slot].clear();
         self.land_sent[slot].clear();
+        if let Some(t) = self.furniture_sent.get_mut(slot) {
+            t.clear();
+        }
     }
 
     /// The guild an account belongs to.
@@ -336,6 +345,7 @@ impl Sim {
         self.system_land();
         self.system_finder();
         self.system_holds();
+        self.system_furniture();
     }
 
     /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel
@@ -513,6 +523,7 @@ impl Sim {
             next_listing: self.market.next_id,
             mail: self.market.mail.clone(),
             holds: self.holds_saved(),
+            furniture: self.rs.furniture.clone(),
         }
     }
 
@@ -524,6 +535,7 @@ impl Sim {
         self.market.post = saved.post;
         self.market.mail = saved.mail;
         self.holds_restore(&saved.holds);
+        self.rs.furniture = saved.furniture;
         self.market.next_id = saved.next_listing.max(self.market.listings.iter().map(|l| l.id + 1).max().unwrap_or(1)).max(1);
         self.rs.crops.clear();
         for c in saved.crops {
@@ -549,7 +561,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /look cape|helmet, /holds, /sail [Place], /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /look cape|helmet, /holds, /sail [Place], /unfurnish, /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -560,6 +572,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "title" | "titles" => sim.title_command(slot, &rest),
         "look" | "appearance" => sim.look_command(slot, &rest),
         "sail" | "boat" | "ship" => sim.sail_command(slot, &rest),
+        "unfurnish" => sim.unfurnish(slot),
         "holds" | "war" => {
             let line = sim.holds_line();
             say(clients, slot, &line);

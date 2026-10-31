@@ -2241,6 +2241,19 @@ func _dress(dress: Dictionary, name: String, scale: float, at: Vector3, turn: fl
 		dress[path] = []
 	dress[path].append(Transform3D(Basis(Vector3.UP, turn).scaled(Vector3.ONE * scale), at - Vector3(0, m.get_aabb().position.y * scale, 0)))
 
+func furniture_node(piece: String) -> Node3D:
+	var m := _mesh(_dress_path(piece))
+	if m == null:
+		return super.furniture_node(piece)
+	var mi := MeshInstance3D.new()
+	mi.mesh = m
+	mi.scale = Vector3.ONE * 1.2
+	mi.position.y = -m.get_aabb().position.y * 1.2
+	var n := Node3D.new()
+	n.add_child(mi)
+	_snowable(mi)
+	return n
+
 func _dress_path(name: String) -> String:
 	match name.left(2):
 		"d:": return DUNGEON + name.substr(2) + ".gltf"

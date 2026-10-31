@@ -237,6 +237,9 @@ var names := {}           # entity id -> name (a bot's kind, "Trader": what shop
 var given := {}           # entity id -> a bot's own name ("Bridget"), for its nameplate and its words
 var looks := {}           # entity id -> a player's look, "cape,helmet" (/play/looks): what their model wears
 var holds := {}           # the faction war (chat channel 18): place name -> [holder's title ("" nobody), colour]
+var furniture: Array = [] # furniture set down near us (chat channel 19): [[Vector2, quarter turns, piece], ...]
+var _furniture_node: Node3D
+var _furniture_drawn := ""
 var _looks_shown := {}    # entity id -> the look its node was last dressed in
 var bubbles: CanvasLayer  # speech bubbles over whoever speaks: scripts/bubbles.gd
 var _names_want := {}     # ids to ask about next
@@ -576,6 +579,14 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 19: # furniture near us: "U0|x,y,turns,piece;...", more in "U1|"
+			if text.begins_with("U0|"):
+				furniture.clear()
+			for e in text.substr(3).split(";", false):
+				var uf := e.split(",")
+				if uf.size() >= 4:
+					furniture.append([Vector2(float(uf[0]), float(uf[1])), int(uf[2]), uf[3]])
+			_draw_furniture()
 		elif channel == 18: # who holds the faction war's holds: "H0|place,faction,colour;...", more in "H1|"
 			if text.begins_with("H0|"):
 				holds.clear()
@@ -3452,6 +3463,31 @@ func _draw_blueprint(cells: Array) -> void:
 	for i in cells.size():
 		var cell: Vector3i = cells[i][0]
 		mm2.set_instance_transform(i, Transform3D(Basis(), Vector3((cell.x + 0.5) * bs2, (cell.z + 0.5) * bs2, (cell.y + 0.5) * bs2)))
+
+## The furniture near us, as the server last told it: each piece where it stands, on the ground or the floor
+## built under it.
+func _draw_furniture() -> void:
+	var key := str(furniture)
+	if key == _furniture_drawn or theme == null:
+		return
+	_furniture_drawn = key
+	if _furniture_node:
+		_furniture_node.queue_free()
+	_furniture_node = Node3D.new()
+	add_child(_furniture_node)
+	var bs := float(build.get("block", 2.0)) if not build.is_empty() else 2.0
+	for f in furniture:
+		var p: Vector2 = f[0]
+		var n: Node3D = theme.furniture_node(String(f[2]))
+		var cx := int(floor(p.x / bs))
+		var cy := int(floor(p.y / bs))
+		var z := _col_base(cx, cy)
+		while _solid(cx, cy, z):
+			z += 1 # on top of a floor built there
+		var floor_y := maxf(_height(p.x, p.y), z * bs) if not build.is_empty() and _solid(cx, cy, z - 1) else _height(p.x, p.y)
+		n.position = Vector3(p.x, floor_y, p.y)
+		n.rotation.y = int(f[1]) * PI * 0.5
+		_furniture_node.add_child(n)
 
 ## The land held near us, from the server: a first line ("L0|") starts the list again, "L1|" adds to it.
 func _on_land(text: String) -> void:

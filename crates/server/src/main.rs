@@ -25,6 +25,7 @@ mod io;
 mod nav;
 mod night;
 mod town;
+mod furnish;
 mod gossip;
 mod folk;
 mod plague;
