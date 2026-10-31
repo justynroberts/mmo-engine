@@ -52,6 +52,49 @@ impl Sim {
     }
 }
 
+/// `/social`: what the Godot social window shows, on chat channel SOCIAL (see `proto::chat::channel::SOCIAL`).
+fn social_window(sim: &Sim, clients: &mut Clients, slot: usize) {
+    let clip = |t: &str, n: usize| -> String { t.chars().filter(|c| *c != '|').take(n).collect() };
+    let mut lines = vec!["X|".to_string()];
+    let me = sim.tag_of(slot);
+    // A member by account tag: their name if they are on, else the name their identity claimed, else "a member".
+    let name_of = |tag: &str| -> String {
+        if let Some(s) = (0..sim.ents.high).find(|&s| sim.ents.alive[s] && sim.ents.owner[s] < DRIVEN && sim.tag_of(s).as_deref() == Some(tag)) {
+            return sim.name_of(s).to_string();
+        }
+        clients.names.iter().find(|(_, id)| proto::secure::account_tag(id) == tag).map_or_else(|| "a member".into(), |(n, _)| n.clone())
+    };
+    match me.as_deref().and_then(|t| sim.rs.guild_of(t)) {
+        Some(g) => {
+            let guild = &sim.rs.guilds[g];
+            lines.push(format!("G|{}|{}|{}|{}", clip(&guild.name, 32), clip(&name_of(&guild.leader), 24), guild.members.len(), (Some(&guild.leader) == me.as_ref()) as u8));
+            for m in guild.members.iter().take(24) {
+                lines.push(format!("GM|{}", clip(&name_of(m), 24)));
+            }
+        }
+        None => lines.push("G|".into()),
+    }
+    let letters: Vec<&crate::mail::Letter> = me.as_deref().map(|t| sim.market.mail.iter().filter(|l| l.to == t).collect()).unwrap_or_default();
+    lines.push(format!("M|{}", letters.len()));
+    for l in letters.iter().take(6) {
+        let goods = if l.count > 0 { format!("{} {}", l.count, sim.items.iter().find(|i| i.name == l.item).map_or(l.item.as_str(), |i| i.shown())) } else { String::new() };
+        lines.push(format!("ML|{}|{}|{}", clip(&l.from, 24), clip(&goods, 30), clip(&l.text, 50)));
+    }
+    for f in 0..sim.factions.len().min(10) {
+        let v = sim.standing(slot, f);
+        lines.push(format!("S|{}|{v}|{}", clip(&sim.factions[f].shown(), 40), sim.factions[f].mood(v)));
+    }
+    let mut towns: Vec<(String, i32)> = sim.repute[slot].iter().filter_map(|(n, v)| sim.places.iter().position(|p| &p.name == n).map(|h| (sim.place_called(h), *v))).collect();
+    towns.sort();
+    for (t, v) in towns.into_iter().take(12) {
+        lines.push(format!("T|{}|{v}|{}", clip(&t, 40), crate::repute::Tier::of(v).word()));
+    }
+    lines.push("E|".into());
+    for l in lines {
+        tell(clients, slot, 0, channel::SOCIAL, &l);
+    }
+}
+
 /// A player by display name, ignoring case.
 fn find(sim: &Sim, name: &str) -> Option<usize> {
     let want = name.trim().to_lowercase();
@@ -264,6 +307,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             }
             clients.log_chat(sim.tick, me, channel::PARTY, &msg);
         }
+        "social" => social_window(sim, clients, slot),
         "queue" | "lfg" | "unqueue" => {
             sim.finder_command(slot, if cmd == "unqueue" { "unqueue" } else { "queue" }, &rest);
         }

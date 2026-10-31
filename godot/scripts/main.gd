@@ -19,6 +19,7 @@ const SpellFx := preload("res://scripts/spellfx.gd")
 const JournalScript := preload("res://scripts/journal.gd")
 const QuestsScript := preload("res://scripts/quests.gd")
 const FinderScript := preload("res://scripts/finder.gd")
+const SocialScript := preload("res://scripts/social.gd")
 const ShopScript := preload("res://scripts/shop.gd")
 const BagScript := preload("res://scripts/bag.gd")
 const TradeScript := preload("res://scripts/trade.gd")
@@ -142,6 +143,7 @@ var bar_order: Array = []   # the names on the spell bar, in key order: the play
 var journal: CanvasLayer    # the spell journal and the menu: scripts/journal.gd
 var questui: CanvasLayer    # quest offers, the quest log and the tracker: scripts/quests.gd
 var finderui: CanvasLayer   # the group finder (F5): scripts/finder.gd
+var socialui: CanvasLayer   # guild, letters and standing (F6): scripts/social.gd
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
 var bagui: CanvasLayer      # the whole bag and the bank (F4): scripts/bag.gd
 var tradeui: CanvasLayer    # trading with another player: scripts/trade.gd
@@ -304,6 +306,12 @@ func _ready() -> void:
 	finderui = FinderScript.new()
 	add_child(finderui)
 	finderui.command.connect(func(t: String): net.say(t, false))
+	socialui = SocialScript.new()
+	add_child(socialui)
+	socialui.command.connect(func(t: String): net.say(t, false))
+	socialui.compose.connect(func(t: String):
+		socialui.panel.visible = false
+		hud.open_chat(t))
 	questui.accepted.connect(func(i: int): net.accept_quest(i))
 	questui.declined.connect(func(): net.abandon_quest(-1))
 	questui.abandoned.connect(func(i: int): net.abandon_quest(i))
@@ -564,6 +572,8 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 17: # the social window's answer to /social
+			socialui.on_line(text)
 		elif channel == 16: # the group finder's queue: "Q|dungeon|queued|wanted|role", "Q|" once out
 			finderui.on_line(text)
 		elif channel == 15: # the land held near us: "L0|x0,y0,x1,y1,mine,name;...", more in "L1|" lines
@@ -653,6 +663,8 @@ func _start() -> void:
 				_open_auction()
 			elif String(args["open"]) == "finder":
 				finderui.toggle()
+			elif String(args["open"]) == "social":
+				socialui.toggle()
 			else:
 				bagui.toggle(net.bag()))
 	if args.has("blueprint"): # --blueprint N: in build mode, lay blueprint N out a few blocks south of us (with --shot)
@@ -2668,12 +2680,16 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_F5:
 			finderui.toggle()
 			return
+		if k == KEY_F6:
+			socialui.target_name = _name(target_id) if target_id != 0 and _players.has(target_id) else ""
+			socialui.toggle()
+			return
 		if k == KEY_F4 or k == BAG_KEY:
 			bagui.toggle(net.bag())
 			return
-		if k == KEY_ESCAPE and (finderui.escape() or settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
+		if k == KEY_ESCAPE and (socialui.escape() or finderui.escape() or settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
 			return
-		if journal.is_open() or questui.is_open() or finderui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
+		if journal.is_open() or questui.is_open() or finderui.is_open() or socialui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
 			return
 		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
@@ -3859,6 +3875,9 @@ func _on_ability(name: String) -> void:
 			questui.toggle_log()
 		"group":
 			finderui.toggle()
+		"social":
+			socialui.target_name = _name(target_id) if target_id != 0 and _players.has(target_id) else ""
+			socialui.toggle()
 
 ## The frame bars for an entity: every replicated attribute except the bookkeeping ones (airborne, lit).
 ## How full a bar of attribute `a` can be for entity `e`: a player's level ceiling when the pool grows with level

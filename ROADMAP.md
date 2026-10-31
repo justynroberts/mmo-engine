@@ -38,7 +38,8 @@ block at a time while you stand in reach)
 2. A quest step "build N blocks (of a material) in your plot", so quests can ask for building.
 3. Blueprints: a few small buildings laid out as a ghost to fill in.
 
-**E. The rest behind windows:** guild (`/guild`), mailbox (`/mail`), standing (`/rep`).
+**E. The rest behind windows** — done: F6 in the Godot client is guild, letters and standing side by side, from
+"/social" (chat channel 17), with buttons for founding, inviting, leaving, writing and taking goods.
 
 ## 1. Boss fights — done
 
