@@ -275,6 +275,8 @@ export interface ItemDef {
   dye?: string
   /** Furniture: using one sets this piece (a theme piece name, like "d:stool") down on your own land. */
   furniture?: string
+  /** How it looks in the hand: sword, greatsword, axe, greataxe, staff, wand, knife or crossbow. */
+  look?: string
 }
 
 /** The block materials a player can build, by number (proto::game::BLOCK_NAMES up to the crops). */

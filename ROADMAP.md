@@ -114,13 +114,16 @@ buttons to wear a title. Eleven in both worlds.
 `rules.respec_cost` coin (`crates/server/src/talents.rs`). Three talents for each of the four classes in both worlds.
 A trainer bot type was not needed: any market will do.
 
-## 7. Appearance and dyes — done but for showing one item's look on another
+## 7. Appearance and dyes — done
 
 A look: a cape colour from a palette and the helmet shown or not, chosen in the class picker or with `/look`, and
 dye items (`ItemDef::dye`) that colour the cape (three sold by the merchant in both worlds). Kept per character
 (`Record::look`), served beside names at `/play/looks`, drawn by the Godot client on everyone's model
-(`crates/server/src/looks.rs`, `main.gd` `_dress`). The KayKit models have no body or hair variants to choose from,
-and gear is not drawn on them, so showing one item's look on another has nothing to show yet.
+(`crates/server/src/looks.rs`, `main.gd` `_dress`). Gear in the hand is drawn: an item's `look` (sword,
+greatsword, axe, greataxe, staff, wand, knife, crossbow) shows as each class model's nearest weapon, and
+`/look weapon Item` shows the look of another item the player owns on what they wield (kept with the look); swords
+and battle axes have looks in both worlds, and a druid's staff, a long knife and a crossbow are sold for theirs.
+The KayKit models have no body or hair variants to choose from.
 
 ## 8. Group finder — done
 

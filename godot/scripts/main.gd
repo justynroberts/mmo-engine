@@ -3191,13 +3191,42 @@ func _turn_to_me(id: int) -> void:
 		if track.has(id):
 			track[id]["face_until"] = t_total + 4.0
 
-## Dress a player's model in their look ("cape,helmet"): the cape (and a mage's hat) in its colour, the helmet shown
-## or not. "" puts the model back as it came.
+## The weapon parts a model may hold in its main hand, and for each look (proto::game::LOOKS) the parts to try in
+## turn: each class's model has its own, so a look shows as the nearest one it has.
+const HAND_PARTS := ["1H_Sword", "2H_Sword", "1H_Axe", "2H_Axe", "Knife", "1H_Crossbow", "2H_Crossbow", "2H_Staff", "1H_Wand", "Throwable"]
+const LOOK_PARTS := {
+	"sword": ["1H_Sword", "1H_Axe", "Knife", "1H_Wand"],
+	"greatsword": ["2H_Sword", "2H_Axe", "2H_Staff", "2H_Crossbow"],
+	"axe": ["1H_Axe", "1H_Sword", "Knife", "1H_Wand"],
+	"greataxe": ["2H_Axe", "2H_Sword", "2H_Staff", "2H_Crossbow"],
+	"staff": ["2H_Staff", "2H_Sword", "2H_Axe", "2H_Crossbow"],
+	"wand": ["1H_Wand", "Knife", "1H_Sword", "1H_Axe"],
+	"knife": ["Knife", "1H_Sword", "1H_Axe", "1H_Wand"],
+	"crossbow": ["1H_Crossbow", "2H_Crossbow", "2H_Staff", "1H_Sword"],
+}
+
+## Dress a player's model in their look ("cape,helmet,weapon look"): the cape (and a mage's hat) in its colour, the
+## helmet shown or not, and in the hand the part nearest the weapon's look. "" puts the model back as it came.
 func _dress(node: Node3D, code: String) -> void:
 	var parts := code.split(",")
 	var cape := Color(parts[0]) if parts.size() > 0 and parts[0].begins_with("#") else Color.WHITE
 	var helmet := parts.size() < 2 or parts[1] != "0"
-	for m in node.find_children("*", "MeshInstance3D", true, false):
+	var weapon := String(parts[2]) if parts.size() > 2 else ""
+	var meshes := node.find_children("*", "MeshInstance3D", true, false)
+	if weapon != "" and LOOK_PARTS.has(weapon):
+		var have := {}
+		for m in meshes:
+			have[String(m.name)] = m
+		var pick := ""
+		for cand in LOOK_PARTS[weapon]:
+			if have.has(cand):
+				pick = cand
+				break
+		if pick != "":
+			for h in HAND_PARTS:
+				if have.has(h):
+					(have[h] as Node3D).visible = h == pick
+	for m in meshes:
 		var n := String(m.name)
 		if n.ends_with("_Cape"):
 			if cape == Color.WHITE:

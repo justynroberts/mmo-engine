@@ -161,7 +161,7 @@ export function removeZone(g: GameFile, index: number): GameFile {
   }
 }
 
-export const MAX_ITEMS = 32
+export const MAX_ITEMS = 96
 
 export function newItem(g: GameFile): ItemDef {
   return { name: uniqueName('item', (g.items ?? []).map((i) => i.name)), color: '#f5d90a', stack_max: 5, uses: [], consume: true }

@@ -539,6 +539,18 @@
     {
      "item": "luireach",
      "price": 40
+    },
+    {
+     "item": "lorg",
+     "price": 30
+    },
+    {
+     "item": "scian",
+     "price": 18
+    },
+    {
+     "item": "crosbhogha",
+     "price": 40
     }
    ],
    "names": [
@@ -7742,7 +7754,8 @@
    "equip": {
     "slot": "weapon",
     "might": 0.15
-   }
+   },
+   "look": "sword"
   },
   {
    "name": "tua chatha",
@@ -7755,7 +7768,8 @@
    "equip": {
     "slot": "weapon",
     "might": 0.25
-   }
+   },
+   "look": "greataxe"
   },
   {
    "name": "luireach",
@@ -7968,6 +7982,30 @@
    "stack_max": 5,
    "value": 6,
    "furniture": "d:keg"
+  },
+  {
+   "name": "lorg",
+   "title": "Druid's Staff",
+   "color": "#6b4a2f",
+   "stack_max": 1,
+   "value": 15,
+   "look": "staff"
+  },
+  {
+   "name": "scian",
+   "title": "Long Knife",
+   "color": "#a0a0a8",
+   "stack_max": 1,
+   "value": 9,
+   "look": "knife"
+  },
+  {
+   "name": "crosbhogha",
+   "title": "Crossbow",
+   "color": "#6b4a2f",
+   "stack_max": 1,
+   "value": 20,
+   "look": "crossbow"
   }
  ],
  "weather": [

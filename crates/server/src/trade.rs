@@ -12,6 +12,7 @@ use proto::game::{GEAR_SLOTS, INV_SLOTS};
 impl Sim {
     fn bump_gear(&mut self, s: usize) {
         self.gear_ver[s] = self.gear_ver[s].wrapping_add(1);
+        self.ents.renamed.push(s as u32); // what they wield shows in their look (`/play/looks`)
     }
 
     /// The merchant `target` (an entity id) if it is a bot with a shop within talking range of player `s`.
@@ -213,7 +214,7 @@ mod tests {
     use proto::world::World;
 
     fn item(name: &str, value: u16) -> ItemDef {
-        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None }
+        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None }
     }
 
     #[test]
