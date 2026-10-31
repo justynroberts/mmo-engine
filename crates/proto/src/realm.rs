@@ -107,6 +107,26 @@ fn is_zero_u16(n: &u16) -> bool {
     *n == 0
 }
 
+/// The deeds a character counts, for achievements: these, or "kill:<bot type>" for one kind.
+pub const DEEDS: [&str; 8] = ["kills", "quests", "places", "crafts", "harvests", "builds", "falls", "dungeons"];
+
+/// An achievement: `count` of one deed (`DEEDS`, or "kill:<bot type>"), earned once, with experience and perhaps a
+/// title the player may then wear (`grants`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Achievement {
+    pub name: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    pub deed: String,
+    pub count: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub grants: String,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub xp: u32,
+}
+
 /// A skill that rises with use, from 0 to `max`: crafting with recipes that name it, farming crops that name it,
 /// gathering by beating bot types that name it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -283,6 +303,7 @@ pub struct Realm {
     pub plots: Option<PlotRules>,
     pub dungeons: Vec<DungeonRt>,
     pub skills: Vec<SkillDef>,
+    pub achievements: Vec<Achievement>,
     /// Per bot type (index in `GameFile::archetypes`): the skill beating one raises.
     pub arch_skill: Vec<Option<usize>>,
 }
@@ -378,6 +399,21 @@ impl GameFile {
                 if !self.loot.iter().any(|t| &t.name == l) {
                     return Err(format!("bot type '{}': '{l}' is not a loot table", a.name));
                 }
+            }
+        }
+
+        if self.achievements.len() > 256 {
+            return Err("at most 256 achievements".into());
+        }
+        unique(self.achievements.iter().map(|a| a.name.as_str()), "achievement")?;
+        for a in &self.achievements {
+            let ctx = format!("achievement '{}'", a.name);
+            let known = DEEDS.contains(&a.deed.as_str()) || a.deed.strip_prefix("kill:").is_some_and(|k| self.archetypes.iter().any(|x| x.name == k));
+            if !known {
+                return Err(format!("{ctx}: deed must be one of {} or kill:<bot type>", DEEDS.join(", ")));
+            }
+            if a.count == 0 || a.title.is_empty() || a.title.len() > 64 || a.grants.len() > 32 || a.grants.contains('|') {
+                return Err(format!("{ctx}: a title, a count of at least 1, and a title it grants of at most 32 characters"));
             }
         }
 
@@ -482,7 +518,7 @@ impl GameFile {
             dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group });
         }
 
-        Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons, skills: self.skills.clone(), arch_skill })
+        Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons, skills: self.skills.clone(), achievements: self.achievements.clone(), arch_skill })
     }
 }
 

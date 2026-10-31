@@ -92,10 +92,13 @@ Farming and Hunting. Not done: a crafter's name on what they make, which needs i
 Keeps and towns a faction can take and hold (a banner to stand at, guards who change sides), with something
 worth holding them for: a tax on trade there, a vendor, a bonus to the side.
 
-## 5. Achievements and titles
+## 5. Achievements and titles — done
 
-Deeds counted per character (kills by type, places found, quests, crafts, falls), achievements over them, and
-titles shown with the name.
+Deeds counted per character (kills in all and by type, quests, places found, crafts, harvests, builds, falls,
+dungeons; `crates/server/src/deeds.rs`), achievements over them (`GameFile::achievements`: a deed, a count,
+experience, a title it grants), and a title worn with `/title` and shown with the name (the names feed sends
+"Name|Title"; the Godot client puts it on the name plate). The F6 window lists achievements with progress and
+buttons to wear a title. Eleven in both worlds.
 
 ## 6. Talents
 

@@ -69,6 +69,13 @@ pub struct Record {
     /// Their level in each skill they have, by skill name (`skills.rs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<(String, u16)>,
+    /// What they have done, counted (`deeds.rs`), the achievements earned (by name) and the title worn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deeds: Vec<(String, u32)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub earned: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 fn is_zero(v: &u32) -> bool {

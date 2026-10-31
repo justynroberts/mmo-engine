@@ -57,6 +57,10 @@ export function rewriteRealmRefs(g: GameFile, kind: RefKind, from: string, to: s
       .map((d) => ({ ...d, bots: d.bots.flatMap((b) => (b.bot !== from ? [b] : to === null ? [] : [{ ...b, bot: to }])) }))
       .filter((d) => d.bots.length > 0)
   }
+  // An achievement for beating a kind of bot follows its name, and goes with it.
+  if (kind === 'arch' && g.achievements) {
+    next.achievements = g.achievements.flatMap((a) => (a.deed !== `kill:${from}` ? [a] : to === null ? [] : [{ ...a, deed: `kill:${to}` }]))
+  }
   if (kind === 'place') {
     if (g.recipes) {
       next.recipes = g.recipes.flatMap((r) => {

@@ -18,6 +18,8 @@ var _letter_lines: Array = []      # [[from, goods, text], ...]
 var _standing: Array = []          # [[name, value, word], ...]
 var _towns: Array = []
 var _skills: Array = []            # [[title, level, max], ...]
+var _feats: Array = []             # achievements: [[title, earned, so far, count, title it grants], ...]
+var _worn := ""                    # the title worn
 var _cols := HBoxContainer.new()
 
 func _ready() -> void:
@@ -26,13 +28,13 @@ func _ready() -> void:
 	panel.visible = false
 	panel.add_theme_stylebox_override("panel", BagScript.box())
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(900, 420)
-	panel.position = Vector2(-450, -240)
+	panel.custom_minimum_size = Vector2(1180, 460)
+	panel.position = Vector2(-590, -260)
 	add_child(panel)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	panel.add_child(v)
-	v.add_child(BagScript.title("Company, standing and skills", 26, false))
+	v.add_child(BagScript.title("Company, standing, skills and deeds", 26, false))
 	_cols.add_theme_constant_override("separation", 28)
 	_cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(_cols)
@@ -53,6 +55,8 @@ func on_line(text: String) -> void:
 			_standing.clear()
 			_towns.clear()
 			_skills.clear()
+			_feats.clear()
+			_worn = ""
 		"G":
 			_guild = [f[1], f[2], int(f[3]), f[4] == "1"] if f.size() >= 5 else []
 		"GM":
@@ -71,6 +75,11 @@ func on_line(text: String) -> void:
 		"K":
 			if f.size() >= 4:
 				_skills.append([f[1], int(f[2]), int(f[3])])
+		"A":
+			if f.size() >= 6:
+				_feats.append([f[1], f[2] == "1", int(f[3]), int(f[4]), f[5]])
+		"W":
+			_worn = f[1] if f.size() > 1 else ""
 		"E":
 			_rebuild()
 
@@ -139,6 +148,16 @@ func _rebuild() -> void:
 		for e in _skills:
 			_text(k, "%s  %d / %d" % [e[0], e[1], e[2]], HUD.ACCENT if int(e[1]) > 0 else HUD.TEXT, 14)
 		_text(k, "Skills rise with use: making (the bag's Make row), harvesting and gathering.", HUD.MUTED, 12)
+	if not _feats.is_empty():
+		var a := _column("Achievements")
+		_text(a, ("Called " + _worn) if _worn != "" else "No title worn.", HUD.ACCENT if _worn != "" else HUD.MUTED, 13)
+		for e in _feats:
+			var grants: String = e[4]
+			_text(a, "%s %s  %d/%d%s" % ["✓" if e[1] else "·", e[0], e[2], e[3], ("  (" + grants + ")") if grants != "" else ""], HUD.ACCENT if e[1] else HUD.TEXT, 13)
+			if e[1] and grants != "" and grants != _worn:
+				_button(a, "Be called " + grants, func(): command.emit("/title " + grants))
+		if _worn != "":
+			_button(a, "Wear no title", func(): command.emit("/title none"))
 
 static func _mood_colour(v: int) -> Color:
 	return Color("8fd18a") if v > 0 else (Color("ff8a70") if v < 0 else HUD.TEXT)

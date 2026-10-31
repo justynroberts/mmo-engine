@@ -84,6 +84,14 @@ fn social_window(sim: &Sim, clients: &mut Clients, slot: usize) {
         let v = sim.standing(slot, f);
         lines.push(format!("S|{}|{v}|{}", clip(&sim.factions[f].shown(), 40), sim.factions[f].mood(v)));
     }
+    for a in sim.realm.achievements.iter().take(24) {
+        let done = sim.earned[slot].contains(&a.name);
+        let at = sim.deed_count(slot, &a.deed).min(a.count);
+        lines.push(format!("A|{}|{}|{at}|{}|{}", clip(&a.title, 40), done as u8, a.count, clip(&a.grants, 32)));
+    }
+    if !sim.title[slot].is_empty() {
+        lines.push(format!("W|{}", clip(&sim.title[slot], 32)));
+    }
     for k in 0..sim.realm.skills.len() {
         lines.push(format!("K|{}|{}|{}", clip(sim.realm.skills[k].shown(), 30), sim.skill_level(slot, k), sim.realm.skills[k].max));
     }

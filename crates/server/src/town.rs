@@ -65,6 +65,9 @@ impl Sim {
         self.repute[s].clear();
         self.spoils[s].clear();
         self.skill_lv[s].clear();
+        self.deeds[s].clear();
+        self.earned[s].clear();
+        self.title[s].clear();
     }
 
     /// The bot in `s` is busy with town life this AI tick (in a brawl, running with a purse, after a thief): its

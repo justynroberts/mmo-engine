@@ -71,7 +71,8 @@ pub mod channel {
     /// Server to client, from the server (0): a player's guild, letters and standing for the Godot social window, in
     /// answer to "/social" (`social.rs`). "X|" starts it; then "G|name|leader|members|mine" (or "G|" for none),
     /// "GM|name" per member, "M|waiting", "ML|from|count item|text" per letter (the first few), "S|faction|value|mood"
-    /// and "T|town|value|tier" per standing, "K|skill|level|max" per skill; "E|" ends it. Not shown as chat.
+    /// and "T|town|value|tier" per standing, "K|skill|level|max" per skill,
+    /// "A|achievement|earned|so far|count|title it grants" per achievement, "W|title" for the title worn; "E|" ends it. Not shown as chat.
     pub const SOCIAL: u8 = 17;
 }
 

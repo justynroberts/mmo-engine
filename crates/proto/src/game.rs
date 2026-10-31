@@ -723,6 +723,9 @@ pub struct GameFile {
     /// Skills that rise with use (`realm.rs` `SkillDef`): crafting, farming, gathering.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<crate::realm::SkillDef>,
+    /// Achievements over the deeds characters count (`realm.rs` `Achievement`), some granting titles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub achievements: Vec<crate::realm::Achievement>,
     /// Tuning numbers: reaches, timers, sizes (`rules.rs`). Not in the content hash: edits apply live.
     #[serde(default, skip_serializing_if = "crate::rules::Rules::is_default")]
     pub rules: crate::rules::Rules,
@@ -2045,6 +2048,7 @@ impl GameFile {
             plots: None,
             dungeons: Vec::new(),
             skills: Vec::new(),
+            achievements: Vec::new(),
             rules: Default::default(),
             starter: Vec::new(),
             start_place: None,

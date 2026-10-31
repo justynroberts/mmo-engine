@@ -131,6 +131,7 @@ impl Sim {
                 }
             }
             self.ents.quests[s][i].state = QUEST_DONE;
+            self.deed(s, "quests", 1);
             if q.daily {
                 self.ents.quests[s][i].count = today();
             }

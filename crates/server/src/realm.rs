@@ -295,6 +295,7 @@ impl Sim {
             if let Some(k) = c.skill {
                 self.raise_skill(s, k);
             }
+            self.deed(s, "harvests", 1);
         } else if kind == SPROUT {
             self.give_or_drop(s, c.seed, 1);
         }
@@ -455,6 +456,7 @@ impl Sim {
                         self.give_or_drop(s, item, n as u32);
                     }
                     self.tells.push((s, format!("{} is cleared!", d.name)));
+                    self.deed(s, "dungeons", 1);
                 }
             }
             if self.tick.saturating_sub(self.rs.runs[i].seen) > idle {
@@ -541,7 +543,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -549,6 +551,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
     match cmd.as_str() {
         "faction" | "side" => faction(sim, clients, slot, &rest),
         "class" => class(sim, clients, slot, &rest),
+        "title" | "titles" => sim.title_command(slot, &rest),
         "claim" => claim(sim, clients, slot),
         "unclaim" => unclaim(sim, clients, slot),
         "plot" => plot(sim, clients, slot, &rest),
@@ -986,6 +989,7 @@ fn craft(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
     if let Some(k) = r.skill.filter(|_| lv < r.level + crate::skills::GAIN_SPAN) {
         sim.raise_skill(slot, k);
     }
+    sim.deed(slot, "crafts", 1);
 }
 
 #[cfg(test)]

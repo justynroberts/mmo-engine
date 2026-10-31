@@ -484,6 +484,10 @@ pub struct Sim {
     pub spoils: Vec<Vec<(String, u16)>>,
     /// Per slot: their level in each skill they have (`skills.rs`), by skill name.
     pub skill_lv: Vec<Vec<(String, u16)>>,
+    /// Per slot: deeds counted, achievements earned and the title worn (`deeds.rs`).
+    pub deeds: Vec<Vec<(String, u32)>>,
+    pub earned: Vec<Vec<String>>,
+    pub title: Vec<String>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -729,6 +733,9 @@ impl Sim {
             repute: vec![Vec::new(); cap],
             spoils: vec![Vec::new(); cap],
             skill_lv: vec![Vec::new(); cap],
+            deeds: vec![Vec::new(); cap],
+            earned: vec![Vec::new(); cap],
+            title: vec![String::new(); cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -930,6 +937,9 @@ impl Sim {
             towns: self.repute[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
             spoils: self.spoils[slot].iter().filter(|e| e.1 == crate::items::week()).cloned().collect(),
             skills: self.skill_lv[slot].clone(),
+            deeds: self.deeds[slot].clone(),
+            earned: self.earned[slot].clone(),
+            title: self.title[slot].clone(),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -1027,6 +1037,9 @@ impl Sim {
         self.standing[slot] = rec.standing.iter().map(|(n, v)| (n.clone(), (*v).clamp(-proto::game::STANDING_MAX, proto::game::STANDING_MAX))).collect();
         self.spoils[slot] = rec.spoils.clone();
         self.skill_lv[slot] = rec.skills.clone();
+        self.deeds[slot] = rec.deeds.clone();
+        self.earned[slot] = rec.earned.clone();
+        self.title[slot] = rec.title.clone();
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 
@@ -1281,6 +1294,7 @@ impl Sim {
         self.stats.builds += 1;
         if self.ents.owner[s] < DRIVEN {
             self.quest_build(s, kind);
+            self.deed(s, "builds", 1);
         }
         Ok(())
     }
@@ -1656,6 +1670,8 @@ impl Sim {
     pub fn feed_name(&self, slot: usize) -> std::sync::Arc<str> {
         match self.given_name(slot) {
             Some(g) => format!("{}|{g}", self.name_of(slot)).into(),
+            // A player's title rides the same way: their name, then what they are called.
+            None if !self.title[slot].is_empty() => format!("{}|{}", self.name_of(slot), self.title[slot]).into(),
             None => self.name_of(slot),
         }
     }
@@ -2431,6 +2447,14 @@ impl Sim {
                 self.award(p, xp, None);
             }
         }
+        if let Some(kind) = self.archs.get(self.ents.arch[s] as usize).map(|a| format!("kill:{}", a.name)) {
+            for &p in &who {
+                if self.ents.owner[p] < DRIVEN {
+                    self.deed(p, "kills", 1);
+                    self.deed(p, &kind, 1);
+                }
+            }
+        }
         // Gathering: a bot type that names a skill raises it for those who beat it.
         if let Some(k) = self.realm.arch_skill.get(self.ents.arch[s] as usize).copied().flatten() {
             for &p in &who {
@@ -2496,6 +2520,7 @@ impl Sim {
         }
         for (s, name, title) in found {
             self.ents.found[s].push(name);
+            self.deed(s, "places", 1);
             self.award(s, give, Some(format!("Discovered {title} (+{give} experience)")));
         }
     }
@@ -2730,6 +2755,7 @@ impl Sim {
     /// What falling costs a player, as `rules` says (nothing, by default): experience earned into their level, a
     /// share of their coin, stacks of their bag left where they fell, and a wait before they may rise (`back_at`).
     fn fall_cost(&mut self, s: usize) {
+        self.deed(s, "falls", 1);
         let r = self.rules;
         if r.rise_delay_secs > 0.0 {
             self.ents.back_at[s] = self.tick + proto::rules::Rules::ticks(r.rise_delay_secs, self.tick_hz);

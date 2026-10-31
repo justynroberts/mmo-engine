@@ -291,6 +291,17 @@ export interface Recipe {
   skill?: string
   level?: number
 }
+/** An achievement: `count` of one deed (kills, quests, places, crafts, harvests, builds, falls, dungeons, or
+ *  "kill:<bot type>"), earned once, with experience and perhaps a title the player may wear (`grants`). */
+export interface Achievement {
+  name: string
+  title: string
+  text?: string
+  deed: string
+  count: number
+  grants?: string
+  xp?: number
+}
 /** A skill that rises with use, 0..max (default 100): by recipes, crops and bot types that name it. */
 export interface SkillDef {
   name: string
@@ -559,6 +570,7 @@ export interface GameFile {
   plots?: PlotRules
   dungeons?: DungeonDef[]
   skills?: SkillDef[]
+  achievements?: Achievement[]
 }
 
 /** How a boss fights (Archetype.boss). Phases are in order of `below`, highest first. */

@@ -589,6 +589,9 @@ func _start() -> void:
 				god = false
 				_notice(text)
 			_dungeon_line(text)
+			if text.begins_with("Achievement earned: "):
+				hud.announce(text.trim_prefix("Achievement earned: ").get_slice(".", 0), Color("ffd27a"))
+				sound.play("horn", -6.0, 0.0)
 			if text.begins_with("The finder has a company for "):
 				hud.announce(text.get_slice(":", 0).trim_prefix("The finder has a company for ") + "\nYour company is at the door", Color("e07a5f"))
 				sound.play("horn", -4.0, 0.0)
@@ -3148,6 +3151,8 @@ func _turn_to_me(id: int) -> void:
 
 ## How a line names its speaker: a player by their name, a bot by its own name and kind ("Bridget the Trader").
 func _called(id: int) -> String:
+	if _players.has(id):
+		return _name(id) # a player's "given" is the title they wear, shown on their name plate
 	return "%s the %s" % [given[id], _name(id)] if given.has(id) else _name(id)
 
 ## Our cloud in god mode: soft white puffs under our feet that drift and bob, with us standing on it.

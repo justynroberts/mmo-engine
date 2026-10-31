@@ -9606,5 +9606,103 @@
       "title": "Hunting",
       "max": 100
     }
+  ],
+  "achievements": [
+    {
+      "name": "first blood",
+      "title": "First Blood",
+      "deed": "kills",
+      "count": 1,
+      "xp": 10
+    },
+    {
+      "name": "wolfbane",
+      "title": "Wolfbane",
+      "text": "Twenty-five wolves.",
+      "deed": "kill:mac tire",
+      "count": 25,
+      "grants": "Wolfbane",
+      "xp": 150
+    },
+    {
+      "name": "kingslayer",
+      "title": "Kingslayer",
+      "text": "The Brigand King, brought down.",
+      "deed": "kill:ri na ndibheirgeach",
+      "count": 1,
+      "grants": "Kingslayer",
+      "xp": 200
+    },
+    {
+      "name": "crom dubh",
+      "title": "Darkness Ended",
+      "text": "Crom Dubh, beaten in his mound.",
+      "deed": "kill:crom dubh",
+      "count": 1,
+      "grants": "Lightbringer",
+      "xp": 300
+    },
+    {
+      "name": "wanderer",
+      "title": "The Long Road",
+      "text": "Ten places found.",
+      "deed": "places",
+      "count": 10,
+      "grants": "the Wanderer",
+      "xp": 100
+    },
+    {
+      "name": "helping hand",
+      "title": "A Helping Hand",
+      "text": "Ten quests handed in.",
+      "deed": "quests",
+      "count": 10,
+      "grants": "the Helpful",
+      "xp": 100
+    },
+    {
+      "name": "green fingers",
+      "title": "Green Fingers",
+      "text": "Twenty harvests.",
+      "deed": "harvests",
+      "count": 20,
+      "grants": "the Farmer",
+      "xp": 100
+    },
+    {
+      "name": "the builder",
+      "title": "Stone on Stone",
+      "text": "A hundred blocks built.",
+      "deed": "builds",
+      "count": 100,
+      "grants": "the Builder",
+      "xp": 100
+    },
+    {
+      "name": "the cook",
+      "title": "The Cook",
+      "text": "Ten things made.",
+      "deed": "crafts",
+      "count": 10,
+      "grants": "the Cook",
+      "xp": 80
+    },
+    {
+      "name": "delver",
+      "title": "Into the Dark",
+      "text": "A dungeon cleared.",
+      "deed": "dungeons",
+      "count": 1,
+      "grants": "the Delver",
+      "xp": 150
+    },
+    {
+      "name": "unlucky",
+      "title": "Back Again",
+      "text": "Fallen five times, and risen.",
+      "deed": "falls",
+      "count": 5,
+      "grants": "the Unlucky"
+    }
   ]
 }

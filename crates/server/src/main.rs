@@ -7,6 +7,7 @@ mod blocks;
 mod boss;
 mod botdir;
 mod ctl;
+mod deeds;
 mod director;
 mod encounter;
 mod factions;
