@@ -287,6 +287,15 @@ export interface Recipe {
   makes: string
   count?: number
   near?: string
+  /** A skill (GameFile.skills) it needs `level` of; making it raises the skill while not far below. */
+  skill?: string
+  level?: number
+}
+/** A skill that rises with use, 0..max (default 100): by recipes, crops and bot types that name it. */
+export interface SkillDef {
+  name: string
+  title?: string
+  max?: number
 }
 /** A seed planted beside tilled soil grows in `grow_secs` into a crop that harvests into `yields`. */
 export interface CropDef {
@@ -296,6 +305,8 @@ export interface CropDef {
   min?: number
   max?: number
   grow_secs?: number
+  /** A skill harvesting it raises (a sheaf more each 25). */
+  skill?: string
 }
 /** Land players claim with /claim: `size` blocks on a side, `per_player` each, for `cost` coin. `/plot grow` buys
  *  the next of `sizes` (each bigger than the one before). */
@@ -391,6 +402,8 @@ export interface Archetype {
   faction?: string
   /** A loot table (`GameFile.loot`) rolled when it falls, on top of its drops. */
   loot?: string
+  /** A skill (GameFile.skills) beating one raises: gathering from quarries, trees and game. */
+  skill?: string
 }
 /** A faction (GameFile.factions, at most 32). Beating one of its members moves a player's standing by `kill`
  * (default -10), and with every faction that `hates` it by that faction's `bounty` (default 2). Below `hostile`
@@ -545,6 +558,7 @@ export interface GameFile {
   crops?: CropDef[]
   plots?: PlotRules
   dungeons?: DungeonDef[]
+  skills?: SkillDef[]
 }
 
 /** How a boss fights (Archetype.boss). Phases are in order of `below`, highest first. */

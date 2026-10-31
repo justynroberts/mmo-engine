@@ -64,6 +64,7 @@ impl Sim {
         (self.plea[s], self.plea_at[s], self.lit_sent[s]) = (None, 0, 0);
         self.repute[s].clear();
         self.spoils[s].clear();
+        self.skill_lv[s].clear();
     }
 
     /// The bot in `s` is busy with town life this AI tick (in a brawl, running with a purse, after a thief): its

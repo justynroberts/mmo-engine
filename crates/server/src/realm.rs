@@ -289,8 +289,12 @@ impl Sim {
         let Some(c) = self.realm.crops.iter().find(|c| c.name == name).cloned() else { return };
         if kind == RIPE {
             self.lived(s, crate::life::Deed::Harvest);
-            let n = c.min as u32 + self.rng.next_u32() % ((c.max - c.min) as u32 + 1) + self.season_yield();
+            let skilled = c.skill.map_or(0, |k| self.skill_level(s, k) as u32 / 25);
+            let n = c.min as u32 + self.rng.next_u32() % ((c.max - c.min) as u32 + 1) + self.season_yield() + skilled;
             self.give_or_drop(s, c.yields, n);
+            if let Some(k) = c.skill {
+                self.raise_skill(s, k);
+            }
         } else if kind == SPROUT {
             self.give_or_drop(s, c.seed, 1);
         }
@@ -537,7 +541,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -560,6 +564,10 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
             }
             None => say(clients, slot, "Nobody of that name is about."),
         },
+        "skills" => {
+            let line = sim.skills_line(slot);
+            say(clients, slot, &line);
+        }
         "recipes" => {
             let line = if sim.realm.recipes.is_empty() {
                 "Nothing can be made here.".to_string()
@@ -570,7 +578,8 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                     .iter()
                     .map(|r| {
                         let needs: Vec<String> = r.needs.iter().map(|&(i, n)| format!("{n} {}", sim.items[i].shown())).collect();
-                        format!("{} ({})", r.name, needs.join(", "))
+                        let skill = r.skill.map(|k| format!(", {} {}", sim.realm.skills[k].shown(), r.level)).unwrap_or_default();
+                        format!("{} ({}{skill})", r.name, needs.join(", "))
                     })
                     .collect();
                 format!("Recipes: {}", list.join("; "))
@@ -942,6 +951,10 @@ fn craft(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
             return say(clients, slot, &format!("That is made at {at}."));
         }
     }
+    let lv = r.skill.map_or(0, |k| sim.skill_level(slot, k));
+    if let Some(k) = r.skill.filter(|_| lv < r.level) {
+        return say(clients, slot, &format!("You need {} {} to make that (you have {lv}).", sim.realm.skills[k].shown(), r.level));
+    }
     let have = |item: usize| sim.inv[slot].iter().filter(|b| b.0 as usize == item + 1).map(|b| b.1 as u32).sum::<u32>();
     if let Some(&(item, n)) = r.needs.iter().find(|&&(item, n)| have(item) < n as u32) {
         return say(clients, slot, &format!("You need {n} {}.", sim.items[item].shown()));
@@ -963,9 +976,16 @@ fn craft(sim: &mut Sim, clients: &mut Clients, slot: usize, rest: &str) {
         }
     }
     sim.inv_ver[slot] = sim.inv_ver[slot].wrapping_add(1);
-    sim.give_or_drop(slot, r.makes, r.count as u32);
-    let what = &sim.items[r.makes];
-    say(clients, slot, &format!("You make {} {}.", r.count, what.name));
+    // Skill past the recipe's level now and then makes one more batch (up to half the time); under the level and a
+    // span, making it teaches.
+    let extra = r.skill.is_some() && sim.rng.f32() < ((lv - r.level) as f32 / 200.0).min(0.5);
+    let count = r.count as u32 * if extra { 2 } else { 1 };
+    sim.give_or_drop(slot, r.makes, count);
+    let what = sim.items[r.makes].shown().to_string();
+    say(clients, slot, &format!("You make {count} {what}{}.", if extra { ", your skill making the most of it" } else { "" }));
+    if let Some(k) = r.skill.filter(|_| lv < r.level + crate::skills::GAIN_SPAN) {
+        sim.raise_skill(slot, k);
+    }
 }
 
 #[cfg(test)]
@@ -1159,7 +1179,7 @@ mod tests {
         let mut s = sim_with(|g| {
             g.items.push(proto::game::ItemDef { name: "carrot seed".into(), uses: vec![], ..g.items[0].clone() });
             g.items.push(proto::game::ItemDef { name: "carrot".into(), uses: vec![], stack_max: 20, ..g.items[0].clone() });
-            g.crops = vec![CropDef { name: "carrot".into(), seed: "carrot seed".into(), yields: "carrot".into(), min: 3, max: 3, grow_secs: 2.0 }];
+            g.crops = vec![CropDef { name: "carrot".into(), seed: "carrot seed".into(), yields: "carrot".into(), min: 3, max: 3, grow_secs: 2.0, skill: None }];
         });
         let p = player(&mut s, 100.0, 100.0, "farmer");
         let (seed, carrot) = (s.items.iter().position(|i| i.name == "carrot seed").unwrap(), s.items.iter().position(|i| i.name == "carrot").unwrap());
@@ -1194,7 +1214,7 @@ mod tests {
     #[test]
     fn crafting_takes_the_ingredients_and_gives_the_make() {
         let mut s = sim_with(|g| {
-            g.recipes = vec![Recipe { name: "stim".into(), needs: vec![Stack { item: "medkit".into(), count: 2 }, Stack { item: "battery".into(), count: 1 }], makes: "stim".into(), count: 1, near: None }];
+            g.recipes = vec![Recipe { name: "stim".into(), needs: vec![Stack { item: "medkit".into(), count: 2 }, Stack { item: "battery".into(), count: 1 }], makes: "stim".into(), count: 1, near: None, skill: None, level: 0 }];
         });
         let p = player(&mut s, 100.0, 100.0, "a");
         let ix = |s: &Sim, n: &str| s.items.iter().position(|i| i.name == n).unwrap();
@@ -1207,6 +1227,28 @@ mod tests {
         craft(&mut s, &mut clients, p, "Stim");
         assert_eq!(s.inv[p].iter().filter(|b| b.0 as usize == stim + 1).count(), 1);
         assert!(s.inv[p].iter().all(|b| b.0 as usize != medkit + 1 && b.0 as usize != battery + 1));
+    }
+
+    #[test]
+    fn a_recipe_needs_its_skill_and_teaches_it() {
+        let mut s = sim_with(|g| {
+            g.skills = vec![SkillDef { name: "medicine".into(), title: "Medicine".into(), max: 100 }];
+            g.recipes = vec![
+                Recipe { name: "stim".into(), needs: vec![Stack { item: "medkit".into(), count: 1 }], makes: "stim".into(), count: 1, near: None, skill: Some("medicine".into()), level: 0 },
+                Recipe { name: "big stim".into(), needs: vec![Stack { item: "medkit".into(), count: 1 }], makes: "stim".into(), count: 1, near: None, skill: Some("medicine".into()), level: 2 },
+            ];
+        });
+        let p = player(&mut s, 100.0, 100.0, "a");
+        let medkit = s.items.iter().position(|i| i.name == "medkit").unwrap();
+        let mut clients = Clients::default();
+        s.give(p, medkit, 5);
+        craft(&mut s, &mut clients, p, "big stim");
+        assert_eq!(s.skill_level(p, 0), 0, "too unskilled to try");
+        craft(&mut s, &mut clients, p, "stim");
+        craft(&mut s, &mut clients, p, "stim");
+        assert_eq!(s.skill_level(p, 0), 2, "each make teaches");
+        craft(&mut s, &mut clients, p, "big stim");
+        assert_eq!(s.skill_level(p, 0), 3, "now it can be made");
     }
 
     #[test]

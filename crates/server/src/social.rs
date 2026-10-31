@@ -84,6 +84,9 @@ fn social_window(sim: &Sim, clients: &mut Clients, slot: usize) {
         let v = sim.standing(slot, f);
         lines.push(format!("S|{}|{v}|{}", clip(&sim.factions[f].shown(), 40), sim.factions[f].mood(v)));
     }
+    for k in 0..sim.realm.skills.len() {
+        lines.push(format!("K|{}|{}|{}", clip(sim.realm.skills[k].shown(), 30), sim.skill_level(slot, k), sim.realm.skills[k].max));
+    }
     let mut towns: Vec<(String, i32)> = sim.repute[slot].iter().filter_map(|(n, v)| sim.places.iter().position(|p| &p.name == n).map(|h| (sim.place_called(h), *v))).collect();
     towns.sort();
     for (t, v) in towns.into_iter().take(12) {

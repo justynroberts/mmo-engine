@@ -482,6 +482,9 @@ pub struct Archetype {
     /// A loot table (`GameFile::loot`) rolled when it falls, on top of its `drops`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loot: Option<String>,
+    /// A skill (`GameFile::skills`) that rises for whoever beats one: gathering from quarries, trees and game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
     /// Given names for the bots of this type, one each ("Bridget" the Seed Trader): absent, they go by the type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
@@ -717,6 +720,9 @@ pub struct GameFile {
     pub plots: Option<crate::realm::PlotRules>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dungeons: Vec<crate::realm::DungeonDef>,
+    /// Skills that rise with use (`realm.rs` `SkillDef`): crafting, farming, gathering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<crate::realm::SkillDef>,
     /// Tuning numbers: reaches, timers, sizes (`rules.rs`). Not in the content hash: edits apply live.
     #[serde(default, skip_serializing_if = "crate::rules::Rules::is_default")]
     pub rules: crate::rules::Rules,
@@ -1977,6 +1983,7 @@ impl GameFile {
             leash: 0.0,
             faction: None,
             loot: None,
+            skill: None,
         };
         let mut drone = bot("drone", "#e0457b", 4, Behaviour::Chase, 1.0, Some("zap"));
         drone.attrs.insert("health".into(), 60.0);
@@ -2037,6 +2044,7 @@ impl GameFile {
             crops: Vec::new(),
             plots: None,
             dungeons: Vec::new(),
+            skills: Vec::new(),
             rules: Default::default(),
             starter: Vec::new(),
             start_place: None,

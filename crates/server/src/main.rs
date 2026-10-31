@@ -30,6 +30,7 @@ mod quests;
 mod realm;
 mod net;
 mod sim;
+mod skills;
 mod social;
 mod statics;
 mod store;

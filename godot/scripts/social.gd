@@ -17,6 +17,7 @@ var _letters := 0
 var _letter_lines: Array = []      # [[from, goods, text], ...]
 var _standing: Array = []          # [[name, value, word], ...]
 var _towns: Array = []
+var _skills: Array = []            # [[title, level, max], ...]
 var _cols := HBoxContainer.new()
 
 func _ready() -> void:
@@ -31,7 +32,7 @@ func _ready() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	panel.add_child(v)
-	v.add_child(BagScript.title("Company and standing", 26, false))
+	v.add_child(BagScript.title("Company, standing and skills", 26, false))
 	_cols.add_theme_constant_override("separation", 28)
 	_cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(_cols)
@@ -51,6 +52,7 @@ func on_line(text: String) -> void:
 			_letter_lines.clear()
 			_standing.clear()
 			_towns.clear()
+			_skills.clear()
 		"G":
 			_guild = [f[1], f[2], int(f[3]), f[4] == "1"] if f.size() >= 5 else []
 		"GM":
@@ -66,6 +68,9 @@ func on_line(text: String) -> void:
 		"T":
 			if f.size() >= 4:
 				_towns.append([f[1], int(f[2]), f[3]])
+		"K":
+			if f.size() >= 4:
+				_skills.append([f[1], int(f[2]), int(f[3])])
 		"E":
 			_rebuild()
 
@@ -129,6 +134,11 @@ func _rebuild() -> void:
 		_text(s, "Towns", HUD.ACCENT, 14)
 	for e in _towns:
 		_text(s, "%s  %d  (%s)" % [e[0], e[1], e[2]], _mood_colour(int(e[1])), 13)
+	if not _skills.is_empty():
+		var k := _column("Skills")
+		for e in _skills:
+			_text(k, "%s  %d / %d" % [e[0], e[1], e[2]], HUD.ACCENT if int(e[1]) > 0 else HUD.TEXT, 14)
+		_text(k, "Skills rise with use: making (the bag's Make row), harvesting and gathering.", HUD.MUTED, 12)
 
 static func _mood_colour(v: int) -> Color:
 	return Color("8fd18a") if v > 0 else (Color("ff8a70") if v < 0 else HUD.TEXT)

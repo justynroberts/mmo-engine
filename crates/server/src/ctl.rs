@@ -352,7 +352,8 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
     let item = |i: usize| sim.items.get(i).map_or(String::new(), |t| t.name.clone());
     let recipes: Vec<serde_json::Value> = sim.realm.recipes.iter().map(|r| {
         json!({"name": r.name, "makes": item(r.makes), "count": r.count, "needs": r.needs.iter().map(|&(i, n)| json!([item(i), n])).collect::<Vec<_>>(),
-            "near": r.near.and_then(|p| sim.places.get(p)).map(|p| if p.title.is_empty() { p.name.clone() } else { p.title.clone() })})
+            "near": r.near.and_then(|p| sim.places.get(p)).map(|p| if p.title.is_empty() { p.name.clone() } else { p.title.clone() }),
+            "skill": r.skill.map(|k| sim.realm.skills[k].shown().to_string()), "level": r.level})
     }).collect();
     let crops: Vec<serde_json::Value> =
         sim.realm.crops.iter().map(|c| json!({"name": c.name, "seed": item(c.seed), "yields": item(c.yields), "grow_secs": c.grow_secs})).collect();
@@ -428,6 +429,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             "factions": &sim.factions,
             "recipes": recipes,
             "crops": crops,
+            "skills": sim.realm.skills.iter().map(|k| json!({"name": k.name, "title": k.shown(), "max": k.max})).collect::<Vec<_>>(),
             "plots": sim.realm.plots.as_ref().map(|p| json!({"size": p.size, "per_player": p.per_player})),
             "dungeons": dungeons,
         },

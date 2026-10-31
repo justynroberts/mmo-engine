@@ -66,6 +66,9 @@ pub struct Record {
     /// Bosses whose spoils they have had this week, by boss type name, with the week (`items.rs` `week`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spoils: Vec<(String, u16)>,
+    /// Their level in each skill they have, by skill name (`skills.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<(String, u16)>,
 }
 
 fn is_zero(v: &u32) -> bool {

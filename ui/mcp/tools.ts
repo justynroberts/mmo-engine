@@ -91,7 +91,7 @@ async function ok<T = any>(ctx: Ctx, path: string, method = 'GET', body?: unknow
 // ---------------------------------------------------------------- the game file
 
 type Section = 'places' | 'routes' | 'archetypes' | 'items' | 'weather' | 'events' | 'zones' | 'quests' | 'classes' | 'factions' | 'attrs' | 'actions' | RealmSection
-type RealmSection = 'loot' | 'recipes' | 'crops' | 'dungeons'
+type RealmSection = 'loot' | 'recipes' | 'crops' | 'dungeons' | 'skills'
 
 interface SectionOps {
   list(g: GameFile): { name: string }[]
@@ -106,8 +106,18 @@ interface SectionOps {
 function realmOps(key: RealmSection, fresh: (g: GameFile) => any): SectionOps {
   const list = (g: GameFile) => ((g[key] as { name: string }[] | undefined) ?? [])
   const put = (g: GameFile, l: any[]) => ({ ...g, [key]: l })
-  const pointers = (g: GameFile, from: string, to: string | null) =>
-    key !== 'loot'
+  // A skill's name in bot types, recipes and crops follows it (or goes with it).
+  const reskill = <T extends { skill?: string }>(e: T, from: string, to: string | null): T => {
+    if (e.skill !== from) return e
+    const out = { ...e }
+    if (to === null) delete out.skill
+    else out.skill = to
+    return out
+  }
+  const pointers = (g: GameFile, from: string, to: string | null): GameFile =>
+    key === 'skills'
+      ? { ...g, archetypes: g.archetypes.map((a) => reskill(a, from, to)), recipes: g.recipes?.map((r) => reskill(r, from, to)), crops: g.crops?.map((c) => reskill(c, from, to)) }
+      : key !== 'loot'
       ? g
       : {
           ...g,
@@ -163,6 +173,7 @@ const SECTIONS: Record<Section, SectionOps> = {
   recipes: realmOps('recipes', () => ({ needs: [], count: 1 })),
   crops: realmOps('crops', () => ({ min: 1, max: 1, grow_secs: 300 })),
   dungeons: realmOps('dungeons', () => ({ bots: [] })),
+  skills: realmOps('skills', () => ({ max: 100 })),
 }
 const SECTION_NAMES = Object.keys(SECTIONS) as [Section, ...Section[]]
 
@@ -341,7 +352,7 @@ const BOSS_NOTE = [
 ].join('\n')
 
 const REALM_NOTE = [
-  'The realm sections all apply live (none restarts the world): loot, recipes, crops, dungeons (upsert by name), and plots (put_game, or the game file\'s plots: { size, per_player, cost, sizes: [{ size, cost }] }).',
+  'The realm sections all apply live (none restarts the world): loot, recipes, crops, dungeons, skills (upsert by name; skills: { name, title, max }, named by a recipe\'s skill + level, a crop\'s skill and a bot type\'s skill, rising with use), and plots (put_game, or the game file\'s plots: { size, per_player, cost, sizes: [{ size, cost }] }).',
   'factions (the same section as standing, see FactionFile): players may also join one as their side with /faction name (not one they stand below hostile with); the same side never harms each other, whatever pvp says, and its fighters never take a member for an enemy. color is #rrggbb. A game with a replicated attribute named "faction" (0..32, 8 bits) lets clients tell friend from foe.',
   'classes (see ClassFile and the classes note): schools: [...] lets a class use every action of those schools as well as its spells (and actions without a school); /class name chooses one over chat, once, like the class picker.',
   'Item rarity: common (absent), uncommon, rare, epic, legendary. A bot type names a loot table (loot: name) rolled when it falls, rolls times, each a weighted pick among entries { item, weight, min, max } and nothing; a drop of rare or better is announced to players near it.',

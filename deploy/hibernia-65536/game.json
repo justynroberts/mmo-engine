@@ -1785,7 +1785,8 @@
     }
    ],
    "xp": 8,
-   "level": 1
+   "level": 1,
+   "skill": "fiach"
   },
   {
    "name": "mac tire",
@@ -1809,7 +1810,8 @@
    ],
    "xp": 20,
    "level": 2,
-   "ambush": true
+   "ambush": true,
+   "skill": "fiach"
   },
   {
    "name": "dibheirgeach",
@@ -3074,7 +3076,8 @@
     }
    ],
    "xp": 28,
-   "level": 3
+   "level": 3,
+   "skill": "fiach"
   },
   {
    "name": "mac tire ban thiar",
@@ -3097,7 +3100,8 @@
     }
    ],
    "xp": 28,
-   "level": 3
+   "level": 3,
+   "skill": "fiach"
   },
   {
    "name": "villager",
@@ -9595,7 +9599,8 @@
     }
    ],
    "makes": "aran",
-   "count": 2
+   "count": 2,
+   "skill": "cocaireacht"
   },
   {
    "name": "leite",
@@ -9610,7 +9615,9 @@
     }
    ],
    "makes": "leite",
-   "count": 2
+   "count": 2,
+   "skill": "cocaireacht",
+   "level": 10
   }
  ],
  "crops": [
@@ -9620,7 +9627,8 @@
    "yields": "cruithneacht",
    "min": 2,
    "max": 4,
-   "grow_secs": 240.0
+   "grow_secs": 240.0,
+   "skill": "feirmeoireacht"
   },
   {
    "name": "coirce",
@@ -9628,7 +9636,8 @@
    "yields": "coirce",
    "min": 2,
    "max": 4,
-   "grow_secs": 180.0
+   "grow_secs": 180.0,
+   "skill": "feirmeoireacht"
   },
   {
    "name": "meacan",
@@ -9636,7 +9645,8 @@
    "yields": "meacan",
    "min": 1,
    "max": 3,
-   "grow_secs": 300.0
+   "grow_secs": 300.0,
+   "skill": "feirmeoireacht"
   },
   {
    "name": "cabaiste",
@@ -9644,7 +9654,8 @@
    "yields": "cabaiste",
    "min": 1,
    "max": 2,
-   "grow_secs": 420.0
+   "grow_secs": 420.0,
+   "skill": "feirmeoireacht"
   }
  ],
  "plots": {
@@ -9821,5 +9832,22 @@
    }
   }
  ],
- "start_place": "dublin"
+ "start_place": "dublin",
+ "skills": [
+  {
+   "name": "cocaireacht",
+   "title": "Cooking",
+   "max": 100
+  },
+  {
+   "name": "feirmeoireacht",
+   "title": "Farming",
+   "max": 100
+  },
+  {
+   "name": "fiach",
+   "title": "Hunting",
+   "max": 100
+  }
+ ]
 }

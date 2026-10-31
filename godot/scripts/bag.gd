@@ -144,7 +144,10 @@ func _show_recipes() -> void:
 			parts.append("%d/%d %s" % [have, want, HUD.item(item)])
 		var b := Button.new()
 		b.text = "%s x%d" % [HUD.item(String(r.get("makes", r.get("name", "")))), int(r.get("count", 1))]
-		b.tooltip_text = "Takes " + ", ".join(parts)
+		var skill := String(r["skill"]) if r.get("skill") is String else ""
+		if skill != "" and int(r.get("level", 0)) > 0:
+			b.text += "  (%s %d)" % [skill, int(r["level"])]
+		b.tooltip_text = "Takes " + ", ".join(parts) + (("; raises " + skill) if skill != "" else "")
 		b.disabled = not can
 		b.focus_mode = Control.FOCUS_NONE
 		var name := String(r.get("name", ""))

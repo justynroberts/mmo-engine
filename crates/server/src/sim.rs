@@ -482,6 +482,8 @@ pub struct Sim {
     pub repute: Vec<Vec<(String, i32)>>,
     /// Per slot: the bosses whose spoils they have had, and the week (`items.rs` `week`), by boss type name.
     pub spoils: Vec<Vec<(String, u16)>>,
+    /// Per slot: their level in each skill they have (`skills.rs`), by skill name.
+    pub skill_lv: Vec<Vec<(String, u16)>>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -726,6 +728,7 @@ impl Sim {
             season: None,
             repute: vec![Vec::new(); cap],
             spoils: vec![Vec::new(); cap],
+            skill_lv: vec![Vec::new(); cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -926,6 +929,7 @@ impl Sim {
             standing: self.standing[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
             towns: self.repute[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
             spoils: self.spoils[slot].iter().filter(|e| e.1 == crate::items::week()).cloned().collect(),
+            skills: self.skill_lv[slot].clone(),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -1022,6 +1026,7 @@ impl Sim {
         self.class[slot] = self.classes.iter().position(|c| c.name == rec.class).map_or(0, |k| k as u8 + 1);
         self.standing[slot] = rec.standing.iter().map(|(n, v)| (n.clone(), (*v).clamp(-proto::game::STANDING_MAX, proto::game::STANDING_MAX))).collect();
         self.spoils[slot] = rec.spoils.clone();
+        self.skill_lv[slot] = rec.skills.clone();
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 
@@ -2426,6 +2431,12 @@ impl Sim {
                 self.award(p, xp, None);
             }
         }
+        // Gathering: a bot type that names a skill raises it for those who beat it.
+        if let Some(k) = self.realm.arch_skill.get(self.ents.arch[s] as usize).copied().flatten() {
+            for &p in &who {
+                self.raise_skill(p, k);
+            }
+        }
         who
     }
 
@@ -3581,6 +3592,7 @@ mod tests {
             leash: 0.0,
             faction: None,
             loot: None,
+            skill: None,
         }
     }
 

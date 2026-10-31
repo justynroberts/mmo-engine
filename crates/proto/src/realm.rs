@@ -95,6 +95,38 @@ pub struct Recipe {
     pub count: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub near: Option<String>,
+    /// A skill (`GameFile::skills`) it needs `level` of, and raises while it is not far below the maker; past the
+    /// level the maker sometimes makes one more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub level: u16,
+}
+
+fn is_zero_u16(n: &u16) -> bool {
+    *n == 0
+}
+
+/// A skill that rises with use, from 0 to `max`: crafting with recipes that name it, farming crops that name it,
+/// gathering by beating bot types that name it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SkillDef {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    #[serde(default = "d_skill_max")]
+    pub max: u16,
+}
+
+fn d_skill_max() -> u16 {
+    100
+}
+
+impl SkillDef {
+    pub fn shown(&self) -> &str {
+        if self.title.is_empty() { &self.name } else { &self.title }
+    }
 }
 
 /// A crop: using a `seed` item while standing by tilled soil plants it; after `grow_secs` the sprout is ripe, and
@@ -111,6 +143,9 @@ pub struct CropDef {
     pub max: u8,
     #[serde(default = "d_grow")]
     pub grow_secs: f32,
+    /// A skill harvesting it raises, and each 25 of it a sheaf more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
 }
 
 fn d_grow() -> f32 {
@@ -213,6 +248,8 @@ pub struct RecipeRt {
     pub makes: usize,
     pub count: u8,
     pub near: Option<usize>,
+    pub skill: Option<usize>,
+    pub level: u16,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -223,6 +260,7 @@ pub struct CropRt {
     pub min: u8,
     pub max: u8,
     pub grow_secs: f32,
+    pub skill: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -244,6 +282,9 @@ pub struct Realm {
     pub crops: Vec<CropRt>,
     pub plots: Option<PlotRules>,
     pub dungeons: Vec<DungeonRt>,
+    pub skills: Vec<SkillDef>,
+    /// Per bot type (index in `GameFile::archetypes`): the skill beating one raises.
+    pub arch_skill: Vec<Option<usize>>,
 }
 
 /// A faction by name or title, any case (what a player types after `/faction`).
@@ -340,6 +381,21 @@ impl GameFile {
             }
         }
 
+        if self.skills.len() > 32 {
+            return Err("at most 32 skills".into());
+        }
+        unique(self.skills.iter().map(|s| s.name.as_str()), "skill")?;
+        if let Some(s) = self.skills.iter().find(|s| s.max == 0 || s.max > 1000) {
+            return Err(format!("skill '{}': max must be 1..1000", s.name));
+        }
+        let skill = |n: &Option<String>, ctx: &str| -> Result<Option<usize>, String> {
+            n.as_deref().map(|n| self.skills.iter().position(|s| s.name == n).ok_or_else(|| format!("{ctx}: '{n}' is not a skill"))).transpose()
+        };
+        let mut arch_skill = self.archetypes.iter().map(|a| skill(&a.skill, &format!("bot type '{}'", a.name))).collect::<Result<Vec<_>, String>>()?;
+        if arch_skill.iter().all(Option::is_none) {
+            arch_skill.clear(); // (read with get: a game with no gathering keeps none)
+        }
+
         if self.recipes.len() > MAX_RECIPES {
             return Err(format!("at most {MAX_RECIPES} recipes"));
         }
@@ -357,7 +413,11 @@ impl GameFile {
             let needs = needs.collect::<Result<Vec<_>, String>>()?;
             amounts(r.count, r.count, &ctx)?;
             let near = r.near.as_deref().map(|p| place(p, &ctx)).transpose()?;
-            recipes.push(RecipeRt { name: r.name.clone(), needs, makes: item(&r.makes, &ctx)?, count: r.count, near });
+            let sk = skill(&r.skill, &ctx)?;
+            if sk.is_some_and(|k| r.level > self.skills[k].max) {
+                return Err(format!("{ctx}: a level past its skill's max"));
+            }
+            recipes.push(RecipeRt { name: r.name.clone(), needs, makes: item(&r.makes, &ctx)?, count: r.count, near, skill: sk, level: r.level });
         }
 
         if self.crops.len() > MAX_CROPS {
@@ -375,7 +435,7 @@ impl GameFile {
             if crops.iter().any(|o: &CropRt| o.seed == seed) {
                 return Err(format!("{ctx}: another crop grows from '{}'", c.seed));
             }
-            crops.push(CropRt { name: c.name.clone(), seed, yields: item(&c.yields, &ctx)?, min: c.min, max: c.max, grow_secs: c.grow_secs });
+            crops.push(CropRt { name: c.name.clone(), seed, yields: item(&c.yields, &ctx)?, min: c.min, max: c.max, grow_secs: c.grow_secs, skill: skill(&c.skill, &ctx)? });
         }
 
         if let Some(p) = &self.plots {
@@ -422,7 +482,7 @@ impl GameFile {
             dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group });
         }
 
-        Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons })
+        Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons, skills: self.skills.clone(), arch_skill })
     }
 }
 
@@ -446,8 +506,8 @@ mod tests {
     fn names_resolve_and_bad_ones_are_refused() {
         let mut g = game();
         g.factions = vec![crate::game::FactionFile { name: "red".into(), title: "The Red".into(), color: "#ff0000".into(), ..Default::default() }];
-        g.crops = vec![CropDef { name: "carrot".into(), seed: "carrot seed".into(), yields: "carrot".into(), min: 1, max: 3, grow_secs: 60.0 }];
-        g.recipes = vec![Recipe { name: "stew".into(), needs: vec![Stack { item: "carrot".into(), count: 2 }], makes: "carrot seed".into(), count: 1, near: None }];
+        g.crops = vec![CropDef { name: "carrot".into(), seed: "carrot seed".into(), yields: "carrot".into(), min: 1, max: 3, grow_secs: 60.0, skill: None }];
+        g.recipes = vec![Recipe { name: "stew".into(), needs: vec![Stack { item: "carrot".into(), count: 2 }], makes: "carrot seed".into(), count: 1, near: None, skill: None, level: 0 }];
         let r = g.realm().unwrap();
         assert_eq!(find_faction(&g.factions, "THE RED"), Some(0));
         assert_eq!(r.crops[0].yields, g.items.len() - 1);
