@@ -1454,52 +1454,122 @@ func zone_mist(z: Dictionary) -> Node3D:
 func map_image(px: int) -> Image:
 	return await map_area(Rect2(0, 0, world.size, world.size), px)
 
-## The map of one square of the world, `px` pixels on a side: the land shaded by its slopes, water, roads, what is
-## built, and (close up, where they have streamed in) the fields in their crops and the trees. With `spread`, the
-## ground is drawn a few rows a frame (await it), so a close-up made while playing does not stall a frame.
+## The map of one square of the world, `px` pixels on a side, made to look like a photograph from high up through
+## a little haze: the sea by its depth with surf and beaches, the land mottled and shaded from the north-west, going
+## to heath, rock and snow with height and the cold north, darker where it is wooded; rivers in the sea's colours,
+## roads as faint dusty lines, towns as grey-brown built-up ground with roofs, and (close up, where they have
+## streamed in) the fields in their crops and the trees. With `spread`, the ground is drawn a few rows a frame (await
+## it), so a close-up made while playing does not stall a frame.
 func map_area(area: Rect2, px: int, spread := false) -> Image:
-	var img := Image.create(px, px, false, Image.FORMAT_RGB8)
 	var step: float = area.size.x / px
 	var o0 := area.position
 	# Slopes over at least a heights cell, so the shading follows the hills rather than the grid they are kept on.
 	var e := maxf(step, world.height_cell() if world.has_method("height_cell") else 2.0)
+	# Noise anchored to the world (so a close-up matches the whole map), made natively in one go: a fine mottle and
+	# a broad one that says where the woods are.
+	var fine := _map_noise(area, px, 1.0 / 900.0, 11)
+	var broad := _map_noise(area, px, 1.0 / 5200.0, 23)
+	var sea: float = world.sea_level
+	var data := PackedByteArray()
+	data.resize(px * px * 3)
+	var mask := PackedByteArray() # land 255, water 0: blurred after, for how near the shore each bit of sea is
+	mask.resize(px * px)
+	var haze := Color(0.68, 0.73, 0.78)
 	for j in px:
 		if spread and j % 8 == 7:
 			await get_tree().process_frame
+		var y := o0.y + (j + 0.5) * step
+		var cold: float = land.cold_at(y) if land != null else 0.0
 		for i in px:
 			var x := o0.x + (i + 0.5) * step
-			var y := o0.y + (j + 0.5) * step
-			var slope := (height(x - e, y - e) - height(x + e, y + e)) / (2.0 * e)
-			var lit := 0.9 * (1.0 + clampf(slope * 1.2, -0.25, 0.25))
 			var hh := height(x, y)
-			if world.has_sea and hh < world.sea_level + 0.1:
-				img.set_pixel(i, j, Color("2f6f8f"))
+			var a := height(x - e, y - e)
+			var b := height(x + e, y + e)
+			var n := fine[j * px + i] / 255.0
+			var w := broad[j * px + i] / 255.0
+			var c: Color
+			var d := sea - hh
+			if world.has_sea and d > -0.1:
+				continue # the sea is coloured after, by how near the shore it is
 			else:
-				# High ground goes to heath and grey rock, so hills read on the map as well as by their shading.
-				var up := clampf((hh - 14.0) / 22.0, 0.0, 1.0)
-				var c := Color(0.36, 0.54, 0.2).lerp(Color(0.52, 0.5, 0.4), up)
-				img.set_pixel(i, j, Color(c.r * lit, c.g * lit, c.b * lit))
+				mask[j * px + i] = 255
+				var up := hh - sea
+				var high := clampf((hh - 12.0) / 26.0, 0.0, 1.0)
+				# Pasture, mottled from lush to drier; woods where the broad noise is high; heath and rock going up.
+				c = Color(0.3, 0.44, 0.17).lerp(Color(0.44, 0.52, 0.25), n)
+				var wood := smoothstep(0.56, 0.64, w + (n - 0.5) * 0.12) * (1.0 - high)
+				c = c.lerp(Color(0.13, 0.22, 0.1).lerp(Color(0.17, 0.26, 0.12), n), wood)
+				c = c.lerp(Color(0.44, 0.4, 0.29).lerp(Color(0.5, 0.48, 0.44), n), smoothstep(0.25, 0.7, high))
+				# The cold north: paler, browner grass, and snow on what is high there (and on the highest anywhere).
+				c = c.lerp(Color(0.52, 0.52, 0.44), cold * 0.45)
+				var snow := smoothstep(0.92, 1.02, high + cold * 0.15 + (n - 0.5) * 0.1) * 0.8
+				c = c.lerp(Color(0.86, 0.88, 0.9), snow)
+				# Sand and shingle just above the sea.
+				if world.has_sea and up < 0.9:
+					c = c.lerp(Color(0.74, 0.69, 0.55).lerp(Color(0.6, 0.58, 0.54), n), clampf(1.0 - up / 0.9, 0.0, 1.0))
+				# Light from the north-west, and a little shadow in the hollows.
+				var slope := (b - a) / (2.0 * e)
+				var hollow := clampf(((a + b) * 0.5 - hh) * 0.08, 0.0, 0.15)
+				var lit := clampf(1.0 + slope * 1.6, 0.55, 1.4) - hollow
+				c = Color(c.r * lit, c.g * lit, c.b * lit)
+			c = c.lerp(haze, 0.1)
+			var k := (j * px + i) * 3
+			data[k] = clampi(int(c.r * 255.0), 0, 255)
+			data[k + 1] = clampi(int(c.g * 255.0), 0, 255)
+			data[k + 2] = clampi(int(c.b * 255.0), 0, 255)
+	if world.has_sea:
+		# The sea: turquoise over the shallows by the shore, teal further out, deep navy in open water, with surf
+		# at the edge; nearness to the shore from the land mask blurred at two widths (natively, by scaling).
+		var near_shore := _map_blur(mask, px, 6)
+		var off_shore := _map_blur(mask, px, 40)
+		for j in px:
+			if spread and j % 32 == 31:
+				await get_tree().process_frame
+			for i in px:
+				var q := j * px + i
+				if mask[q] != 0:
+					continue
+				if near_shore[q] > 235 and i > 0:
+					# A hollow inland just under the sea's level, not the sea: wet ground like what is beside it.
+					for ch in 3:
+						data[q * 3 + ch] = int(data[q * 3 - 3 + ch] * 0.9)
+					continue
+				var n := fine[q] / 255.0
+				var shelf := clampf(off_shore[q] / 255.0 * 2.6, 0.0, 1.0)
+				var shallow := clampf(near_shore[q] / 255.0 * 2.2, 0.0, 1.0)
+				var c := Color(0.04, 0.11, 0.21).lerp(Color(0.07, 0.25, 0.33), smoothstep(0.0, 1.0, shelf))
+				c = c.lerp(Color(0.2, 0.46, 0.47), smoothstep(0.15, 1.0, shallow))
+				c = c.lerp(Color(0.78, 0.83, 0.8), smoothstep(0.82, 1.0, shallow) * 0.5)
+				c = (c * (0.95 + n * 0.1)).lerp(haze, 0.1)
+				data[q * 3] = clampi(int(c.r * 255.0), 0, 255)
+				data[q * 3 + 1] = clampi(int(c.g * 255.0), 0, 255)
+				data[q * 3 + 2] = clampi(int(c.b * 255.0), 0, 255)
+	var img := Image.create_from_data(px, px, false, Image.FORMAT_RGB8, data)
 	var px_of := func(x: float, y: float) -> Vector2i:
 		return Vector2i(clampi(int((x - o0.x) / step), 0, px - 1), clampi(int((y - o0.y) / step), 0, px - 1))
 	var near := area.grow(64.0)
-	var seg_in := func(a: Vector2, b: Vector2) -> bool:
-		return near.intersects(Rect2(a, Vector2.ZERO).expand(b))
-	# Close up: fields in their crops, and trees as dark specks.
-	if step < 16.0 and land != null:
-		var crop := {"pasture": Color(0.42, 0.6, 0.26), "hay": Color(0.6, 0.64, 0.33), "wheat": Color(0.8, 0.68, 0.36),
-			"barley": Color(0.74, 0.69, 0.42), "oats": Color(0.66, 0.66, 0.42), "potato": Color(0.48, 0.38, 0.26)}
+	var seg_in := func(p: Vector2, q: Vector2) -> bool:
+		return near.intersects(Rect2(p, Vector2.ZERO).expand(q))
+	var close := step < 16.0
+	# Close up: fields in their crops, and trees as dark crowns.
+	if close and land != null:
+		var crop := {"pasture": Color(0.36, 0.5, 0.22), "hay": Color(0.56, 0.58, 0.32), "wheat": Color(0.72, 0.62, 0.36),
+			"barley": Color(0.68, 0.63, 0.4), "oats": Color(0.6, 0.6, 0.4), "potato": Color(0.42, 0.34, 0.24)}
 		for f in land.fields_in(area):
 			if f.size() < 5:
 				continue
 			var q: PackedVector2Array = f[3]
-			var c: Color = crop.get(f[4], Color(0.5, 0.6, 0.3))
+			var fc: Color = crop.get(f[4], Color(0.45, 0.52, 0.28))
 			var box: Rect2 = f[0]
 			var p0: Vector2i = px_of.call(box.position.x, box.position.y)
 			var p1: Vector2i = px_of.call(box.end.x, box.end.y)
 			for jj in range(p0.y, p1.y + 1):
 				for ii in range(p0.x, p1.x + 1):
 					if Geometry2D.is_point_in_polygon(Vector2(o0.x + (ii + 0.5) * step, o0.y + (jj + 0.5) * step), q):
-						img.set_pixel(ii, jj, c)
+						# Keep the ground's light and mottle under the crop.
+						var g := img.get_pixel(ii, jj)
+						var lum := clampf((g.r + g.g + g.b) / 0.9, 0.7, 1.3)
+						img.set_pixel(ii, jj, (fc * lum).lerp(haze, 0.1))
 		var cx0 := int(floor(area.position.x / world.CELL))
 		var cy0 := int(floor(area.position.y / world.CELL))
 		for cx in range(cx0, int(floor(area.end.x / world.CELL)) + 1):
@@ -1508,17 +1578,25 @@ func map_area(area: Rect2, px: int, spread := false) -> Image:
 					var t := String(o.get("t", ""))
 					if t == "tree" or t == "tree_bare":
 						var p: Vector2i = px_of.call(o["p"][0], o["p"][1])
-						img.set_pixel(p.x, p.y, Color(0.16, 0.3, 0.13))
+						_map_blend(img, p, Color(0.08, 0.15, 0.07), 0.75)
+						_map_blend(img, p + Vector2i(1, 1), Color(0.05, 0.08, 0.05), 0.35) # its shadow, to the south-east
+	var water := Color(0.1, 0.3, 0.37)
 	for r in world.rivers:
 		var pts: Array = r["pts"]
 		for k in pts.size() - 1:
 			if not seg_in.call(Vector2(pts[k][0], pts[k][1]), Vector2(pts[k + 1][0], pts[k + 1][1])):
 				continue
-			var wide := maxi(3, int(2.0 * float(r.get("half_width", 5.0)) / step))
+			var wide := maxi(1, int(2.0 * float(r.get("half_width", 5.0)) / step))
 			var segs := maxi(6, int(Vector2(pts[k][0], pts[k][1]).distance_to(Vector2(pts[k + 1][0], pts[k + 1][1])) / step))
 			for t in segs + 1:
 				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], float(t) / segs), lerpf(pts[k][1], pts[k + 1][1], float(t) / segs))
-				img.fill_rect(Rect2i(p - Vector2i(wide / 2, wide / 2), Vector2i(wide, wide)), Color("2f7f8f"))
+				if wide <= 1:
+					_map_blend(img, p, water, 0.8)
+				else:
+					img.fill_rect(Rect2i(p - Vector2i(wide / 2, wide / 2), Vector2i(wide, wide)), water)
+	# Roads: faint dusty lines from far off, plainer close up.
+	var dust := Color(0.72, 0.66, 0.53)
+	var road_a := 0.75 if close else (0.42 if step < 48.0 else 0.26)
 	for r in world.roads:
 		var pts: Array = r["pts"]
 		var wide := maxi(1, int(2.0 * float(r.get("half_width", 3.0)) / step))
@@ -1526,23 +1604,72 @@ func map_area(area: Rect2, px: int, spread := false) -> Image:
 			if not seg_in.call(Vector2(pts[k][0], pts[k][1]), Vector2(pts[k + 1][0], pts[k + 1][1])):
 				continue
 			var segs := maxi(1, int(Vector2(pts[k][0], pts[k][1]).distance_to(Vector2(pts[k + 1][0], pts[k + 1][1])) / step))
+			var last := Vector2i(-1, -1)
 			for t in segs + 1:
 				var p: Vector2i = px_of.call(lerpf(pts[k][0], pts[k + 1][0], float(t) / segs), lerpf(pts[k][1], pts[k + 1][1], float(t) / segs))
-				img.fill_rect(Rect2i(p, Vector2i(wide, wide)), Color("c9b48a"))
-	var colours := {"house": Color("b5523b"), "keep": Color("8d867d"), "castle": Color("8d867d"), "tower": Color("6f6a62"),
-		"wall": Color("5d5850"), "crag": Color("6e675e"), "lake": Color("2f7f8f"), "square": Color("b8a77e"), "city": Color("9b8f72")}
-	for pass_ in 2: # open ground first, then what stands on it
+				if p == last:
+					continue
+				last = p
+				if wide <= 1:
+					_map_blend(img, p, dust, road_a)
+				else:
+					img.fill_rect(Rect2i(p, Vector2i(wide, wide)), dust.lerp(haze, 0.1))
+	# Built-up ground first (towns' streets, squares), then what stands on it: roofs, stone, walls, lakes.
+	var ground := {"city": Color(0.5, 0.47, 0.41), "square": Color(0.62, 0.58, 0.5)}
+	var standing := {"house": Color(0.5, 0.36, 0.3), "keep": Color(0.56, 0.54, 0.5), "castle": Color(0.56, 0.54, 0.5), "tower": Color(0.48, 0.46, 0.43),
+		"wall": Color(0.42, 0.4, 0.37), "crag": Color(0.46, 0.44, 0.4), "lake": water}
+	for pass_ in 2:
+		var colours: Dictionary = ground if pass_ == 0 else standing
 		for o in world.objects:
 			var t := String(o.get("t", ""))
-			if not o.has("b") or not colours.has(t) or (pass_ == 0) != (t == "city" or t == "square"):
+			if not o.has("b") or not colours.has(t):
 				continue
 			var b: Array = o["b"]
 			if not near.intersects(Rect2(b[0], b[1], b[2] - b[0], b[3] - b[1])):
 				continue
 			var p0: Vector2i = px_of.call(b[0], b[1])
 			var p1: Vector2i = px_of.call(b[2], b[3])
-			img.fill_rect(Rect2i(p0, (p1 - p0).max(Vector2i(1, 1))), colours[t])
+			var size := (p1 - p0).max(Vector2i(1, 1))
+			var col: Color = colours[t]
+			if t == "lake" and size.x * size.y < 4:
+				continue # a pond too small to see from up here
+			if t == "lake" or size.x * size.y >= 4:
+				img.fill_rect(Rect2i(p0, size), col.lerp(haze, 0.1))
+				if t == "house" and size.x >= 2 and size.y >= 2:
+					# A ridge: the lit half of the roof and the shaded half.
+					img.fill_rect(Rect2i(p0, Vector2i(size.x, maxi(1, size.y / 2))), col.lightened(0.15))
+			else:
+				# Too small to draw as itself: a house is a speck of roof among grey-brown ground.
+				_map_blend(img, p0, col if t != "house" else Color(0.48, 0.42, 0.37), 0.55)
 	return img
+
+## Noise (0..255 a pixel) over `area` at `freq` per world unit, anchored to the world, `px` on a side.
+func _map_noise(area: Rect2, px: int, freq: float, seed_: int) -> PackedByteArray:
+	var fnl := FastNoiseLite.new()
+	fnl.seed = seed_
+	fnl.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	fnl.fractal_type = FastNoiseLite.FRACTAL_FBM
+	fnl.fractal_octaves = 4
+	var step := area.size.x / px
+	fnl.frequency = freq * step
+	fnl.offset = Vector3(area.position.x / step, area.position.y / step, 0.0)
+	var im := fnl.get_image(px, px, false, false, true)
+	im.convert(Image.FORMAT_L8)
+	return im.get_data()
+
+## A `px`-square L8 mask blurred over about `radius` pixels: scaled down and back up, smoothly.
+static func _map_blur(mask: PackedByteArray, px: int, radius: int) -> PackedByteArray:
+	var im := Image.create_from_data(px, px, false, Image.FORMAT_L8, mask)
+	var small := maxi(2, px / maxi(1, radius))
+	im.resize(small, small, Image.INTERPOLATE_BILINEAR)
+	im.resize(px, px, Image.INTERPOLATE_CUBIC)
+	return im.get_data()
+
+## Mix `col` into one pixel of the map by `a`.
+static func _map_blend(img: Image, p: Vector2i, col: Color, a: float) -> void:
+	if p.x < 0 or p.y < 0 or p.x >= img.get_width() or p.y >= img.get_height():
+		return
+	img.set_pixel(p.x, p.y, img.get_pixel(p.x, p.y).lerp(col, a))
 
 func smoke_checks() -> Array:
 	var batched := 0

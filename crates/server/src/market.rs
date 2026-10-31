@@ -664,7 +664,7 @@ mod tests {
     use proto::world::World;
 
     fn item(name: &str, stack: u8) -> ItemDef {
-        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: stack, uses: vec![], consume: true, value: 1, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None }
+        ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: stack, uses: vec![], consume: true, value: 1, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None, potion: None }
     }
 
     fn town() -> proto::game::Place {

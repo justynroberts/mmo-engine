@@ -63,6 +63,8 @@ pub struct Rules {
     /// member of a holder is paid for each hold every ten minutes (`holds.rs`).
     pub capture_secs: f32,
     pub hold_tithe: u32,
+    /// Seconds after drinking a potion before another may be drunk (`potions.rs`).
+    pub potion_cooldown_secs: f32,
     /// What falling costs a player (all nothing by default): a share of the experience earned into their level (never
     /// a level), a share of the coin in their bag (gone), the chance each other stack of their bag is left where they
     /// fell, and seconds before they may rise.
@@ -138,6 +140,7 @@ impl Default for Rules {
             respec_cost: 20,
             capture_secs: 60.0,
             hold_tithe: 3,
+            potion_cooldown_secs: 20.0,
             fall_xp_loss_pct: 0.0,
             fall_coin_loss_pct: 0.0,
             fall_drop_pct: 0.0,
@@ -198,6 +201,7 @@ impl Rules {
             ("dungeon_idle_secs", self.dungeon_idle_secs),
             ("finder_wait_secs", self.finder_wait_secs),
             ("capture_secs", self.capture_secs),
+            ("potion_cooldown_secs", self.potion_cooldown_secs),
             ("listing_hours", self.listing_hours),
             ("rise_delay_secs", self.rise_delay_secs),
             ("hail_secs", self.hail_secs),

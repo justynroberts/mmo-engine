@@ -498,6 +498,10 @@ pub struct Sim {
     pub maker: Vec<Vec<crate::crafted::Mark>>,
     pub gear_maker: Vec<Vec<crate::crafted::Mark>>,
     pub makers_sent: Vec<String>,
+    /// Potions working on each player (`potions.rs`), what they were last told of them, and the tick they may next drink.
+    pub draughts: Vec<Vec<crate::potions::Draught>>,
+    pub draughts_sent: Vec<String>,
+    pub potion_at: Vec<u32>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -752,6 +756,9 @@ impl Sim {
             maker: vec![vec![(0, String::new()); proto::game::INV_SLOTS]; cap],
             gear_maker: vec![vec![(0, String::new()); proto::game::GEAR_SLOTS]; cap],
             makers_sent: vec![String::new(); cap],
+            draughts: vec![Vec::new(); cap],
+            draughts_sent: vec![String::new(); cap],
+            potion_at: vec![0; cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -2396,8 +2403,8 @@ impl Sim {
         // Level and gear together: what each adds, on top of 1.
         let (gm, _) = self.gear_bonus(from);
         let (_, gt) = self.gear_bonus(to);
-        let gm = gm + self.class_of(from).map_or(0.0, |c| c.might) + self.talent_bonus(from).0;
-        let gt = gt + self.class_of(to).map_or(0.0, |c| c.toughness) + self.talent_bonus(to).1;
+        let gm = gm + self.class_of(from).map_or(0.0, |c| c.might) + self.talent_bonus(from).0 + self.potion_bonus(from).0;
+        let gt = gt + self.class_of(to).map_or(0.0, |c| c.toughness) + self.talent_bonus(to).1 + self.potion_bonus(to).1;
         let might = self.levels.as_ref().map_or(1.0, |l| l.might_at(self.ents.level[from])) + gm;
         let tough = self.levels.as_ref().map_or(1.0, |l| l.toughness_at(self.ents.level[to])) + gt;
         let d = delta * might;
@@ -3200,7 +3207,7 @@ mod tests {
     fn a_material_with_an_item_costs_one_and_breaking_your_own_gives_it_back() {
         use proto::game::{build_arg, build_target, ItemRt, ACT_BREAK, ACT_BUILD};
         let mut s = sim();
-        let stone = ItemRt { name: "stone".into(), color: "#888888".into(), stack_max: 50, uses: vec![], consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: Some(0), dye: None, furniture: None, look: None };
+        let stone = ItemRt { name: "stone".into(), color: "#888888".into(), stack_max: 50, uses: vec![], consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: Some(0), dye: None, furniture: None, look: None, potion: None };
         s.set_items(vec![stone]);
         let a = s.spawn(0).unwrap();
         s.set_account(a, Some("aaaaaaaaaaaaaaaa"));
@@ -3445,7 +3452,7 @@ mod tests {
     #[test]
     fn falling_can_cost_experience_coin_and_the_bag_and_rising_can_wait() {
         use proto::game::{ItemDef, LevelsFile};
-        let item = |name: &str| ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None };
+        let item = |name: &str| ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None, potion: None };
         let mut s = sim_with(|g| {
             g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
             g.items = vec![item("silver"), item("stone")];
@@ -3494,7 +3501,7 @@ mod tests {
     fn reaching_a_level_can_give_things_as_well() {
         use proto::game::{ItemDef, LevelReward, LevelsFile};
         let mut s = sim_with(|g| {
-            g.items = vec![ItemDef { name: "brick".into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None }];
+            g.items = vec![ItemDef { name: "brick".into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None, potion: None }];
             let reward = |level: u8, n: u8| LevelReward { level, items: vec![proto::realm::Stack { item: "brick".into(), count: n }], text: format!("Level {level}: bricks.") };
             g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![reward(2, 10), reward(3, 20)], grow: Default::default() });
         });

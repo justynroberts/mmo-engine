@@ -1124,6 +1124,26 @@
     {
      "item": "ceig",
      "price": 12
+    },
+    {
+     "item": "deoch nirt",
+     "price": 10
+    },
+    {
+     "item": "deoch iarainn",
+     "price": 10
+    },
+    {
+     "item": "deoch luais",
+     "price": 12
+    },
+    {
+     "item": "deoch athnuachana",
+     "price": 9
+    },
+    {
+     "item": "deoch draiochta",
+     "price": 9
     }
    ],
    "names": [
@@ -2990,6 +3010,26 @@
     {
      "item": "siol cabaiste",
      "price": 2
+    },
+    {
+     "item": "deoch nirt",
+     "price": 10
+    },
+    {
+     "item": "deoch iarainn",
+     "price": 10
+    },
+    {
+     "item": "deoch luais",
+     "price": 12
+    },
+    {
+     "item": "deoch athnuachana",
+     "price": 9
+    },
+    {
+     "item": "deoch draiochta",
+     "price": 9
     }
    ],
    "lasts_secs": 1800,
@@ -8006,6 +8046,94 @@
    "stack_max": 1,
    "value": 20,
    "look": "crossbow"
+  },
+  {
+   "name": "deoch nirt",
+   "title": "Draught of Might",
+   "color": "#d9502e",
+   "stack_max": 5,
+   "uses": [],
+   "consume": true,
+   "value": 3,
+   "rarity": "uncommon",
+   "potion": {
+    "secs": 60.0,
+    "might": 0.25
+   }
+  },
+  {
+   "name": "deoch iarainn",
+   "title": "Ironbark Tonic",
+   "color": "#8a8f73",
+   "stack_max": 5,
+   "uses": [],
+   "consume": true,
+   "value": 3,
+   "rarity": "uncommon",
+   "potion": {
+    "secs": 60.0,
+    "toughness": 0.3
+   }
+  },
+  {
+   "name": "deoch luais",
+   "title": "Swiftfoot Elixir",
+   "color": "#3fc1c9",
+   "stack_max": 5,
+   "uses": [],
+   "consume": true,
+   "value": 3,
+   "rarity": "uncommon",
+   "potion": {
+    "secs": 30.0,
+    "speed": 0.4
+   }
+  },
+  {
+   "name": "deoch athnuachana",
+   "title": "Draught of Renewal",
+   "color": "#4fbf5a",
+   "stack_max": 5,
+   "uses": [
+    {
+     "attr": "health",
+     "delta": 10.0
+    }
+   ],
+   "consume": true,
+   "value": 3,
+   "potion": {
+    "secs": 20.0,
+    "every": [
+     {
+      "attr": "health",
+      "delta": 3.0
+     }
+    ]
+   }
+  },
+  {
+   "name": "deoch draiochta",
+   "title": "Draught of Wisdom",
+   "color": "#8e5bd6",
+   "stack_max": 5,
+   "uses": [
+    {
+     "attr": "mana",
+     "delta": 60.0
+    }
+   ],
+   "consume": true,
+   "value": 3,
+   "potion": {
+    "secs": 20.0,
+    "every": [
+     {
+      "attr": "mana",
+      "delta": 3.0
+     }
+    ]
+   }
   }
  ],
  "weather": [
@@ -10060,6 +10188,94 @@
    "count": 2,
    "skill": "cocaireacht",
    "level": 10
+  },
+  {
+   "name": "deoch nirt",
+   "needs": [
+    {
+     "item": "miodh",
+     "count": 1
+    },
+    {
+     "item": "meacan",
+     "count": 2
+    }
+   ],
+   "makes": "deoch nirt",
+   "count": 1,
+   "skill": "ailceimic"
+  },
+  {
+   "name": "deoch athnuachana",
+   "needs": [
+    {
+     "item": "miodh",
+     "count": 1
+    },
+    {
+     "item": "cabaiste",
+     "count": 2
+    }
+   ],
+   "makes": "deoch athnuachana",
+   "count": 1,
+   "skill": "ailceimic",
+   "level": 5
+  },
+  {
+   "name": "deoch iarainn",
+   "needs": [
+    {
+     "item": "miodh",
+     "count": 1
+    },
+    {
+     "item": "craiceann mic tire",
+     "count": 1
+    }
+   ],
+   "makes": "deoch iarainn",
+   "count": 1,
+   "skill": "ailceimic",
+   "level": 10
+  },
+  {
+   "name": "deoch luais",
+   "needs": [
+    {
+     "item": "miodh",
+     "count": 1
+    },
+    {
+     "item": "coirce",
+     "count": 3
+    }
+   ],
+   "makes": "deoch luais",
+   "count": 1,
+   "skill": "ailceimic",
+   "level": 15
+  },
+  {
+   "name": "deoch draiochta",
+   "needs": [
+    {
+     "item": "miodh",
+     "count": 1
+    },
+    {
+     "item": "cruithneacht",
+     "count": 2
+    },
+    {
+     "item": "cabaiste",
+     "count": 1
+    }
+   ],
+   "makes": "deoch draiochta",
+   "count": 1,
+   "skill": "ailceimic",
+   "level": 20
   }
  ],
  "crops": [
@@ -10289,6 +10505,11 @@
   {
    "name": "fiach",
    "title": "Hunting",
+   "max": 100
+  },
+  {
+   "name": "ailceimic",
+   "title": "Alchemy",
    "max": 100
   }
  ],

@@ -5,8 +5,8 @@
 use crate::sim::Sim;
 
 /// A passage costs this much, and one more coin for every `PER_COIN` units sailed.
-const BASE: u32 = 2;
-const PER_COIN: f32 = 400.0;
+pub const BASE: u32 = 2;
+pub const PER_COIN: f32 = 400.0;
 /// How far round a dock's place counts as being at it.
 const QUAY: f32 = 10.0;
 

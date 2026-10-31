@@ -410,11 +410,13 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // from /play/world/tiles as the player moves.
         "world": hs.world.as_ref().map(|w| json!({ "ver": format!("{:016x}", w.ver), "bytes": w.bytes.len(), "parts": true, "head_bytes": w.head.len(), "points": w.point_count, "tile": proto::tiles::TILE })),
         "items": sim.items.iter().map(|i| {
-            let mut v = json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty() || i.equip.is_some() || i.mount > 0.0});
+            let mut v = json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty() || i.equip.is_some() || i.mount > 0.0 || i.potion.is_some()});
             if !i.title.is_empty() { v["title"] = json!(i.title); }
             if i.value > 0 { v["value"] = json!(i.value); }
             if let Some(e) = &i.equip { v["equip"] = json!({"slot": e.slot as u8, "might": e.might, "toughness": e.toughness}); }
             if i.mount > 0.0 { v["mount"] = json!(i.mount); }
+            // A potion: how long it lasts and what it gives while it does.
+            if let Some(p) = &i.potion { v["potion"] = json!({"secs": p.secs, "might": p.might, "toughness": p.toughness, "speed": p.speed}); }
             if !i.rarity.is_common() { v["rarity"] = json!(i.rarity.title()); }
             // A block of this material (by number): building one uses one up.
             if let Some(k) = i.block { v["block"] = json!(k); }
@@ -431,6 +433,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             "crops": crops,
             // The faction war's holds: where they are (who holds them comes on chat channel 18).
             "docks": sim.places.iter().filter(|p| p.dock).map(|p| json!({"name": p.name, "title": p.title, "x": p.x, "y": p.y, "r": p.r})).collect::<Vec<_>>(),
+            "fares": {"base": crate::boats::BASE, "per": crate::boats::PER_COIN},
             "holds": sim.places.iter().filter(|p| p.hold.is_some()).map(|p| json!({"name": p.name, "title": p.title, "x": p.x, "y": p.y, "r": p.r})).collect::<Vec<_>>(),
             "skills": sim.realm.skills.iter().map(|k| json!({"name": k.name, "title": k.shown(), "max": k.max})).collect::<Vec<_>>(),
             "plots": sim.realm.plots.as_ref().map(|p| json!({"size": p.size, "per_player": p.per_player})),

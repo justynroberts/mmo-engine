@@ -12,6 +12,7 @@ const ROLES := ["tank", "healer", "damage"]
 
 var panel := PanelContainer.new()
 var role := "damage"
+var wait_secs := 60.0              # past this the finder goes with whoever is queued (rules.finder_wait_secs)
 var _dungeons: Array = []          # [[Vector2, name, level, boss, foes, group], ...] (main.gd _dungeons)
 var _queued := []                  # [dungeon, queued, wanted, role] while in a queue, else empty
 var _since := 0.0                  # seconds in the queue
@@ -33,7 +34,7 @@ func _ready() -> void:
 	panel.add_child(v)
 	v.add_child(BagScript.title("Group finder", 26, false))
 	var about := Label.new()
-	about.text = "Queue for a dungeon and the finder makes you a company, a tank and a healer first, and takes you to its door. Your party queues with you."
+	about.text = "Queue for a dungeon and the finder makes you a company, a tank and a healer first, and takes you to its door. Your party queues with you. If too few come in time, it takes whoever is there, alone if need be."
 	about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	about.add_theme_color_override("font_color", HUD.TEXT)
 	about.add_theme_font_size_override("font_size", 13)
@@ -126,7 +127,9 @@ func _show_status() -> void:
 	if _queued.is_empty():
 		_status.text = "Not queued."
 	else:
-		_status.text = "Queued for %s as %s: %d of %d found, %d:%02d waiting" % [_queued[0], _queued[3], _queued[1], _queued[2], int(_since) / 60, int(_since) % 60]
+		var left := maxi(0, int(wait_secs - _since))
+		var then := ("; going in %ds with whoever is here" % left) if _queued[1] < _queued[2] and left > 0 else ""
+		_status.text = "Queued for %s as %s: %d of %d found, %d:%02d waiting%s" % [_queued[0], _queued[3], _queued[1], _queued[2], int(_since) / 60, int(_since) % 60, then]
 
 func toggle() -> void:
 	panel.visible = not panel.visible

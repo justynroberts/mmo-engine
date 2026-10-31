@@ -7,7 +7,7 @@ extends Node3D
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue. --guest plays a throwaway character, not this machine's own.
-## Screenshots: --say TEXT says it (or runs a "/" command) five seconds in, --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
+## Screenshots: --say TEXT says it (or runs a "/" command) five seconds in, --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --map opens the world map (--map_zoom N zoomed in on you), --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
@@ -20,6 +20,7 @@ const JournalScript := preload("res://scripts/journal.gd")
 const QuestsScript := preload("res://scripts/quests.gd")
 const FinderScript := preload("res://scripts/finder.gd")
 const SocialScript := preload("res://scripts/social.gd")
+const ShipsScript := preload("res://scripts/ships.gd")
 const ShopScript := preload("res://scripts/shop.gd")
 const BagScript := preload("res://scripts/bag.gd")
 const TradeScript := preload("res://scripts/trade.gd")
@@ -144,6 +145,8 @@ var journal: CanvasLayer    # the spell journal and the menu: scripts/journal.gd
 var questui: CanvasLayer    # quest offers, the quest log and the tracker: scripts/quests.gd
 var finderui: CanvasLayer   # the group finder (F5): scripts/finder.gd
 var socialui: CanvasLayer   # guild, letters and standing (F6): scripts/social.gd
+var shipsui: CanvasLayer    # taking ship at a dock (F there): scripts/ships.gd
+var _potions_had: Array = []  # titles of the potions working on us last we heard (main.gd _on_potions)
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
 var bagui: CanvasLayer      # the whole bag and the bank (F4): scripts/bag.gd
 var tradeui: CanvasLayer    # trading with another player: scripts/trade.gd
@@ -312,6 +315,9 @@ func _ready() -> void:
 	finderui = FinderScript.new()
 	add_child(finderui)
 	finderui.command.connect(func(t: String): net.say(t, false))
+	shipsui = ShipsScript.new()
+	add_child(shipsui)
+	shipsui.command.connect(func(t: String): net.say(t, false))
 	socialui = SocialScript.new()
 	add_child(socialui)
 	socialui.command.connect(func(t: String): net.say(t, false))
@@ -489,6 +495,8 @@ func _start() -> void:
 	var map_img: Image = await theme.map_image(1024 if world.size > 16384.0 else 512)
 	hud.set_map(map_img, world.size)
 	world_map.build(map_img, world.size)
+	if theme.has_method("map_area"):
+		world_map.detail_source = theme.map_area # the sharp close-up when zoomed in
 	var w0 = info.get("weather")
 	if w0 is Dictionary:
 		_apply_weather.call_deferred(w0)
@@ -515,7 +523,18 @@ func _start() -> void:
 	var realm_info = info.get("realm", {})
 	bagui.set_recipes(realm_info.get("recipes", []) if realm_info is Dictionary and realm_info.get("recipes") is Array else [])
 	HudScript.ITEM_TITLES.clear()
+	HudScript.ITEM_NOTES.clear()
 	for it in info.get("items", []):
+		if it.get("potion") is Dictionary:
+			var po: Dictionary = it["potion"]
+			var gives := []
+			if float(po.get("might", 0)) > 0.0:
+				gives.append("blows %d%% harder" % roundi(float(po["might"]) * 100.0))
+			if float(po.get("toughness", 0)) > 0.0:
+				gives.append("wounds %d%% lighter" % roundi(float(po["toughness"]) * 100.0))
+			if float(po.get("speed", 0)) > 0.0:
+				gives.append("faster on your feet")
+			HudScript.ITEM_NOTES[String(it["name"])] = "Potion, lasts %d s%s" % [int(po.get("secs", 0)), (": " + ", ".join(gives)) if not gives.is_empty() else ""]
 		if it.has("title"):
 			HudScript.ITEM_TITLES[String(it["name"])] = String(it["title"])
 		if it.has("rarity"):
@@ -579,6 +598,8 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 21: # the potions working on us: "P0|title,colour,secs;..."
+			_on_potions(text)
 		elif channel == 20: # who made what we carry: "K0|slot,name;..."
 			bagui.on_makers(text)
 		elif channel == 19: # furniture near us: "U0|x,y,turns,piece;...", more in "U1|"
@@ -682,6 +703,8 @@ func _start() -> void:
 		_smoke()
 	if args.has("map"):
 		_toggle_map.call_deferred()
+		if args.has("map_zoom"): # --map_zoom N: zoom the map N times on where we stand (with --shot)
+			get_tree().create_timer(6.0).timeout.connect(func(): world_map.zoom_on(me_pos, float(args["map_zoom"])))
 	if args.has("build"):
 		_set_building(true)
 	if args.has("open"): # --open bag|auction|finder: to look at them (with --shot)
@@ -1037,6 +1060,7 @@ func _process(delta: float) -> void:
 			others.append(e["position"])
 	hud.minimap.dungeons = _dungeons()
 	finderui.set_dungeons(hud.minimap.dungeons)
+	finderui.wait_secs = _rule("finder_wait_secs", 60.0)
 	finderui.tick(delta)
 	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
 	hud.minimap.goals = questui.goals(homes).filter(func(g): return not g.is_empty())
@@ -2736,9 +2760,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_F4 or k == BAG_KEY:
 			bagui.toggle(net.bag())
 			return
-		if k == KEY_ESCAPE and (socialui.escape() or finderui.escape() or settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
+		if k == KEY_ESCAPE and (shipsui.escape() or socialui.escape() or finderui.escape() or settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
 			return
-		if journal.is_open() or questui.is_open() or finderui.is_open() or socialui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
+		if journal.is_open() or questui.is_open() or shipsui.is_open() or finderui.is_open() or socialui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
 			return
 		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
@@ -2818,6 +2842,8 @@ func _on_chat(text: String) -> void:
 func _toggle_map() -> void:
 	if not world_map.visible and not world_map.built:
 		world_map.build(await theme.map_image(512), world.size)
+		if theme.has_method("map_area"):
+			world_map.detail_source = theme.map_area
 	world_map.visible = not world_map.visible
 
 func _attack() -> void:
@@ -3754,12 +3780,32 @@ func _talk_or_pickup() -> void:
 	if target_id != 0 and _players.has(target_id) and _dist_to(target_id) <= 12.0:
 		net.act_arg(ACT_TRADE, target_id, 0)
 		return
-	# At a dock: where the boats go, and the chat ready to say which.
+	# At a dock: where the boats go and what each costs, to pick one.
 	if _dock_here() != "":
-		net.say("/sail", false)
-		hud.open_chat("/sail ")
+		var realm_info = info.get("realm", {})
+		var rd: Dictionary = realm_info if realm_info is Dictionary else {}
+		var fares: Dictionary = rd.get("fares", {}) if rd.get("fares") is Dictionary else {}
+		var coin = info.get("currency")
+		shipsui.open(_dock_here(), rd.get("docks", []), fares, HudScript.item(String(coin)) if coin is String else "")
 		return
 	net.pickup()
+
+## The potions working on us (chat channel 21): to the HUD, and a new one seen drunk, a swirl of its colour rising
+## round us with its name.
+func _on_potions(text: String) -> void:
+	var list := []
+	for e in text.substr(3).split(";", false):
+		var f := e.split(",")
+		if f.size() >= 3:
+			list.append([f[0], Color(f[1]) if f[1].begins_with("#") else Color.WHITE, float(f[2])])
+	var me: Node3D = ents.get(net.get_self_id())
+	for p in list:
+		if me != null and not _potions_had.has(p[0]):
+			_float_text(me.position + Vector3(0, 0.8, 0), p[0], p[1])
+			spellfx.burst(me.position, p[1])
+			sound.play("chime", -10.0, 0.0)
+	_potions_had = list.map(func(p): return p[0])
+	hud.set_potions(list)
 
 ## The auction house (from the bag or a merchant's shop); the server says if this is not the place for it.
 func _open_auction() -> void:

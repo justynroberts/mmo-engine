@@ -72,7 +72,15 @@ export function renameAttr(g: GameFile, index: number, name: string): GameFile {
   return rewriteRefs({
     ...g,
     attrs: g.attrs.map((a, i) => (i === index ? { ...a, name } : a)),
-    ...(g.items ? { items: g.items.map((it) => ({ ...it, uses: it.uses.map((u) => ({ ...u, attr: swap(u.attr) })) })) } : {}),
+    ...(g.items
+      ? {
+          items: g.items.map((it) => ({
+            ...it,
+            uses: it.uses.map((u) => ({ ...u, attr: swap(u.attr) })),
+            ...(it.potion?.every ? { potion: { ...it.potion, every: it.potion.every.map((u) => ({ ...u, attr: swap(u.attr) })) } } : {}),
+          })),
+        }
+      : {}),
     actions: g.actions.map((a) => ({
       ...a,
       requires: a.requires ? { ...a.requires, attr: swap(a.requires.attr) } : null,
@@ -95,7 +103,15 @@ export function removeAttr(g: GameFile, index: number): GameFile {
   return rewriteRefs({
     ...g,
     attrs: g.attrs.filter((_, i) => i !== index),
-    ...(g.items ? { items: g.items.map((it) => ({ ...it, uses: it.uses.filter((u) => u.attr !== gone) })) } : {}),
+    ...(g.items
+      ? {
+          items: g.items.map((it) => ({
+            ...it,
+            uses: it.uses.filter((u) => u.attr !== gone),
+            ...(it.potion?.every ? { potion: { ...it.potion, every: it.potion.every.filter((u) => u.attr !== gone) } } : {}),
+          })),
+        }
+      : {}),
     actions: g.actions.map((a) => ({
       ...a,
       requires: a.requires?.attr === gone ? null : a.requires,

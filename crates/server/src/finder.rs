@@ -3,7 +3,8 @@
 //!
 //! `/queue` lists the dungeons; `/queue Name [tank|healer|damage]` queues you (and your party, who come as one);
 //! `/unqueue` leaves. A group is the dungeon's `group` players: one tank and one healer first when it is three or
-//! more, the rest whoever has waited longest; after `rules.finder_wait_secs` without them it takes whoever is there.
+//! more, the rest whoever has waited longest; after `rules.finder_wait_secs` without them it takes whoever is there,
+//! however few (alone if need be), so a quiet realm still gets its players to the door.
 //! Each player queued hears how the queue stands on chat channel 16 (`proto::chat::channel::FINDER`) when it
 //! changes: "Q|dungeon|queued|wanted|role", or "Q|" once out of it.
 
@@ -111,11 +112,11 @@ impl Sim {
         let mut mine: Vec<usize> = (0..self.finder.len()).filter(|&i| self.finder[i].dungeon == d).collect();
         mine.sort_by_key(|&i| self.finder[i].at);
         let total: usize = mine.iter().map(|&i| self.finder[i].members.len()).sum();
-        if total < want {
-            return None;
-        }
         let waited = mine.first().map_or(0, |&i| self.tick.saturating_sub(self.finder[i].at));
         let patient = waited < proto::rules::Rules::ticks(self.rules.finder_wait_secs, self.tick_hz);
+        if total == 0 || (total < want && patient) {
+            return None;
+        }
         let mut out: Vec<usize> = Vec::new();
         let mut size = 0;
         let take = |i: usize, out: &mut Vec<usize>, size: &mut usize| {
@@ -138,7 +139,7 @@ impl Sim {
         for &i in &mine {
             take(i, &mut out, &mut size);
         }
-        (size == want).then_some(out)
+        (size == want || (!patient && size > 0)).then_some(out)
     }
 
     /// Make the picked tickets one party (a raid if it is bigger than a party), and take them to the door.
@@ -181,7 +182,8 @@ impl Sim {
         }
         for &s in &slots {
             let role = tickets.iter().find(|t| t.members.contains(&self.ents.id_of(s))).map_or(DAMAGE, |t| t.role);
-            self.tells.push((s, format!("The finder has a company for {}: {}. You are at its door ({}).", dungeon.name, names.join(", "), ROLES[role as usize])));
+            let short = if slots.len() < dungeon.group as usize { format!(" Nobody else came in time: {} of the {} it wants.", slots.len(), dungeon.group) } else { String::new() };
+            self.tells.push((s, format!("The finder has a company for {}: {}. You are at its door ({}).{short}", dungeon.name, names.join(", "), ROLES[role as usize])));
         }
     }
 
@@ -264,5 +266,20 @@ mod tests {
         s.finder_command(q, "unqueue", "");
         s.system_finder();
         assert!(s.notes.iter().any(|n| n.0 == q && n.3 == "Q|"), "{:?}", s.notes);
+    }
+
+    #[test]
+    fn one_alone_waits_out_the_queue_and_is_taken_to_the_door() {
+        let mut s = sim();
+        let p = s.spawn(0).unwrap();
+        s.finder_command(p, "queue", "the crypt tank");
+        s.system_finder();
+        assert_eq!(s.finder.len(), 1, "not yet");
+        s.tick += proto::rules::Rules::ticks(s.rules.finder_wait_secs, s.tick_hz) + 1;
+        s.system_finder();
+        assert!(s.finder.is_empty());
+        let d = (s.ents.x[p] - 300.0).hypot(s.ents.y[p] - 300.0);
+        assert!(d > 10.0 && d < 20.0, "at the door: {d}");
+        assert!(s.tells.iter().any(|(q, t)| *q == p && t.contains("1 of the 3")), "{:?}", s.tells);
     }
 }

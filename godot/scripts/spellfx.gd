@@ -159,6 +159,12 @@ func _motes(at: Vector3, c: Color, o: Dictionary) -> CPUParticles3D:
 	_fading.append({"node": p, "t": 0.0, "life": p.lifetime + 0.4, "grow": 0.0, "spin": 0.0, "rise": 0.0})
 	return p
 
+## A potion drunk: motes of its colour swirl up round the drinker standing at `feet`, with a brief glow.
+func burst(feet: Vector3, c: Color) -> void:
+	_light(feet + Vector3(0, 1.0, 0), c, 2.0, 6.0, 0.8)
+	_motes(feet + Vector3(0, 0.2, 0), c, {"amount": 36, "speed": 1.6, "life": 1.3, "ring": 0.6, "spread": 20.0, "gravity": Vector3(0, 2.4, 0), "explode": 0.4, "size": 0.18})
+	_motes(feet + Vector3(0, 1.0, 0), c.lightened(0.4), {"amount": 14, "speed": 2.5, "life": 0.6, "size": 0.12})
+
 ## A jagged bolt of lightning from a to b, made of thin glowing slats; it flickers once and is gone.
 func _lightning(a: Vector3, b: Vector3, c: Color) -> void:
 	for pass_n in 2:

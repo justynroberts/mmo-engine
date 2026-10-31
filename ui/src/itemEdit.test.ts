@@ -36,6 +36,10 @@ describe('editing items keeps every reference honest', () => {
   it('renaming or deleting an attribute follows into what items do', () => {
     expect(renameAttr(base(), 0, 'hp').items![0]!.uses[0]!.attr).toBe('hp')
     expect(removeAttr(base(), 0).items![0]!.uses).toEqual([])
+    const brewed = base()
+    brewed.items![0]!.potion = { secs: 20, every: [{ attr: 'health', delta: 3 }] }
+    expect(renameAttr(brewed, 0, 'hp').items![0]!.potion!.every![0]!.attr).toBe('hp')
+    expect(removeAttr(brewed, 0).items![0]!.potion!.every).toEqual([])
   })
 
   it('a deleted place drops the item step rather than widening it to everywhere', () => {

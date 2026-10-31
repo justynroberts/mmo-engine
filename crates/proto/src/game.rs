@@ -1337,6 +1337,36 @@ pub struct ItemDef {
     /// client draws its model's nearest weapon; another item's look can be shown instead (`/look weapon Item`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<String>,
+    /// A potion: drinking one (its `uses` at once, as any item) also leaves this on the drinker for a while
+    /// (`potions.rs`); one potion's effect at a time of each kind, and `rules.potion_cooldown_secs` between drinks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub potion: Option<PotionFile>,
+}
+
+/// What a potion leaves on its drinker for `secs`: harder blows (`might`) and lighter wounds (`toughness`), shares as
+/// gear's are; `speed` added to the `speed` attribute; and `every` (attribute changes, like `uses`) each second.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PotionFile {
+    pub secs: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub might: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub toughness: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub speed: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub every: Vec<UseEffect>,
+}
+
+/// A potion resolved: `every` by attribute index.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PotionRt {
+    pub secs: f32,
+    pub might: f32,
+    pub toughness: f32,
+    pub speed: f32,
+    pub every: Vec<(usize, f32)>,
 }
 
 fn is_zero_u16(v: &u16) -> bool {
@@ -1493,6 +1523,7 @@ pub struct ItemRt {
     pub dye: Option<String>,
     pub furniture: Option<String>,
     pub look: Option<String>,
+    pub potion: Option<PotionRt>,
     /// `ItemDef::title`, empty when it has none (`shown`).
     pub title: String,
 }
@@ -1969,7 +2000,7 @@ pub fn is_hex_colour(s: &str) -> bool {
 }
 
 fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
-    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None }
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None, potion: None }
 }
 
 /// What the sample bots leave behind.
@@ -2514,6 +2545,29 @@ impl GameFile {
             if it.furniture.as_deref().is_some_and(|f| f.is_empty() || f.len() > 40 || !f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')) {
                 return Err(format!("{ctx}: furniture names a piece in at most 40 letters, digits, _ and :"));
             }
+            let potion = match &it.potion {
+                None => None,
+                Some(p) => {
+                    if !(p.secs.is_finite() && (1.0..=3600.0).contains(&p.secs)) {
+                        return Err(format!("{ctx}: a potion lasts 1..3600 seconds"));
+                    }
+                    if ![p.might, p.toughness].iter().all(|v| v.is_finite() && (0.0..=2.0).contains(v)) || !(p.speed.is_finite() && (0.0..=4.0).contains(&p.speed)) {
+                        return Err(format!("{ctx}: a potion's might and toughness are 0..2, its speed 0..4"));
+                    }
+                    if p.every.len() > 4 {
+                        return Err(format!("{ctx}: a potion has at most 4 effects each second"));
+                    }
+                    let mut every = Vec::new();
+                    for u in &p.every {
+                        if !u.delta.is_finite() || u.delta.abs() > 10_000.0 {
+                            return Err(format!("{ctx}: a potion's effect each second must be a number"));
+                        }
+                        let a = self.attrs.iter().position(|x| x.name == u.attr).ok_or_else(|| format!("{ctx}: unknown attribute '{}'", u.attr))?;
+                        every.push((a, u.delta));
+                    }
+                    Some(PotionRt { secs: p.secs, might: p.might, toughness: p.toughness, speed: p.speed, every })
+                }
+            };
             items.push(ItemRt {
                 name: it.name.clone(),
                 color: it.color.clone(),
@@ -2529,6 +2583,7 @@ impl GameFile {
                 dye: it.dye.clone(),
                 furniture: it.furniture.clone(),
                 look: it.look.clone(),
+                potion,
             });
         }
         let mut seen = HashSet::new();
@@ -3432,7 +3487,7 @@ mod tests {
         .unwrap();
         assert!(old.build().is_ok());
         let mut more = ok.clone();
-        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None });
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None, furniture: None, look: None, potion: None });
         assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
         g.items.clear();
         assert!(g.build().is_err(), "drops of items that no longer exist are caught");

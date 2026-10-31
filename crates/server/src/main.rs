@@ -40,6 +40,7 @@ mod skills;
 mod social;
 mod statics;
 mod store;
+mod potions;
 mod talents;
 mod trade;
 mod web;

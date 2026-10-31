@@ -277,6 +277,19 @@ export interface ItemDef {
   furniture?: string
   /** How it looks in the hand: sword, greatsword, axe, greataxe, staff, wand, knife or crossbow. */
   look?: string
+  /** A potion: drinking it (its uses at once, as any item) also leaves this on the drinker for a while. */
+  potion?: PotionFile
+}
+
+/** What a potion leaves on its drinker for secs (1..3600): might and toughness shares (0..2) as gear's, speed (0..4)
+ *  added to the speed attribute, and every (at most 4 attribute changes) each second. rules.potion_cooldown_secs
+ *  must pass between two drinks; drinking the same one again starts it afresh, different ones add up. */
+export interface PotionFile {
+  secs: number
+  might?: number
+  toughness?: number
+  speed?: number
+  every?: UseEffect[]
 }
 
 /** The block materials a player can build, by number (proto::game::BLOCK_NAMES up to the crops). */
@@ -835,6 +848,8 @@ export interface Rules {
   mail_waiting: number
   /** Coin it costs to take back every talent point at a market (/respec). */
   respec_cost: number
+  /** Seconds after drinking a potion before another may be drunk. */
+  potion_cooldown_secs: number
   /** Seconds a faction stands in a hold, unopposed, to take it; coin each online member of its holder gets a hold every ten minutes. */
   capture_secs: number
   hold_tithe: number
@@ -899,6 +914,7 @@ export const RULE_DEFAULTS: Rules = {
   listings_per_seller: 12,
   mail_waiting: 50,
   respec_cost: 20,
+  potion_cooldown_secs: 20,
   capture_secs: 60,
   hold_tithe: 3,
   fall_xp_loss_pct: 0,

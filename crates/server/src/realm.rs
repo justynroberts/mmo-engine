@@ -347,6 +347,7 @@ impl Sim {
         self.system_holds();
         self.system_furniture();
         self.system_makers();
+        self.system_potions();
     }
 
     /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel

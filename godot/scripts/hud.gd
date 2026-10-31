@@ -31,6 +31,8 @@ static var BODY: Font
 static var TITLE: Font
 ## Items' English names by item name (/play/info "items" "title"), for every panel that shows one: `item`.
 static var ITEM_TITLES := {}
+## What a potion gives, by item name ("Lasts 60 s: blows 25% harder"), for tooltips (main.gd from /play/info items).
+static var ITEM_NOTES := {}
 
 ## Text from anyone else (chat, names, a plot's name in a server line) made safe for the BBCode chat log, so
 ## nobody can restyle, resize or fake lines on another player's screen.
@@ -80,6 +82,8 @@ var bar := HBoxContainer.new()          # the action bar: abilities, the bag, ma
 var slots: Array[Slot] = []
 var spellbar := HBoxContainer.new()     # the game's spells (its actions after the first), over the action bar
 var spell_slots: Array[Slot] = []
+var potion_row := HBoxContainer.new() # the potions working on you, under your frame, counting down
+var _potions: Array = []                 # [[title, colour, ends at (seconds since start)], ...]
 var party_box := VBoxContainer.new()    # party mates under your frame: name and health
 var party_head := HBoxContainer.new()   # over them: PARTY n/size and a Leave button
 var _party_count := Label.new()
@@ -242,6 +246,15 @@ func _ready() -> void:
 	spellbar.alignment = BoxContainer.ALIGNMENT_CENTER
 	spellbar.visible = false
 	root.add_child(spellbar)
+	potion_row.position = Vector2(16, 100)
+	potion_row.add_theme_constant_override("separation", 4)
+	potion_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(potion_row)
+	var tick := Timer.new()
+	tick.wait_time = 0.5
+	tick.autostart = true
+	tick.timeout.connect(_show_potions)
+	add_child(tick)
 	party_head.position = Vector2(16, 118)
 	party_head.visible = false
 	party_head.add_theme_constant_override("separation", 8)
@@ -632,6 +645,38 @@ static func _outline(l: Label, px: int) -> void:
 ## Your frame. bars: [[label, fraction, text, colour], ...]; badges: short words shown under it (GOD, SNEAKING).
 func set_player(title: String, sub: String, initial: String, bars: Array, badges: Array) -> void:
 	me_frame.set_data(title, sub, initial, bars, badges)
+
+## The potions working on you: [[title, colour, seconds left], ...] (chat channel 21); they count down here.
+func set_potions(list: Array) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_potions = list.map(func(p): return [p[0], p[1], now + float(p[2])])
+	_show_potions()
+
+func _show_potions() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_potions = _potions.filter(func(p): return p[2] > now)
+	while potion_row.get_child_count() < _potions.size():
+		var chip := PanelContainer.new()
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var l := Label.new()
+		l.add_theme_font_size_override("font_size", 11)
+		_outline(l, 3)
+		chip.add_child(l)
+		potion_row.add_child(chip)
+	while potion_row.get_child_count() > _potions.size():
+		var gone := potion_row.get_child(potion_row.get_child_count() - 1)
+		potion_row.remove_child(gone)
+		gone.queue_free()
+	for i in _potions.size():
+		var p: Array = _potions[i]
+		var col: Color = p[1]
+		var chip := potion_row.get_child(i) as PanelContainer
+		var left := int(ceil(p[2] - now))
+		chip.add_theme_stylebox_override("panel", _box(Color(col.r * 0.25, col.g * 0.25, col.b * 0.25, 0.85), col, 4))
+		var l := chip.get_child(0) as Label
+		l.text = "%s %s" % [p[0], ("%d:%02d" % [left / 60, left % 60]) if left >= 60 else "%ds" % left]
+		l.add_theme_color_override("font_color", col.lightened(0.45))
+		chip.modulate.a = 0.55 + 0.45 * absf(sin(now * 4.0)) if left <= 5 else 1.0
 
 ## Your target's frame; an empty title hides it.
 func set_target(title: String, sub: String, bars: Array) -> void:

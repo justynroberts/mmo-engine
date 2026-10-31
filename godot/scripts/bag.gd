@@ -189,7 +189,7 @@ func refresh(bag: Array) -> void:
 			money += n
 		var b := _slots[i]
 		b.text = "" if name == "" else ("%s\n%d" % [HUD.item(name), n] if n > 1 else HUD.item(name))
-		b.tooltip_text = HUD.item(name) + (("\nMade by " + String(_makers[i])) if i < SLOTS and _makers.has(i) and name != "" else "")
+		b.tooltip_text = HUD.item(name) + (("\n" + String(HUD.ITEM_NOTES[name])) if HUD.ITEM_NOTES.has(name) else "") + (("\nMade by " + String(_makers[i])) if i < SLOTS and _makers.has(i) and name != "" else "")
 		var s := StyleBoxFlat.new()
 		s.bg_color = Color(0.09, 0.09, 0.1, 0.95) if name == "" else Color(d.get("color", "#888888")).darkened(0.62)
 		s.border_color = HUD.ACCENT if at == _picked else Color(1, 1, 1, 0.08)
