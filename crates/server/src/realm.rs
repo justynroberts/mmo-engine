@@ -328,16 +328,30 @@ impl Sim {
             }
             let me = self.tag_of(s);
             let (x, y) = (self.ents.x[s], self.ents.y[s]);
+            let hz = self.tick_hz.max(1) as f32;
             let mut entries = Vec::new();
+            // What was told, with the tick the next crop ripens rather than seconds left, so a clock running down
+            // is not news (the client counts down itself).
+            let mut said = Vec::new();
             for p in &self.rs.plots {
                 let [x0, y0, x1, y1] = [p.area.x0, p.area.y0, p.area.x1, p.area.y1].map(|v| v as f32 * BLOCK);
                 if x0 - LAND_REACH > x || x1 + LAND_REACH < x || y0 - LAND_REACH > y || y1 + LAND_REACH < y {
                     continue;
                 }
+                let mine = Some(&p.owner) == me.as_ref();
+                // On one's own land: when the soonest crop growing there is ripe (0 for none growing).
+                let next = if mine {
+                    self.rs.crops.iter().filter(|(&(key, _), v)| v.1 != 0 && p.area.has(key & 0x7fff, key >> 15)).map(|(_, v)| v.1).min().unwrap_or(0)
+                } else {
+                    0
+                };
+                let secs = if next == 0 { 0 } else { (next.saturating_sub(self.tick) as f32 / hz).ceil() as u32 };
                 let name: String = p.name.chars().filter(|c| !matches!(c, ',' | ';' | '|')).collect();
-                entries.push(format!("{},{},{},{},{},{name}", x0 as i32, y0 as i32, x1 as i32, y1 as i32, (Some(&p.owner) == me.as_ref()) as u8));
+                let head = format!("{},{},{},{},{}", x0 as i32, y0 as i32, x1 as i32, y1 as i32, mine as u8);
+                said.push(format!("{head},{next},{name}"));
+                entries.push(format!("{head},{secs},{name}"));
             }
-            let all = entries.join(";");
+            let all = said.join(";");
             if all == self.rs.land_sent[s] {
                 continue;
             }
@@ -1070,12 +1084,23 @@ mod tests {
         let told = |s: &Sim, p: usize| s.notes.iter().filter(|n| n.0 == p && n.2 == proto::chat::channel::LAND).map(|n| n.3.clone()).collect::<Vec<_>>();
         let mine = told(&s, owner);
         assert_eq!(mine.len(), 1);
-        assert!(mine[0].starts_with("L0|") && mine[0].contains(",1,"), "{mine:?}");
-        assert!(told(&s, near)[0].contains(",0,"), "someone else's");
+        assert!(mine[0].starts_with("L0|") && mine[0].ends_with(",1,0,"), "{mine:?}");
+        assert!(told(&s, near)[0].ends_with(",0,0,"), "someone else's");
         assert!(told(&s, far).is_empty(), "too far to be told");
         s.notes.clear();
         s.system_land();
         assert!(s.notes.is_empty(), "nothing new, nothing sent");
+        // A crop growing on it: the owner hears when it will be ripe, once, not every second as the time runs down.
+        let (cx, cy) = here(&s, owner);
+        let ripens = s.tick + 30 * s.tick_hz;
+        s.rs.crops.insert((proto::world::block_key(cx, cy), 0), ("oats".into(), ripens));
+        s.system_land();
+        assert!(told(&s, owner)[0].ends_with(",1,30,"), "{:?}", told(&s, owner));
+        s.notes.clear();
+        s.tick += s.tick_hz;
+        s.system_land();
+        assert!(s.notes.is_empty(), "the clock running down is not news");
+        s.rs.crops.clear();
         unclaim(&mut s, &mut clients, owner);
         s.system_land();
         assert_eq!(told(&s, owner), vec!["L0|".to_string()], "the land gone");

@@ -122,6 +122,7 @@ var _load_done := false                 # loaded() was called; it fades once the
 const LOAD_MIN := 2.2                   # long enough to read a line, however fast the world arrives
 var help_hint := Label.new()
 var prompt := Label.new()               # over the action bar: what F would do here ("F  Talk to the Shepherd")
+var goal_mark := GoalMark.new()         # the tracked quest's goal: a ring over it, or an arrow at the screen's edge
 var _banner_tw: Tween
 var _loc_tw: Tween
 var _toast_tw: Tween
@@ -435,6 +436,9 @@ func _ready() -> void:
 	prompt.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	prompt.visible = false
 	root.add_child(prompt)
+	goal_mark.set_anchors_preset(Control.PRESET_FULL_RECT)
+	goal_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(goal_mark)
 	help_hint.text = "F1  controls"
 	help_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 16)
 	help_hint.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -1077,6 +1081,57 @@ class Slot extends Control:
 
 ## The minimap: a round window on the world map, north up, you in the middle pointing the way you are going.
 ## The mouse wheel over it zooms.
+## Where the tracked quest wants us, over the 3D view: a ring with the distance where the goal is on screen, an
+## arrow at the edge pointing the way when it is off screen or behind us.
+class GoalMark extends Control:
+	var on := false
+	var at := Vector2.ZERO     # the goal's place on screen (meaningless when behind)
+	var behind := false
+	var text := ""
+
+	func show_goal(p_on: bool, p_at := Vector2.ZERO, p_behind := false, p_text := "") -> void:
+		if p_on == on and p_at.distance_to(at) < 0.5 and p_behind == behind and p_text == text:
+			return
+		on = p_on
+		at = p_at
+		behind = p_behind
+		text = p_text
+		queue_redraw()
+
+	func _draw() -> void:
+		if not on:
+			return
+		var area := get_viewport_rect().size
+		var mid := area / 2.0
+		var margin := 48.0
+		var inside := Rect2(Vector2(margin, margin), area - Vector2(margin, margin) * 2.0)
+		var col := Color("ffe08a")
+		var font := get_theme_default_font()
+		if not behind and inside.has_point(at):
+			draw_circle(at, 9.5, Color(0, 0, 0, 0.6))
+			draw_arc(at, 8.0, 0.0, TAU, 24, col, 2.0, true)
+			draw_circle(at, 2.5, col)
+			var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+			draw_string_outline(font, at + Vector2(-w / 2.0, 26), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, 4, Color(0, 0, 0, 0.9))
+			draw_string(font, at + Vector2(-w / 2.0, 26), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, col)
+			return
+		# Off screen: from the middle towards it (away from it when behind us), pinned to the edge.
+		var d := (at - mid) * (-1.0 if behind else 1.0)
+		if d.length() < 0.001:
+			d = Vector2(0, 1)
+		d = d.normalized()
+		var k := minf(absf((inside.size.x / 2.0) / d.x) if absf(d.x) > 0.001 else INF, absf((inside.size.y / 2.0) / d.y) if absf(d.y) > 0.001 else INF)
+		var p := mid + d * k
+		var side := Vector2(-d.y, d.x)
+		var tri := PackedVector2Array([p + d * 14.0, p - d * 6.0 + side * 10.0, p - d * 6.0 - side * 10.0])
+		draw_colored_polygon(tri, col)
+		tri.append(tri[0])
+		draw_polyline(tri, Color(0, 0, 0, 0.85), 1.5)
+		var w2 := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+		var tp := p - d * 26.0 + Vector2(-w2 / 2.0, 5)
+		draw_string_outline(font, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, 4, Color(0, 0, 0, 0.9))
+		draw_string(font, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, col)
+
 class Minimap extends Control:
 	const SIDE := 180.0
 	var tex: ImageTexture

@@ -18,14 +18,15 @@ order (each step is playable on its own):
 4. Raids: a raid is a party past 5 (up to `rules.raid_size`), drawn as a compact grid; dungeons can ask for one.
 
 **B. Quests that lead somewhere** — done (the goal shows on the map, the minimap and in the tracker with its
-distance and compass point, not as a screen-edge arrow; the starter chain is "a new arrival" to "the brigand king")
+distance and compass point, and over the view as a ring or an arrow at the screen's edge; the starter chain is
+"a new arrival" to "the brigand king")
 1. The tracked quest's goal shown on the map, the minimap and as an arrow at the screen's edge.
 2. "E to talk" over a giver in reach.
 3. A starter chain through the systems: a town errand, the first furrow (farming), a shelter (building), the
    brigands' camp (a dungeon with a party).
 
-**C. Farming** — done but for time to harvest (the land bar counts what is sprouting and ripe; making is a row in
-the bag)
+**C. Farming** — done (the land bar counts what is sprouting and ripe and says when the next is ready; making is
+a row in the bag)
 1. A plot window: claim here, grow, name, with the plot's edge drawn on the ground while it is open.
 2. Crops show their stage and time to harvest when looked at; seeds plant from the bag's quick slots.
 3. A crafting window over `/craft` (recipes, what you have, make), with cooking recipes for the crops.

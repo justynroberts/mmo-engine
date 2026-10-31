@@ -972,6 +972,7 @@ func _process(delta: float) -> void:
 	hud.minimap.dungeons = _dungeons()
 	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
 	hud.minimap.goals = questui.goals(homes).filter(func(g): return not g.is_empty())
+	_show_goal(hud.minimap.goals)
 	_goal_in -= delta
 	if _goal_in <= 0.0:
 		_goal_in = 0.25
@@ -3194,7 +3195,7 @@ func _make_horse() -> Node3D:
 	return root
 
 var _raid := false # our party was made a raid (the server said so)
-var land: Array = []             # the land held near us (chat channel 15): [[Rect2, mine, name], ...]
+var land: Array = []             # the land held near us (chat channel 15): [[Rect2, mine, name, ripe at (t_total, 0 none)], ...]
 var _land_edges: MeshInstance3D  # their edges, a low glowing fence, shown in build mode
 var _land_drawn := ""            # what the fence was last built from
 var _crops_seen := {}            # the land bar's crop count, worked out twice a second
@@ -3202,15 +3203,30 @@ const CROP_SPROUT := 15          # proto::game::SPROUT and RIPE, block materials
 const CROP_RIPE := 16
 var _goal_in := 0.0 # seconds till the tracker's distances are worked out again
 
+## The first quest goal over the 3D view: a ring on it, or an arrow at the screen's edge; gone once we are there.
+func _show_goal(goals: Array) -> void:
+	if goals.is_empty() or building or world_map.visible:
+		hud.goal_mark.show_goal(false)
+		return
+	var g: Array = goals[0]
+	var p: Vector2 = g[0]
+	var d: float = maxf(0.0, me_pos.distance_to(p) - float(g[2]))
+	if d < 1.0:
+		hud.goal_mark.show_goal(false)
+		return
+	var w := Vector3(p.x, theme.height(p.x, p.y) + 2.0, p.y)
+	hud.goal_mark.show_goal(true, cam.unproject_position(w), cam.is_position_behind(w), "%s  %d u" % [g[1], int(d)])
+
 ## The land held near us, from the server: a first line ("L0|") starts the list again, "L1|" adds to it.
 func _on_land(text: String) -> void:
 	if text.begins_with("L0|"):
 		land.clear()
 	for e in text.substr(3).split(";", false):
 		var f := e.split(",")
-		if f.size() >= 5:
+		if f.size() >= 6:
 			var r := Rect2(float(f[0]), float(f[1]), float(f[2]) - float(f[0]), float(f[3]) - float(f[1]))
-			land.append([r, f[4] == "1", ",".join(f.slice(5)) if f.size() > 5 else ""])
+			var secs := float(f[5])
+			land.append([r, f[4] == "1", ",".join(f.slice(6)) if f.size() > 6 else "", t_total + secs if secs > 0.0 else 0.0])
 
 ## In build mode: whose land we stand on, with what can be done about it, and the edges of the land round us.
 func _show_land() -> void:
@@ -3228,7 +3244,12 @@ func _show_land() -> void:
 		hud.show_land("Unclaimed land", false, false)
 	elif here[1]:
 		var r: Rect2 = here[0]
-		hud.show_land("Your land%s, %d by %d%s" % [(": " + String(here[2])) if here[2] != "" else "", int(r.size.x), int(r.size.y), _crops_in(r)], true, true)
+		var ripe_at: float = here[3]
+		var soon := ""
+		if ripe_at > 0.0:
+			var left := ripe_at - t_total
+			soon = ", next ripe now" if left <= 0.0 else (", next ripe in %d s" % ceili(left) if left < 90.0 else ", next ripe in %d min" % ceili(left / 60.0))
+		hud.show_land("Your land%s, %d by %d%s%s" % [(": " + String(here[2])) if here[2] != "" else "", int(r.size.x), int(r.size.y), _crops_in(r), soon], true, true)
 	else:
 		hud.show_land("Held by another%s" % ((": " + String(here[2])) if here[2] != "" else ""), true, false)
 	_draw_land_edges()
