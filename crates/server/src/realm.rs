@@ -26,6 +26,8 @@ pub const PLOTS_MAX: usize = 20_000;
 pub const CROPS_MAX: usize = 50_000;
 /// How far past a dungeon place's edge a player still counts as inside (so stepping on the edge does not flicker).
 pub const DUNGEON_SLACK: f32 = 1.5;
+/// How far round a player the land held is told to them (world units).
+pub const LAND_REACH: f32 = 160.0;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Guild {
@@ -118,6 +120,8 @@ pub struct State {
     pub guild_invite: Vec<u16>,
     /// Per slot: the name of the named plot they were last seen in ("" for none), to tell them when they walk in.
     pub plot_here: Vec<String>,
+    /// Per slot: the land near them as last told (chat channel LAND), so it goes again only when it changes.
+    pub land_sent: Vec<String>,
     pub guilds: Vec<Guild>,
     pub plots: Vec<Plot>,
     /// Growing and ripe crops: (column key, layer) -> (crop name, tick it ripens).
@@ -130,7 +134,7 @@ pub struct State {
 
 impl State {
     pub fn new(cap: usize) -> State {
-        State { faction: vec![0; cap], phase: vec![0; cap], guild_invite: vec![0; cap], plot_here: vec![String::new(); cap], ..Default::default() }
+        State { faction: vec![0; cap], phase: vec![0; cap], guild_invite: vec![0; cap], plot_here: vec![String::new(); cap], land_sent: vec![String::new(); cap], ..Default::default() }
     }
 
     pub fn reset(&mut self, slot: usize) {
@@ -138,6 +142,7 @@ impl State {
         self.phase[slot] = 0;
         self.guild_invite[slot] = 0;
         self.plot_here[slot].clear();
+        self.land_sent[slot].clear();
     }
 
     /// The guild an account belongs to.
@@ -308,6 +313,48 @@ impl Sim {
         }
         self.system_dungeons();
         self.system_plot_names();
+        self.system_land();
+    }
+
+    /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel
+    /// LAND), so a client can draw its edges and say what standing there means.
+    fn system_land(&mut self) {
+        if self.realm.plots.is_none() {
+            return;
+        }
+        for s in 0..self.ents.high {
+            if !self.is_live_player(s) {
+                continue;
+            }
+            let me = self.tag_of(s);
+            let (x, y) = (self.ents.x[s], self.ents.y[s]);
+            let mut entries = Vec::new();
+            for p in &self.rs.plots {
+                let [x0, y0, x1, y1] = [p.area.x0, p.area.y0, p.area.x1, p.area.y1].map(|v| v as f32 * BLOCK);
+                if x0 - LAND_REACH > x || x1 + LAND_REACH < x || y0 - LAND_REACH > y || y1 + LAND_REACH < y {
+                    continue;
+                }
+                let name: String = p.name.chars().filter(|c| !matches!(c, ',' | ';' | '|')).collect();
+                entries.push(format!("{},{},{},{},{},{name}", x0 as i32, y0 as i32, x1 as i32, y1 as i32, (Some(&p.owner) == me.as_ref()) as u8));
+            }
+            let all = entries.join(";");
+            if all == self.rs.land_sent[s] {
+                continue;
+            }
+            self.rs.land_sent[s] = all;
+            // As few lines as will carry it, each inside a chat line.
+            let mut line = String::from("L0|");
+            for e in &entries {
+                if line.len() + e.len() + 1 > proto::chat::MAX_TEXT {
+                    self.notes.push((s, 0, proto::chat::channel::LAND, std::mem::replace(&mut line, String::from("L1|"))));
+                }
+                if !line.ends_with('|') {
+                    line.push(';');
+                }
+                line.push_str(e);
+            }
+            self.notes.push((s, 0, proto::chat::channel::LAND, line));
+        }
     }
 
     /// Once a second: a player who walks into a named plot is told whose land it is.
@@ -1011,6 +1058,27 @@ mod tests {
         assert!(!act(&mut s, stranger, ACT_BUILD));
         assert!(act(&mut s, owner, ACT_BUILD));
         assert!(!act(&mut s, stranger, ACT_BREAK));
+    }
+
+    #[test]
+    fn players_are_told_the_land_near_them_when_it_changes() {
+        let mut s = sim_with(|g| g.plots = Some(PlotRules { size: 8, per_player: 1, cost: 0, sizes: vec![] }));
+        let (owner, near, far) = (player(&mut s, 100.0, 100.0, "own"), player(&mut s, 150.0, 100.0, "near"), player(&mut s, 480.0, 480.0, "far"));
+        let mut clients = Clients::default();
+        claim(&mut s, &mut clients, owner);
+        s.system_land();
+        let told = |s: &Sim, p: usize| s.notes.iter().filter(|n| n.0 == p && n.2 == proto::chat::channel::LAND).map(|n| n.3.clone()).collect::<Vec<_>>();
+        let mine = told(&s, owner);
+        assert_eq!(mine.len(), 1);
+        assert!(mine[0].starts_with("L0|") && mine[0].contains(",1,"), "{mine:?}");
+        assert!(told(&s, near)[0].contains(",0,"), "someone else's");
+        assert!(told(&s, far).is_empty(), "too far to be told");
+        s.notes.clear();
+        s.system_land();
+        assert!(s.notes.is_empty(), "nothing new, nothing sent");
+        unclaim(&mut s, &mut clients, owner);
+        s.system_land();
+        assert_eq!(told(&s, owner), vec!["L0|".to_string()], "the land gone");
     }
 
     #[test]

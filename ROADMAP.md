@@ -4,6 +4,39 @@ What the long-lived MMOs have that this one does not yet, in the order it is bei
 game file (nothing hard-coded per world), works through the console and the MCP, and ships with tests. A phase is
 done when the server, the Godot client and the console all handle it.
 
+## Now: make it a game, not a set of slash commands
+
+The server already has dungeons, parties, farming, plots, crafting, guilds and 24 quests, but most of it is reached
+through chat commands a new player never finds. This pass puts each behind a window, a marker or a quest, in this
+order (each step is playable on its own):
+
+**A. Dungeons and groups** — done (raids are a party grown past 5 with `/raid`; dungeons do not yet ask for one)
+1. The seed world gets its two dungeons (Brú na Bóinne with Crom Dubh, the brigands' camp with the Brigand King),
+   bosses included, as the 65,536 world has them.
+2. Dungeons marked on the map and minimap, with a level and "party of N" note; a banner on entering and clearing.
+3. A party window (P): members, invite the player you have targeted, leave; an invite pops up to accept or decline.
+4. Raids: a raid is a party past 5 (up to `rules.raid_size`), drawn as a compact grid; dungeons can ask for one.
+
+**B. Quests that lead somewhere** — done (the goal shows on the map, the minimap and in the tracker with its
+distance and compass point, not as a screen-edge arrow; the starter chain is "a new arrival" to "the brigand king")
+1. The tracked quest's goal shown on the map, the minimap and as an arrow at the screen's edge.
+2. "E to talk" over a giver in reach.
+3. A starter chain through the systems: a town errand, the first furrow (farming), a shelter (building), the
+   brigands' camp (a dungeon with a party).
+
+**C. Farming** — done but for time to harvest (the land bar counts what is sprouting and ripe; making is a row in
+the bag)
+1. A plot window: claim here, grow, name, with the plot's edge drawn on the ground while it is open.
+2. Crops show their stage and time to harvest when looked at; seeds plant from the bag's quick slots.
+3. A crafting window over `/craft` (recipes, what you have, make), with cooking recipes for the crops.
+
+**D. Building** — 1 and 2 done (the build bar already showed costs; quests have a `build` step); blueprints to do
+1. The build bar shows each material's cost and how many you carry; free ones marked.
+2. A quest step "build N blocks (of a material) in your plot", so quests can ask for building.
+3. Blueprints: a few small buildings laid out as a ghost to fill in.
+
+**E. The rest behind windows:** guild (`/guild`), mailbox (`/mail`), standing (`/rep`).
+
 ## 1. Boss fights — done
 
 A bot type with a `boss` section fights by script rather than by its rule stack alone.

@@ -7,6 +7,7 @@ extends CanvasLayer
 signal bag_op(op: int, slot: int, other: int)   # proto::game::bag_op, sent as ACT_BAG
 signal offered(slot: int)                        # put into the trade that is open
 signal auction_requested
+signal craft(recipe: String)                     # make one batch of a recipe (/craft)
 
 const HUD := preload("res://scripts/hud.gd")
 const SLOTS := 24
@@ -31,6 +32,8 @@ var _picked := -1
 var _list: Array = []
 var _items: Array = []            # /play/info items: tag - 1 -> {name, color, value, rarity}
 var _currency := ""
+var _recipes: Array = []          # /play/info realm recipes: {name, makes, count, needs: [[item, n], ...]}
+var _make := HBoxContainer.new()  # under the bag: a button per recipe, lit when you carry what it needs
 
 func _ready() -> void:
 	layer = 6
@@ -79,6 +82,12 @@ func _ready() -> void:
 	v.add_child(_about)
 	_buttons.add_theme_constant_override("separation", 8)
 	v.add_child(_buttons)
+	var make_row := HBoxContainer.new()
+	make_row.add_theme_constant_override("separation", 8)
+	make_row.add_child(title("Make", 16, false))
+	_make.add_theme_constant_override("separation", 6)
+	make_row.add_child(_make)
+	v.add_child(make_row)
 	var hint := Label.new()
 	hint.text = "Click a thing, then a slot to move it there. Right click uses it. I, F4 or Esc to close."
 	hint.add_theme_font_size_override("font_size", 12)
@@ -103,6 +112,44 @@ static func title(text: String, size: int, grow: bool) -> Label:
 	if grow:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return l
+
+## What can be made (from /play/info "realm" "recipes").
+func set_recipes(recipes: Array) -> void:
+	_recipes = recipes
+
+## A recipe's buttons: what it makes and what it takes, with how many of each you carry.
+func _show_recipes() -> void:
+	for c in _make.get_children():
+		c.queue_free()
+	if _recipes.is_empty():
+		var none := Label.new()
+		none.text = "Nothing can be made in this world."
+		none.add_theme_color_override("font_color", HUD.MUTED)
+		_make.add_child(none)
+		return
+	var carried := {}
+	for i in mini(SLOTS, _list.size()):
+		var d: Dictionary = _list[i]
+		var n := String(d.get("item", ""))
+		if n != "":
+			carried[n] = int(carried.get(n, 0)) + int(d.get("count", 0))
+	for r in _recipes:
+		var can := true
+		var parts := []
+		for need in r.get("needs", []):
+			var item := String(need[0]) if need is Array else String(need.get("item", ""))
+			var want := int(need[1]) if need is Array else int(need.get("count", 1))
+			var have := int(carried.get(item, 0))
+			can = can and have >= want
+			parts.append("%d/%d %s" % [have, want, HUD.item(item)])
+		var b := Button.new()
+		b.text = "%s x%d" % [HUD.item(String(r.get("makes", r.get("name", "")))), int(r.get("count", 1))]
+		b.tooltip_text = "Takes " + ", ".join(parts)
+		b.disabled = not can
+		b.focus_mode = Control.FOCUS_NONE
+		var name := String(r.get("name", ""))
+		b.pressed.connect(func(): craft.emit(name))
+		_make.add_child(b)
 
 ## The game's items and money (from /play/info).
 func set_items(items: Array, currency: String) -> void:
@@ -139,6 +186,7 @@ func refresh(bag: Array) -> void:
 		b.add_theme_color_override("font_color", HUD.TEXT)
 	_money.text = "%d %s" % [money, HUD.item(_currency)] if _currency != "" else ""
 	_show_picked()
+	_show_recipes()
 
 func _entry(at: int) -> Dictionary:
 	var i := at if at < BANK else SLOTS + at - BANK

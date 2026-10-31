@@ -19,6 +19,11 @@ fades; the music itself is unchanged.
 | `../theme/ar_aghaidh.ogg` | Ar Aghaidh (the old title theme, kept for later; not played) | made for this game by the project owner with Suno | owned by the project |
 | `holy_5.ogg` | Ceremonial Build (take 1), mastered 3 dB under the others to sit back | made for this game by the project owner | owned by the project |
 | `city_2.ogg` | Ceremonial Build (take 2), mastered 3 dB under the others to sit back | made for this game by the project owner | owned by the project |
+| `tavern.ogg` | Tavern Dance (the inn of an evening; -16.5 LUFS like the town pieces) | made for this game by the project owner | owned by the project |
+| `tavern_2.ogg` | Pastoral Tavern (the inn of an evening; -16.5 LUFS) | made for this game by the project owner | owned by the project |
+| `eerie_6.ogg` | Deep Dungeon Silence (-21 LUFS like the other eerie pieces) | made for this game by the project owner | owned by the project |
+| `holy_6.ogg` | Ancient Silence (-19.5 LUFS like the other holy pieces) | made for this game by the project owner | owned by the project |
+| `capital.ogg` | Procession of Hibernia (the capital's own, Áth Cliath; -15.7 LUFS like `city.ogg`) | made for this game by the project owner | owned by the project |
 
 ## Kevin MacLeod (incompetech.com), CC BY 4.0
 
@@ -52,4 +57,4 @@ Attribution line for each, as the author asks for it (for an in-game credits scr
 > Licensed under Creative Commons: By Attribution 4.0 License
 > http://creativecommons.org/licenses/by/4.0/
 
-| city.ogg | Dignified Procession | the project owner, made for this game with Suno | own work | the biggest city's music (Áth Cliath) |
+| city.ogg | Dignified Procession | the project owner, made for this game with Suno | own work | the big cities' music (Corcaigh, Gaillimh, Luimneach, Port Láirge) |

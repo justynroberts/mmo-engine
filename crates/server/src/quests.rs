@@ -259,6 +259,31 @@ impl Sim {
         }
     }
 
+    /// The player in `s` has built a block of material `kind`: a "build N" step of that material (or of any) moves on.
+    pub fn quest_build(&mut self, s: usize, kind: u8) {
+        if self.quests.is_empty() {
+            return;
+        }
+        let name = proto::game::BLOCK_NAMES.get(kind as usize).copied().unwrap_or("");
+        for i in 0..self.ents.quests[s].len() {
+            let run = &self.ents.quests[s][i];
+            if run.state != QUEST_ACTIVE {
+                continue;
+            }
+            let Some((_, q)) = self.quest(&run.name) else { continue };
+            if let Some(QuestStep::Build { count, material }) = q.steps.get(run.step as usize) {
+                if material.as_deref().is_none_or(|m| m == name) {
+                    let need = *count;
+                    self.ents.quests[s][i].count += 1;
+                    self.bump_quests(s);
+                    if self.ents.quests[s][i].count >= need {
+                        self.advance(s, i);
+                    }
+                }
+            }
+        }
+    }
+
     /// Once a second: places walked into and items gathered count for the steps waiting on them.
     pub fn system_quests(&mut self) {
         if self.quests.is_empty() {
@@ -289,7 +314,8 @@ impl Sim {
 mod tests {
     use crate::sim::{PendingAction, Sim, NONE};
     use proto::game::{GameFile, LevelsFile, QuestFile, QuestItem, QuestStep, ACT_ACCEPT, ACT_TALK};
-    use proto::wire::{NO_OFFER, QUEST_DONE, QUEST_READY};
+    use super::QuestRun;
+    use proto::wire::{NO_OFFER, QUEST_ACTIVE, QUEST_DONE, QUEST_READY};
     use proto::world::World;
 
     #[test]
@@ -356,6 +382,29 @@ mod tests {
         act(&mut s, me, ACT_TALK, mid, 0);
         assert_eq!(s.ents.offer[me], NO_OFFER);
         assert_eq!(s.record_of(me).quests, vec![("cull".to_string(), 2, 0, QUEST_DONE)]);
+    }
+
+    #[test]
+    fn building_blocks_of_the_asked_material_moves_a_build_step_on() {
+        let mut g = GameFile::default_game();
+        g.quests.push(QuestFile {
+            name: "shelter".into(),
+            title: "A shelter".into(),
+            giver: "merchant".into(),
+            steps: vec![QuestStep::Build { count: 2, material: Some("timber".into()) }, QuestStep::Build { count: 1, material: None }],
+            ..Default::default()
+        });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        s.ents.quests[me].push(QuestRun { name: "shelter".into(), step: 0, count: 0, state: QUEST_ACTIVE });
+        let timber = proto::game::BLOCK_NAMES.iter().position(|&n| n == "timber").unwrap() as u8;
+        s.quest_build(me, 0); // stone: not what is asked
+        assert_eq!(s.ents.quests[me][0].count, 0);
+        s.quest_build(me, timber);
+        s.quest_build(me, timber);
+        assert_eq!(s.ents.quests[me][0].step, 1, "on to building anything");
+        s.quest_build(me, 0);
+        assert_eq!(s.ents.quests[me][0].state, QUEST_READY);
     }
 
     #[test]

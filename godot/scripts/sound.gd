@@ -12,7 +12,7 @@ extends Node
 
 const AMBIENCE := ["sea", "shore", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy",
 	"battle", "tavern", "fair"]
-const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city"]
+const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern"]
 ## How loud each layer is at full strength, in dB, so they sit together.
 const AMB_DB := {"sea": -11.0, "shore": -10.0, "river": -12.0, "forest": -9.0, "night": -8.0, "wind": -16.0, "rain": -10.0,
 	"fire": -6.0, "town": -15.0, "market": -11.0, "crypt": -5.0, "holy": -9.0, "battle": -10.0, "tavern": -9.0, "fair": -7.0}
@@ -24,10 +24,10 @@ const FADE := 0.6          # ambience: share of the way to what is wanted, per s
 const MUSIC_FADE := 5.0    # seconds to cross over when the mood changes
 const TRACK_FADE := 4.0    # seconds of overlap when one piece of a mood runs into the next
 ## Silence (seconds, min..max) between pieces for the quieter moods; the others run straight on with a crossfade.
-const MUSIC_GAP := {"city": Vector2(8.0, 20.0), "explore": Vector2(4.0, 18.0), "night": Vector2(6.0, 20.0), "holy": Vector2(3.0, 10.0),
+const MUSIC_GAP := {"city": Vector2(8.0, 20.0), "capital": Vector2(8.0, 20.0), "explore": Vector2(4.0, 18.0), "night": Vector2(6.0, 20.0), "holy": Vector2(3.0, 10.0),
 	"eerie": Vector2(5.0, 16.0)}
 ## Pieces made for this game, picked twice as often as the others of their mood.
-const MUSIC_FAVOURED := {"explore_2": 2.0, "explore_3": 2.0, "eerie_5": 2.0, "battle_5": 2.0}
+const MUSIC_FAVOURED := {"explore_2": 2.0, "explore_3": 2.0, "eerie_5": 2.0, "eerie_6": 2.0, "battle_5": 2.0, "holy_6": 2.0}
 ## Fights start suddenly: battle music comes up this fast (it still fades out over MUSIC_FADE when the fight ends).
 const BATTLE_IN := 1.5
 const MUSIC_MAX_TAKES := 24

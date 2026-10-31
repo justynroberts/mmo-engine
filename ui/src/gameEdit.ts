@@ -1,4 +1,5 @@
 import type { Act, ActionFile, Archetype, AttrFile, ClassFile, Cond, EffectFile, GameFile, Place, QuestFile, QuestStep, Route, Rule } from './api'
+import { MATERIALS } from './api'
 import { rewriteRefs, type RefKind } from './directorEdit'
 
 /** Everything that changes the wire schema (and so the handshake hash). Quests, levels, items and the rest are not
@@ -563,6 +564,7 @@ export const QUEST_STEP_KINDS: readonly { kind: QuestStep['kind']; label: string
   { kind: 'visit', label: 'Go to a place' },
   { kind: 'collect', label: 'Bring items' },
   { kind: 'talk', label: 'Talk to a bot' },
+  { kind: 'build', label: 'Build blocks' },
 ]
 
 /** A new step of a kind, naming the first thing of its sort the game has ('' where it has none). */
@@ -576,6 +578,8 @@ export function defaultQuestStep(kind: QuestStep['kind'], g: GameFile): QuestSte
       return { kind, item: g.items?.[0]?.name ?? '', count: 3 }
     case 'talk':
       return { kind, archetype: g.archetypes[0]?.name ?? '' }
+    case 'build':
+      return { kind, count: 10 }
   }
 }
 
@@ -693,7 +697,8 @@ export function questProblems(g: GameFile): string[] {
       if ((s.kind === 'kill' || s.kind === 'talk') && !arch.has(s.archetype)) out.push(`${st}: no bot type called “${s.archetype}”`)
       if (s.kind === 'visit' && !place.has(s.place)) out.push(`${st}: no place called “${s.place}”`)
       if (s.kind === 'collect' && !itm.has(s.item)) out.push(`${st}: no item called “${s.item}”`)
-      if ((s.kind === 'kill' || s.kind === 'collect') && !(s.count >= 1)) out.push(`${st}: a count of at least 1`)
+      if ((s.kind === 'kill' || s.kind === 'collect' || s.kind === 'build') && !(s.count >= 1)) out.push(`${st}: a count of at least 1`)
+      if (s.kind === 'build' && s.material !== undefined && !(MATERIALS as readonly string[]).includes(s.material)) out.push(`${st}: no material called “${s.material}”`)
     })
     for (const r of q.reward ?? []) {
       if (!itm.has(r.item)) out.push(`${at}: rewards “${r.item}”, which is not an item`)

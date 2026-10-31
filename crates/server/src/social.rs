@@ -2,7 +2,8 @@
 //!
 //! A chat line that starts with "/" is a command, not something said aloud: `/w Name text` whispers, `/r text`
 //! answers the last whisper, `/who` lists who is on, `/rep` shows your standing with the factions, and
-//! `/invite Name`, `/accept`, `/decline`, `/leave`, `/p text` and `/party` make and run a party. `/mail`, `/send` and
+//! `/invite Name`, `/accept`, `/decline`, `/leave`, `/p text` and `/party` make and run a party, and `/raid` makes it
+//! a raid, which may grow to `rules.raid_size`. `/mail`, `/send` and
 //! `/mailbox` are mail (`mail.rs`). A party shares the experience of a bot that falls near its
 //! members and their "beat N" quest steps, and its members see each other in a PARTY packet.
 
@@ -21,6 +22,12 @@ impl Sim {
         (0..self.ents.high).filter(|&o| self.ents.alive[o] && self.ents.owner[o] < DRIVEN && self.party[o] == p).collect()
     }
 
+    /// How many the party `slot` is in may hold: a raid's size once it is one.
+    pub fn party_cap(&self, slot: usize) -> usize {
+        let p = self.party[slot];
+        (if p != 0 && self.raids.contains(&p) { self.rules.raid_size } else { self.rules.party_size }) as usize
+    }
+
     fn bump_party(&mut self, members: &[usize]) {
         for &m in members {
             self.party_ver[m] = self.party_ver[m].wrapping_add(1);
@@ -30,10 +37,14 @@ impl Sim {
     /// Leave a party (it ends when one is left).
     pub fn leave_party(&mut self, s: usize) -> Vec<usize> {
         let mates = self.party_of(s);
+        let p = self.party[s];
         self.party[s] = 0;
         let rest: Vec<usize> = mates.into_iter().filter(|&m| m != s).collect();
         if rest.len() == 1 {
             self.party[rest[0]] = 0;
+        }
+        if rest.len() <= 1 {
+            self.raids.remove(&p);
         }
         self.bump_party(&rest);
         self.party_ver[s] = self.party_ver[s].wrapping_add(1);
@@ -194,8 +205,8 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                 say(clients, slot, &format!("{} is already in a party.", sim.name_of(to)));
                 return true;
             }
-            if sim.party_of(slot).len() >= sim.rules.party_size as usize {
-                say(clients, slot, "Your party is full.");
+            if sim.party_of(slot).len() >= sim.party_cap(slot) {
+                say(clients, slot, if sim.raids.contains(&sim.party[slot]) { "Your raid is full." } else { "Your party is full. /raid makes it a raid." });
                 return true;
             }
             sim.invite[to] = me;
@@ -208,7 +219,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                 return true;
             };
             sim.invite[slot] = 0;
-            if sim.party_of(from).len() >= sim.rules.party_size as usize {
+            if sim.party_of(from).len() >= sim.party_cap(from) {
                 say(clients, slot, "That party is full now.");
                 return true;
             }
@@ -252,6 +263,20 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                 tell(clients, m, me, channel::PARTY, &msg);
             }
             clients.log_chat(sim.tick, me, channel::PARTY, &msg);
+        }
+        "raid" => {
+            if sim.party[slot] == 0 {
+                say(clients, slot, "Make a party first: /invite Name, then /raid.");
+                return true;
+            }
+            if sim.raids.insert(sim.party[slot]) {
+                let size = sim.rules.raid_size;
+                for m in sim.party_of(slot) {
+                    say(clients, m, &format!("{my_name} makes the party a raid (up to {size})."));
+                }
+            } else {
+                say(clients, slot, "Your party is a raid already.");
+            }
         }
         "party" => {
             let mates: Vec<String> = sim.party_of(slot).iter().map(|&m| sim.name_of(m).to_string()).collect();

@@ -411,6 +411,8 @@ pub struct Sim {
     pub last_whisper: Vec<u32>,
     pub party_ver: Vec<u32>,
     pub next_party: u32,
+    /// Parties made raids with `/raid`: they may grow to `rules.raid_size`.
+    pub raids: std::collections::HashSet<u32>,
     /// Money, gear and mounts (`trade.rs`): the money item, what each player wears (item index + 1 per slot), how
     /// much a mount adds to their speed while they ride (0 on foot), and a version bumped when either changes.
     pub currency: Option<usize>,
@@ -676,6 +678,7 @@ impl Sim {
             last_whisper: vec![0; cap],
             party_ver: vec![0; cap],
             next_party: 0,
+            raids: Default::default(),
             currency,
             classes,
             class: vec![0; cap],
@@ -1259,6 +1262,9 @@ impl Sim {
         let mask = self.blocks.get(key).map(|c| c.column()).unwrap_or(proto::world::Column { base, mask: 0 });
         self.world.set_column(cx, cy, mask);
         self.stats.builds += 1;
+        if self.ents.owner[s] < DRIVEN {
+            self.quest_build(s, kind);
+        }
         Ok(())
     }
 

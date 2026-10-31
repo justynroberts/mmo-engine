@@ -279,7 +279,7 @@ pub struct Place {
 }
 /// The ambiences a place may have, and its music (the client's sounds: godot/sounds, made by scripts/make_audio.py).
 pub const SOUNDS: [&str; 12] = ["sea", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy", "battle"];
-pub const MUSIC: [&str; 8] = ["explore", "town", "night", "battle", "eerie", "holy", "city", "none"];
+pub const MUSIC: [&str; 10] = ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern", "none"];
 fn d_place_r() -> f32 {
     12.0
 }
@@ -1159,6 +1159,12 @@ pub enum QuestStep {
     Collect { item: String, count: u8 },
     /// Talk to a bot of a type.
     Talk { archetype: String },
+    /// Build `count` blocks, of one material (a `BLOCK_NAMES` entry) or of any.
+    Build {
+        count: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        material: Option<String>,
+    },
 }
 
 impl QuestStep {
@@ -1167,6 +1173,7 @@ impl QuestStep {
         match self {
             QuestStep::Kill { count, .. } => (*count).max(1),
             QuestStep::Collect { count, .. } => (*count).max(1) as u16,
+            QuestStep::Build { count, .. } => (*count).max(1),
             _ => 1,
         }
     }
@@ -2959,6 +2966,7 @@ impl GameFile {
                     QuestStep::Visit { place } => self.places.iter().any(|p| &p.name == place),
                     QuestStep::Collect { item, count } => self.items.iter().any(|i| &i.name == item) && *count >= 1,
                     QuestStep::Talk { archetype } => arch(archetype),
+                    QuestStep::Build { count, material } => *count >= 1 && material.as_deref().is_none_or(|m| BLOCK_NAMES[..SPROUT as usize].contains(&m)),
                 };
                 if !ok {
                     return Err(format!("{ctx}: a step names something that is not there (or counts nothing)"));

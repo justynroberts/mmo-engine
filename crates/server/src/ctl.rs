@@ -273,10 +273,21 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: 
                 }
                 QuestStep::Collect { item, count } => format!("Bring {count} {}", items.iter().find(|i| &i.name == item).map_or(item.as_str(), |i| i.shown())),
                 QuestStep::Talk { archetype } => format!("Speak to the {}", bot(archetype)),
+                QuestStep::Build { count, material } => format!("Build {count} {}block{}", material.as_deref().map_or(String::new(), |m| format!("{m} ")), if *count == 1 { "" } else { "s" }),
             };
             let mut v = json!({"text": text, "need": st.need()});
             if let QuestStep::Talk { archetype } = st {
                 v["who"] = json!(bot(archetype)); // a client marks them
+            }
+            // Where to go for it, for a client's map: the place, or where the bots to beat or speak to live.
+            let home = |a: &str| archs.iter().find(|r| r.name == a).and_then(|r| r.home).and_then(|h| places.get(h));
+            let at = match st {
+                QuestStep::Visit { place } => places.iter().find(|p| &p.name == place),
+                QuestStep::Kill { archetype, .. } | QuestStep::Talk { archetype } => home(archetype),
+                QuestStep::Collect { .. } | QuestStep::Build { .. } => None,
+            };
+            if let Some(p) = at {
+                v["at"] = json!([p.x, p.y, p.r]);
             }
             v
         })
@@ -336,6 +347,23 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
     let mut daylight = serde_json::to_value(&sim.daylight).unwrap_or_default();
     daylight["night_share"] = json!(sim.daylight.night_share());
     daylight["sample"] = json!([now, sim.daylight.phase(now)]);
+    // Where each dungeon is (for the map), how hard (its strongest foe's level), its boss and how many foes.
+    // What can be made and grown, by item name (needs as [item, count]).
+    let item = |i: usize| sim.items.get(i).map_or(String::new(), |t| t.name.clone());
+    let recipes: Vec<serde_json::Value> = sim.realm.recipes.iter().map(|r| {
+        json!({"name": r.name, "makes": item(r.makes), "count": r.count, "needs": r.needs.iter().map(|&(i, n)| json!([item(i), n])).collect::<Vec<_>>(),
+            "near": r.near.and_then(|p| sim.places.get(p)).map(|p| if p.title.is_empty() { p.name.clone() } else { p.title.clone() })})
+    }).collect();
+    let crops: Vec<serde_json::Value> =
+        sim.realm.crops.iter().map(|c| json!({"name": c.name, "seed": item(c.seed), "yields": item(c.yields), "grow_secs": c.grow_secs})).collect();
+    let dungeons: Vec<serde_json::Value> = sim.realm.dungeons.iter().map(|d| {
+        let p = sim.places.get(d.place);
+        let foes = d.bots.iter().filter_map(|&(a, n)| sim.archs.get(a).map(|a| (a, n)));
+        json!({"name": d.name, "place": p.map(|p| p.name.clone()), "x": p.map(|p| p.x), "y": p.map(|p| p.y), "r": p.map(|p| p.r),
+            "level": foes.clone().map(|(a, _)| a.level).max().unwrap_or(0),
+            "boss": foes.clone().find(|(a, _)| a.boss.is_some()).map(|(a, _)| if a.title.is_empty() { a.name.clone() } else { a.title.clone() }),
+            "foes": foes.map(|(_, n)| n as u32).sum::<u32>()})
+    }).collect();
     json!({
         "server_key": to_hex(&hs.keys.public),
         // A string: a u64 does not fit a JavaScript number.
@@ -398,10 +426,10 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // Sides, what can be made and grown, and whether land can be claimed (all reached by "/" commands).
         "realm": {
             "factions": &sim.factions,
-            "recipes": sim.realm.recipes.iter().map(|r| json!({"name": r.name, "makes": r.makes, "count": r.count, "needs": r.needs})).collect::<Vec<_>>(),
-            "crops": sim.realm.crops.iter().map(|c| json!({"name": c.name, "seed": c.seed, "yields": c.yields, "grow_secs": c.grow_secs})).collect::<Vec<_>>(),
+            "recipes": recipes,
+            "crops": crops,
             "plots": sim.realm.plots.as_ref().map(|p| json!({"size": p.size, "per_player": p.per_player})),
-            "dungeons": sim.realm.dungeons.iter().map(|d| json!({"name": d.name, "place": sim.places.get(d.place).map(|p| p.name.clone())})).collect::<Vec<_>>(),
+            "dungeons": dungeons,
         },
         // Money, and what each merchant sells (by the name its bots go by).
         "currency": sim.currency.map(|c| sim.items[c].name.clone()),

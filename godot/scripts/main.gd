@@ -157,6 +157,7 @@ var my_class := 0           # our class (index + 1; 0 until chosen)
 var _class_asked := -100.0  # when the class picker last went up
 var _shop_with := 0         # the merchant the shop is open on
 var _horses := {}           # entity id -> the horse drawn under a rider
+var _cloud: Node3D = null   # under us in god mode
 var spell_ready := {}
 var _gcd_until := 0.0      # the short pause after any spell (the server's GCD_SECS) before the next
 var actions_by_id := {}
@@ -281,6 +282,8 @@ func _ready() -> void:
 	hud.slot_pressed.connect(func(i: int): net.use_slot(i))
 	hud.material_pressed.connect(func(i: int): build_kind = i)
 	hud.mode_pressed.connect(func(): _set_building(not building))
+	hud.party_cmd.connect(func(t: String): net.say(t, false))
+	hud.land_cmd.connect(func(t: String): net.say(t, false))
 	hud.chat_submitted.connect(_on_chat)
 	hud.ability_pressed.connect(_on_ability)
 	hud.spell_pressed.connect(_cast)
@@ -309,6 +312,7 @@ func _ready() -> void:
 	bagui.bag_op.connect(func(op: int, slot: int, other: int): net.act_arg(ACT_BAG, other, op << 8 | slot))
 	bagui.offered.connect(func(slot: int): net.act_arg(ACT_TRADE, 0, 1 << 8 | slot))
 	bagui.auction_requested.connect(_open_auction)
+	bagui.craft.connect(func(r: String): net.say("/craft " + r, false))
 	tradeui.trade_op.connect(func(op: int, slot: int, target: int): net.act_arg(ACT_TRADE, target, op << 8 | slot))
 	auctionui.auction_op.connect(func(op: int, a: int, target: int): net.act_arg(ACT_AUCTION, target, op << 8 | a))
 	shopui.auction_requested.connect(_open_auction)
@@ -487,6 +491,8 @@ func _start() -> void:
 	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
 	for ui in [bagui, tradeui, auctionui]:
 		ui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
+	var realm_info = info.get("realm", {})
+	bagui.set_recipes(realm_info.get("recipes", []) if realm_info is Dictionary and realm_info.get("recipes") is Array else [])
 	HudScript.ITEM_TITLES.clear()
 	for it in info.get("items", []):
 		if it.has("title"):
@@ -552,6 +558,8 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 15: # the land held near us: "L0|x0,y0,x1,y1,mine,name;...", more in "L1|" lines
+			_on_land(text)
 		elif channel == 14: # a boss marks the ground: "T|id|x|y|r|secs|fx", or "C|id" takes one back
 			_boss_mark(text)
 		elif from == 0:
@@ -562,6 +570,13 @@ func _start() -> void:
 			elif text.begins_with("God mode off"):
 				god = false
 				_notice(text)
+			_dungeon_line(text)
+			if text.contains(" makes the party a raid"):
+				_raid = true
+			var asked := text.find(" asks you to join their party.")
+			if asked > 0:
+				hud.ask_invite(text.left(asked))
+				sound.play("chime", -8.0, 0.0)
 			if channel == 3: # a banner: an event's news, across the screen too, with a horn
 				hud.announce(text)
 				sound.play("horn", -3.0, 0.0)
@@ -928,9 +943,16 @@ func _process(delta: float) -> void:
 			tgt_e = e
 	if target_id != 0 and ents.has(target_id) and not tgt_e.is_empty():
 		hud.set_target(_name(target_id), "%d u away" % int(_dist_to(target_id)), _bars(tgt_e, false))
+		var party = net.party()
+		var mate := false
+		for id in party:
+			mate = mate or int(id) == target_id
+		var can: bool = _players.has(target_id) and not mate and party.size() < int(_rule("raid_size", 20.0) if _raid else _rule("party_size", 5.0))
+		hud.show_invite(_name(target_id) if can else "")
 	else:
 		target_id = 0
 		hud.set_target("", "", [])
+		hud.show_invite("")
 	var cls := String(classes[my_class - 1]["title"]) if my_class > 0 and my_class <= classes.size() else String(args.get("class", "knight"))
 	var badges := []
 	if god:
@@ -947,6 +969,14 @@ func _process(delta: float) -> void:
 	for e in list:
 		if e["id"] != self_id:
 			others.append(e["position"])
+	hud.minimap.dungeons = _dungeons()
+	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
+	hud.minimap.goals = questui.goals(homes).filter(func(g): return not g.is_empty())
+	_goal_in -= delta
+	if _goal_in <= 0.0:
+		_goal_in = 0.25
+		questui.update_distances(me_pos, homes)
+		hud.set_prompt("" if building or fallen.down else _f_prompt())
 	hud.update_minimap(me_pos, heading, others)
 	_local_map()
 	if Input.is_key_pressed(KEY_SPACE) and not building and not hud.typing() and not smoke:
@@ -960,6 +990,7 @@ func _process(delta: float) -> void:
 	hud.set_info(place, "%s, %s   %d, %d" % [when, sky, me_pos.x, me_pos.y], int(net.get_rtt_ms()), crowd)
 	hud.set_mode(building, not build.is_empty(), theme.block_name(build_kind))
 	hud.show_materials(building, build_kind)
+	_show_land()
 	hud.set_abilities(theme.torch_mode, theme.torch_lit(), building, world_map.visible, not build.is_empty())
 	if status > 1:
 		hud.status.text = ["", "", "The server refused the connection.", "Disconnected from the server."][clampi(status, 0, 3)]
@@ -1960,6 +1991,9 @@ func _listen(delta: float) -> void:
 			var xy := String(k).split(",")
 			inn_d = minf(inn_d, Vector2(float(xy[0]), float(xy[1])).distance_to(p))
 	w["tavern"] = (1.0 - smoothstep(5.0, 28.0, inn_d)) if inn_d < INF else 0.0
+	# With the tavern's music playing, the fiddle through the door gives way to it; the voices stay.
+	if _music_pick == "tavern":
+		w["tavern"] *= 0.35
 	# A fair night's musicians on the square: their reel, out in the open, louder the nearer.
 	var fair := 0.0
 	for eid in ents:
@@ -1975,7 +2009,7 @@ func _listen(delta: float) -> void:
 	_bells(houses)
 	_dress_season()
 	sound.want = w
-	# Music: a fight first, then the place's own, then a town, then the night or the day. It changes only once the
+	# Music: a fight first, then the inn of an evening, then the place's own, then a town, then the night or the day. It changes only once the
 	# moment has held for a few seconds, so walking along a town's edge does not flip it back and forth.
 	# In a fight: a bot is locked on us (it holds through a chase with no blows) or a player is fighting us, or a
 	# blow passed lately.
@@ -1986,6 +2020,8 @@ func _listen(delta: float) -> void:
 	sound.incidental = "" if fighting or own != "" else ("town" if houses >= 6 else ("farm" if houses >= 1 else ""))
 	if fighting:
 		m = "battle"
+	elif inn_d < TAVERN_MUSIC_NEAR and m in ["", "town", "city", "capital"]:
+		m = "tavern"
 	elif m == "":
 		m = "town" if houses >= 6 else ("night" if dark > 0.55 else "explore")
 	if m != _music_pick:
@@ -1994,6 +2030,9 @@ func _listen(delta: float) -> void:
 	# A change of mood waits a few seconds (passing a house is not a town); the first pick does not.
 	if fighting or t_total - _music_since > 3.0 or (sound.music_for == "" and not _title_on):
 		sound.music_for = "" if _title_on else _music_pick
+
+## How near a lit inn (an inn of an evening) its music takes over from the town's.
+const TAVERN_MUSIC_NEAR := 22.0
 
 ## The lit windows message: "L0|" starts the list afresh, "L1|" adds to it, then "x,y,name" entries by ";" (an inn's
 ## name starting with "*").
@@ -2908,7 +2947,9 @@ func _social_frame(list: Array, self_id: int) -> void:
 		var e: Dictionary = by_id.get(int(id), {})
 		var hp := clampf(float(e.get(health_idx, 0.0)) / _max_of(e, _health_attr), 0.0, 1.0) if not e.is_empty() and health_idx != "" and not _health_attr.is_empty() else -1.0
 		mates.append([_name(int(id)), hp])
-	hud.set_party(mates)
+	if mates.is_empty():
+		_raid = false
+	hud.set_party(mates, int(_rule("raid_size", 20.0) if _raid else _rule("party_size", 5.0)))
 	var gear: Dictionary = net.gear()
 	journal.set_gear(gear)
 	_players.clear()
@@ -2929,6 +2970,10 @@ func _social_frame(list: Array, self_id: int) -> void:
 	for e in list:
 		if float(e.get("speed", 1.0)) >= 1.75 or String(names.get(int(e["id"]), "")) in CARTERS:
 			riding[int(e["id"])] = true
+	# A god rides a cloud, not a horse (god mode's speed would otherwise put us in the saddle).
+	if god:
+		riding.erase(self_id)
+	_cloud_frame(self_id)
 	for id in _horses.keys():
 		if not riding.has(id) or not ents.has(id):
 			(_horses[id] as Node3D).queue_free()
@@ -2945,7 +2990,7 @@ func _social_frame(list: Array, self_id: int) -> void:
 			_horses[id] = h
 		var horse: Node3D = _horses[id]
 		horse.position = node.position
-		horse.rotation.y = node.rotation.y
+		horse.rotation.y = node.rotation.y + PI # the model faces -Z, the characters +Z
 		node.position.y += 0.95 # in the saddle
 		horse.get_node("legs").rotation.x = sin(t_total * 14.0) * 0.35 * minf(1.0, (track.get(id, {}).get("vel", Vector3.ZERO) as Vector3).length() / 10.0)
 
@@ -3050,7 +3095,57 @@ func _turn_to_me(id: int) -> void:
 func _called(id: int) -> String:
 	return "%s the %s" % [given[id], _name(id)] if given.has(id) else _name(id)
 
-## A plain low-poly horse, chestnut with a dark mane, facing -Z like the characters.
+## Our cloud in god mode: soft white puffs under our feet that drift and bob, with us standing on it.
+func _cloud_frame(self_id: int) -> void:
+	var node: Node3D = ents.get(self_id)
+	if not god or node == null:
+		if _cloud != null:
+			_cloud.queue_free()
+			_cloud = null
+		return
+	if _cloud == null:
+		_cloud = _make_cloud()
+		add_child(_cloud)
+	var bob := sin(t_total * 1.6) * 0.12
+	_cloud.position = node.position + Vector3(0, 0.25 + bob, 0)
+	_cloud.rotation.y = t_total * 0.15
+	for i in _cloud.get_child_count():
+		var puff := _cloud.get_child(i) as Node3D
+		puff.position.y = float(puff.get_meta("y")) + sin(t_total * 1.3 + i * 1.7) * 0.05
+	node.position.y += 0.75 + bob # standing on it
+
+func _make_cloud() -> Node3D:
+	var root := Node3D.new()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1, 1, 1, 0.92)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 1.0
+	mat.rim_enabled = true
+	mat.rim = 0.6
+	mat.emission_enabled = true
+	mat.emission = Color(0.85, 0.88, 0.95)
+	mat.emission_energy_multiplier = 0.25
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for i in 11:
+		var a := TAU * i / 11.0
+		var r := 0.15 if i == 0 else rng.randf_range(0.45, 0.85)
+		var s := SphereMesh.new()
+		var size := rng.randf_range(0.35, 0.55) if i > 0 else 0.6
+		s.radius = size
+		s.height = size * 1.5 # a little flattened
+		s.radial_segments = 16
+		s.rings = 8
+		var m := MeshInstance3D.new()
+		m.mesh = s
+		m.material_override = mat
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.position = Vector3(cos(a) * r, rng.randf_range(-0.08, 0.1), sin(a) * r)
+		m.set_meta("y", m.position.y)
+		root.add_child(m)
+	return root
+
+## A plain low-poly horse, chestnut with a dark mane, facing -Z.
 func _make_horse() -> Node3D:
 	var root := Node3D.new()
 	var coat := StandardMaterial3D.new()
@@ -3098,6 +3193,138 @@ func _make_horse() -> Node3D:
 			l.rotation.x = 0.0
 	return root
 
+var _raid := false # our party was made a raid (the server said so)
+var land: Array = []             # the land held near us (chat channel 15): [[Rect2, mine, name], ...]
+var _land_edges: MeshInstance3D  # their edges, a low glowing fence, shown in build mode
+var _land_drawn := ""            # what the fence was last built from
+var _crops_seen := {}            # the land bar's crop count, worked out twice a second
+const CROP_SPROUT := 15          # proto::game::SPROUT and RIPE, block materials
+const CROP_RIPE := 16
+var _goal_in := 0.0 # seconds till the tracker's distances are worked out again
+
+## The land held near us, from the server: a first line ("L0|") starts the list again, "L1|" adds to it.
+func _on_land(text: String) -> void:
+	if text.begins_with("L0|"):
+		land.clear()
+	for e in text.substr(3).split(";", false):
+		var f := e.split(",")
+		if f.size() >= 5:
+			var r := Rect2(float(f[0]), float(f[1]), float(f[2]) - float(f[0]), float(f[3]) - float(f[1]))
+			land.append([r, f[4] == "1", ",".join(f.slice(5)) if f.size() > 5 else ""])
+
+## In build mode: whose land we stand on, with what can be done about it, and the edges of the land round us.
+func _show_land() -> void:
+	var has_plots: bool = info.get("realm", {}).get("plots") != null if info.get("realm") is Dictionary else false
+	if not building or not has_plots:
+		hud.show_land("", false, false)
+		if _land_edges:
+			_land_edges.visible = false
+		return
+	var here: Array = []
+	for l in land:
+		if (l[0] as Rect2).has_point(me_pos):
+			here = l
+	if here.is_empty():
+		hud.show_land("Unclaimed land", false, false)
+	elif here[1]:
+		var r: Rect2 = here[0]
+		hud.show_land("Your land%s, %d by %d%s" % [(": " + String(here[2])) if here[2] != "" else "", int(r.size.x), int(r.size.y), _crops_in(r)], true, true)
+	else:
+		hud.show_land("Held by another%s" % ((": " + String(here[2])) if here[2] != "" else ""), true, false)
+	_draw_land_edges()
+
+## What grows on a piece of land, for the land bar: ", 3 sprouting, 2 ripe (break to harvest)", or "".
+func _crops_in(r: Rect2) -> String:
+	if t_total - float(_crops_seen.get("at", -9.0)) < 0.5 and _crops_seen.get("r") == r:
+		return String(_crops_seen["text"])
+	var edge: float = theme.block_size() if theme else 2.0
+	var counts := [0, 0]
+	for cy in range(int(floor(r.position.y / edge)), int(ceil(r.end.y / edge))):
+		for cx in range(int(floor(r.position.x / edge)), int(ceil(r.end.x / edge))):
+			var c: Dictionary = blocks.get(cy << 15 | cx, {})
+			if c.is_empty():
+				continue
+			for ch in String(c["k"]):
+				if ch != ".":
+					var kind: int = theme.block_kind(ch)
+					if kind == CROP_SPROUT:
+						counts[0] += 1
+					elif kind == CROP_RIPE:
+						counts[1] += 1
+	var bits := []
+	if counts[0] > 0:
+		bits.append("%d sprouting" % counts[0])
+	if counts[1] > 0:
+		bits.append("%d ripe (break to harvest)" % counts[1])
+	var text := (", " + ", ".join(bits)) if not bits.is_empty() else ""
+	_crops_seen = {"at": t_total, "r": r, "text": text}
+	return text
+
+## A low fence of light round each piece of land near us: gold for ours, red for another's.
+func _draw_land_edges() -> void:
+	if _land_edges == null:
+		_land_edges = MeshInstance3D.new()
+		_land_edges.mesh = ImmediateMesh.new()
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.vertex_color_use_as_albedo = true
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_land_edges.material_override = m
+		_land_edges.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_land_edges)
+	_land_edges.visible = true
+	var key := str(land)
+	if key == _land_drawn:
+		return
+	_land_drawn = key
+	var im := _land_edges.mesh as ImmediateMesh
+	im.clear_surfaces()
+	if land.is_empty():
+		return
+	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	for l in land:
+		var r: Rect2 = l[0]
+		var c := Color(1.0, 0.82, 0.4, 0.45) if l[1] else Color(1.0, 0.45, 0.35, 0.35)
+		var corners := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y), r.position]
+		for k in 4:
+			var a: Vector2 = corners[k]
+			var b: Vector2 = corners[k + 1]
+			var steps := maxi(1, int(a.distance_to(b) / 2.0))
+			for i in steps:
+				var p := a.lerp(b, float(i) / steps)
+				var q := a.lerp(b, float(i + 1) / steps)
+				var hp: float = theme.height(p.x, p.y) + 0.05
+				var hq: float = theme.height(q.x, q.y) + 0.05
+				var v := [Vector3(p.x, hp, p.y), Vector3(q.x, hq, q.y), Vector3(q.x, hq + 0.7, q.y), Vector3(p.x, hp + 0.7, p.y)]
+				for j in [0, 1, 2, 0, 2, 3]:
+					im.surface_set_color(c if j < 2 else Color(c.r, c.g, c.b, 0.0))
+					im.surface_add_vertex(v[j])
+	im.surface_end()
+
+## The realm's dungeons with where they are, from /play/info (a server too old to say where is left out):
+## [[Vector2, name, level, boss, foes], ...].
+func _dungeons() -> Array:
+	var out := []
+	var realm = info.get("realm", {})
+	for d in (realm.get("dungeons", []) if realm is Dictionary else []):
+		if d is Dictionary and d.get("x") != null and d.get("y") != null:
+			out.append([Vector2(float(d["x"]), float(d["y"])), String(d.get("name", "")), int(d.get("level", 0)),
+				String(d["boss"]) if d.get("boss") is String else "", int(d.get("foes", 0))])
+	return out
+
+## The server's word on a dungeon (entering, leaving, clearing it), also across the screen.
+func _dungeon_line(text: String) -> void:
+	for d in _dungeons():
+		var name: String = d[1]
+		if text == "You enter %s." % name:
+			var who := ("%s waits within. " % d[3]) if d[3] != "" else ""
+			hud.announce("%s\n%s%d foes, level %d. Your party shares this run." % [name, who, d[4], d[2]], Color("e07a5f"))
+			sound.play("horn", -6.0, 0.0)
+		elif text == "%s is cleared!" % name:
+			hud.announce("%s cleared!" % name)
+			sound.play("horn", -3.0, 0.0)
+
 ## What the world map marks: quest givers with a quest for us (!), where to hand one in (?), and traders, each
 ## at the place their kind lives (/play/info "homes"; bots wander, their home does not).
 func _map_marks() -> Array:
@@ -3113,7 +3340,38 @@ func _map_marks() -> Array:
 		if homes.has(who) and not quest_marks.has(who):
 			var h: Array = homes[who]
 			out.append([Vector2(float(h[0]) + 6.0, float(h[1]) + 6.0), "trade"])
+	for d in _dungeons():
+		var label := "%s  (level %d%s)" % [d[1], d[2], (", " + d[3]) if d[3] != "" else ""]
+		out.append([d[0], "dungeon", label])
+	for g in questui.goals(homes):
+		if not g.is_empty():
+			out.append([g[0], "goal", g[1]])
 	return out
+
+## What F would do now, in a few words: talk to a quest giver in reach, trade with a merchant, ask a player to trade.
+func _f_prompt() -> String:
+	var reach := _rule("talk_reach", 8.0)
+	var me: int = net.get_self_id()
+	var giver := 0
+	var best := reach
+	for id in ents:
+		if id != me and (ents[id] as Node3D).has_node("qmark") and _dist_to(id) <= best:
+			best = _dist_to(id)
+			giver = id
+	if giver != 0:
+		return "F  Talk to the %s" % _name(giver)
+	var shops: Dictionary = info.get("shops", {}) if info.get("shops") is Dictionary else {}
+	best = reach
+	var trader := 0
+	for id in ents:
+		if id != me and shops.has(_name(id)) and _dist_to(id) <= best:
+			best = _dist_to(id)
+			trader = id
+	if trader != 0:
+		return "F  Trade with the %s" % _name(trader)
+	if target_id != 0 and _players.has(target_id) and _dist_to(target_id) <= 12.0:
+		return "F  Ask %s to trade" % _name(target_id)
+	return ""
 
 ## F: talk to the one targeted (or the nearest with a quest mark) if they are in reach; otherwise pick up.
 func _talk_or_pickup() -> void:

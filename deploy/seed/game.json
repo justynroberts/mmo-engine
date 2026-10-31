@@ -1920,7 +1920,9 @@
       "speed_mult": 0.9,
       "sight": 60.0,
       "attack": "buille",
-      "attrs": {},
+      "attrs": {
+        "health": 300.0
+      },
       "home": "bru na boinne",
       "rules": [],
       "drops": [
@@ -1938,7 +1940,154 @@
         }
       ],
       "xp": 400,
-      "level": 12
+      "level": 12,
+      "leash": 80.0,
+      "boss": {
+        "phases": [
+          {
+            "below": 100,
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 6,
+                "at": "tank"
+              },
+              {
+                "action": "ceo nimhe",
+                "every_secs": 9,
+                "warn_secs": 2.5,
+                "at": "random",
+                "radius": 7,
+                "say": "Crom Dubh breathes out the grave's air!"
+              }
+            ]
+          },
+          {
+            "below": 60,
+            "say": "Crom Dubh calls the dead out of the mound!",
+            "adds": [
+              {
+                "bot": "sluagh",
+                "count": 3
+              }
+            ],
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 6,
+                "at": "tank"
+              },
+              {
+                "action": "ceo nimhe",
+                "every_secs": 8,
+                "warn_secs": 2.2,
+                "at": "random",
+                "radius": 7
+              },
+              {
+                "action": "tintreach",
+                "every_secs": 10,
+                "warn_secs": 2.0,
+                "at": "farthest",
+                "radius": 6
+              }
+            ]
+          },
+          {
+            "below": 25,
+            "say": "The dark god rages: the mound fills with poison!",
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 5,
+                "at": "tank"
+              },
+              {
+                "action": "ceo nimhe",
+                "every_secs": 7,
+                "warn_secs": 2.5,
+                "at": "self",
+                "radius": 10
+              }
+            ]
+          }
+        ],
+        "enrage_secs": 300,
+        "enrage_might": 3,
+        "defeat": "Crom Dubh falls, and the mound is quiet."
+      }
+    },
+    {
+      "name": "ri na ndibheirgeach",
+      "title": "Brigand King",
+      "color": "#3e2723",
+      "count": 0,
+      "behaviour": "chase",
+      "speed_mult": 1.0,
+      "sight": 45.0,
+      "attack": "buille",
+      "attrs": {
+        "health": 300.0
+      },
+      "home": "dibheirgigh",
+      "drops": [
+        {
+          "item": "claiomh",
+          "chance_pct": 60.0,
+          "min": 1,
+          "max": 1
+        },
+        {
+          "item": "pingin airgid",
+          "chance_pct": 100.0,
+          "min": 10,
+          "max": 25
+        }
+      ],
+      "xp": 300,
+      "level": 9,
+      "ambush": false,
+      "leash": 80.0,
+      "rules": [],
+      "boss": {
+        "phases": [
+          {
+            "below": 100,
+            "moves": [
+              {
+                "action": "liathroid tine",
+                "every_secs": 8,
+                "warn_secs": 2.0,
+                "at": "farthest",
+                "radius": 5,
+                "say": "The Brigand King hurls a firepot!"
+              }
+            ]
+          },
+          {
+            "below": 50,
+            "say": "To me, lads!",
+            "adds": [
+              {
+                "bot": "dibheirgeach",
+                "count": 3
+              }
+            ],
+            "moves": [
+              {
+                "action": "liathroid tine",
+                "every_secs": 6,
+                "warn_secs": 1.8,
+                "at": "random",
+                "radius": 5
+              }
+            ]
+          }
+        ],
+        "enrage_secs": 240,
+        "enrage_might": 3,
+        "defeat": "The Brigand King is down. The camp is yours."
+      }
     },
     {
       "name": "ceannai taistil",
@@ -4603,7 +4752,7 @@
       "r": 125.0,
       "title": "Áth Cliath",
       "sound": "market",
-      "music": "city",
+      "music": "capital",
       "safe": true
     },
     {
@@ -4613,7 +4762,7 @@
       "r": 105.0,
       "title": "Port Láirge",
       "sound": "sea",
-      "music": "town",
+      "music": "city",
       "safe": true
     },
     {
@@ -4623,7 +4772,7 @@
       "r": 105.0,
       "title": "Corcaigh",
       "sound": "sea",
-      "music": "town",
+      "music": "city",
       "safe": true
     },
     {
@@ -4633,7 +4782,7 @@
       "r": 105.0,
       "title": "Luimneach",
       "sound": "town",
-      "music": "town",
+      "music": "city",
       "safe": true
     },
     {
@@ -4643,7 +4792,7 @@
       "r": 105.0,
       "title": "Gaillimh",
       "sound": "sea",
-      "music": "town",
+      "music": "city",
       "safe": true
     },
     {
@@ -8111,6 +8260,106 @@
   ],
   "quests": [
     {
+      "name": "a new arrival",
+      "title": "A New Arrival",
+      "giver": "watchman",
+      "text": "New to these parts? You'll want a trade and a roof before the nights draw in. The Seed Trader at the market in Áth Cliath sets up newcomers. Go and speak to them.",
+      "done_text": "Good. Tell the Seed Trader the watch sent you.",
+      "turn_in": "tuathanach",
+      "steps": [
+        {
+          "kind": "talk",
+          "archetype": "tuathanach"
+        }
+      ],
+      "xp": 40,
+      "reward": [
+        {
+          "item": "siol cruithneachta",
+          "count": 4
+        },
+        {
+          "item": "pingin airgid",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "a plot of your own",
+      "title": "A Plot of Your Own",
+      "giver": "tuathanach",
+      "after": "a new arrival",
+      "text": "Land first. Type /claim where you stand to make a plot yours. Then press B, pick soil and lay four blocks of tilled earth. Plant the oat seeds in your bag beside it and bring me three sheaves of oats when they ripen.",
+      "done_text": "Oats! You'll not go hungry now.",
+      "steps": [
+        {
+          "kind": "build",
+          "count": 4,
+          "material": "soil"
+        },
+        {
+          "kind": "collect",
+          "item": "coirce",
+          "count": 3
+        }
+      ],
+      "xp": 100,
+      "reward": [
+        {
+          "item": "pingin airgid",
+          "count": 10
+        }
+      ]
+    },
+    {
+      "name": "a roof over your head",
+      "title": "A Roof Over Your Head",
+      "giver": "tuathanach",
+      "after": "a plot of your own",
+      "text": "Nobody sleeps out in the open with wolves and worse about at night. Build yourself a shelter: walls on three sides and a roof over your head, and the night raiders will pass you by.",
+      "done_text": "Snug as a monk in his cell.",
+      "steps": [
+        {
+          "kind": "build",
+          "count": 12
+        }
+      ],
+      "xp": 120,
+      "reward": [
+        {
+          "item": "deoch leighis",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "the brigand king",
+      "title": "The Brigand King",
+      "giver": "watchman",
+      "after": "a roof over your head",
+      "level": 3,
+      "text": "The brigands south of Kildare have crowned themselves a king. Their camp gives every company that walks in a fight of its own. Don't go alone: gather a party (the Invite button over a player, or /invite Name) and bring him down.",
+      "done_text": "The roads will be safer for it. Take this blade; you've earned it.",
+      "steps": [
+        {
+          "kind": "visit",
+          "place": "dibheirgigh"
+        },
+        {
+          "kind": "kill",
+          "archetype": "ri na ndibheirgeach",
+          "count": 1
+        }
+      ],
+      "xp": 400,
+      "reward": [
+        {
+          "item": "claiomh",
+          "count": 1
+        }
+      ]
+    },
+    {
       "name": "wolves at the fold",
       "title": "Wolves at the Fold",
       "text": "The wolves have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
@@ -9119,5 +9368,45 @@
   ],
   "gods": [
     "27e5f44f38eb50e5"
+  ],
+  "dungeons": [
+    {
+      "name": "Brú na Bóinne",
+      "place": "bru na boinne",
+      "bots": [
+        {
+          "bot": "sluagh",
+          "count": 4
+        },
+        {
+          "bot": "crom dubh",
+          "count": 1
+        }
+      ],
+      "xp": 600,
+      "reward": {
+        "item": "fainne oir",
+        "count": 1
+      }
+    },
+    {
+      "name": "Campa na nDíbheirgeach",
+      "place": "dibheirgigh",
+      "bots": [
+        {
+          "bot": "dibheirgeach",
+          "count": 5
+        },
+        {
+          "bot": "ri na ndibheirgeach",
+          "count": 1
+        }
+      ],
+      "xp": 350,
+      "reward": {
+        "item": "deoch leighis",
+        "count": 3
+      }
+    }
   ]
 }

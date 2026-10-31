@@ -4752,7 +4752,7 @@
    "r": 125.0,
    "title": "Áth Cliath",
    "sound": "market",
-   "music": "city",
+   "music": "capital",
    "safe": true
   },
   {
@@ -4762,7 +4762,7 @@
    "r": 105.0,
    "title": "Port Láirge",
    "sound": "sea",
-   "music": "town",
+   "music": "city",
    "safe": true
   },
   {
@@ -4772,7 +4772,7 @@
    "r": 105.0,
    "title": "Corcaigh",
    "sound": "sea",
-   "music": "town",
+   "music": "city",
    "safe": true
   },
   {
@@ -4782,7 +4782,7 @@
    "r": 105.0,
    "title": "Luimneach",
    "sound": "town",
-   "music": "town",
+   "music": "city",
    "safe": true
   },
   {
@@ -4792,7 +4792,7 @@
    "r": 105.0,
    "title": "Gaillimh",
    "sound": "sea",
-   "music": "town",
+   "music": "city",
    "safe": true
   },
   {

@@ -329,7 +329,7 @@ export const TRADE_NOTE = [
   'An item with equip: { slot: "weapon" | "armour" | "trinket", might 0..2, toughness 0..2 } is worn, not used up: using it puts it on in its slot, adding might (blows and heals land that share harder) and toughness (harm divided by 1 + that share), like levels do.',
   'An item with mount 0..4 is a mount: using it rides (or gets down), adding that to the "speed" attribute (define speed replicated so it shows); any harm, or using an action, gets the rider down.',
   'Leave value, equip and mount out for none. Renaming an item renames it in shops and the currency; removing one drops it from shops and clears the currency if it was the money.',
-  'Chat commands players type (server-side, no setup): /w Name text whispers, /r replies to the last whisper, /who lists who is on, /invite Name asks someone into your party, /accept and /decline answer, /leave leaves it, /p text talks to the party, /party lists it. A party shares experience and quest kill credit.',
+  'Chat commands players type (server-side, no setup): /w Name text whispers, /r replies to the last whisper, /who lists who is on, /invite Name asks someone into your party, /accept and /decline answer, /leave leaves it, /p text talks to the party, /party lists it, /raid makes it a raid of up to rules.raid_size. A party shares experience and quest kill credit.',
 ].join(' ')
 
 /** How the realm sections work, for game_schema and upsert. */

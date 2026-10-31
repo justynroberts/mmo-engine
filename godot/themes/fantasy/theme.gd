@@ -9,6 +9,8 @@ extends "res://scripts/theme.gd"
 
 const PROP_CHUNK := 128.0
 var terrain_mat: ShaderMaterial
+var sea_node: MeshInstance3D     # the open sea, raised and lowered by the tide
+var _cloud_off := Vector2.ZERO   # how far the clouds' shadows have drifted (world_cloud_off)
 var water_mat: ShaderMaterial
 var rain := GPUParticles3D.new()   # whatever the weather drops: rain, snow or dust
 var sky_mat: ShaderMaterial
@@ -175,8 +177,18 @@ global uniform float world_snow;    // snow lying
 global uniform vec2 world_cold_band; // land.gd: fully cold north of x, none south of y (world z)
 global uniform float world_relief;   // the snow and heath lines scaled for a world with taller land (1 for small ones)
 global uniform float world_autumn;  // life.gd: the year's turn to gold, 0 .. 1
+global uniform float world_tide;    // theme.gd: how far the tide stands above or below sea level now
+global uniform vec2 world_clouds;   // theme.gd: cloud shadows, x how dark, y the cover threshold
+global uniform vec2 world_cloud_off; // theme.gd: how far they have drifted
 varying vec3 wp;
 varying vec3 wn;
+// Which stretches of coast are sand (1) and which shingle and rock (0): the same as theme.gd coast_sand.
+uint uh(ivec2 c) { uint u = uint(c.x) * 1664525u + uint(c.y) * 1013904223u; u ^= u >> 16u; u *= 2146121005u; u ^= u >> 15u; u *= 2221713035u; u ^= u >> 16u; return u; }
+float ch(ivec2 c) { return float(uh(c) >> 8u) / 16777215.0; }
+float coast_sand(vec2 p) {
+	vec2 g = p / 260.0; vec2 i = floor(g); vec2 f = g - i; vec2 u = f * f * (3.0 - 2.0 * f); ivec2 k = ivec2(i);
+	return smoothstep(0.42, 0.58, mix(mix(ch(k), ch(k + ivec2(1, 0)), u.x), mix(ch(k + ivec2(0, 1)), ch(k + ivec2(1, 1)), u.x), u.y));
+}
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 float n(vec2 p) {
 	vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
@@ -259,11 +271,24 @@ void fragment() {
 	vec3 rock = vec3(0.47, 0.45, 0.42) * (0.8 + 0.4 * fbm(q * 0.25 + wp.y * 0.1));
 	rock = mix(rock, rock * vec3(0.92, 0.96, 1.04), cold);
 	c = mix(c, rock, max(smoothstep(0.28, 0.5, slope), rocky * smoothstep(0.04, 0.12, slope + 0.05 * n(q * 0.3))));
-	// The shore: sand in the south, grey shingle in the north, darker where the sea wets it.
-	float beach = 1.0 - smoothstep(sea_level + 0.5, sea_level + 1.4, wp.y + 0.6 * (n(q * 0.3) - 0.5));
-	vec3 sand = mix(vec3(0.79, 0.72, 0.54), vec3(0.56, 0.55, 0.53), cold) * (0.9 + 0.15 * fbm(q * 1.5));
-	sand = mix(sand, sand * 0.72, 1.0 - smoothstep(sea_level + 0.1, sea_level + 0.6, wp.y));
-	c = mix(c, sand, beach * (1.0 - smoothstep(0.35, 0.6, slope)));
+	// The shore: wide sand beaches along some stretches of coast (coast_sand), a narrow strip of shingle elsewhere,
+	// grey in the north. The sea wets it up to where the tide stands now, the falling tide leaves it damp below high
+	// water, and a dark line of wrack marks high water on the sand.
+	// Above the highest beach (top + 0.3 with the 0.3 of noise) there is none: most of the land skips all this.
+	if (wp.y < sea_level + 2.6) {
+		float sandy = coast_sand(q);
+		float top = sea_level + mix(0.6, 2.0, sandy);
+		float beach = 1.0 - smoothstep(top - 0.5, top + 0.3, wp.y + 0.6 * (n(q * 0.3) - 0.5));
+		vec3 sand = mix(vec3(0.79, 0.72, 0.54), vec3(0.56, 0.55, 0.53), cold) * (0.9 + 0.15 * fbm(q * 1.5));
+		vec3 shingle = vec3(0.50, 0.49, 0.47) * (0.72 + 0.45 * n(q * 4.0)) * (0.9 + 0.15 * fbm(q * 0.8));
+		sand = mix(shingle, sand, sandy);
+		float tidewet = 1.0 - smoothstep(sea_level + world_tide + 0.05, sea_level + world_tide + 0.45, wp.y + 0.15 * n(q * 0.8));
+		float damp = 1.0 - smoothstep(sea_level + world_tide, sea_level + 0.55, wp.y);
+		sand *= 1.0 - 0.3 * max(tidewet, damp * 0.45);
+		float wrack = smoothstep(0.1, 0.0, abs(wp.y - (sea_level + 0.5 + 0.1 * n(q * 0.3)))) * smoothstep(0.35, 0.65, n(q * 0.08)) * sandy;
+		sand = mix(sand, vec3(0.30, 0.27, 0.17), wrack * 0.45);
+		c = mix(c, sand, beach * (1.0 - smoothstep(0.35, 0.6, slope)));
+	}
 	// Roads: packed earth with a ragged grassy edge in the country, cobbles in the city.
 	float road = 0.0;
 	if (land_on > 0.5) {
@@ -290,6 +315,12 @@ void fragment() {
 	c *= 1.0 - 0.3 * wk * (0.6 + 0.4 * road);
 	float pud = world_puddles * (1.0 - sn) * lvl * smoothstep(0.6, 0.7, fbm(q / 2.6 + 3.1)) * (0.3 + 0.7 * road);
 	c = mix(c, c * 0.4 + vec3(0.02, 0.03, 0.045), pud);
+	// Clouds' shadows sweeping over the land with the wind (the same in the water shader).
+	if (world_clouds.x > 0.0) {
+		vec2 cq = q + world_cloud_off;
+		float cl = 0.65 * n(cq / 90.0) + 0.35 * n(cq / 37.0 + 5.3);
+		c *= 1.0 - 0.32 * world_clouds.x * smoothstep(world_clouds.y, world_clouds.y + 0.12, cl);
+	}
 	ALBEDO = pow(c, vec3(2.2)); // the colours above are sRGB; albedo is linear
 	ROUGHNESS = mix(mix(1.0, mix(0.6, 0.28, road), wk), 0.04, pud);
 	SPECULAR = 0.5 * max(wk * (0.3 + 0.7 * road), pud);
@@ -316,10 +347,13 @@ void fragment() {
 		sea_plane.subdivide_width = 64
 		sea_plane.subdivide_depth = 64
 		sea.mesh = sea_plane
-		sea.material_override = _water()
+		var sea_mat := _water().duplicate() as ShaderMaterial
+		sea_mat.set_shader_parameter("swell", 1.0)
+		sea.material_override = sea_mat
 		sea.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		sea.position = Vector3(ext.get_center().x, world.sea_level, ext.get_center().y)
 		add_child(sea)
+		sea_node = sea
 	# Water: every river's ribbon and every lake's surface, once.
 	for r in world.rivers:
 		add_child(_river_mesh(r))
@@ -528,6 +562,39 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	t = lap("life", t)
 	_warm(center, 1.5)
 	lap("warm", t)
+	var tide := tide_now()
+	RenderingServer.global_shader_parameter_set("world_tide", tide)
+	if sea_node:
+		sea_node.position.y = world.sea_level + tide
+
+## The tide: the sea rises and falls by TIDE_RISE over TIDE_SECS, timed by the clock so every client sees the same
+## tide. It is only drawn; the server knows nothing of it.
+const TIDE_SECS := 480.0
+const TIDE_RISE := 0.45
+
+static func tide_now() -> float:
+	return TIDE_RISE * sin(TAU * fmod(Time.get_unix_time_from_system(), TIDE_SECS) / TIDE_SECS)
+
+## Which stretches of coast are sand (1) and which shingle and rock (0), changing every few hundred units: the
+## ground shader's coast_sand, the same hash in integers, so the props and the ground agree.
+static func coast_sand(p: Vector2) -> float:
+	var g := p / 260.0
+	var i := g.floor()
+	var f := g - i
+	var u := f * f * (Vector2(3, 3) - 2.0 * f)
+	var kx := int(i.x)
+	var ky := int(i.y)
+	var v := lerpf(lerpf(_coast_hash(kx, ky), _coast_hash(kx + 1, ky), u.x), lerpf(_coast_hash(kx, ky + 1), _coast_hash(kx + 1, ky + 1), u.x), u.y)
+	return smoothstep(0.42, 0.58, v)
+
+static func _coast_hash(x: int, y: int) -> float:
+	var u := (x * 1664525 + y * 1013904223) & 0xffffffff
+	u ^= u >> 16
+	u = (u * 2146121005) & 0xffffffff
+	u ^= u >> 15
+	u = (u * 2221713035) & 0xffffffff
+	u ^= u >> 16
+	return float(u >> 8) / 16777215.0
 
 ## How dark the night is: the moon's light, and the share of the day's ambient light left at night. Torches and
 ## fires carry the dark hours.
@@ -547,6 +614,12 @@ func _daylight_frame(dt: float) -> void:
 	var dark: float = _wx["dark"]
 	var storm: float = _wx["storm"]
 	darkness = clampf(1.0 - day + dark * 0.6, 0.0, 1.0)
+	# The clouds' shadows: drifting the way the sky's clouds do, most marked under a broken sky, none at night,
+	# fading out under full overcast (the light is already flat).
+	_cloud_off += Vector2(1.0, 0.35) * (2.0 + 9.0 * float(_wx["wind"])) * dt
+	var shade := (1.0 - darkness) * smoothstep(0.05, 0.3, cover) * (1.0 - smoothstep(0.75, 1.0, cover))
+	RenderingServer.global_shader_parameter_set("world_clouds", Vector2(shade, lerpf(0.72, 0.36, cover)))
+	RenderingServer.global_shader_parameter_set("world_cloud_off", _cloud_off)
 	# Lightning in a storm: a double flash every few seconds, once the storm has built up.
 	if storm > 0.6:
 		_next_flash -= dt
@@ -660,7 +733,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 				_crag_diggings(b, int(o.get("v", 0)), batch)
 			"lake":
 				var b: Array = o["b"]
-				node.add_child(_rim_rocks(b, float(o.get("y", 0.0)), 5.0))
+				node.add_child(_rim_rocks(b, float(o.get("y", 0.0)), 5.0, float(o.get("y", 0.0)) - 0.45))
 				node.add_child(_dock(b, float(o.get("y", 0.0)) - 0.45, int(o.get("v", 0))))
 			"tree", "tree_bare", "bush", "rock", "boulder", "spire":
 				_prop(o, batch)
@@ -1060,6 +1133,9 @@ func _reeds(cell: Rect2, cold: float, node: Node3D) -> void:
 			continue
 		var rng := RandomNumberGenerator.new()
 		rng.seed = hash(Vector2i(roundi(lr.position.x), roundi(lr.position.y)))
+		var level := float(l.get("level", 0.0))
+		var reach := minf(lr.size.x, lr.size.y) / 2.0
+		var joined := _lakes_touching(lb)
 		var corners := [lr.position, Vector2(lr.end.x, lr.position.y), lr.end, Vector2(lr.position.x, lr.end.y)]
 		for i in 4:
 			var a: Vector2 = corners[i]
@@ -1068,7 +1144,13 @@ func _reeds(cell: Rect2, cold: float, node: Node3D) -> void:
 			var t := 0.0
 			while t < a.distance_to(b):
 				if rng.randf() < thin:
-					add.call(a.lerp(b, t / a.distance_to(b)) + inward * rng.randf_range(-0.4, 1.4), float(l.get("level", 0.0)) - 0.7, rng)
+					var e := a.lerp(b, t / a.distance_to(b))
+					var off := rng.randf_range(-1.4, 0.6)
+					# Only where the walk in from the edge passes through this cell can a reed land in it.
+					if Rect2(e, Vector2.ZERO).expand(e + inward * reach).grow(1.5).intersects(cell) and not _in_any(e - inward * 2.0, joined):
+						var w := _lake_edge(level, e, inward, reach)
+						if w.is_finite():
+							add.call(w + inward * off, level - 0.7, rng)
 				t += rng.randf_range(1.6, 3.0)
 	if xf.is_empty():
 		return
@@ -1083,7 +1165,16 @@ func _reeds(cell: Rect2, cold: float, node: Node3D) -> void:
 		mmi.material_override = _reed_mats[shade]
 	node.add_child(mmi)
 
-## The sea's edge: driftwood and the odd stone on the sand, more stones and less wood in the north.
+## The sea's edge, by the kind of coast (coast_sand). A beach: driftwood, flat pebbles, rocks half buried in the
+## sand, dune grass along its top, a rowing boat drawn up now and then, and once in a long while a wreck. A rocky
+## shore: boulders standing in the water's edge, sea stacks out in the shallows, and shingle. More stone and less
+## wood in the north. None of it is solid.
+const DUNE_GRASS := ["grass_large.glb", "grass_leafsLarge.glb"]
+const SEA_STACKS := ["rock_tallA.glb", "rock_tallB.glb", "rock_tallC.glb", "rock_tallG.glb"]
+const SHORE_BOULDERS := ["rocks-a.glb", "rocks-b.glb", "rocks-c.glb"]
+const SAND_ROCKS := ["rocks-sand-a.glb", "rocks-sand-b.glb", "rocks-sand-c.glb"]
+const PEBBLES := ["stone_smallFlatA.glb", "stone_smallFlatB.glb", "stone_smallFlatC.glb", "ground_riverRocks.glb"]
+
 func _shore(cell: Rect2, cold: float, put: Callable) -> void:
 	if not world.has_sea:
 		return
@@ -1098,6 +1189,8 @@ func _shore(cell: Rect2, cold: float, put: Callable) -> void:
 		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector2i(roundi(cell.position.x), roundi(cell.position.y))) + 77
+	var sl: float = world.sea_level
+	var turn := func() -> Basis: return Basis(Vector3.UP, rng.randf() * TAU)
 	var step := 5.0
 	var y := cell.position.y + step * 0.5
 	while y < cell.end.y:
@@ -1106,14 +1199,43 @@ func _shore(cell: Rect2, cold: float, put: Callable) -> void:
 			var q := Vector2(x + rng.randf_range(-2.0, 2.0), y + rng.randf_range(-2.0, 2.0))
 			var hq := height(q.x, q.y)
 			var roll := rng.randf()
-			if hq > world.sea_level - 0.1 and hq < world.sea_level + 1.2:
-				if roll < 0.035 * (1.0 - 0.6 * cold):
-					put.call(RES + ["Wood_Log_A", "Wood_Log_B"][rng.randi() % 2] + ".gltf",
-						Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * Basis(Vector3.FORWARD, rng.randf_range(-0.1, 0.1)).scaled(Vector3.ONE * rng.randf_range(1.0, 1.5)), Vector3(q.x, hq - 0.05, q.y)))
-				elif roll < 0.035 + 0.05 + 0.1 * cold:
-					var sc := rng.randf_range(0.4, 1.0)
-					put.call(FOREST + SMALL_ROCKS[rng.randi() % SMALL_ROCKS.size()] + ".gltf",
-						Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 0.7, sc)), Vector3(q.x, hq - 0.1, q.y)))
+			if hq < sl - 3.0 or hq > sl + 2.4: # nothing is placed outside these heights (the same draws either way)
+				x += step
+				continue
+			var at := Vector3(q.x, hq, q.y)
+			if coast_sand(q) > 0.5:
+				if hq > sl + 1.3 and hq < sl + 2.4:
+					if roll < 0.35 * (1.0 - 0.5 * cold):
+						var sc := rng.randf_range(1.6, 2.6)
+						put.call(COAST + DUNE_GRASS[rng.randi() % DUNE_GRASS.size()], Transform3D(turn.call().scaled(Vector3(sc, sc * rng.randf_range(0.9, 1.4), sc)), at - Vector3(0, 0.05, 0)))
+				elif hq > sl - 0.2 and hq < sl + 1.3:
+					if roll < 0.03 * (1.0 - 0.6 * cold):
+						put.call(RES + ["Wood_Log_A", "Wood_Log_B"][rng.randi() % 2] + ".gltf",
+							Transform3D(turn.call() * Basis(Vector3.FORWARD, rng.randf_range(-0.1, 0.1)).scaled(Vector3.ONE * rng.randf_range(1.0, 1.5)), at - Vector3(0, 0.05, 0)))
+					elif roll < 0.037 and hq > sl + 0.3:
+						put.call(COAST + ["boat-row-small.glb", "boat-row-large.glb"][rng.randi() % 2], Transform3D(turn.call() * Basis(Vector3.FORWARD, rng.randf_range(0.08, 0.2)).scaled(Vector3.ONE * 1.5), at + Vector3(0, 0.05, 0)))
+					elif roll < 0.0375 and hq < sl + 0.1:
+						put.call(COAST + "ship-wreck.glb", Transform3D(turn.call() * Basis(Vector3.FORWARD, rng.randf_range(0.35, 0.55)).scaled(Vector3.ONE * 1.3), at - Vector3(0, 2.8, 0)))
+					elif roll < 0.07:
+						var sc := rng.randf_range(0.3, 0.6)
+						put.call(COAST + SAND_ROCKS[rng.randi() % SAND_ROCKS.size()], Transform3D(turn.call().scaled(Vector3(sc, sc * 0.7, sc)), at - Vector3(0, 0.35, 0)))
+					elif roll < 0.11:
+						put.call(COAST + PEBBLES[rng.randi() % PEBBLES.size()], Transform3D(turn.call().scaled(Vector3.ONE * rng.randf_range(1.2, 2.2)), at + Vector3(0, 0.01, 0)))
+			else:
+				if hq > sl - 3.0 and hq < sl - 0.5:
+					if roll < 0.035:
+						var sc := rng.randf_range(3.5, 7.5)
+						put.call(COAST + SEA_STACKS[rng.randi() % SEA_STACKS.size()], Transform3D(turn.call().scaled(Vector3(sc, sc * rng.randf_range(0.9, 1.5), sc)), at - Vector3(0, 0.4, 0)))
+				elif hq > sl - 0.9 and hq < sl + 0.3:
+					if roll < 0.14:
+						var sc := rng.randf_range(0.45, 1.1)
+						put.call(COAST + SHORE_BOULDERS[rng.randi() % SHORE_BOULDERS.size()], Transform3D(turn.call().scaled(Vector3(sc, sc * rng.randf_range(0.7, 1.1), sc)), at - Vector3(0, 0.5, 0)))
+				elif hq > sl + 0.3 and hq < sl + 1.0:
+					if roll < 0.12 + 0.1 * cold:
+						var sc := rng.randf_range(0.4, 1.0)
+						put.call(FOREST + SMALL_ROCKS[rng.randi() % SMALL_ROCKS.size()] + ".gltf", Transform3D(turn.call().scaled(Vector3(sc, sc * 0.7, sc)), at - Vector3(0, 0.1, 0)))
+					elif roll < 0.3:
+						put.call(COAST + PEBBLES[rng.randi() % PEBBLES.size()], Transform3D(turn.call().scaled(Vector3.ONE * rng.randf_range(1.2, 2.2)), at + Vector3(0, 0.01, 0)))
 			x += step
 		y += step
 
@@ -1446,6 +1568,7 @@ const VILLAGE := "res://themes/fantasy/assets/village/"
 
 const RES := "res://themes/fantasy/assets/resources/" # KayKit Resource Bits: logs, planks, stone, ore, cloth
 const TOOLS := "res://themes/fantasy/assets/tools/"    # KayKit RPG Tools Bits: anvil, grindstone, axes, rope, lanterns
+const COAST := "res://themes/fantasy/assets/coast/"    # Kenney Pirate Kit and Nature Kit (CC0): boats, a wreck, shore rocks, sea stacks, dune grass
 
 const VS := 1.4 # Quaternius builds in metres; this brings the village up to the chibi characters' size
 
@@ -1551,10 +1674,10 @@ var _warm_sorted_at := Vector2.INF
 ## Start loading every piece the theme may draw on the loader's threads, so the first village that needs one does
 ## not wait for it to load (the pieces come in during the loading screen).
 func _prefetch() -> void:
-	for dir in [VILLAGE, RES, TOOLS, DUNGEON, FOREST]:
+	for dir in [VILLAGE, RES, TOOLS, DUNGEON, FOREST, COAST]:
 		for f in DirAccess.get_files_at(dir):
 			var name := f.trim_suffix(".import").trim_suffix(".remap") # an exported game lists the import files
-			if name.ends_with(".gltf") and not _fetching.has(dir + name):
+			if (name.ends_with(".gltf") or name.ends_with(".glb")) and not _fetching.has(dir + name):
 				_fetching[dir + name] = true
 				ResourceLoader.load_threaded_request(dir + name)
 
@@ -1588,8 +1711,23 @@ func _mesh(path: String) -> Mesh:
 					st.commit(am)
 			m = am
 		inst.free()
+	if m is ArrayMesh and path.begins_with(COAST):
+		_coast_colours(m as ArrayMesh)
 	meshes[path] = m
 	return m
+
+## The Nature Kit is pastel (teal grass, peach rock): its materials, by name, in the colours of the rest of the land.
+const COAST_COLOURS := {"stone": Color(0.56, 0.55, 0.53), "dirt": Color(0.47, 0.44, 0.40), "dirtDark": Color(0.36, 0.33, 0.29),
+	"grass": Color(0.42, 0.52, 0.27), "water": Color(0.30, 0.45, 0.50)}
+
+func _coast_colours(m: ArrayMesh) -> void:
+	for i in m.get_surface_count():
+		var mat := m.surface_get_material(i) as StandardMaterial3D
+		if mat and COAST_COLOURS.has(mat.resource_name):
+			var c := mat.duplicate() as StandardMaterial3D
+			c.albedo_color = COAST_COLOURS[mat.resource_name]
+			c.roughness = 0.95
+			m.surface_set_material(i, c)
 
 func _multi(mesh: Mesh, xforms: Array, tint := Color.WHITE) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
@@ -2196,6 +2334,10 @@ func _dock(b: Array, water: float, v: int) -> Node3D:
 	var into: Vector3 = sd[1]
 	if _in_any(Vector2(shore.x, shore.z) - Vector2(into.x, into.z) * 2.0, _lakes_touching(b)):
 		return Node3D.new() # that side is more of the same lake: no shore to build a dock on
+	# From the water's edge, a step back on the land, not the box's.
+	var edge := _lake_edge(water, Vector2(shore.x, shore.z), Vector2(into.x, into.z), minf(float(b[2]) - float(b[0]), float(b[3]) - float(b[1])) / 2.0)
+	if edge.is_finite():
+		shore = Vector3(edge.x, 0, edge.y) - into * VS
 	var face := Basis(Vector3.UP, atan2(into.x, into.z)) * Basis.from_scale(Vector3.ONE * VS)
 	var per := {}
 	var add := func(name: String, xf: Transform3D):
@@ -2228,7 +2370,7 @@ func _dock(b: Array, water: float, v: int) -> Node3D:
 	return node
 
 ## Rocks along a box's edge, every `gap` units or so, from the box's corner so every client agrees.
-func _rim_rocks(b: Array, ground: float, gap: float) -> Node3D:
+func _rim_rocks(b: Array, ground: float, gap: float, lake_level := INF) -> Node3D:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = (int(b[0]) * 73856093) ^ (int(b[1]) * 19349663)
 	var picks := ["Rock_1_A_Color1", "Rock_1_J_Color1", "Rock_2_A_Color1", "Rock_3_E_Color1"]
@@ -2244,11 +2386,21 @@ func _rim_rocks(b: Array, ground: float, gap: float) -> Node3D:
 			var p := a.lerp(c, (k + rng.randf() * 0.6) / (n + 1))
 			if _in_any(p, joined):
 				continue # the edge it shares with the rest of the lake is open water, not shore
+			var y := ground - 0.3
+			if lake_level < INF:
+				# A lake's rocks stand at its water's edge, which wanders inside the box.
+				var inward := (Vector2((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) - (a + c) / 2.0).normalized()
+				var w := _lake_edge(lake_level, p, inward, minf(float(b[2]) - float(b[0]), float(b[3]) - float(b[1])) / 2.0)
+				if w.is_finite():
+					p = w - inward * rng.randf_range(2.0, 4.0)
+					y = height(p.x, p.y) - 0.3
 			var pick: String = picks[rng.randi() % picks.size()]
 			if not per.has(pick):
 				per[pick] = []
 			var s := rng.randf_range(1.6, 3.2)
-			per[pick].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, ground - 0.3, p.y)))
+			if lake_level < INF: # a pond's rocks are a pond's size
+				s *= clampf(minf(float(b[2]) - float(b[0]), float(b[3]) - float(b[1])) / 50.0, 0.4, 1.0)
+			per[pick].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, y, p.y)))
 	var node := Node3D.new()
 	for pick in per:
 		var m := _mesh(FOREST + String(pick) + ".gltf")
@@ -2272,6 +2424,17 @@ static func _in_any(p: Vector2, boxes: Array) -> bool:
 		if (r as Rect2).has_point(p):
 			return true
 	return false
+
+## Where the water begins, going `inward` from a lake box's edge at `from` (worldgen rounds the basin and lets its
+## shore wander, so that is some way in from the box): INF when there is no water within `reach`.
+func _lake_edge(level: float, from: Vector2, inward: Vector2, reach: float) -> Vector2:
+	var d := 0.0
+	while d <= reach:
+		var p := from + inward * d
+		if height(p.x, p.y) < level:
+			return p
+		d += 1.0
+	return Vector2.INF
 
 ## A river's water: a ribbon along its course at its level, a little wider than the channel so the banks hide the edge.
 func _river_mesh(r: Dictionary) -> Node3D:
@@ -2342,6 +2505,10 @@ func _water() -> ShaderMaterial:
 	sh.code = """shader_type spatial;
 render_mode cull_disabled, depth_draw_always;
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear;
+uniform float swell = 0.0; // the open sea: lines of breakers rolling in over the shallows
+global uniform float world_rain; // life.gd: how hard rain is falling
+global uniform vec2 world_clouds;
+global uniform vec2 world_cloud_off;
 varying vec3 wp;
 float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 float n(vec2 p) {
@@ -2356,6 +2523,21 @@ void fragment() {
 	float e = 0.2;
 	float a = waves(q, t);
 	vec3 wn = normalize(vec3((a - waves(q + vec2(e, 0.0), t)) / e * 0.3, 1.0, (a - waves(q + vec2(0.0, e), t)) / e * 0.3));
+	if (world_rain > 0.02) {
+		// Rain: rings spreading from where each drop lands, more of them the harder it falls.
+		vec2 rn = vec2(0.0);
+		for (int l = 0; l < 3; l++) {
+			vec2 rq = q * 1.3 + float(l) * vec2(17.3, 9.1);
+			vec2 cell = floor(rq);
+			float s = h(cell + float(l) * 3.7);
+			float age = fract(TIME * (1.1 + 0.4 * s) + s * 7.0);
+			vec2 d = fract(rq) - (0.3 + 0.4 * vec2(h(cell + 1.7), h(cell + 4.3)));
+			float r = length(d);
+			float ring = (1.0 - smoothstep(0.0, 0.05, abs(r - age * 0.32))) * (1.0 - age) * step(s, world_rain);
+			rn += d / (r + 0.001) * ring;
+		}
+		wn = normalize(wn + vec3(rn.x, 0.0, rn.y) * 0.7 * smoothstep(70.0, 25.0, length(VERTEX))); // gone in the distance, where they would shimmer
+	}
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 	float depth = texture(depth_tex, SCREEN_UV).r;
 	vec4 v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, depth, 1.0);
@@ -2363,9 +2545,23 @@ void fragment() {
 	float thick = clamp(VERTEX.z - v.z, 0.0, 20.0);
 	float k = smoothstep(0.0, 3.0, thick);
 	vec3 c = mix(vec3(0.14, 0.44, 0.47), vec3(0.03, 0.14, 0.24), k);
-	float foam = (1.0 - smoothstep(0.0, 0.45, thick)) * (0.6 + 0.4 * n(q * 2.0 + t * 2.0));
+	// The water's edge laps in and out and wanders, so it never follows the straight edges of the ground's triangles.
+	float edge = 0.06 + 0.3 * n(q * 0.22 + vec2(t * 0.15, 0.0)) + 0.16 * (0.5 + 0.5 * sin(TIME * 0.8 + 6.2832 * n(q * 0.03)));
+	float foam = (1.0 - smoothstep(edge, edge + 0.5, thick)) * (0.6 + 0.4 * n(q * 2.0 + t * 2.0));
+	if (swell > 0.0) {
+		// Breakers: crests a little apart over the shallows, each rolling in towards the beach and spending itself
+		// at the edge; broken up along their length so they come in as sets, not as rings.
+		float ph = thick * 4.0 + TIME * 1.2 + 6.2832 * n(q * 0.02);
+		float crest = smoothstep(0.75, 0.97, sin(ph)) * smoothstep(0.2, 0.5, n(q * 0.06 + vec2(TIME * 0.05, 0.0)));
+		foam = max(foam, swell * crest * smoothstep(4.0, 1.5, thick) * smoothstep(0.1, 0.5, thick) * (0.7 + 0.3 * n(q * 1.5)));
+	}
+	if (world_clouds.x > 0.0) {
+		vec2 cq = q + world_cloud_off;
+		float cl = 0.65 * n(cq / 90.0) + 0.35 * n(cq / 37.0 + 5.3);
+		c *= 1.0 - 0.32 * world_clouds.x * smoothstep(world_clouds.y, world_clouds.y + 0.12, cl);
+	}
 	ALBEDO = mix(c, vec3(0.92, 0.95, 0.95), foam * 0.8);
-	ALPHA = clamp(0.55 + k * 0.4 + foam * 0.4, 0.0, 0.96);
+	ALPHA = clamp(0.55 + k * 0.4 + foam * 0.4, 0.0, 0.96) * smoothstep(edge - 0.06, edge + 0.06, thick);
 	ROUGHNESS = 0.06;
 	SPECULAR = 0.7;
 }"""

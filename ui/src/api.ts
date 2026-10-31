@@ -125,6 +125,8 @@ export type QuestStep =
   | { kind: 'visit'; place: string }
   /** Carry `count` (1..255) of an item; taken when the quest is handed in. */
   | { kind: 'collect'; item: string; count: number }
+  /** Build `count` (1..65535) blocks, of one material (a MATERIALS name) or of any when left out. */
+  | { kind: 'build'; count: number; material?: string }
   /** Talk to a bot of a type. */
   | { kind: 'talk'; archetype: string }
 /** A quest (GameFile.quests, at most 512; a player holds at most 25 at once). Not in the content hash: edits apply live, nobody is disconnected. */
@@ -218,7 +220,7 @@ export interface Place {
 }
 /** What a place's sound and music may be (proto::game::SOUNDS, MUSIC). */
 export const SOUNDS = ['sea', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town', 'market', 'crypt', 'holy', 'battle'] as const
-export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'city', 'none'] as const
+export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'city', 'capital', 'tavern', 'none'] as const
 export interface Route {
   name: string
   points: [number, number][]
@@ -742,6 +744,8 @@ export interface Rules {
   kill_credit_secs: number
   /** Most players in a party (at least 2). */
   party_size: number
+  /** Most players in a raid, a party made one with /raid (at least party_size). */
+  raid_size: number
   /** Party mates this near a kill share its experience. */
   party_share_reach: number
   /** Other players this near a kill share its quest credit. */
@@ -812,6 +816,7 @@ export const RULE_DEFAULTS: Rules = {
   pvp_quiet_secs: 8,
   kill_credit_secs: 30,
   party_size: 5,
+  raid_size: 20,
   party_share_reach: 80,
   quest_share_reach: 40,
   say_reach: 64,

@@ -295,4 +295,17 @@ mod tests {
         s.leave_party(a);
         assert_eq!((s.party[a], s.party[b]), (0, 0), "a party of one is no party");
     }
+
+    #[test]
+    fn a_raid_holds_more_than_a_party_and_ends_with_it() {
+        let mut s = Sim::new(GameFile::default_game().build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let [a, b] = [0, 1].map(|o| s.spawn(o).unwrap());
+        s.party[a] = 3;
+        s.party[b] = 3;
+        assert_eq!(s.party_cap(a), s.rules.party_size as usize);
+        s.raids.insert(3);
+        assert_eq!(s.party_cap(b), s.rules.raid_size as usize);
+        s.leave_party(a);
+        assert!(s.raids.is_empty(), "the raid ends when one is left");
+    }
 }

@@ -1,11 +1,14 @@
 extends Node3D
 ## Life round the player that only this client sees, so it costs the server nothing: birds pecking on open ground
 ## that scatter when you run at them, gulls over the coast, deer at the edge of the woods that bolt, sheep and
-## cattle grazing by farms, smoke from the nearest chimneys and fireflies over water on a dry night. Everything is
+## cattle grazing by farms, smoke from the nearest chimneys, fireflies over water on a dry night, ducks on the
+## nearest lake that paddle off as you come, butterflies on a fine day, leaves falling in autumn and bats flitting
+## round the houses and the woods at dusk. Everything is
 ## a fixed pool placed round the camera and moved on as it goes; nothing is made or freed while playing.
 ##
 ## The fantasy theme makes this in setup and calls step() every frame. It also eases how wet the ground is and how
-## much snow lies (the theme's weather), as global shader values the ground, roofs and blocks read.
+## much snow lies (the theme's weather), as global shader values the ground, roofs and blocks read, and how hard rain
+## falls now (the water's rain rings).
 
 var theme: Node3D          # the fantasy theme: height(), world, darkness, the weather (_rain_kind, _rain_ratio, _wx)
 var low := false           # Graphics: Low (fewer of everything)
@@ -67,8 +70,12 @@ static func ensure_globals() -> void:
 	if Engine.has_meta("life_globals"):
 		return
 	Engine.set_meta("life_globals", true)
-	for n in ["world_wet", "world_puddles", "world_snow", "world_autumn"]:
+	for n in ["world_wet", "world_puddles", "world_snow", "world_autumn", "world_tide", "world_rain"]:
 		RenderingServer.global_shader_parameter_add(n, RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
+	# theme.gd: the clouds' shadows on the land and water, x how dark (0 at night, under clear sky or full overcast),
+	# y the noise level above which a cloud is overhead (the sky's own threshold), and how far they have drifted.
+	RenderingServer.global_shader_parameter_add("world_clouds", RenderingServer.GLOBAL_VAR_TYPE_VEC2, Vector2(0.0, 1.0))
+	RenderingServer.global_shader_parameter_add("world_cloud_off", RenderingServer.GLOBAL_VAR_TYPE_VEC2, Vector2.ZERO)
 	# land.gd: the band of latitude where the north turns cold (set by the theme once it knows the world).
 	RenderingServer.global_shader_parameter_add("world_cold_band", RenderingServer.GLOBAL_VAR_TYPE_VEC2, Vector2(-1e9, -1e9))
 	# How much taller the land runs than the small worlds the snow and heath lines were set for (1 for those).
@@ -98,6 +105,17 @@ func setup(p_theme: Node3D) -> void:
 		_smoke.append(s)
 	_flies = _make_flies()
 	add_child(_flies)
+	for i in DUCKS:
+		var d := _make_duck(i % 2 == 0)
+		d["node"].visible = false
+		add_child(d["node"])
+		_ducks.append(d)
+	_butterflies = _make_drift(false)
+	add_child(_butterflies)
+	_leaves = _make_drift(true)
+	add_child(_leaves)
+	_bats = _make_bats()
+	add_child(_bats)
 
 ## How many of each are about (for the smoke test).
 func _saw(what: String) -> void:
@@ -111,7 +129,9 @@ func counts() -> Dictionary:
 	var deer := _deer.filter(func(d): return d["node"].visible).size()
 	var stock := _stock.filter(func(a): return a["node"].visible).size()
 	var smoke := _smoke.filter(func(s): return s.emitting).size()
-	return {"birds": birds, "deer": deer, "stock": stock, "smoke": smoke, "flies": _flies.emitting}
+	var ducks := _ducks.filter(func(d): return d["node"].visible).size()
+	return {"birds": birds, "deer": deer, "stock": stock, "smoke": smoke, "flies": _flies.emitting, "ducks": ducks,
+		"butterflies": _butterflies.emitting, "leaves": _leaves.emitting, "bats": _bats.emitting}
 
 func step(center: Vector2, dt: float) -> void:
 	if dt <= 0.0:
@@ -130,7 +150,7 @@ func step(center: Vector2, dt: float) -> void:
 		var t := Time.get_ticks_usec()
 		_survey()
 		theme.lap("life survey", t)
-		_placing = [_place_flocks, _place_deer, _place_stock, _place_smoke]
+		_placing = [_place_flocks, _place_deer, _place_stock, _place_smoke, _place_ducks]
 	elif not _placing.is_empty():
 		var t := Time.get_ticks_usec()
 		var f: Callable = _placing.pop_front()
@@ -140,8 +160,11 @@ func step(center: Vector2, dt: float) -> void:
 	_fish_step(dt)
 	_deer_step(dt)
 	_stock_step(dt)
+	_ducks_step(dt)
 	_smoke_frame()
 	_flies_frame()
+	_drift_frame()
+	_bats_frame()
 	_ground_weather(dt)
 
 # ================================================================== looking over the land
@@ -986,6 +1009,303 @@ func _flies_frame() -> void:
 		_flies.amount_ratio = 0.5 if low else 1.0
 	_flies.emitting = on
 
+# ================================================================== ducks
+
+const DUCKS := 7
+var _ducks: Array = []     # per duck: {node, head, at: Vector2, to: Vector2, yaw, t, phase}
+var _duck_level := 0.0     # the water level of the lake they are on
+var _duck_box := Rect2()   # and its box (empty for none)
+
+## A mallard: brown duck, or drake with a green head and a white collar, sitting on the water.
+func _make_duck(drake: bool) -> Dictionary:
+	var root := Node3D.new()
+	var body := _mat(Color("7a6650") if not drake else Color("8c8c86"))
+	var head_mat := _mat(Color("6d5a46") if not drake else Color("1f4a2e"))
+	_box(root, Vector3(0.2, 0.13, 0.36), Vector3(0, 0.05, 0), body)
+	_box(root, Vector3(0.14, 0.08, 0.1), Vector3(0, 0.1, 0.19), body, Vector3(-0.5, 0, 0)) # tail up
+	if drake:
+		_box(root, Vector3(0.18, 0.08, 0.14), Vector3(0, 0.1, -0.12), _mat(Color("6b3f2a"))) # chestnut breast
+	var head := Node3D.new()
+	head.position = Vector3(0, 0.14, -0.15)
+	root.add_child(head)
+	_box(head, Vector3(0.06, 0.12, 0.06), Vector3(0, 0.04, 0), head_mat if drake else body) # neck
+	if drake:
+		_box(head, Vector3(0.075, 0.025, 0.075), Vector3(0, 0.0, 0), _mat(Color("e8e4dc"))) # collar
+	_box(head, Vector3(0.09, 0.09, 0.12), Vector3(0, 0.12, -0.02), head_mat)
+	_box(head, Vector3(0.05, 0.025, 0.08), Vector3(0, 0.1, -0.11), _mat(Color("d9a62e"))) # bill
+	return {"node": root, "head": head, "at": Vector2.ZERO, "to": Vector2.ZERO, "yaw": 0.0, "t": 0.0, "phase": 0.0}
+
+## Open water on the ducks' lake (a little way out from the edge).
+func _duck_water(p: Vector2) -> bool:
+	return _duck_box.has_point(p) and _h(p.x, p.y) < _duck_level - 0.2
+
+## Ducks on the nearest lake within reach, in a loose party out on the water; none when no lake is near.
+func _place_ducks() -> void:
+	var best := INF
+	var box := Rect2()
+	var level := 0.0
+	for l in theme.world.lakes:
+		var b: Array = l["b"]
+		var r := Rect2(float(b[0]), float(b[1]), float(b[2]) - float(b[0]), float(b[3]) - float(b[1]))
+		var q := Vector2(clampf(_center.x, r.position.x, r.end.x), clampf(_center.y, r.position.y, r.end.y))
+		var d := q.distance_to(_center)
+		if d < best and d < NEAR * 0.7:
+			best = d
+			box = r
+			level = float(l.get("level", 0.0))
+	if box == _duck_box and box.has_area():
+		return # still on the same lake
+	_duck_box = box
+	_duck_level = level
+	var home := Vector2.INF
+	if box.has_area():
+		for _k in 16:
+			var p := box.position + Vector2(_rng.randf_range(0.2, 0.8), _rng.randf_range(0.2, 0.8)) * box.size
+			if _duck_water(p):
+				home = p
+				break
+	var n := (DUCKS / 2) if low else DUCKS
+	for i in _ducks.size():
+		var d: Dictionary = _ducks[i]
+		var p := home + Vector2(_rng.randf_range(-3.0, 3.0), _rng.randf_range(-3.0, 3.0)) if home != Vector2.INF else Vector2.INF
+		var on := i < n and p != Vector2.INF and _duck_water(p)
+		d["node"].visible = on
+		if on:
+			d["at"] = p
+			d["to"] = p
+			d["yaw"] = _rng.randf() * TAU
+			d["t"] = _rng.randf_range(0.0, 4.0)
+
+func _ducks_step(dt: float) -> void:
+	var mid := Vector2.ZERO
+	var count := 0
+	for d in _ducks:
+		if d["node"].visible:
+			mid += d["at"]
+			count += 1
+	if count == 0:
+		return
+	mid /= count
+	for d in _ducks:
+		var n: Node3D = d["node"]
+		if not n.visible:
+			continue
+		var at: Vector2 = d["at"]
+		var speed := 0.45
+		# Someone coming close: paddle off, quicker.
+		if at.distance_to(_center) < 7.0:
+			var away := at + (at - _center).normalized() * 3.0
+			if _duck_water(away):
+				d["to"] = away
+				speed = 1.3
+		d["t"] = float(d["t"]) - dt
+		if float(d["t"]) <= 0.0:
+			# Pottering about near the others, now and then a dabble.
+			d["t"] = _rng.randf_range(3.0, 8.0)
+			var nxt: Vector2 = mid + Vector2(_rng.randf_range(-3.5, 3.5), _rng.randf_range(-3.5, 3.5))
+			if _duck_water(nxt):
+				d["to"] = nxt
+		var to: Vector2 = d["to"]
+		var head: Node3D = d["head"]
+		if at.distance_to(to) > 0.2:
+			var step := (to - at).normalized() * speed * dt
+			d["at"] = at + step
+			d["yaw"] = atan2(-step.x, -step.y)
+			head.rotation.x = lerpf(head.rotation.x, 0.0, minf(1.0, dt * 4.0))
+		else:
+			# Still: head down into the water for a moment now and then.
+			var dabble := sin(_clock * 0.9 + float(n.get_instance_id() % 53)) > 0.85
+			head.rotation.x = lerpf(head.rotation.x, -1.3 if dabble else 0.0, minf(1.0, dt * 5.0))
+		d["phase"] = float(d["phase"]) + dt
+		var p: Vector2 = d["at"]
+		n.position = Vector3(p.x, _duck_level + 0.02 * sin(float(d["phase"]) * 2.3), p.y)
+		n.rotation.y = lerp_angle(n.rotation.y, float(d["yaw"]), minf(1.0, dt * 4.0))
+		n.rotation.z = 0.05 * sin(float(d["phase"]) * 1.7) # rocking on the ripples
+
+# ================================================================== butterflies and falling leaves
+
+var _butterflies: GPUParticles3D
+var _leaves: GPUParticles3D
+
+## Small coloured motes that drift and tumble: butterflies over the grass by day, or leaves coming down.
+func _make_drift(leaves: bool) -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(5, 1.5, 5) if leaves else Vector3(16, 0.5, 16)
+	pm.direction = Vector3(0, 1, 0)
+	pm.spread = 180.0
+	pm.initial_velocity_min = 0.1
+	pm.initial_velocity_max = 0.5
+	pm.gravity = Vector3(0.4, -0.7, 0.15) if leaves else Vector3.ZERO
+	pm.turbulence_enabled = true
+	pm.turbulence_noise_strength = 2.5 if leaves else 4.0
+	pm.turbulence_noise_scale = 3.0 if leaves else 1.6
+	pm.turbulence_influence_min = 0.1
+	pm.turbulence_influence_max = 0.25 if leaves else 0.4
+	pm.angle_min = 0.0
+	pm.angle_max = 360.0
+	pm.angular_velocity_min = -220.0 if leaves else 0.0
+	pm.angular_velocity_max = 220.0 if leaves else 0.0
+	# Each one its own colour: whites, yellows, a blue and a red admiral; or the leaves' golds and browns.
+	var kinds := Gradient.new()
+	if leaves:
+		kinds.set_color(0, Color("c8962e"))
+		kinds.add_point(0.35, Color("b5561f"))
+		kinds.add_point(0.7, Color("8a5a2b"))
+		kinds.set_color(kinds.get_point_count() - 1, Color("d9b24a"))
+	else:
+		kinds.set_color(0, Color("f2efe0"))
+		kinds.add_point(0.4, Color("f0d65a"))
+		kinds.add_point(0.65, Color("8fb0e8"))
+		kinds.set_color(kinds.get_point_count() - 1, Color("d9622b"))
+	kinds.interpolation_mode = Gradient.GRADIENT_INTERPOLATE_CONSTANT
+	var kt := GradientTexture1D.new()
+	kt.gradient = kinds
+	pm.color_initial_ramp = kt
+	var fade := Gradient.new()
+	fade.set_color(0, Color(1, 1, 1, 0))
+	fade.add_point(0.1, Color(1, 1, 1, 1))
+	fade.add_point(0.85, Color(1, 1, 1, 1))
+	fade.set_color(fade.get_point_count() - 1, Color(1, 1, 1, 0))
+	var ft := GradientTexture1D.new()
+	ft.gradient = fade
+	pm.color_ramp = ft
+	if not leaves:
+		# Wings opening and closing: the mote's width beats.
+		var beat := Curve.new()
+		for k in 25:
+			beat.add_point(Vector2(k / 24.0, 0.35 + 0.65 * absf(sin(k * 2.2))))
+		var bt := CurveXYZTexture.new()
+		var flat := Curve.new()
+		flat.add_point(Vector2(0, 1))
+		flat.add_point(Vector2(1, 1))
+		bt.curve_x = beat
+		bt.curve_y = flat
+		bt.curve_z = flat
+		pm.scale_curve = bt
+	p.process_material = pm
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.16, 0.12) if leaves else Vector2(0.18, 0.13)
+	var m := StandardMaterial3D.new()
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.vertex_color_use_as_albedo = true
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.roughness = 1.0
+	quad.material = m
+	p.draw_pass_1 = quad
+	p.amount = 24 if leaves else 18
+	p.lifetime = 7.0 if leaves else 9.0
+	p.preprocess = p.lifetime
+	p.visibility_aabb = AABB(Vector3(-20, -10, -20), Vector3(40, 16, 40))
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.emitting = false
+	return p
+
+func _drift_frame() -> void:
+	var dry: bool = theme._rain_kind == "" and snow < 0.1
+	var wind: float = theme._wx.get("wind", 0.3)
+	# Butterflies: a fine, still, bright day out of the winter, over open ground (not in a town).
+	var fine: bool = dry and theme.darkness < 0.3 and wind < 0.6 and season_snow < 0.1 and season_autumn < 0.6
+	var b_on: bool = fine and _houses.size() < 6
+	if b_on:
+		var at := Vector3(_center.x, _h(_center.x, _center.y) + 0.9, _center.y)
+		if not _butterflies.emitting or _butterflies.global_position.distance_to(at) > 12.0:
+			_butterflies.global_position = at
+		_butterflies.amount_ratio = 0.5 if low else 1.0
+	_butterflies.emitting = b_on
+	# Leaves: autumn, from the trees nearest us, blown harder in a wind.
+	var l_on: bool = season_autumn > 0.25 and snow < 0.3 and not _woods.is_empty()
+	if l_on:
+		var near: Vector2 = _woods[0]
+		for w in _woods:
+			if (w as Vector2).distance_to(_center) < near.distance_to(_center):
+				near = w
+		l_on = near.distance_to(_center) < 45.0
+		if l_on:
+			var at := Vector3(near.x, _h(near.x, near.y) + 4.5, near.y)
+			if not _leaves.emitting or _leaves.global_position.distance_to(at) > 8.0:
+				_leaves.global_position = at
+			(_leaves.process_material as ParticleProcessMaterial).gravity = Vector3(0.4 + 2.5 * wind, -0.7, 0.15 + 0.8 * wind)
+			_leaves.amount_ratio = clampf(season_autumn, 0.3, 1.0) * (0.5 if low else 1.0)
+	_leaves.emitting = l_on
+
+# ================================================================== bats
+
+var _bats: GPUParticles3D
+
+## A few bats jinking about overhead: dark, fast, wings beating.
+func _make_bats() -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(14, 2.0, 14)
+	pm.direction = Vector3(1, 0, 0)
+	pm.spread = 180.0
+	pm.flatness = 0.8
+	pm.initial_velocity_min = 3.0
+	pm.initial_velocity_max = 5.5
+	pm.gravity = Vector3.ZERO
+	pm.turbulence_enabled = true
+	pm.turbulence_noise_strength = 9.0
+	pm.turbulence_noise_scale = 1.2
+	pm.turbulence_noise_speed_random = 1.0
+	pm.turbulence_influence_min = 0.35
+	pm.turbulence_influence_max = 0.6
+	var fade := Gradient.new()
+	fade.set_color(0, Color(1, 1, 1, 0))
+	fade.add_point(0.1, Color(1, 1, 1, 1))
+	fade.add_point(0.9, Color(1, 1, 1, 1))
+	fade.set_color(fade.get_point_count() - 1, Color(1, 1, 1, 0))
+	var ft := GradientTexture1D.new()
+	ft.gradient = fade
+	pm.color_ramp = ft
+	# Wings: the width beats quickly, deep down and up.
+	var beat := Curve.new()
+	for k in 61:
+		beat.add_point(Vector2(k / 60.0, 0.25 + 0.75 * absf(sin(k * 1.9))))
+	var flat := Curve.new()
+	flat.add_point(Vector2(0, 1))
+	flat.add_point(Vector2(1, 1))
+	var bt := CurveXYZTexture.new()
+	bt.curve_x = beat
+	bt.curve_y = flat
+	bt.curve_z = flat
+	pm.scale_curve = bt
+	p.process_material = pm
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.34, 0.12)
+	var m := StandardMaterial3D.new()
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.vertex_color_use_as_albedo = true
+	m.albedo_color = Color(0.06, 0.05, 0.06)
+	m.albedo_texture = soft_dot()
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	quad.material = m
+	p.draw_pass_1 = quad
+	p.amount = 9
+	p.lifetime = 4.0
+	p.preprocess = 4.0
+	p.visibility_aabb = AABB(Vector3(-30, -6, -30), Vector3(60, 16, 60))
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.emitting = false
+	return p
+
+func _bats_frame() -> void:
+	# Out from the eaves and the trees as the light goes, and on into the night; not in rain, wind or winter.
+	var wind: float = theme._wx.get("wind", 0.3)
+	var on: bool = theme._rain_kind == "" and theme.darkness > 0.3 and wind < 0.7 and season_snow < 0.1 and (not _houses.is_empty() or not _woods.is_empty())
+	if on:
+		var at := Vector3(_center.x, _h(_center.x, _center.y) + 6.0, _center.y)
+		if not _bats.emitting or _bats.global_position.distance_to(at) > 14.0:
+			_bats.global_position = at
+		# Most of them at dusk, a few through the night.
+		_bats.amount_ratio = (1.0 - 0.6 * smoothstep(0.7, 0.95, theme.darkness)) * (0.5 if low else 1.0)
+	_bats.emitting = on
+
 # ================================================================== the weather on the ground
 
 ## Joining in weather that has been going a while: the ground already looks it.
@@ -1016,6 +1336,7 @@ func _ground_weather(dt: float) -> void:
 	else:
 		snow = move_toward(snow, season_snow, dt / 90.0)
 	autumn = move_toward(autumn, season_autumn, dt / 60.0)
+	RenderingServer.global_shader_parameter_set("world_rain", falling if kind in ["rain", "storm"] else 0.0)
 	RenderingServer.global_shader_parameter_set("world_autumn", autumn)
 	RenderingServer.global_shader_parameter_set("world_wet", wet)
 	RenderingServer.global_shader_parameter_set("world_puddles", puddles)

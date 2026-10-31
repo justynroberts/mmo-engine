@@ -27,6 +27,8 @@ pub struct Rules {
     pub kill_credit_secs: f32,
     /// Most players in a party.
     pub party_size: u8,
+    /// Most players in a raid (a party made one with `/raid`).
+    pub raid_size: u8,
     /// How near a kill party mates must be to share its experience.
     pub party_share_reach: f32,
     /// How near a kill other players must be to share its quest credit.
@@ -109,6 +111,7 @@ impl Default for Rules {
             pvp_quiet_secs: 8.0,
             kill_credit_secs: 30.0,
             party_size: 5,
+            raid_size: 20,
             party_share_reach: 80.0,
             quest_share_reach: 40.0,
             say_reach: 64.0,
@@ -210,8 +213,8 @@ impl Rules {
         if self.trade_break < self.trade_reach {
             return Err("rules: trade_break must be at least trade_reach".into());
         }
-        if self.party_size < 2 || self.guild_size < 2 || self.listings_per_seller < 1 || self.mail_waiting < 1 {
-            return Err("rules: party_size and guild_size are at least 2, listings_per_seller and mail_waiting at least 1".into());
+        if self.party_size < 2 || self.raid_size < self.party_size || self.guild_size < 2 || self.listings_per_seller < 1 || self.mail_waiting < 1 {
+            return Err("rules: party_size and guild_size are at least 2, raid_size at least party_size, listings_per_seller and mail_waiting at least 1".into());
         }
         Ok(())
     }

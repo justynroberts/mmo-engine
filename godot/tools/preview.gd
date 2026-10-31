@@ -2,6 +2,7 @@ extends SceneTree
 ## The fantasy theme's look at given points of a world file, with no server: for comparing what the theme draws.
 ##   godot --path godot --script res://tools/preview.gd -- --world FILE [--game game.json] --at X,Y[;X,Y...]
 ##       --out PREFIX [--zoom 34] [--time 0.3] [--pitch 0.85] [--yaw 0.6] [--size 1280x720] [--blocks DIR]
+##       [--wet 0..1] [--puddles 0..1] [--autumn 0..1] [--snow 0..1] [--rain 0..1]
 ## --blocks draws what is built, from a server's <world>.blocks.d region files.
 ## Saves PREFIX_0.png, PREFIX_1.png ... one per point, and prints the settlement each point is in.
 var a := {}
@@ -69,6 +70,10 @@ func _run() -> void:
 				break
 		for f in 20:
 			theme.frame(c, zoom)
+			# After the theme's own weather, which sets these each frame.
+			for k in ["wet", "puddles", "autumn", "snow", "rain"]:
+				if a.has(k):
+					RenderingServer.global_shader_parameter_set("world_" + k, float(a[k]))
 			await process_frame
 		var out := "%s_%d.png" % [a["out"], n]
 		root.get_texture().get_image().save_png(out)

@@ -9,6 +9,8 @@ signal material_pressed(kind: int)
 signal mode_pressed                     # the mode chip was clicked (toggle Action / Build)
 signal ability_pressed(name: String)    # attack, jump, torch, map, build
 signal spell_pressed(i: int)            # a slot on the spell bar
+signal party_cmd(text: String)          # a party button: "/invite Name", "/accept", "/decline", "/leave"
+signal land_cmd(text: String)           # a land button: "/claim", "/plot grow", "/unclaim"
 
 const ACCENT := Color("ffd27a")
 const INK := Color(0.05, 0.055, 0.065, 0.84)
@@ -79,11 +81,22 @@ var slots: Array[Slot] = []
 var spellbar := HBoxContainer.new()     # the game's spells (its actions after the first), over the action bar
 var spell_slots: Array[Slot] = []
 var party_box := VBoxContainer.new()    # party mates under your frame: name and health
+var party_head := HBoxContainer.new()   # over them: PARTY n/size and a Leave button
+var _party_count := Label.new()
+var invite_btn := Button.new()          # under a player you have targeted who could join you
+var _invite_name := ""
+var invite_ask := PanelContainer.new()  # someone asks you to join their party: Accept or Decline
+var _invite_text := Label.new()
+var _invite_tw: Tween
 var spell_tip := PanelContainer.new()   # what the spell under the mouse does, over the bars
 var _tip_title := Label.new()
 var _tip_body := Label.new()
 var abilities := {}                     # name -> Slot
 var materials := HBoxContainer.new()   # the build bar, shown in build mode
+var land_bar := HBoxContainer.new()     # over it: whose land this is, and claim / grow / name / give up
+var _land_text := Label.new()
+var _land_claim: Button
+var _land_mine: Array[Button] = []
 var _material_buttons: Array[Button] = []
 var _materials_shown := -2               # the chosen material as last drawn, -1 = hidden
 var _material_counts := []              # what each material's count was as last drawn
@@ -108,6 +121,7 @@ var _load_since := 0.0                  # seconds the screen has been up
 var _load_done := false                 # loaded() was called; it fades once the bar is full and it has been up a while
 const LOAD_MIN := 2.2                   # long enough to read a line, however fast the world arrives
 var help_hint := Label.new()
+var prompt := Label.new()               # over the action bar: what F would do here ("F  Talk to the Shepherd")
 var _banner_tw: Tween
 var _loc_tw: Tween
 var _toast_tw: Tween
@@ -227,10 +241,39 @@ func _ready() -> void:
 	spellbar.alignment = BoxContainer.ALIGNMENT_CENTER
 	spellbar.visible = false
 	root.add_child(spellbar)
-	party_box.position = Vector2(16, 120)
+	party_head.position = Vector2(16, 118)
+	party_head.visible = false
+	party_head.add_theme_constant_override("separation", 8)
+	_party_count.add_theme_font_size_override("font_size", 12)
+	_party_count.add_theme_color_override("font_color", Color("8fd3ff"))
+	_outline(_party_count, 3)
+	party_head.add_child(_party_count)
+	party_head.add_child(_small_button("Leave", func(): party_cmd.emit("/leave")))
+	root.add_child(party_head)
+	party_box.position = Vector2(16, 142)
 	party_box.add_theme_constant_override("separation", 4)
 	party_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(party_box)
+	invite_btn = _small_button("Invite to party", func(): party_cmd.emit("/invite " + _invite_name))
+	invite_btn.position = Vector2(14 + Frame.W + 12, 118)
+	invite_btn.visible = false
+	root.add_child(invite_btn)
+	invite_ask.add_theme_stylebox_override("panel", _box(Color(0.05, 0.06, 0.08, 0.92), Color("8fd3ff"), 12))
+	invite_ask.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 150)
+	invite_ask.visible = false
+	var ask := VBoxContainer.new()
+	ask.add_theme_constant_override("separation", 8)
+	_invite_text.add_theme_font_size_override("font_size", 15)
+	_invite_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ask.add_child(_invite_text)
+	var answers := HBoxContainer.new()
+	answers.alignment = BoxContainer.ALIGNMENT_CENTER
+	answers.add_theme_constant_override("separation", 10)
+	answers.add_child(_small_button("Accept", func(): _answer_invite("/accept")))
+	answers.add_child(_small_button("Decline", func(): _answer_invite("/decline")))
+	ask.add_child(answers)
+	invite_ask.add_child(ask)
+	root.add_child(invite_ask)
 	spell_tip.visible = false
 	spell_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	spell_tip.add_theme_stylebox_override("panel", _box(Color(0.04, 0.045, 0.05, 0.94), EDGE, 12))
@@ -252,6 +295,24 @@ func _ready() -> void:
 	materials.add_theme_constant_override("separation", 4)
 	materials.visible = false
 	root.add_child(materials)
+	land_bar.add_theme_constant_override("separation", 8)
+	land_bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	land_bar.visible = false
+	_land_text.add_theme_font_size_override("font_size", 14)
+	_outline(_land_text, 4)
+	land_bar.add_child(_land_text)
+	_land_claim = _small_button("Claim land here", func(): land_cmd.emit("/claim"))
+	_land_claim.tooltip_text = "Make a plot round where you stand yours: only you and your guild may build on it"
+	land_bar.add_child(_land_claim)
+	for b in [["Grow", "/plot grow", "Buy the next size up"], ["Name", "", "Give your land a name (typed in chat)"], ["Give up", "/unclaim", "Give up this land"]]:
+		var cmd: String = b[1]
+		var btn := _small_button(b[0], func(): open_chat("/plot name ") if cmd == "" else land_cmd.emit(cmd))
+		btn.tooltip_text = b[2]
+		land_bar.add_child(btn)
+		_land_mine.append(btn)
+	land_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 84)
+	land_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	root.add_child(land_bar)
 	mode_chip.focus_mode = Control.FOCUS_NONE
 	mode_chip.add_theme_font_size_override("font_size", 13)
 	mode_chip.tooltip_text = "Back to action mode (B or Esc)"
@@ -366,6 +427,14 @@ func _ready() -> void:
 	root.add_child(crosshair)
 
 	# The keys, behind F1.
+	prompt.add_theme_font_size_override("font_size", 16)
+	prompt.add_theme_color_override("font_color", ACCENT)
+	_outline(prompt, 5)
+	prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	prompt.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 130)
+	prompt.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	prompt.visible = false
+	root.add_child(prompt)
 	help_hint.text = "F1  controls"
 	help_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 16)
 	help_hint.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -463,8 +532,44 @@ func _show_tip(on: bool, s: Slot, title: String, body: String) -> void:
 	var top := spellbar.get_global_rect().position.y - 10.0
 	spell_tip.position = Vector2(clampf(r.get_center().x - spell_tip.size.x * 0.5, 8.0, get_viewport().get_visible_rect().size.x - spell_tip.size.x - 8.0), top - spell_tip.size.y)
 
-## Party mates: [[name, health 0..1, or -1 when out of sight], ...].
-func set_party(mates: Array) -> void:
+func _small_button(text: String, on: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 12)
+	b.pressed.connect(on)
+	return b
+
+## What F would do here, shown over the action bar ("" hides it).
+func set_prompt(text: String) -> void:
+	if prompt.text != text:
+		prompt.text = text
+		prompt.visible = text != ""
+
+## The invite button under the target: shown with the name of a player who could join us, hidden with "".
+func show_invite(name: String) -> void:
+	_invite_name = name
+	invite_btn.visible = name != ""
+
+## Someone asks us to join their party: the question stays half a minute, then goes (the server forgets it too
+## when they ask someone else).
+func ask_invite(from: String) -> void:
+	_invite_text.text = "%s asks you to join their party." % from
+	invite_ask.visible = true
+	if _invite_tw:
+		_invite_tw.kill()
+	_invite_tw = create_tween()
+	_invite_tw.tween_interval(30.0)
+	_invite_tw.tween_callback(func(): invite_ask.visible = false)
+
+func _answer_invite(cmd: String) -> void:
+	invite_ask.visible = false
+	party_cmd.emit(cmd)
+
+## Party mates: [[name, health 0..1, or -1 when out of sight], ...], and how many a party may hold.
+func set_party(mates: Array, size := 5) -> void:
+	party_head.visible = not mates.is_empty()
+	_party_count.text = "PARTY  %d/%d" % [mates.size() + 1, size]
 	if party_box.get_child_count() != mates.size():
 		for c in party_box.get_children():
 			c.queue_free()
@@ -686,7 +791,10 @@ func toggle_help() -> void:
 		help.reset_size()
 		help.position = (help.get_viewport_rect().size - help.size) / 2.0
 
-func open_chat() -> void:
+func open_chat(prefill := "") -> void:
+	if prefill != "":
+		chat_in.text = prefill
+		chat_in.caret_column = prefill.length()
 	chat_in.visible = true
 	chat_hint.visible = false
 	chat_box.add_theme_stylebox_override("panel", _box(Color(0.03, 0.035, 0.04, 0.8), EDGE, 8))
@@ -766,6 +874,17 @@ func set_material_counts(counts: Array) -> void:
 		var key: String = KEYS[i] if i < KEYS.size() else ""
 		b.text = key if n < 0 else "%s\n%d" % [key, n]
 		b.modulate.a = 0.4 if n == 0 else 1.0
+
+## In build mode, whose land you stand on: held (by anyone), yours, and a line saying so ("" text hides the bar).
+func show_land(text: String, held: bool, mine: bool) -> void:
+	land_bar.visible = text != ""
+	if not land_bar.visible:
+		return
+	_land_text.text = text
+	_land_text.add_theme_color_override("font_color", ACCENT if mine else (Color("ff8a70") if held else TEXT))
+	_land_claim.visible = not held
+	for b in _land_mine:
+		b.visible = mine
 
 ## Show the build bar (or not), with the chosen material marked.
 func show_materials(on: bool, chosen: int) -> void:
@@ -965,6 +1084,8 @@ class Minimap extends Control:
 	var me := Vector2.ZERO
 	var facing := 0.0
 	var others: Array = []
+	var dungeons: Array = [] # [[Vector2, name, ...], ...]: marked, and pinned to the rim when out of view
+	var goals: Array = []    # [[Vector2, title, r], ...]: where our quests want us, the same way
 	var span := 240.0       # world units from the middle to the rim
 	var local_tex: ImageTexture
 	var local_area := Rect2()  # the world square local_tex shows
@@ -1010,6 +1131,16 @@ class Minimap extends Control:
 			if o.length() < rad - 3.0:
 				draw_circle(c + o, 3.0, Color(0, 0, 0, 0.8))
 				draw_circle(c + o, 2.2, ACCENT)
+		for d in dungeons:
+			var o: Vector2 = (d[0] - me) * k
+			if o.length() > rad - 8.0:
+				o = o.normalized() * (rad - 8.0)
+			preload("res://scripts/map.gd").draw_dungeon(self, c + o, 5.5)
+		for g in goals:
+			var o: Vector2 = (g[0] - me) * k
+			if o.length() > rad - 8.0:
+				o = o.normalized() * (rad - 8.0)
+			preload("res://scripts/map.gd").draw_goal(self, c + o, 5.0)
 		var fwd := Vector2(-sin(facing), -cos(facing))
 		var right := Vector2(fwd.y, -fwd.x)
 		var arrow := PackedVector2Array([c + fwd * 9.0, c - fwd * 5.0 + right * 5.5, c - fwd * 2.5, c - fwd * 5.0 - right * 5.5])

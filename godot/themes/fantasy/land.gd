@@ -297,9 +297,44 @@ func ground_map(cx: int, cy: int) -> PackedByteArray:
 		if not box.intersects(cell):
 			continue
 		any = true
-		stamp.call(box, 2, func(p: Vector2) -> float:
-			var d := Vector2(maxf(maxf(lr.position.x - p.x, p.x - lr.end.x), 0.0), maxf(maxf(lr.position.y - p.y, p.y - lr.end.y), 0.0)).length()
-			return 1.0 - d / WET_REACH)
+		# From the water itself, not the box: worldgen rounds the basin and lets its shore wander inside the box.
+		# Water texels first, then how far each texel is from one (a two-pass chamfer over the texels round it).
+		var reg := box.intersection(cell.grow(WET_REACH))
+		var gw := int(ceil(reg.size.x / px)) + 1
+		var gh := int(ceil(reg.size.y / px)) + 1
+		var level := float(l.get("level", 0.0))
+		var dist := PackedFloat32Array()
+		dist.resize(gw * gh)
+		var wet := false
+		for j in gh:
+			for i in gw:
+				var p := reg.position + Vector2(i, j) * px
+				var water: bool = lr.has_point(p) and world.height(p.x, p.y) < level
+				dist[j * gw + i] = 0.0 if water else INF
+				wet = wet or water
+		if not wet:
+			continue # no water within reach of this cell (the box's dry margin): nothing to wet
+		var diag := px * 1.4142
+		for j in gh:
+			for i in gw:
+				var d := dist[j * gw + i]
+				if i > 0: d = minf(d, dist[j * gw + i - 1] + px)
+				if j > 0: d = minf(d, dist[(j - 1) * gw + i] + px)
+				if i > 0 and j > 0: d = minf(d, dist[(j - 1) * gw + i - 1] + diag)
+				if i < gw - 1 and j > 0: d = minf(d, dist[(j - 1) * gw + i + 1] + diag)
+				dist[j * gw + i] = d
+		for j in range(gh - 1, -1, -1):
+			for i in range(gw - 1, -1, -1):
+				var d := dist[j * gw + i]
+				if i < gw - 1: d = minf(d, dist[j * gw + i + 1] + px)
+				if j < gh - 1: d = minf(d, dist[(j + 1) * gw + i] + px)
+				if i < gw - 1 and j < gh - 1: d = minf(d, dist[(j + 1) * gw + i + 1] + diag)
+				if i > 0 and j < gh - 1: d = minf(d, dist[(j + 1) * gw + i - 1] + diag)
+				dist[j * gw + i] = d
+		stamp.call(reg, 2, func(p: Vector2) -> float:
+			var i := clampi(roundi((p.x - reg.position.x) / px), 0, gw - 1)
+			var j := clampi(roundi((p.y - reg.position.y) / px), 0, gh - 1)
+			return 1.0 - dist[j * gw + i] / WET_REACH)
 	# Woodland floor under and round trees and bushes (a), from this cell and the edges of its neighbours.
 	for dx in [-1, 0, 1]:
 		for dy in [-1, 0, 1]:

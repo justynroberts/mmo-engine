@@ -20,6 +20,7 @@ var _log_list := VBoxContainer.new()
 var _quests: Array = []                 # /play/info quests
 var _mine: Array = []                   # [{quest, step, count, state}]
 var _offer := -1
+var _step_labels: Array = []            # the tracker's "what next" line per quest in _mine order (null for none)
 
 func _ready() -> void:
 	layer = 6
@@ -170,10 +171,55 @@ func next_step(m: Dictionary) -> String:
 	var need := int(steps[i].get("need", 1))
 	return String(steps[i]["text"]) + ("  %d/%d" % [int(m["count"]), need] if need > 1 else "")
 
+## Where each of our quests wants us next: [[Vector2, quest title, radius], ...] in _mine order: the current step's
+## place (/play/info steps' "at": the place, or where the bots to beat or speak to live), or the one to hand it in
+## to, from `homes` (/play/info "homes"). A step with nowhere to show (bring N of something) is left out.
+func goals(homes: Dictionary) -> Array:
+	var out := []
+	for m in _mine:
+		out.append(_goal(m, homes))
+	return out
+
+func _goal(m: Dictionary, homes: Dictionary) -> Array:
+	var qi := int(m["quest"])
+	if qi >= _quests.size() or int(m["state"]) == 2:
+		return []
+	var q: Dictionary = _quests[qi]
+	var at = null
+	if int(m["state"]) == 1:
+		at = homes.get(String(q.get("turn_in", "")))
+	else:
+		var steps: Array = q.get("steps", [])
+		if int(m["step"]) < steps.size():
+			at = steps[int(m["step"])].get("at")
+	if not (at is Array) or at.size() < 2:
+		return []
+	return [Vector2(float(at[0]), float(at[1])), String(q["title"]), float(at[2]) if at.size() > 2 else 0.0]
+
+## The tracker's lines with how far and which way each goal is from `me` (called a couple of times a second).
+func update_distances(me: Vector2, homes: Dictionary) -> void:
+	for i in mini(_mine.size(), _step_labels.size()):
+		var l = _step_labels[i]
+		if l == null or not is_instance_valid(l):
+			continue
+		var g := _goal(_mine[i], homes)
+		var text := next_step(_mine[i])
+		if not g.is_empty():
+			var d: float = maxf(0.0, me.distance_to(g[0]) - float(g[2]))
+			text += "   (here)" if d < 1.0 else "   %d u %s" % [int(d), _compass(g[0] - me)]
+		(l as Label).text = text
+
+## Which way, as a compass point (north is -y).
+static func _compass(v: Vector2) -> String:
+	const POINTS := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
+	return POINTS[posmod(int(round(atan2(v.y, v.x) / (PI / 4.0))), 8)]
+
 func _redraw_tracker() -> void:
 	for c in tracker.get_children():
 		c.queue_free()
+	_step_labels.clear()
 	for m in _mine:
+		_step_labels.append(null)
 		if int(m["state"]) == 2 or int(m["quest"]) >= _quests.size():
 			continue
 		var t := _label(14, HUD.ACCENT, true, false)
@@ -188,6 +234,7 @@ func _redraw_tracker() -> void:
 		s.add_theme_constant_override("outline_size", 4)
 		s.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 		tracker.add_child(s)
+		_step_labels[_step_labels.size() - 1] = s
 
 func _redraw_log() -> void:
 	for c in _log_list.get_children():

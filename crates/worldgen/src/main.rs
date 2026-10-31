@@ -674,14 +674,41 @@ fn height(land: &Land, l: &Layout, near: &[usize], rivers: &[River], ri: &RiverI
         let inside = dx == 0.0 && dy == 0.0;
         match s.t {
             "lake" if inside => {
+                // A basin rounded well in at the corners whose shore wanders in and out, inside the box, so the
+                // water's outline is a loch's and not the box's. A side the rest of the lake carries on past is open.
                 let (cx, cy) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
                 let (hx, hy) = ((b[2] - b[0]) / 2.0, (b[3] - b[1]) / 2.0);
-                let r = 8.0f32.min(hx.min(hy) * 0.6);
-                let (qx, qy) = ((x - cx).abs() - (hx - r), (y - cy).abs() - (hy - r));
-                let ins = r - (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() - qx.max(qy).min(0.0);
-                let shore = 1.5 + 3.0 * noise(x / 3.0, y / 3.0, land.seed + 77);
+                let open = |px: f32, py: f32| {
+                    near.iter().any(|&j| j != i && l.things[j].t == "lake" && {
+                        let o = &l.things[j].b;
+                        px > o[0] - 1.5 && px < o[2] + 1.5 && py > o[1] - 1.5 && py < o[3] + 1.5
+                    })
+                };
+                let (mut px, mut py) = ((x - cx).abs(), (y - cy).abs());
+                if (x > cx && open(b[2] + 1.0, y)) || (x < cx && open(b[0] - 1.0, y)) {
+                    px = 0.0;
+                }
+                if (y > cy && open(x, b[3] + 1.0)) || (y < cy && open(x, b[1] - 1.0)) {
+                    py = 0.0;
+                }
+                let short = hx.min(hy);
+                let r = short * 0.8;
+                let (qx, qy) = (px - (hx - r), py - (hy - r));
+                // Bends a few height cells (4.5 units) wide, or the grid would square them off again.
+                let wobble = (short * 0.25).min(12.0) * noise(x / 30.0, y / 30.0, land.seed + 78);
+                let ins = r - (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() - qx.max(qy).min(0.0) - wobble;
+                let shore = 1.0 + 2.0 * noise(x / 5.0, y / 5.0, land.seed + 77);
                 let depth = ins - shore;
-                let bed = if depth <= 0.0 { s.base - 0.15 * (ins / shore).clamp(0.0, 1.0) } else { s.base - 0.6 - (depth * 0.9).min(6.0) };
+                let bed = if depth > 0.0 {
+                    s.base - 0.6 - (depth * 0.9).min(6.0)
+                } else if ins > 0.0 {
+                    s.base - 0.15 * ins / shore
+                } else {
+                    // Past the shore the ground rises back towards the land round about (never below the water), to
+                    // the box's level at its edge so it meets the ground outside.
+                    let edge = (x - b[0]).min(b[2] - x).min(y - b[1]).min(b[3] - y);
+                    s.base + (h - s.base).max(0.0) * smooth(0.0, 6.0, -ins) * smooth(0.0, 4.0, edge)
+                };
                 lake_bed = Some(lake_bed.map_or(bed, |b| b.min(bed)));
                 continue;
             }

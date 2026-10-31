@@ -60,6 +60,10 @@ pub mod channel {
     /// Server to client, from the server (0): a boss fight's marks on the ground (`boss.rs`). "T|id|x|y|r|secs|fx" marks
     /// a circle that a blow lands in after `secs`; "C|id" takes one back. Not shown as chat.
     pub const BOSS: u8 = 14;
+    /// Server to client, from the server (0): the land held near a player (`realm.rs` `system_land`), sent when it
+    /// changes. "L0|x0,y0,x1,y1,mine,name;..." in world units, mine 1 for their own; a long list goes on in "L1|"
+    /// lines; an empty "L0|" means none. Not shown as chat.
+    pub const LAND: u8 = 15;
 }
 
 pub mod kind {
