@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Interpolator, type Pos } from './interp'
-import { GROUND, integrate, Predictor, ROAD_SPEED, roadKey, World } from './sim'
+import { GROUND, integrate, Predictor, ROAD_SPEED, roadKey, WATER_SPEED, World } from './sim'
 
 const walls = () => new World(256, [[100, 0, 110, 200], [0, 120, 90, 130]])
 
@@ -215,5 +215,16 @@ describe('interpolation', () => {
     i.push(5000, [ent(1, 1)], 0)
     i.push(1, [ent(1, 2)], 100)
     expect(i.size).toBe(1)
+  })
+})
+
+describe('deep water', () => {
+  it('is swum at half speed, as proto::world integrate', () => {
+    const dry = new World(512, [])
+    const wet = new World(512, [], [], undefined, [roadKey(25, 25)])
+    const [x0] = integrate(dry, 100, 100, GROUND, 1, 0, 10, 0.1, 0.5)
+    const [x1] = integrate(wet, 100, 100, GROUND, 1, 0, 10, 0.1, 0.5)
+    expect(wet.inWater(101, 101) && !wet.inWater(105, 101)).toBe(true)
+    expect(Math.abs(x1 - 100 - (x0 - 100) * WATER_SPEED)).toBeLessThan(1e-4)
   })
 })

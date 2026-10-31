@@ -10,6 +10,8 @@
 //! u8 format (2) | u64 ver | u16 tiles | per tile: u16 cx | u16 cy | u32 n | n × entry | u16 m | m × u16 road
 //! entry: u32 id | f32 x0 | f32 y0 | f32 x1 | f32 y1 | u8 class        (21 bytes)
 //! road:  the tile's road cells, each `row * 64 + column` of its 64 × 64 cells of `world::ROAD_CELL` units
+//! then, after the tiles (older readers stop before it): u16 w | w × (u16 cx | u16 cy | u16 m | m × u16 water)
+//! water: a tile's deep water cells (swum: `world::WATER_SPEED`), indexed as roads are
 //! ```
 //!
 //! A box that touches several tiles is in each, with the same id. Boxes are the server's f32s bit for bit, so
@@ -69,6 +71,26 @@ pub struct TileSet {
     tiles: HashMap<(u16, u16), Vec<u32>>,
     /// Road cells by tile, each as its index in the tile (`row * ROAD_CELLS + column`).
     roads: HashMap<(u16, u16), Vec<u16>>,
+    waters: HashMap<(u16, u16), Vec<u16>>,
+}
+
+/// The cells (`world::road_key`) whose centre is inside one of these boxes: deep water from a world's lakes.
+pub fn water_cells(size: f32, lakes: &[Aabb]) -> Vec<u32> {
+    let mut out = std::collections::BTreeSet::new();
+    let edge = (size / ROAD_CELL) as u32;
+    for b in lakes {
+        let (cx0, cy0) = ((b.x0.max(0.0) / ROAD_CELL) as u32, (b.y0.max(0.0) / ROAD_CELL) as u32);
+        let (cx1, cy1) = (((b.x1 / ROAD_CELL) as u32).min(edge.saturating_sub(1)), ((b.y1 / ROAD_CELL) as u32).min(edge.saturating_sub(1)));
+        for cy in cy0..=cy1 {
+            for cx in cx0..=cx1 {
+                let (x, y) = ((cx as f32 + 0.5) * ROAD_CELL, (cy as f32 + 0.5) * ROAD_CELL);
+                if x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1 {
+                    out.insert(road_key(cx, cy));
+                }
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// A road as a world file has it: a centre line and how far either side of it the road runs.
@@ -133,7 +155,7 @@ impl TileSet {
                 }
             }
         }
-        Ok(TileSet { ver: h ^ boxes.len() as u64, size, boxes, class, tiles, roads: HashMap::new() })
+        Ok(TileSet { ver: h ^ boxes.len() as u64, size, boxes, class, tiles, roads: HashMap::new(), waters: HashMap::new() })
     }
 
     /// Add road cells (`world::road_key`s): each goes to the tile it is in, and the version changes with them.
@@ -148,6 +170,29 @@ impl TileSet {
         }
         self.ver = if cells.is_empty() { self.ver } else { h ^ 0x0ad5 };
         self
+    }
+
+    /// Add deep water cells (`world::road_key`s), as `with_roads`.
+    pub fn with_waters(mut self, cells: &[u32]) -> TileSet {
+        self.waters.clear();
+        for &k in cells {
+            let (cx, cy) = (k & 0xFFFF, k >> 16);
+            let t = ((cx / ROAD_CELLS) as u16, (cy / ROAD_CELLS) as u16);
+            self.waters.entry(t).or_default().push(((cy % ROAD_CELLS) * ROAD_CELLS + cx % ROAD_CELLS) as u16);
+        }
+        let mut h = self.ver;
+        for &k in cells {
+            h = (h ^ k as u64).wrapping_mul(0x100_0000_01b3);
+        }
+        self.ver = if cells.is_empty() { self.ver } else { h ^ 0x3a7e };
+        self
+    }
+
+    /// Every water cell, as `world::road_key`s.
+    pub fn water_cells(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.waters.iter().flat_map(|(&t, c)| c.iter().map(move |&i| tile_road_key(t, i))).collect();
+        v.sort_unstable();
+        v
     }
 
     /// Every road cell, as `world::road_key`s.
@@ -195,6 +240,20 @@ impl TileSet {
                 put_u16(&mut out, c);
             }
         }
+        // The water after every tile, so a reader that knows nothing of it stops before it.
+        let wet: Vec<&(u16, u16)> = want.iter().filter(|t| self.waters.get(t).is_some_and(|w| !w.is_empty())).collect();
+        if !wet.is_empty() {
+            put_u16(&mut out, wet.len() as u16);
+            for &&(cx, cy) in &wet {
+                let w = &self.waters[&(cx, cy)];
+                put_u16(&mut out, cx);
+                put_u16(&mut out, cy);
+                put_u16(&mut out, w.len() as u16);
+                for &c in w {
+                    put_u16(&mut out, c);
+                }
+            }
+        }
         Some(out)
     }
 }
@@ -226,6 +285,11 @@ pub type Tile = ((u16, u16), Vec<TileBox>, Vec<u16>);
 
 /// A reply: its version and each tile. None if it is cut short or not this format.
 pub fn decode(bytes: &[u8]) -> Option<(u64, Vec<Tile>)> {
+    decode_all(bytes).map(|(v, t, _)| (v, t))
+}
+
+/// A reply with its deep water: each tile's water cells (indexes in the tile), from after the tiles.
+pub fn decode_all(bytes: &[u8]) -> Option<(u64, Vec<Tile>, Vec<((u16, u16), Vec<u16>)>)> {
     let mut r = Reader::new(bytes);
     if r.u8()? != FORMAT {
         return None;
@@ -255,7 +319,22 @@ pub fn decode(bytes: &[u8]) -> Option<(u64, Vec<Tile>)> {
         }
         tiles.push(((cx, cy), v, roads));
     }
-    Some((ver, tiles))
+    let mut waters = Vec::new();
+    if r.remaining() >= 2 {
+        let w = r.u16()? as usize;
+        for _ in 0..w.min(MAX_PER_REQUEST) {
+            let (cx, cy, m) = (r.u16()?, r.u16()?, r.u16()? as usize);
+            if m > (ROAD_CELLS * ROAD_CELLS) as usize {
+                return None;
+            }
+            let mut cells = Vec::with_capacity(m);
+            for _ in 0..m {
+                cells.push(r.u16()?.min((ROAD_CELLS * ROAD_CELLS - 1) as u16));
+            }
+            waters.push(((cx, cy), cells));
+        }
+    }
+    Some((ver, tiles, waters))
 }
 
 /// A client's tiles: the window around the player, asked for as it moves and let go when far. Feed it replies with
@@ -269,6 +348,8 @@ pub struct TileStream {
     held: HashMap<(u16, u16), Vec<u32>>,
     /// Each held tile's road cells, as `world::road_key`s.
     roads: HashMap<(u16, u16), Vec<u32>>,
+    /// Each held tile's water cells, as `world::road_key`s.
+    waters: HashMap<(u16, u16), Vec<u32>>,
     pending: Vec<(u16, u16)>,
     at: Option<(i32, i32)>,
 }
@@ -321,7 +402,7 @@ impl TileStream {
 
     /// Take a reply. False if it is for another version of the walls (the caller should re-read `/play/info`).
     pub fn put(&mut self, bytes: &[u8]) -> bool {
-        let Some((ver, tiles)) = decode(bytes) else { return false };
+        let Some((ver, tiles, waters)) = decode_all(bytes) else { return false };
         if ver != self.ver {
             self.retry();
             return false;
@@ -339,12 +420,16 @@ impl TileStream {
             }
             self.held.insert(t, ids);
         }
+        for (t, cells) in waters {
+            self.waters.insert(t, cells.into_iter().map(|i| tile_road_key(t, i)).collect());
+        }
         self.rev += 1;
         true
     }
 
     fn drop_tile(&mut self, t: (u16, u16)) {
         self.roads.remove(&t);
+        self.waters.remove(&t);
         for id in self.held.remove(&t).unwrap_or_default() {
             if let Some(e) = self.boxes.get_mut(&id) {
                 e.2 -= 1;
@@ -365,6 +450,13 @@ impl TileStream {
     /// Every road cell held, as `world::road_key`s.
     pub fn roads(&self) -> Vec<u32> {
         let mut v: Vec<u32> = self.roads.values().flatten().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Every water cell held, as `world::road_key`s.
+    pub fn waters(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.waters.values().flatten().copied().collect();
         v.sort_unstable();
         v
     }
@@ -472,4 +564,24 @@ mod tests {
         c.reset(newer.ver);
         assert_eq!(c.wanted(1800.0, 10.0).len(), 15);
     }
+
+    #[test]
+    fn deep_water_rides_after_the_tiles_and_older_readers_never_see_it() {
+        let lakes = [Aabb { x0: 10.0, y0: 10.0, x1: 30.0, y1: 20.0 }];
+        let cells = water_cells(512.0, &lakes);
+        assert_eq!(cells.len(), 4 * 2, "cells whose middle is inside the lake: x 14..26 by y 14..18");
+        let set = TileSet::build(512.0, vec![Aabb { x0: 100.0, y0: 100.0, x1: 110.0, y1: 110.0 }], vec![0]).unwrap().with_waters(&cells);
+        let bytes = set.encode(&[(0, 0), (1, 1)]).unwrap();
+        let (ver, tiles, waters) = decode_all(&bytes).unwrap();
+        assert_eq!((ver, tiles.len()), (set.ver, 2));
+        assert_eq!(waters.len(), 1, "only the tile with water");
+        let mut back: Vec<u32> = waters[0].1.iter().map(|&i| tile_road_key(waters[0].0, i)).collect();
+        back.sort_unstable();
+        assert_eq!(back, cells);
+        assert_eq!(decode(&bytes).unwrap().1, tiles, "the plain reader reads the same tiles and stops");
+        let mut st = TileStream::new(512.0, set.ver);
+        assert!(st.put(&bytes));
+        assert_eq!(st.waters(), cells);
+    }
+
 }

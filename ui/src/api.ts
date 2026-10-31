@@ -236,6 +236,8 @@ export interface Place {
   safe?: boolean
   /** A seat factions fight over (faction war): present, the faction holding it at first ('' for none). */
   hold?: string
+  /** A harbour: boats sail from it to the other docks for coin (/sail). */
+  dock?: boolean
 }
 /** What a place's sound and music may be (proto::game::SOUNDS, MUSIC). */
 export const SOUNDS = ['sea', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town', 'market', 'crypt', 'holy', 'battle'] as const

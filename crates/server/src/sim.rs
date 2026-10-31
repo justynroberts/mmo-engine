@@ -1218,6 +1218,9 @@ impl Sim {
     /// reach, inside the world, not in a wall, not on anyone, resting on the ground or against another block,
     /// under the column and world limits; and only the owner breaks a block (anyone, one nobody owns).
     fn build_action(&mut self, s: usize, action: u8, target: u32, arg: u16) -> Result<(), String> {
+        if self.world.in_water(self.ents.x[s], self.ents.y[s]) {
+            return Err("Nobody builds while swimming.".into());
+        }
         use proto::game::{parse_build_arg, parse_build_target, ACT_BREAK, BLOCK_KINDS, BUILD_REACH};
         use proto::world::{block_key, BLOCK};
         let (cx, cy) = parse_build_target(target);
@@ -2225,6 +2228,9 @@ impl Sim {
         if e.owner[p.slot] < DRIVEN && self.levels.is_some() && def.level > e.level[p.slot] {
             return false; // not learnt yet
         }
+        if e.owner[p.slot] < DRIVEN && self.world.in_water(e.x[p.slot], e.y[p.slot]) {
+            return false; // swimming: no fighting, no spells
+        }
         // A class keeps to its own spells (the game's first action, the plain attack, is everyone's unless it
         // belongs to a school).
         if (k != 0 || !def.school.is_empty()) && e.owner[p.slot] < DRIVEN {
@@ -2950,7 +2956,7 @@ mod tests {
         assert_eq!((go(&mut s, ACTION_ZAP), go(&mut s, 2)), (0.0, 0.0), "pvp off: neither the blow nor the nova");
         s.pvp = true;
         assert_eq!((go(&mut s, ACTION_ZAP), go(&mut s, 2)), (10.0, 20.0), "pvp on: both land");
-        s.places.push(proto::game::Place { name: "town".into(), x: 104.0, y: 100.0, r: 3.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None });
+        s.places.push(proto::game::Place { name: "town".into(), x: 104.0, y: 100.0, r: 3.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None, dock: false });
         assert_eq!((go(&mut s, ACTION_ZAP), go(&mut s, 2)), (0.0, 0.0), "the target stands in a safe place");
     }
 
@@ -3005,7 +3011,7 @@ mod tests {
         g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.5, toughness: 0.0, discover_xp: 10, life: Default::default(), rewards: vec![], grow: Default::default() });
         g.archetypes[0].xp = 60;
         g.actions.push(ActionFile { id: 2, name: "late".into(), range: 8.0, level: 2, ..Default::default() });
-        let ford = proto::game::Place { name: "ford".into(), x: 300.0, y: 300.0, r: 10.0, title: "The Ford".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None };
+        let ford = proto::game::Place { name: "ford".into(), x: 300.0, y: 300.0, r: 10.0, title: "The Ford".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false };
         g.places.push(ford);
         let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
         let h = ATTR_HEALTH as usize;
@@ -3494,7 +3500,7 @@ mod tests {
     #[test]
     fn a_fallen_player_rises_in_the_nearest_safe_place() {
         let mut s = sim_with(|g| {
-            let town = |name: &str, x: f32| Place { name: name.into(), x, y: 100.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None };
+            let town = |name: &str, x: f32| Place { name: name.into(), x, y: 100.0, r: 10.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None, dock: false };
             g.places = vec![town("near", 150.0), town("far", 450.0)];
         });
         let p = s.spawn(0).unwrap();
@@ -3712,7 +3718,7 @@ mod tests {
     #[test]
     fn bots_spawn_in_their_home_place_and_wander_stays_near_it() {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None }];
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 15.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false }];
             let mut a = arch("w", Behaviour::Wander, vec![]);
             a.home = Some("home".into());
             a.count = 20;
@@ -3733,7 +3739,7 @@ mod tests {
     #[test]
     fn a_wanderer_walks_to_a_spot_and_stands_there_a_while_then_goes_on() {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None }];
+            g.places = vec![Place { name: "home".into(), x: 250.0, y: 250.0, r: 40.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false }];
             let mut a = arch("w", Behaviour::Wander, vec![]);
             a.home = Some("home".into());
             g.archetypes = vec![a];
@@ -3810,7 +3816,7 @@ mod tests {
     fn a_beast_hunts_the_unarmed_out_of_town_but_not_in_it_and_goes_home_past_its_leash() {
         let mut s = sim_with(|g| {
             for (name, x) in [("den", 100.0), ("town", 400.0)] {
-                g.places.push(Place { name: name.into(), x, y: 300.0, r: 30.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+                g.places.push(Place { name: name.into(), x, y: 300.0, r: 30.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
             }
             let mut wolf = arch("wolf", Behaviour::Chase, vec![]);
             (wolf.home, wolf.sight, wolf.attack, wolf.leash) = (Some("den".into()), 60.0, Some(g.actions[0].name.clone()), 100.0);
@@ -3902,7 +3908,7 @@ mod tests {
 
     fn cup_sim(per_tick: u32) -> (Sim, usize) {
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None }];
+            g.places = vec![Place { name: "far".into(), x: 250.0, y: 260.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false }];
             g.archetypes = vec![arch("b", Behaviour::Idle, vec![Rule { when: Cond::Always, then: Act::Goto { place: "far".into() } }])];
         });
         s.replace_world(cup(), Default::default());
@@ -3953,7 +3959,7 @@ mod tests {
             Rule { when: Cond::Always, then: Act::Goto { place: "gate".into() } },
         ];
         let mut s = sim_with(|g| {
-            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None }];
+            g.places = vec![Place { name: "gate".into(), x: 300.0, y: 100.0, r: 6.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false }];
             g.archetypes = vec![arch("b", Behaviour::Idle, rules)];
         });
         let p = s.spawn(0).unwrap();
@@ -3973,7 +3979,7 @@ mod tests {
     }
 
     fn home_place() -> Place {
-        Place { name: "home".into(), x: 300.0, y: 100.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None }
+        Place { name: "home".into(), x: 300.0, y: 100.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false }
     }
 
     #[test]

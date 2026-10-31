@@ -549,7 +549,7 @@ fn tell(clients: &mut Clients, slot: usize, from: u32, ch: u8, text: &str) {
 }
 
 /// The commands this module answers, for the help line.
-pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /look cape|helmet, /holds, /trade Name";
+pub const HELP: &str = "/faction Name, /class Name, /claim, /unclaim, /plot [grow|name Name], /plots, /visit Plot, /guild create|invite|accept|leave|kick, /g words, /craft Name, /recipes, /skills, /title [Name|none], /talents, /talent Name, /respec, /look cape|helmet, /holds, /sail [Place], /trade Name";
 
 /// Handle a realm "/" command. Returns false if it is not one of ours.
 pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) -> bool {
@@ -559,6 +559,7 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
         "class" => class(sim, clients, slot, &rest),
         "title" | "titles" => sim.title_command(slot, &rest),
         "look" | "appearance" => sim.look_command(slot, &rest),
+        "sail" | "boat" | "ship" => sim.sail_command(slot, &rest),
         "holds" | "war" => {
             let line = sim.holds_line();
             say(clients, slot, &line);
@@ -1289,7 +1290,7 @@ mod tests {
     #[test]
     fn a_dungeon_gives_each_party_its_own_monsters() {
         let mut s = sim_with(|g| {
-            g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+            g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
             g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3 }];
         });
         let (a, b) = (player(&mut s, 300.0, 300.0, "a"), player(&mut s, 305.0, 300.0, "b"));

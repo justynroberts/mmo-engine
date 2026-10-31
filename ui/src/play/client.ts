@@ -161,7 +161,7 @@ export class GameClient {
   ) {
     this.defs = defsOf(info)
     this.walls = new WallStore(info.world_size, info.walls, info.boxes, info.box_class)
-    this.world = new World(info.world_size, this.walls.list(), this.walls.roadCells(), info.road_speed)
+    this.world = new World(info.world_size, this.walls.list(), this.walls.roadCells(), info.road_speed, this.walls.waterCells())
     this.worldRev = this.walls.rev
     this.interp = new Interpolator<Ent>(info.hz)
   }
@@ -182,7 +182,7 @@ export class GameClient {
   private syncWorld() {
     if (this.worldRev === this.walls.rev) return
     this.worldRev = this.walls.rev
-    this.world = new World(this.info.world_size, this.walls.list(), this.walls.roadCells(), this.info.road_speed)
+    this.world = new World(this.info.world_size, this.walls.list(), this.walls.roadCells(), this.info.road_speed, this.walls.waterCells())
     for (const c of this.blocks.values()) this.world.setColumn(c.cx, c.cy, { base: c.base, mask: maskOf(c.kinds) })
   }
 

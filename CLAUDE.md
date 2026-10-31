@@ -66,6 +66,7 @@ The protocol is implemented twice and movement three times. A change to any of t
 - Walls by tile (256 units, `/play/tiles`, binary): `crates/proto/src/tiles.rs` (server and Rust clients) ↔ `ui/src/play/walls.ts` (a shared byte fixture in both tests).
 - Blocks by region (256 units, `/play/blocks/r`, binary): `crates/proto/src/blockfeed.rs` ↔ `ui/src/play/blocks.ts` `decodeRegions` (shared fixture) ↔ `godot/scripts/main.gd` `_poll_block_regions`.
 - Roads: road cells (`World::on_road`, `ROAD_CELL`, `road_key`) and the `road_speed` multiplier in `integrate`, `crates/proto/src/world.rs` ↔ `ui/src/play/sim.ts`; road cells in the tile format, `crates/proto/src/tiles.rs` ↔ `ui/src/play/walls.ts` (the shared fixture includes a road). Road lines are turned into cells only on the server (`tiles::road_cells`).
+- Deep water: water cells (`World::set_waters`/`in_water`, `WATER_SPEED` in `integrate`) in `crates/proto/src/world.rs` ↔ `ui/src/play/sim.ts`; carried after the tiles in the tile format, `crates/proto/src/tiles.rs` (`decode_all`, `with_waters`) ↔ `ui/src/play/walls.ts`. The server makes them from the world file's lakes (`worldfile.rs`, deeper than `SWIM_DEPTH`).
 - Built block columns and 3D movement (`World::set_column`/`enter`/`settle`/`step`, `integrate` with the feet layer) in `crates/proto/src/world.rs` + `predict.rs` ↔ `ui/src/play/sim.ts` (same cases tested on both sides).
 
 ## UI

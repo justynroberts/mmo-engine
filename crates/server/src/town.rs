@@ -369,7 +369,7 @@ mod tests {
     fn town(brawl: f32, lift: f32) -> (Sim, [u8; 3]) {
         let mut g = GameFile::default_game();
         (g.rules.brawl_pct, g.rules.lift_pct) = (brawl.min(100.0), lift);
-        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None });
+        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true, hold: None, dock: false });
         let base = g.archetypes[0].clone();
         let blow = Some(g.actions[0].name.clone());
         let mut folk = base.clone();

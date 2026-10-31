@@ -142,7 +142,8 @@ impl Nav {
     /// body centred in the block, so open ground costs one query and only blocks touching a wall split up.
     fn fill(t: &mut Tile, world: &World, r: f32, tx0: i32, ty0: i32, i0: i32, j0: i32, k: i32) {
         let (x, y) = ((i0 * 2 + k) as f32 * CELL * 0.5, (j0 * 2 + k) as f32 * CELL * 0.5);
-        if !world.blocked_by_walls(x, y, (k - 1) as f32 * CELL * 0.5 + r) {
+        // Walls, and deep water: bots walk round lakes, not through them.
+        if !world.blocked_by_walls(x, y, (k - 1) as f32 * CELL * 0.5 + r) && !world.water_near(x, y, (k - 1) as f32 * CELL * 0.5 + r) {
             for j in j0..j0 + k {
                 for i in i0..i0 + k {
                     let n = ((j - ty0) * TILE + (i - tx0)) as usize;

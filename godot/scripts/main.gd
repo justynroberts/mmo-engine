@@ -2416,6 +2416,14 @@ func _height(x: float, y: float) -> float:
 ## z is z blocks up from height 0, the same everywhere). The server sends the layer.
 func _stand_height(p: Vector2, layer: int) -> float:
 	var ground := _height(p.x, p.y)
+	# In a lake deeper than a body: swimming, shoulders at the surface (the server's water cells are the lakes).
+	if layer == GROUND and world:
+		for l in world.lakes:
+			var lb: Array = l.get("b", [])
+			if lb.size() == 4 and p.x > float(lb[0]) and p.x < float(lb[2]) and p.y > float(lb[1]) and p.y < float(lb[3]):
+				var surface := float(l.get("level", ground))
+				if surface - ground > SWIM_DEPTH:
+					return surface - SWIM_DEPTH
 	if layer == GROUND or build.is_empty():
 		return ground
 	return maxf(ground, layer * float(build["block"]))
@@ -3296,6 +3304,7 @@ func _make_horse() -> Node3D:
 	return root
 
 var _raid := false # our party was made a raid (the server said so)
+const SWIM_DEPTH := 1.1 # how far a swimmer's feet hang below a lake's surface
 var land: Array = []             # the land held near us (chat channel 15): [[Rect2, mine, name, ripe at (t_total, 0 none)], ...]
 var _land_edges: MeshInstance3D  # their edges, a low glowing fence, shown in build mode
 var _land_drawn := ""            # what the fence was last built from
@@ -3595,6 +3604,9 @@ func _map_marks() -> Array:
 		if not g.is_empty():
 			out.append([g[0], "goal", g[1]])
 	var realm_info = info.get("realm", {})
+	for d in (realm_info.get("docks", []) if realm_info is Dictionary else []):
+		var dt := String(d.get("title", "")) if String(d.get("title", "")) != "" else String(d.get("name", ""))
+		out.append([Vector2(float(d["x"]), float(d["y"])) + Vector2(10, -10), "dock", dt])
 	for h in (realm_info.get("holds", []) if realm_info is Dictionary else []):
 		var who: Array = holds.get(String(h.get("name", "")), ["", ""])
 		var title := String(h.get("title", "")) if String(h.get("title", "")) != "" else String(h.get("name", ""))
@@ -3624,6 +3636,16 @@ func _f_prompt() -> String:
 		return "F  Trade with the %s" % _name(trader)
 	if target_id != 0 and _players.has(target_id) and _dist_to(target_id) <= 12.0:
 		return "F  Ask %s to trade" % _name(target_id)
+	if _dock_here() != "":
+		return "F  Take ship from %s" % _dock_here()
+	return ""
+
+## The dock we stand at (its title), or "" (/play/info realm docks).
+func _dock_here() -> String:
+	var realm_info = info.get("realm", {})
+	for d in (realm_info.get("docks", []) if realm_info is Dictionary else []):
+		if me_pos.distance_to(Vector2(float(d["x"]), float(d["y"]))) <= float(d.get("r", 10.0)) + 10.0:
+			return String(d.get("title", "")) if String(d.get("title", "")) != "" else String(d.get("name", ""))
 	return ""
 
 ## F: talk to the one targeted (or the nearest with a quest mark) if they are in reach; otherwise pick up.
@@ -3664,6 +3686,11 @@ func _talk_or_pickup() -> void:
 	# Another player targeted and near: ask them to trade.
 	if target_id != 0 and _players.has(target_id) and _dist_to(target_id) <= 12.0:
 		net.act_arg(ACT_TRADE, target_id, 0)
+		return
+	# At a dock: where the boats go, and the chat ready to say which.
+	if _dock_here() != "":
+		net.say("/sail", false)
+		hud.open_chat("/sail ")
 		return
 	net.pickup()
 

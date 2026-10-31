@@ -14,6 +14,9 @@
 
 use proto::tiles::{class, TileSet};
 use proto::world::Aabb;
+
+/// How deep water must be to be swum (the ground this far below a lake's level).
+const SWIM_DEPTH: f32 = 1.1;
 use serde_json::value::RawValue;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -72,6 +75,7 @@ impl WorldFile {
     pub fn world(&self, seed: u64) -> proto::World {
         let mut w = proto::World::from_boxes(self.size, seed, self.tiles.boxes.clone());
         w.set_roads(self.tiles.road_cells());
+        w.set_waters(self.tiles.water_cells());
         w
     }
 }
@@ -223,7 +227,8 @@ impl<'de> serde::Deserialize<'de> for Objects {
                             _ => {}
                         }
                     }
-                    if o.solid == true && !out.over {
+                    // A lake is deep water, swum, not a wall (its cells come from `water.lakes`).
+                    if o.solid == true && !out.over && o.t != "lake" {
                         let b: Vec<f32> = o.b.as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).map(|n| n as f32).collect()).unwrap_or_default();
                         let b = (b.len() == 4).then(|| [b[0], b[1], b[2], b[3]]);
                         // A solid object at a point is drawn there by the theme (a trunk, a rock), so it is scenery
@@ -302,12 +307,30 @@ pub fn load(path: &Path) -> Result<WorldFile, String> {
         }
     }
     let roads = parse_roads(&v.roads)?;
-    let tiles = Arc::new(TileSet::build(size, boxes, classes)?.with_roads(&proto::tiles::road_cells(size, &roads)));
     // Heights only place block columns, so a world whose heights cannot be read still runs, on flat ground.
     let mut terrain = Terrain::parse(&v.heights).unwrap_or_else(|e| {
         eprintln!("{}: {e}; built blocks will sit as if the ground were flat", path.display());
         Terrain::default()
     });
+    // Deep water: the lakes' cells where the ground lies more than a body below the lake's level (all of the lake
+    // where there are no heights), swum rather than walked.
+    let mut water = Vec::new();
+    for l in v.water["lakes"].as_array().map_or(&[][..], |a| a.as_slice()) {
+        let b: Vec<f32> = l["b"].as_array().map_or_else(Vec::new, |a| a.iter().filter_map(|n| n.as_f64().map(|n| n as f32)).collect());
+        if b.len() != 4 {
+            continue;
+        }
+        let level = l["level"].as_f64().map(|v| v as f32);
+        for k in proto::tiles::water_cells(size, &[Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }]) {
+            let (x, y) = (((k & 0xFFFF) as f32 + 0.5) * proto::world::ROAD_CELL, ((k >> 16) as f32 + 0.5) * proto::world::ROAD_CELL);
+            if terrain.heights.is_empty() || level.is_none_or(|lv| terrain.height(x, y) < lv - SWIM_DEPTH) {
+                water.push(k);
+            }
+        }
+    }
+    water.sort_unstable();
+    water.dedup();
+    let tiles = Arc::new(TileSet::build(size, boxes, classes)?.with_roads(&proto::tiles::road_cells(size, &roads)).with_waters(&water));
     let boxes = |v: &[[f32; 4]]| Arc::new(v.iter().map(|b| Aabb { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }).collect::<Vec<_>>());
     (terrain.houses, terrain.squares, terrain.water, terrain.towers) = (boxes(&solids.houses), boxes(&solids.squares), boxes(&solids.water), boxes(&solids.towers));
     terrain.sea = v.water["sea"]["level"].as_f64().map(|l| l as f32);
@@ -505,4 +528,17 @@ mod tests {
         assert_eq!(t.base(0, 0), 0);
         assert_eq!(Terrain::default().base(5, 5), 0, "flat without heights");
     }
+
+    #[test]
+    fn the_seed_worlds_lakes_are_deep_water_not_walls() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/seed/world.json");
+        let Ok(wf) = load(&p) else { return }; // (only where the seed world is checked out)
+        let w = wf.world(1);
+        assert!(w.water_count() > 1000, "lakes swum: {} cells", w.water_count());
+        let lake = wf.terrain.lakes.first().copied().expect("the seed world has lakes");
+        let (cx, cy) = ((lake.x0 + lake.x1) / 2.0, (lake.y0 + lake.y1) / 2.0);
+        assert!(w.in_water(cx, cy), "the middle of a lake is deep");
+        assert!(!w.blocked_by_walls(cx, cy, 0.5), "and no wall");
+    }
+
 }

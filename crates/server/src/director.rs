@@ -732,7 +732,7 @@ mod tests {
     fn a_weather_zone_acts_only_inside_its_place_and_events_switch_it() {
         let (mut s, mut d, mut c, _) = setup(|g| {
             g.weather.push(storm());
-            g.places.push(proto::game::Place { name: "haunt".into(), x: 300.0, y: 300.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+            g.places.push(proto::game::Place { name: "haunt".into(), x: 300.0, y: 300.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
             g.zones.push(WeatherZone { name: "red mist".into(), place: "haunt".into(), weather: "storm".into(), active: true, height: 30.0 });
             g.events.push(EventDef { name: "lift".into(), every_secs: 0, chance_pct: 100.0, steps: vec![Step::Zone { zone: "red mist".into(), on: false }], ..EventDef::default() });
         });
@@ -941,7 +941,7 @@ mod tests {
     fn a_roaming_market_comes_to_a_town_gathers_its_folk_and_the_turning_year_starts_events() {
         use proto::game::{Behaviour, Place, Season};
         let (mut s, mut d, mut c, _) = setup(|g| {
-            g.places.push(Place { name: "kells".into(), x: 200.0, y: 200.0, r: 50.0, title: "Ceanannas".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+            g.places.push(Place { name: "kells".into(), x: 200.0, y: 200.0, r: 50.0, title: "Ceanannas".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
             let mut folk = g.archetypes[0].clone();
             (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.names) = ("folk".into(), Behaviour::Wander, None, 0, Some("kells".into()), vec![], vec!["Aoife".into(), "Brian".into()]);
             g.archetypes.push(folk);

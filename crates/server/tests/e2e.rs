@@ -1294,6 +1294,7 @@ fn start_zone_lines() -> Zones {
         music: String::new(),
         safe: false,
         hold: None,
+        dock: false,
     };
     let mut town = GameFile::default_game();
     town.walls = Some(vec![]);
@@ -2325,7 +2326,8 @@ fn the_console_generates_a_world_previews_it_and_applies_it_live() {
     // Apply: live, served to clients, and saved as world.json. (The bad recipe did not spoil the preview.)
     let (s, r) = json(&srv, "POST", "/api/world/apply", "");
     assert_eq!(s, 200, "{r}");
-    let solid = preview["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true).count();
+    // Every solid object is a wall, but a lake: deep water, swum.
+    let solid = preview["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true && o["t"] != "lake").count();
     assert_eq!(json(&srv, "GET", "/api/world", "").1["boxes"].as_array().unwrap().len(), solid);
     let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
     assert!(info["world"]["ver"].is_string());
@@ -2832,7 +2834,7 @@ fn a_town_shuns_one_who_strikes_its_folk_its_shops_refuse_them_and_the_watch_fol
     for a in g.archetypes.iter_mut() {
         a.count = 0;
     }
-    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
     let mut folk = g.archetypes[0].clone();
     (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 4, Some("kells".into()), vec![], vec![]);
     (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into()], vec!["Byrne".into()]);
@@ -2935,7 +2937,7 @@ fn the_evening_bell_is_remarked_on_by_the_townsfolk_round_a_player() {
     for a in g.archetypes.iter_mut() {
         a.count = 0;
     }
-    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
     let mut folk = g.archetypes[0].clone();
     (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 4, Some("kells".into()), vec![], vec![]);
     (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into()], vec!["Byrne".into()]);
@@ -3016,7 +3018,7 @@ fn a_player_who_catches_its_cutpurses_becomes_a_towns_hero() {
     for a in g.archetypes.iter_mut() {
         a.count = 0;
     }
-    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
     let mut folk = g.archetypes[0].clone();
     (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 3, Some("kells".into()), vec![], vec![]);
     (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into()], vec!["Byrne".into()]);
@@ -3112,7 +3114,7 @@ fn the_sickness_comes_to_a_town_its_sick_cough_and_ask_for_a_cure_its_shops_shut
     for a in g.archetypes.iter_mut() {
         a.count = 0;
     }
-    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
     let mut folk = g.archetypes[0].clone();
     (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Idle, None, 6, Some("kells".into()), vec![], vec![]);
     (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into(), "Eoin".into(), "Fiona".into()], vec!["Byrne".into()]);
@@ -3206,7 +3208,7 @@ fn of_an_evening_the_townsfolk_go_to_the_inn_and_come_out_singing_and_fighting()
     for a in g.archetypes.iter_mut() {
         a.count = 0;
     }
-    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+    g.places.push(proto::game::Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
     let mut folk = g.archetypes[0].clone();
     (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules, folk.homes) = ("folk".into(), Behaviour::Wander, None, 8, Some("kells".into()), vec![], vec![]);
     (folk.names, folk.surnames) = (vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into(), "Eoin".into(), "Fiona".into(), "Gráinne".into(), "Hugh".into()], vec!["Byrne".into()]);

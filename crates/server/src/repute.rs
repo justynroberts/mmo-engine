@@ -386,7 +386,7 @@ mod tests {
         let mut g = GameFile::default_game();
         g.rules.plea_pct = 100.0;
         for (n, x) in [("kells", 500.0), ("trim", 900.0)] {
-            g.places.push(Place { name: n.into(), x, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+            g.places.push(Place { name: n.into(), x, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
         }
         let base = g.archetypes[0].clone();
         let blow = Some(g.actions[0].name.clone());

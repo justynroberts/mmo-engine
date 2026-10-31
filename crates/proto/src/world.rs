@@ -53,6 +53,9 @@ pub const ROAD_CELL: f32 = 4.0;
 /// How much faster than on open ground something moves on a road, unless the game file says otherwise.
 pub const ROAD_SPEED: f32 = 1.5;
 
+/// How fast a swimmer goes, as a share of their speed on land.
+pub const WATER_SPEED: f32 = 0.5;
+
 /// A road cell's key: its column and row, `ROAD_CELL` units each (a 65,536 unit world is 16,384 across).
 #[inline]
 pub fn road_key(cx: u32, cy: u32) -> u32 {
@@ -147,6 +150,8 @@ pub struct World {
     /// The road cells (by `road_key`), and how much faster movement is on them (the game file's `road_speed`).
     roads: std::collections::HashSet<u32>,
     pub road_speed: f32,
+    /// The water cells (by `road_key`, the same 4 unit cells): deep water, swum at `WATER_SPEED`.
+    waters: std::collections::HashSet<u32>,
 }
 
 impl World {
@@ -171,7 +176,7 @@ impl World {
         // gets coarser ones so the bucket table stays small (at most about a million buckets).
         let cell = (size / 1024.0).max(16.0);
         let gw = (size / cell).ceil() as usize + 1;
-        let mut w = World { size, seed, boxes: Vec::new(), cell, gw, buckets: vec![Vec::new(); gw * gw], blocks: Default::default(), roads: Default::default(), road_speed: ROAD_SPEED };
+        let mut w = World { size, seed, boxes: Vec::new(), cell, gw, buckets: vec![Vec::new(); gw * gw], blocks: Default::default(), roads: Default::default(), road_speed: ROAD_SPEED, waters: Default::default() };
         w.set_boxes(boxes);
         w
     }
@@ -220,6 +225,31 @@ impl World {
 
     pub fn road_count(&self) -> usize {
         self.roads.len()
+    }
+
+    /// Replace the water cells (keys from `road_key`).
+    pub fn set_waters(&mut self, cells: impl IntoIterator<Item = u32>) {
+        self.waters = cells.into_iter().collect();
+    }
+
+    pub fn water_count(&self) -> usize {
+        self.waters.len()
+    }
+
+    /// True if any water cell lies within `half` of (x, y) (a square): for keeping walkers (bots) out of it.
+    pub fn water_near(&self, x: f32, y: f32, half: f32) -> bool {
+        if self.waters.is_empty() {
+            return false;
+        }
+        let (c0x, c0y) = (((x - half).max(0.0) / ROAD_CELL) as u32, ((y - half).max(0.0) / ROAD_CELL) as u32);
+        let (c1x, c1y) = (((x + half).max(0.0) / ROAD_CELL) as u32, ((y + half).max(0.0) / ROAD_CELL) as u32);
+        (c0y..=c1y).any(|cy| (c0x..=c1x).any(|cx| self.waters.contains(&road_key(cx, cy))))
+    }
+
+    /// True if the point is in deep water (a water cell): swum, slowly, and nobody fights there.
+    #[inline]
+    pub fn in_water(&self, x: f32, y: f32) -> bool {
+        !self.waters.is_empty() && x >= 0.0 && y >= 0.0 && self.waters.contains(&road_key((x / ROAD_CELL) as u32, (y / ROAD_CELL) as u32))
     }
 
     /// True if the point is on a road cell.
@@ -365,7 +395,8 @@ pub fn move_vector(dir_x: i8, dir_y: i8) -> (f32, f32) {
 }
 
 /// One movement tick, identical on server and (for prediction) client. Standing still still settles: a block
-/// broken underfoot drops you. Starting the tick on a road makes it `world.road_speed` times as long.
+/// broken underfoot drops you. Starting the tick on a road makes it `world.road_speed` times as long, and in deep
+/// water `WATER_SPEED` times (swimming).
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn integrate(
@@ -383,7 +414,13 @@ pub fn integrate(
     if mx == 0.0 && my == 0.0 {
         return (x, y, if z == GROUND { z } else { world.settle(x, y, r, z) });
     }
-    let speed = if world.on_road(x, y) { speed * world.road_speed } else { speed };
+    let speed = if world.in_water(x, y) {
+        speed * WATER_SPEED
+    } else if world.on_road(x, y) {
+        speed * world.road_speed
+    } else {
+        speed
+    };
     world.step(x, y, z, mx * speed * dt, my * speed * dt, r)
 }
 
@@ -454,6 +491,16 @@ mod tests {
     }
 
     /// The same cases are in ui/src/play/sim.test.ts.
+    #[test]
+    fn deep_water_is_swum_at_half_speed() {
+        let mut w = World::from_boxes(512.0, 1, vec![]);
+        let (x0, _, _) = integrate(&w, 100.0, 100.0, GROUND, 1, 0, 10.0, 0.1, 0.5);
+        w.set_waters([road_key(25, 25)]);
+        assert!(w.in_water(101.0, 101.0) && !w.in_water(105.0, 101.0));
+        let (x1, _, _) = integrate(&w, 100.0, 100.0, GROUND, 1, 0, 10.0, 0.1, 0.5);
+        assert!(((x1 - 100.0) - (x0 - 100.0) * WATER_SPEED).abs() < 1e-4, "{x0} {x1}");
+    }
+
     #[test]
     fn a_road_is_faster_from_the_cell_a_tick_starts_in() {
         let mut w = World::from_boxes(512.0, 1, vec![]);

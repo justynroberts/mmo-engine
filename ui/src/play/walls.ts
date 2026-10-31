@@ -29,7 +29,7 @@ export interface TileBox {
 
 /** A /play/tiles reply: its version (16 hex digits), each tile's boxes and each tile's road cells (as roadKeys).
  * Null if cut short or not format 2. */
-export function decodeTiles(buf: ArrayBuffer): { ver: string; tiles: Map<string, TileBox[]>; roads: Map<string, number[]> } | null {
+export function decodeTiles(buf: ArrayBuffer): { ver: string; tiles: Map<string, TileBox[]>; roads: Map<string, number[]>; waters: Map<string, number[]> } | null {
   const v = new DataView(buf)
   let p = 0
   const need = (n: number) => p + n <= v.byteLength
@@ -63,7 +63,27 @@ export function decodeTiles(buf: ArrayBuffer): { ver: string; tiles: Map<string,
     }
     roads.set(`${cx},${cy}`, cells)
   }
-  return { ver, tiles, roads }
+  // After the tiles: their deep water cells (proto::tiles; a server too old to have them sends nothing more).
+  const waters = new Map<string, number[]>()
+  if (need(2)) {
+    const w = v.getUint16(p, true)
+    p += 2
+    for (let t = 0; t < Math.min(w, 64); t++) {
+      if (!need(6)) return null
+      const cx = v.getUint16(p, true)
+      const cy = v.getUint16(p + 2, true)
+      const m = v.getUint16(p + 4, true)
+      p += 6
+      if (m > ROAD_CELLS * ROAD_CELLS || !need(m * 2)) return null
+      const cells: number[] = []
+      for (let i = 0; i < m; i++, p += 2) {
+        const c = Math.min(v.getUint16(p, true), ROAD_CELLS * ROAD_CELLS - 1)
+        cells.push(roadKey(cx * ROAD_CELLS + (c % ROAD_CELLS), cy * ROAD_CELLS + Math.floor(c / ROAD_CELLS)))
+      }
+      waters.set(`${cx},${cy}`, cells)
+    }
+  }
+  return { ver, tiles, roads, waters }
 }
 
 type Fetcher = (url: string) => Promise<ArrayBuffer>
@@ -82,8 +102,9 @@ export class WallStore {
   private cls = new Map<number, number>()
   private refs = new Map<number, number>()
   private tiles = new Map<string, number[]>()
-  /** Each held tile's road cells (roadKeys). */
+  /** Each held tile's road cells (roadKeys), and its deep water cells. */
   private roads = new Map<string, number[]>()
+  private waters = new Map<string, number[]>()
   private pending = new Set<string>()
   private ver = ''
   private streaming = false
@@ -119,6 +140,11 @@ export class WallStore {
   /** Every road cell held (roadKeys). */
   roadCells(): number[] {
     return [...this.roads.values()].flat()
+  }
+
+  /** Every deep water cell held (roadKeys). */
+  waterCells(): number[] {
+    return [...this.waters.values()].flat()
   }
 
   /** Walls whose box touches the square of half-width `r` around a point. */
@@ -159,6 +185,7 @@ export class WallStore {
     this.refs.clear()
     this.tiles.clear()
     this.roads.clear()
+    this.waters.clear()
     this.pending.clear()
     this.epoch++
   }
@@ -218,6 +245,7 @@ export class WallStore {
           }
           this.tiles.set(k, ids)
           this.roads.set(k, reply.roads.get(k) ?? [])
+          this.waters.set(k, reply.waters.get(k) ?? [])
         }
         this.rev++
       })
@@ -239,6 +267,7 @@ export class WallStore {
     }
     this.tiles.delete(k)
     this.roads.delete(k)
+    this.waters.delete(k)
   }
 
   /** True once every tile near the player is in, which is when prediction can be trusted. */

@@ -19,6 +19,8 @@ const LAST_CELL = (1 << 15) - 1
 /** Edge of a road cell (proto::world::ROAD_CELL), and the road speed when the server does not say. */
 export const ROAD_CELL = 4
 export const ROAD_SPEED = 1.5
+/** How fast a swimmer goes in deep water, as a share of their speed (proto::world::WATER_SPEED). */
+export const WATER_SPEED = 0.5
 /** A road cell's key (proto::world::road_key). */
 export const roadKey = (cx: number, cy: number) => cx + cy * 65536
 
@@ -43,10 +45,13 @@ export class World {
   /** The road cells (roadKey), and how much faster movement is on them (the game's road_speed). */
   private roads: Set<number>
   readonly roadSpeed: number
+  /** The deep water cells (roadKey), swum at WATER_SPEED. */
+  private waters: Set<number>
 
-  constructor(size: number, boxes: readonly Box[], roads: Iterable<number> = [], roadSpeed = ROAD_SPEED) {
+  constructor(size: number, boxes: readonly Box[], roads: Iterable<number> = [], roadSpeed = ROAD_SPEED, waters: Iterable<number> = []) {
     this.size = f(size)
     this.roads = new Set(roads)
+    this.waters = new Set(waters)
     this.roadSpeed = f(roadSpeed)
     this.boxes = boxes.map((b) => [f(b[0]), f(b[1]), f(b[2]), f(b[3])] as const)
     this.gw = Math.ceil(this.size / CELL) + 1
@@ -64,6 +69,11 @@ export class World {
         else this.buckets.set(k, [i])
       }
     })
+  }
+
+  /** True if the point is in deep water (proto World::in_water). */
+  inWater(x: number, y: number): boolean {
+    return this.waters.size > 0 && x >= 0 && y >= 0 && this.waters.has(roadKey(Math.floor(x / ROAD_CELL), Math.floor(y / ROAD_CELL)))
   }
 
   /** True if the point is on a road cell (proto World::on_road). */
@@ -192,7 +202,7 @@ export function moveVector(dirX: number, dirY: number): [number, number] {
 export function integrate(world: World, x: number, y: number, z: number, dirX: number, dirY: number, speed: number, dt: number, r: number): [number, number, number] {
   const [mx, my] = moveVector(dirX, dirY)
   if (mx === 0 && my === 0) return [x, y, z === GROUND ? z : world.settle(x, y, r, z)]
-  const s = world.onRoad(x, y) ? f(speed * world.roadSpeed) : speed
+  const s = world.inWater(x, y) ? f(speed * WATER_SPEED) : world.onRoad(x, y) ? f(speed * world.roadSpeed) : speed
   return world.step(x, y, z, f(f(mx * s) * dt), f(f(my * s) * dt), r)
 }
 

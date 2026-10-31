@@ -696,6 +696,7 @@ pub unsafe extern "C" fn mmo_put_tiles(c: *mut Client, bytes: *const u8, len: us
     }
     c.world.set_boxes(t.boxes().into_iter().map(|(_, b, _)| b).collect());
     c.world.set_roads(t.roads());
+    c.world.set_waters(t.waters());
     1
 }
 
@@ -732,6 +733,7 @@ pub unsafe extern "C" fn mmo_set_walls(c: *mut Client, info_json: *const c_char)
     c.tiles = tiles;
     c.world.set_boxes(boxes);
     c.world.set_roads([]);
+    c.world.set_waters([]);
     1
 }
 

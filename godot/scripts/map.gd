@@ -88,7 +88,13 @@ func _draw() -> void:
 	# Quests to take (!), to hand in (?), and traders (a small gold diamond).
 	for m in marks:
 		var at: Vector2 = to.call(m[0])
-		if m[1] == "hold":
+		if m[1] == "dock":
+			# An anchor: a ring, a shank and a crossbar.
+			var ac := Color("8fc3e8")
+			draw_arc(at + Vector2(0, 2), 5.0, 0.15 * PI, 0.85 * PI, 12, ac, 2.0, true)
+			draw_line(at + Vector2(0, -7), at + Vector2(0, 7), ac, 2.0)
+			draw_line(at + Vector2(-4, -4), at + Vector2(4, -4), ac, 2.0)
+		elif m[1] == "hold":
 			var col := Color(String(m[3])) if m.size() > 3 and String(m[3]).begins_with("#") else Color("b8b0a0")
 			draw_line(at + Vector2(0, 8), at + Vector2(0, -12), Color("2a2620"), 2.0)
 			draw_colored_polygon(PackedVector2Array([at + Vector2(1, -12), at + Vector2(13, -8), at + Vector2(1, -4)]), col)
@@ -115,7 +121,7 @@ func _draw() -> void:
 			draw_string_outline(title_font, at + Vector2(-5, 8), m[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 22, 5, Color(0, 0, 0, 0.9))
 			draw_string(title_font, at + Vector2(-5, 8), m[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("ffd27a"))
 	draw_string(font, origin + Vector2(0, -12), "WORLD MAP   you are at %d, %d   M or Esc to close" % [int(me.x), int(me.y)], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("f3ead2"))
-	var legend := [["you", Color("f3ead2")], ["others nearby", Color("ffd27a")], ["! a quest   ? hand one in", Color("ffd27a")], ["trader", Color("c9a227")], ["dungeon", DUNGEON], ["quest goal", GOAL], ["hold (faction war)", Color("b8b0a0")]]
+	var legend := [["you", Color("f3ead2")], ["others nearby", Color("ffd27a")], ["! a quest   ? hand one in", Color("ffd27a")], ["trader", Color("c9a227")], ["dungeon", DUNGEON], ["quest goal", GOAL], ["hold (faction war)", Color("b8b0a0")], ["boats (F at a dock)", Color("8fc3e8")]]
 	var lx := origin.x
 	for l in legend:
 		draw_rect(Rect2(Vector2(lx, origin.y + side + 14), Vector2(12, 12)), l[1])

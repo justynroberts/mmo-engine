@@ -4,6 +4,7 @@
 //! rate, build interest-filtered delta snapshots, send them in batches.
 
 mod blocks;
+mod boats;
 mod boss;
 mod botdir;
 mod ctl;

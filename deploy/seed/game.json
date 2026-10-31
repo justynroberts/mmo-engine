@@ -4769,7 +4769,8 @@
       "title": "Áth Cliath",
       "sound": "market",
       "music": "capital",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "waterford",
@@ -4779,7 +4780,8 @@
       "title": "Port Láirge",
       "sound": "sea",
       "music": "city",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "cork",
@@ -4789,7 +4791,8 @@
       "title": "Corcaigh",
       "sound": "sea",
       "music": "city",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "limerick",
@@ -4809,7 +4812,8 @@
       "title": "Gaillimh",
       "sound": "sea",
       "music": "city",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "wexford",
@@ -4819,7 +4823,8 @@
       "title": "Loch Garman",
       "sound": "sea",
       "music": "town",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "armagh",
@@ -4839,7 +4844,8 @@
       "title": "Doire",
       "sound": "sea",
       "music": "town",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "kilkenny",
@@ -4859,7 +4865,8 @@
       "title": "Droichead Átha",
       "sound": "sea",
       "music": "town",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "sligo",
@@ -4869,7 +4876,8 @@
       "title": "Sligeach",
       "sound": "sea",
       "music": "town",
-      "safe": true
+      "safe": true,
+      "dock": true
     },
     {
       "name": "athlone",
@@ -4915,7 +4923,8 @@
       "r": 70.0,
       "title": "Trá Lí",
       "sound": "sea",
-      "music": "explore"
+      "music": "explore",
+      "dock": true
     },
     {
       "name": "downpatrick",
@@ -4987,7 +4996,8 @@
       "r": 70.0,
       "title": "Cathair na Mart",
       "sound": "sea",
-      "music": "explore"
+      "music": "explore",
+      "dock": true
     },
     {
       "name": "lismore",
@@ -5023,7 +5033,8 @@
       "r": 70.0,
       "title": "Béal Feirste",
       "sound": "sea",
-      "music": "explore"
+      "music": "explore",
+      "dock": true
     },
     {
       "name": "mullingar",
@@ -5077,7 +5088,8 @@
       "r": 70.0,
       "title": "Ceann tSáile",
       "sound": "sea",
-      "music": "explore"
+      "music": "explore",
+      "dock": true
     },
     {
       "name": "ardee",

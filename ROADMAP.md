@@ -136,9 +136,14 @@ into their own bag, once a week per boss (`items.rs` `loot_from`, `Record::spoil
 an event's `when` may be `calendar` (hour and minute UTC, every day or one weekday); both worlds hold a Great Fair
 on Saturdays at 19:00 and a great raid on Fridays at 20:00.
 
-## 10. Swimming and boats
+## 10. Swimming and boats — done
 
-Deep water swum (slow, no fighting), boats bought and sailed between docks.
+Deep water is swum: a world's lakes, where the ground lies more than a body below the lake's level, are water cells
+(`World::in_water`, `proto::world::WATER_SPEED` half speed in `integrate`, matched in `ui/src/play/sim.ts`) instead
+of walls; they ride after the tiles in `/play/tiles` (older readers stop before them), bots' paths keep out of
+them, nobody fights or builds there, and the Godot client draws a swimmer at the surface. Boats: places marked
+`dock` (twelve harbour towns in both worlds), `/sail Name` there buys passage by the distance and lands you at the
+far quay; F at a dock and anchors on the map (`crates/server/src/boats.rs`).
 
 ## 11. A main story — done
 

@@ -272,7 +272,7 @@ mod tests {
 
     fn town() -> (Sim, u8) {
         let mut g = GameFile::default_game();
-        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None });
+        g.places.push(Place { name: "town".into(), x: 500.0, y: 500.0, r: 60.0, title: "Kells".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
         let mut folk = g.archetypes[0].clone();
         (folk.name, folk.behaviour, folk.attack, folk.count, folk.home, folk.rules) = ("folk".into(), Behaviour::Idle, None, 0, Some("town".into()), vec![]);
         folk.names = vec!["Aoife".into(), "Brian".into(), "Ciara".into(), "Dara".into(), "Eoin".into(), "Fiona".into()];
