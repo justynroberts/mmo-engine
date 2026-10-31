@@ -480,6 +480,8 @@ pub struct Sim {
     /// How each town thinks of each player, by place name (`repute.rs`), what they were asked to help with, and
     /// when next they may be asked.
     pub repute: Vec<Vec<(String, i32)>>,
+    /// Per slot: the bosses whose spoils they have had, and the week (`items.rs` `week`), by boss type name.
+    pub spoils: Vec<Vec<(String, u16)>>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -723,6 +725,7 @@ impl Sim {
             day: 0.0,
             season: None,
             repute: vec![Vec::new(); cap],
+            spoils: vec![Vec::new(); cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -922,6 +925,7 @@ impl Sim {
             class: self.class_of(slot).map_or(String::new(), |c| c.name.clone()),
             standing: self.standing[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
             towns: self.repute[slot].iter().filter(|e| e.1 != 0).cloned().collect(),
+            spoils: self.spoils[slot].iter().filter(|e| e.1 == crate::items::week()).cloned().collect(),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -1017,6 +1021,7 @@ impl Sim {
         self.restore_gear(slot, &rec.gear);
         self.class[slot] = self.classes.iter().position(|c| c.name == rec.class).map_or(0, |k| k as u8 + 1);
         self.standing[slot] = rec.standing.iter().map(|(n, v)| (n.clone(), (*v).clamp(-proto::game::STANDING_MAX, proto::game::STANDING_MAX))).collect();
+        self.spoils[slot] = rec.spoils.clone();
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 
@@ -2395,7 +2400,9 @@ impl Sim {
     }
 
     /// A bot has fallen: every player who hurt it lately (`Rules::kill_credit_secs`) gets its type's experience.
-    fn credit(&mut self, s: usize) {
+    /// Credit for a fallen bot: experience and quest kills to those who hurt it and their party mates near; returns
+    /// who was credited.
+    fn credit(&mut self, s: usize) -> Vec<usize> {
         let xp = self.archs.get(self.ents.arch[s] as usize).map_or(0, |a| a.xp);
         let since = self.tick.saturating_sub(proto::rules::Rules::ticks(self.rules.kill_credit_secs, self.tick_hz));
         let mut who: Vec<usize> = self.ents.hurt_by[s].iter().filter(|h| h.1 >= since).filter_map(|h| self.ents.resolve(h.0)).collect();
@@ -2414,12 +2421,12 @@ impl Sim {
         if let Some(arch) = self.archs.get(self.ents.arch[s] as usize).map(|a| a.name.clone()) {
             self.quest_kill(&arch, self.ents.x[s], self.ents.y[s], &who);
         }
-        if xp == 0 {
-            return;
+        if xp > 0 {
+            for &p in &who {
+                self.award(p, xp, None);
+            }
         }
-        for p in who {
-            self.award(p, xp, None);
-        }
+        who
     }
 
     /// Give a player experience (and a line saying why, if given); a new level is announced to them.
@@ -2655,8 +2662,8 @@ impl Sim {
                         }
                         self.plea_kill(s, &killers);
                         self.boss_fell(s);
-                        self.credit(s);
-                        self.loot_from(s);
+                        let credited = self.credit(s);
+                        self.loot_from(s, &credited);
                         self.drop_purse(s, by);
                         buried = self.folk_death(s, killer);
                     }

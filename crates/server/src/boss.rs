@@ -406,6 +406,22 @@ mod tests {
     }
 
     #[test]
+    fn a_boss_gives_each_player_their_own_spoils_once_a_week() {
+        let (mut s, boss, a, b) = arena();
+        let medkit = s.items.iter().position(|i| i.name == "medkit").unwrap();
+        let k = s.ents.arch[boss] as usize;
+        s.archs[k].drops = vec![proto::game::DropRt { item: medkit, chance_pct: 100.0, min: 1, max: 1 }];
+        let count = |s: &Sim, p: usize| s.inv[p].iter().filter(|t| t.0 as usize == medkit + 1).map(|t| t.1 as u32).sum::<u32>();
+        s.loot_from(boss, &[a, b]);
+        assert_eq!((count(&s, a), count(&s, b)), (1, 1), "each their own, into the bag");
+        assert!(s.ground.is_empty(), "nothing on the ground to squabble over");
+        s.loot_from(boss, &[a]);
+        assert_eq!(count(&s, a), 1, "not twice in a week");
+        assert!(s.tells.iter().any(|(p, t)| *p == a && t.contains("this week")), "{:?}", s.tells);
+        assert_eq!(s.record_of(a).spoils.len(), 1, "kept with the character");
+    }
+
+    #[test]
     fn it_goes_for_the_most_threat_and_a_taunt_turns_it() {
         let (mut s, boss, a, b) = arena();
         hit(&mut s, boss, a, 10.0);

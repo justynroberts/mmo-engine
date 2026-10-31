@@ -63,6 +63,9 @@ pub struct Record {
     /// How each town thinks of them, by place name (`repute.rs`; those at 0 left out).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub towns: Vec<(String, i32)>,
+    /// Bosses whose spoils they have had this week, by boss type name, with the week (`items.rs` `week`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spoils: Vec<(String, u16)>,
 }
 
 fn is_zero(v: &u32) -> bool {

@@ -21,6 +21,11 @@ pub struct GroundItem {
     pub born: u32,
 }
 
+/// This week, as weeks since 1970 (UTC), for a boss's spoils once a week.
+pub fn week() -> u16 {
+    (proto::daylight::now_ms() / (7.0 * 86_400_000.0)) as u16
+}
+
 impl Sim {
     pub fn clear_inv(&mut self, slot: usize) {
         self.inv[slot] = [(0, 0); INV_SLOTS];
@@ -105,24 +110,55 @@ impl Sim {
         }
     }
 
-    /// What a bot of this type leaves behind, rolled once at the spot where it fell.
-    pub fn loot_from(&mut self, slot: usize) {
+    /// What a bot of this type leaves behind, rolled once at the spot where it fell. A boss's spoils are each
+    /// player's own instead, rolled for everyone credited (`credited`) into their bag, once a week per boss: those
+    /// who have had them this week are told so and get nothing.
+    pub fn loot_from(&mut self, slot: usize, credited: &[usize]) {
         let a = self.ents.arch[slot];
         if a == NO_ARCH {
             return;
         }
-        let drops = self.archs[a as usize].drops.clone();
+        let boss = self.archs[a as usize].boss.is_some();
+        if boss && !credited.is_empty() {
+            let name = self.archs[a as usize].name.clone();
+            let shown = self.name_of(slot).to_string();
+            let wk = week();
+            for &p in credited {
+                if self.spoils[p].iter().any(|(n, w)| *n == name && *w == wk) {
+                    self.tells.push((p, format!("You have had the {shown}'s spoils this week.")));
+                    continue;
+                }
+                self.spoils[p].retain(|(n, w)| *n != name && *w == wk);
+                self.spoils[p].push((name.clone(), wk));
+                let won = self.rolled(slot);
+                let words: Vec<String> = won.iter().map(|&(i, n)| format!("{n} {}", self.items[i].shown())).collect();
+                for (i, n) in won {
+                    self.give_or_drop(p, i, n);
+                }
+                self.tells.push((p, if words.is_empty() { format!("The {shown} had nothing for you.") } else { format!("Your spoils from the {shown}: {}.", words.join(", ")) }));
+            }
+            return;
+        }
         let (x, y) = (self.ents.x[slot], self.ents.y[slot]);
+        for (item, n) in self.rolled(slot) {
+            let (jx, jy) = ((self.rng.f32() - 0.5) * 2.0, (self.rng.f32() - 0.5) * 2.0);
+            self.put_ground(x + jx, y + jy, item, n.min(99) as u8);
+        }
+    }
+
+    /// One roll of a fallen bot's drops and loot table: (item, count) for each that came up.
+    fn rolled(&mut self, slot: usize) -> Vec<(usize, u32)> {
+        let drops = self.archs[self.ents.arch[slot] as usize].drops.clone();
+        let mut out = Vec::new();
         for d in drops {
             if self.rng.f32() * 100.0 >= d.chance_pct {
                 continue;
             }
             let span = (d.max - d.min) as u32 + 1;
-            let n = d.min as u32 + self.rng.next_u32() % span;
-            let (jx, jy) = ((self.rng.f32() - 0.5) * 2.0, (self.rng.f32() - 0.5) * 2.0);
-            self.put_ground(x + jx, y + jy, d.item, n.min(99) as u8);
+            out.push((d.item, d.min as u32 + self.rng.next_u32() % span));
         }
-        self.roll_loot(slot);
+        out.extend(self.roll_table(slot));
+        out
     }
 
     /// Use, drop or pick up, as the action byte says. A pickup takes the pile `target` names (a ground item id) when

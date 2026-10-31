@@ -190,10 +190,21 @@ impl Sim {
         matches!((self.rs.guild_of(&p.owner), self.rs.guild_of(&me)), (Some(a), Some(b)) if a == b)
     }
 
-    /// Roll a fallen bot's loot table, announcing anything rare to the players near it.
+    /// Roll a fallen bot's loot table onto the ground where it fell.
+    #[cfg(test)]
     pub fn roll_loot(&mut self, slot: usize) {
-        let Some(t) = self.archs.get(self.ents.arch[slot] as usize).and_then(|a| a.loot) else { return };
-        let Some(table) = self.realm.loot.get(t).cloned() else { return };
+        let (x, y) = (self.ents.x[slot], self.ents.y[slot]);
+        for (item, n) in self.roll_table(slot) {
+            self.put_ground(x, y, item, n.min(99) as u8);
+        }
+    }
+
+    /// Roll a fallen bot's loot table: (item, count) for each that came up, anything rare announced to the
+    /// players near it.
+    pub fn roll_table(&mut self, slot: usize) -> Vec<(usize, u32)> {
+        let mut out = Vec::new();
+        let Some(t) = self.archs.get(self.ents.arch[slot] as usize).and_then(|a| a.loot) else { return out };
+        let Some(table) = self.realm.loot.get(t).cloned() else { return out };
         let (x, y) = (self.ents.x[slot], self.ents.y[slot]);
         let total: u64 = table.nothing as u64 + table.entries.iter().map(|e| e.1 as u64).sum::<u64>();
         for _ in 0..table.rolls {
@@ -213,8 +224,7 @@ impl Sim {
                 continue;
             };
             let n = min as u32 + self.rng.next_u32() % ((max - min) as u32 + 1);
-            let (jx, jy) = ((self.rng.f32() - 0.5) * 2.0, (self.rng.f32() - 0.5) * 2.0);
-            self.put_ground(x + jx, y + jy, item, n.min(99) as u8);
+            out.push((item, n));
             let rarity = self.items[item].rarity;
             if rarity >= proto::realm::Rarity::Rare {
                 let line = format!("A {} {} falls from the {}!", rarity.title(), self.items[item].shown(), self.name_of(slot));
@@ -226,6 +236,7 @@ impl Sim {
                 }
             }
         }
+        out
     }
 
     /// Plant the crop that grows from item `item` in the nearest tilled soil within reach that has room on top.
