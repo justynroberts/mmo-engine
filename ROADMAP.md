@@ -100,9 +100,12 @@ Points per level spent in a class's trees; respec at a trainer for coin.
 
 A look chosen when a character is made (body, hair, colours), dyes for gear, and showing one item's look on another.
 
-## 8. Group finder
+## 8. Group finder — done
 
-Queue for a dungeon by role; a party made from the queue is taken to the dungeon's door.
+Queue for a dungeon by role (`/queue Name tank|healer|damage`, `/unqueue`, or the Godot client's F5 window); a
+party queues together. When the dungeon's `group` (default 3) have queued, a tank and a healer first (or whoever is
+there after `rules.finder_wait_secs`), they become a party (a raid past `party_size`) and are put at the
+dungeon's door. `crates/server/src/finder.rs`; the queue's state on chat channel 16.
 
 ## 9. Daily and weekly rhythm
 

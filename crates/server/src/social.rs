@@ -3,7 +3,7 @@
 //! A chat line that starts with "/" is a command, not something said aloud: `/w Name text` whispers, `/r text`
 //! answers the last whisper, `/who` lists who is on, `/rep` shows your standing with the factions, and
 //! `/invite Name`, `/accept`, `/decline`, `/leave`, `/p text` and `/party` make and run a party, and `/raid` makes it
-//! a raid, which may grow to `rules.raid_size`. `/mail`, `/send` and
+//! a raid, which may grow to `rules.raid_size`. `/queue` and `/unqueue` are the group finder (`finder.rs`). `/mail`, `/send` and
 //! `/mailbox` are mail (`mail.rs`). A party shares the experience of a bot that falls near its
 //! members and their "beat N" quest steps, and its members see each other in a PARTY packet.
 
@@ -263,6 +263,9 @@ pub fn command(sim: &mut Sim, clients: &mut Clients, slot: usize, text: &str) ->
                 tell(clients, m, me, channel::PARTY, &msg);
             }
             clients.log_chat(sim.tick, me, channel::PARTY, &msg);
+        }
+        "queue" | "lfg" | "unqueue" => {
+            sim.finder_command(slot, if cmd == "unqueue" { "unqueue" } else { "queue" }, &rest);
         }
         "raid" => {
             if sim.party[slot] == 0 {

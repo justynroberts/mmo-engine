@@ -314,6 +314,7 @@ impl Sim {
         self.system_dungeons();
         self.system_plot_names();
         self.system_land();
+        self.system_finder();
     }
 
     /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel
@@ -1219,7 +1220,7 @@ mod tests {
     fn a_dungeon_gives_each_party_its_own_monsters() {
         let mut s = sim_with(|g| {
             g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false });
-            g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }) }];
+            g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3 }];
         });
         let (a, b) = (player(&mut s, 300.0, 300.0, "a"), player(&mut s, 305.0, 300.0, "b"));
         s.system_realm();

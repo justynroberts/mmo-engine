@@ -161,6 +161,17 @@ pub struct DungeonDef {
     pub xp: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reward: Option<Stack>,
+    /// How many players the group finder brings together for it (3 when left out).
+    #[serde(default = "d_group", skip_serializing_if = "is_default_group")]
+    pub group: u8,
+}
+
+fn d_group() -> u8 {
+    3
+}
+
+fn is_default_group(n: &u8) -> bool {
+    *n == 3
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -222,6 +233,7 @@ pub struct DungeonRt {
     pub bots: Vec<(usize, u8)>,
     pub xp: u32,
     pub reward: Option<(usize, u8)>,
+    pub group: u8,
 }
 
 /// The checked, resolved form of the realm parts of a game file.
@@ -404,7 +416,10 @@ impl GameFile {
             if dungeons.iter().any(|o: &DungeonRt| o.place == at) {
                 return Err(format!("{ctx}: another dungeon is at '{}'", d.place));
             }
-            dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward });
+            if d.group == 0 {
+                return Err(format!("dungeon '{}': a group of at least 1", d.name));
+            }
+            dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group });
         }
 
         Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons })

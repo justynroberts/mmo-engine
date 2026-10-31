@@ -413,6 +413,10 @@ pub struct Sim {
     pub next_party: u32,
     /// Parties made raids with `/raid`: they may grow to `rules.raid_size`.
     pub raids: std::collections::HashSet<u32>,
+    /// The group finder (`finder.rs`): who is queued, whether that changed since they were told, and who was told.
+    pub finder: Vec<crate::finder::Ticket>,
+    pub finder_dirty: bool,
+    pub finder_told: Vec<usize>,
     /// Money, gear and mounts (`trade.rs`): the money item, what each player wears (item index + 1 per slot), how
     /// much a mount adds to their speed while they ride (0 on foot), and a version bumped when either changes.
     pub currency: Option<usize>,
@@ -679,6 +683,9 @@ impl Sim {
             party_ver: vec![0; cap],
             next_party: 0,
             raids: Default::default(),
+            finder: Vec::new(),
+            finder_dirty: false,
+            finder_told: Vec::new(),
             currency,
             classes,
             class: vec![0; cap],

@@ -45,6 +45,8 @@ pub struct Rules {
     pub guild_size: u16,
     /// Seconds an empty dungeon run stays open.
     pub dungeon_idle_secs: f32,
+    /// Seconds the group finder waits for a tank and a healer before it makes a group of whoever is queued.
+    pub finder_wait_secs: f32,
     /// How near two players must be to start a trade, and how far apart before it is called off.
     pub trade_reach: f32,
     pub trade_break: f32,
@@ -120,6 +122,7 @@ impl Default for Rules {
             bot_say_secs: 6.0,
             guild_size: 200,
             dungeon_idle_secs: 30.0,
+            finder_wait_secs: 60.0,
             trade_reach: 12.0,
             trade_break: 24.0,
             market_reach: 16.0,
@@ -184,6 +187,7 @@ impl Rules {
             ("kill_credit_secs", self.kill_credit_secs),
             ("bot_say_secs", self.bot_say_secs),
             ("dungeon_idle_secs", self.dungeon_idle_secs),
+            ("finder_wait_secs", self.finder_wait_secs),
             ("listing_hours", self.listing_hours),
             ("rise_delay_secs", self.rise_delay_secs),
             ("hail_secs", self.hail_secs),

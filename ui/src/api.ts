@@ -310,6 +310,8 @@ export interface DungeonDef {
   bots: { bot: string; count?: number }[]
   xp?: number
   reward?: Stack
+  /** Players the group finder brings together for it (3 when left out). */
+  group?: number
 }
 export const GEAR_SLOTS = ['weapon', 'armour', 'trinket'] as const
 export type GearSlot = (typeof GEAR_SLOTS)[number]
@@ -762,6 +764,8 @@ export interface Rules {
   guild_size: number
   /** An empty dungeon run closes after this long. */
   dungeon_idle_secs: number
+  /** The group finder waits this long for a tank and a healer, then makes a group of whoever is queued. */
+  finder_wait_secs: number
   /** Start a trade this near; it is called off past trade_break. */
   trade_reach: number
   trade_break: number
@@ -825,6 +829,7 @@ export const RULE_DEFAULTS: Rules = {
   bot_say_secs: 6,
   guild_size: 200,
   dungeon_idle_secs: 30,
+  finder_wait_secs: 60,
   trade_reach: 12,
   trade_break: 24,
   market_reach: 16,

@@ -10,6 +10,7 @@ mod ctl;
 mod director;
 mod encounter;
 mod factions;
+mod finder;
 mod hail;
 mod homes;
 mod items;

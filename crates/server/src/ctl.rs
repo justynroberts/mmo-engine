@@ -362,7 +362,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         json!({"name": d.name, "place": p.map(|p| p.name.clone()), "x": p.map(|p| p.x), "y": p.map(|p| p.y), "r": p.map(|p| p.r),
             "level": foes.clone().map(|(a, _)| a.level).max().unwrap_or(0),
             "boss": foes.clone().find(|(a, _)| a.boss.is_some()).map(|(a, _)| if a.title.is_empty() { a.name.clone() } else { a.title.clone() }),
-            "foes": foes.map(|(_, n)| n as u32).sum::<u32>()})
+            "foes": foes.map(|(_, n)| n as u32).sum::<u32>(), "group": d.group})
     }).collect();
     json!({
         "server_key": to_hex(&hs.keys.public),

@@ -348,7 +348,7 @@ const REALM_NOTE = [
   'recipes: /craft name takes needs [{ item, count }] from the bag and gives count of makes, only within near (a place) if set. /recipes lists them.',
   'crops: { name, seed, yields, min, max, grow_secs }: using a seed item beside tilled soil (block material soil) plants it on top; it ripens after grow_secs and breaking it ripe gives min..max of yields (a sprout gives the seed back). A merchant selling seeds makes farming open to all.',
   'plots: /claim takes size x size blocks where you stand (not over a safe place); only the owner and their guild build or break there. /unclaim, /plot.',
-  'dungeons: { name, place, bots: [{ bot, count }], xp, reward: { item, count } }: walking into the place gives you and your party your own copy of those bots (nobody else sees them); clearing it rewards everyone inside; it closes 30 s after the last one leaves.',
+  'dungeons: { name, place, bots: [{ bot, count }], xp, reward: { item, count }, group }: walking into the place gives you and your party your own copy of those bots (nobody else sees them); clearing it rewards everyone inside; it closes 30 s after the last one leaves. group (default 3) is how many players the group finder (/queue Dungeon [tank|healer|damage], /unqueue) brings together and takes to its door; it waits rules.finder_wait_secs for a tank and a healer.',
   'Guilds need no setup: /guild create Name, /guild invite Name, /guild accept, /guild leave, /guild kick Name, /g words.',
   'Renaming or removing an item, bot type or place rewrites or drops the loot entries, recipes, crops and dungeons that named it.',
 ].join(' ')

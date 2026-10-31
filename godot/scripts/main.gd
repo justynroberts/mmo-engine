@@ -18,6 +18,7 @@ const BubblesScript := preload("res://scripts/bubbles.gd")
 const SpellFx := preload("res://scripts/spellfx.gd")
 const JournalScript := preload("res://scripts/journal.gd")
 const QuestsScript := preload("res://scripts/quests.gd")
+const FinderScript := preload("res://scripts/finder.gd")
 const ShopScript := preload("res://scripts/shop.gd")
 const BagScript := preload("res://scripts/bag.gd")
 const TradeScript := preload("res://scripts/trade.gd")
@@ -140,6 +141,7 @@ var all_spells: Array = []  # every spell the game has (its actions after the fi
 var bar_order: Array = []   # the names on the spell bar, in key order: the player's choice, kept per server
 var journal: CanvasLayer    # the spell journal and the menu: scripts/journal.gd
 var questui: CanvasLayer    # quest offers, the quest log and the tracker: scripts/quests.gd
+var finderui: CanvasLayer   # the group finder (F5): scripts/finder.gd
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
 var bagui: CanvasLayer      # the whole bag and the bank (F4): scripts/bag.gd
 var tradeui: CanvasLayer    # trading with another player: scripts/trade.gd
@@ -299,6 +301,9 @@ func _ready() -> void:
 	journal.log_out.connect(_log_out)
 	questui = QuestsScript.new()
 	add_child(questui)
+	finderui = FinderScript.new()
+	add_child(finderui)
+	finderui.command.connect(func(t: String): net.say(t, false))
 	questui.accepted.connect(func(i: int): net.accept_quest(i))
 	questui.declined.connect(func(): net.abandon_quest(-1))
 	questui.abandoned.connect(func(i: int): net.abandon_quest(i))
@@ -559,6 +564,8 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 16: # the group finder's queue: "Q|dungeon|queued|wanted|role", "Q|" once out
+			finderui.on_line(text)
 		elif channel == 15: # the land held near us: "L0|x0,y0,x1,y1,mine,name;...", more in "L1|" lines
 			_on_land(text)
 		elif channel == 14: # a boss marks the ground: "T|id|x|y|r|secs|fx", or "C|id" takes one back
@@ -572,6 +579,9 @@ func _start() -> void:
 				god = false
 				_notice(text)
 			_dungeon_line(text)
+			if text.begins_with("The finder has a company for "):
+				hud.announce(text.get_slice(":", 0).trim_prefix("The finder has a company for ") + "\nYour company is at the door", Color("e07a5f"))
+				sound.play("horn", -4.0, 0.0)
 			if text.contains(" makes the party a raid"):
 				_raid = true
 			var asked := text.find(" asks you to join their party.")
@@ -637,10 +647,12 @@ func _start() -> void:
 		_toggle_map.call_deferred()
 	if args.has("build"):
 		_set_building(true)
-	if args.has("open"): # --open bag|auction: to look at them (with --shot)
+	if args.has("open"): # --open bag|auction|finder: to look at them (with --shot)
 		get_tree().create_timer(float(args.get("open_after", "4"))).timeout.connect(func():
 			if String(args["open"]) == "auction":
 				_open_auction()
+			elif String(args["open"]) == "finder":
+				finderui.toggle()
 			else:
 				bagui.toggle(net.bag()))
 	if args.has("blueprint"): # --blueprint N: in build mode, lay blueprint N out a few blocks south of us (with --shot)
@@ -980,6 +992,8 @@ func _process(delta: float) -> void:
 		if e["id"] != self_id:
 			others.append(e["position"])
 	hud.minimap.dungeons = _dungeons()
+	finderui.set_dungeons(hud.minimap.dungeons)
+	finderui.tick(delta)
 	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
 	hud.minimap.goals = questui.goals(homes).filter(func(g): return not g.is_empty())
 	_show_goal(hud.minimap.goals)
@@ -2651,12 +2665,15 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_F3:
 			questui.toggle_log()
 			return
+		if k == KEY_F5:
+			finderui.toggle()
+			return
 		if k == KEY_F4 or k == BAG_KEY:
 			bagui.toggle(net.bag())
 			return
-		if k == KEY_ESCAPE and (settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
+		if k == KEY_ESCAPE and (finderui.escape() or settingsui.escape() or auctionui.escape() or tradeui.escape() or bagui.escape() or shopui.escape() or questui.escape() or journal.escape()):
 			return
-		if journal.is_open() or questui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
+		if journal.is_open() or questui.is_open() or finderui.is_open() or shopui.is_open() or classui.is_open() or settingsui.is_open() or bagui.is_open() or tradeui.is_open() or auctionui.is_open():
 			return
 		# Keys every mode shares: move (polled in _drive), jump, chat, map, god, full screen, the mode switch.
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
@@ -3469,14 +3486,14 @@ func _draw_land_edges() -> void:
 	im.surface_end()
 
 ## The realm's dungeons with where they are, from /play/info (a server too old to say where is left out):
-## [[Vector2, name, level, boss, foes], ...].
+## [[Vector2, name, level, boss, foes, group], ...].
 func _dungeons() -> Array:
 	var out := []
 	var realm = info.get("realm", {})
 	for d in (realm.get("dungeons", []) if realm is Dictionary else []):
 		if d is Dictionary and d.get("x") != null and d.get("y") != null:
 			out.append([Vector2(float(d["x"]), float(d["y"])), String(d.get("name", "")), int(d.get("level", 0)),
-				String(d["boss"]) if d.get("boss") is String else "", int(d.get("foes", 0))])
+				String(d["boss"]) if d.get("boss") is String else "", int(d.get("foes", 0)), int(d.get("group", 3))])
 	return out
 
 ## The server's word on a dungeon (entering, leaving, clearing it), also across the screen.
@@ -3840,6 +3857,8 @@ func _on_ability(name: String) -> void:
 			journal.toggle_journal()
 		"quests":
 			questui.toggle_log()
+		"group":
+			finderui.toggle()
 
 ## The frame bars for an entity: every replicated attribute except the bookkeeping ones (airborne, lit).
 ## How full a bar of attribute `a` can be for entity `e`: a player's level ceiling when the pool grows with level

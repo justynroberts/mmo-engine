@@ -65,6 +65,9 @@ pub mod channel {
     /// growing on their own land is ripe (0 for none); a long list goes on in "L1|" lines; an empty "L0|" means none.
     /// Not shown as chat.
     pub const LAND: u8 = 15;
+    /// Server to client, from the server (0): how the group finder's queue stands for a player in it (`finder.rs`),
+    /// sent when it changes: "Q|dungeon|queued|wanted|role", or "Q|" once out of it. Not shown as chat.
+    pub const FINDER: u8 = 16;
 }
 
 pub mod kind {
