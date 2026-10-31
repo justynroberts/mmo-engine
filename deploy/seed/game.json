@@ -9105,6 +9105,147 @@
           "count": 15
         }
       ]
+    },
+    {
+      "name": "the stone cries out",
+      "title": "The Stone of Destiny",
+      "giver": "laoch",
+      "level": 2,
+      "text": "They say the Lia Fáil on the Hill of Tara has fallen silent: the stone that roars beneath a true king. Go to Tara and see it for yourself.",
+      "opening": "The Stone of Destiny\nOn the Hill of Tara, the Lia Fáil has fallen silent.",
+      "done_text": "Silent, you say? Then something is badly wrong in Ireland.",
+      "steps": [
+        {
+          "kind": "visit",
+          "place": "tara"
+        }
+      ],
+      "xp": 120,
+      "reward": [
+        {
+          "item": "pingin airgid",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "name": "the monks of kells",
+      "title": "The Monks of Kells",
+      "giver": "laoch",
+      "after": "the stone cries out",
+      "turn_in": "manach",
+      "text": "The monks keep the old books. If anyone knows why the stone is quiet, it's them. Find a monk and ask.",
+      "done_text": "The stone? Yes. We have feared this. Sit, and I will tell you.",
+      "steps": [
+        {
+          "kind": "talk",
+          "archetype": "manach"
+        }
+      ],
+      "xp": 100
+    },
+    {
+      "name": "words in the book",
+      "title": "Words in the Book",
+      "giver": "manach",
+      "after": "the monks of kells",
+      "level": 3,
+      "text": "The old book says the stone sleeps when the dark god walks again. The brothers at Clonmacnoise and Glendalough watch the old roads; go to both and see what stirs.",
+      "opening": "Words in the Book\n\"When Crom Dubh walks, the stone will sleep.\"",
+      "done_text": "Graves opened at both? Then it is as the book says.",
+      "steps": [
+        {
+          "kind": "visit",
+          "place": "clonmacnoise"
+        },
+        {
+          "kind": "visit",
+          "place": "glendalough"
+        }
+      ],
+      "xp": 250,
+      "reward": [
+        {
+          "item": "deoch leighis",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "the restless mound",
+      "title": "The Restless Mound",
+      "giver": "manach",
+      "after": "words in the book",
+      "level": 5,
+      "text": "The dead walk out of Brú na Bóinne at night, the sluagh, his host. Thin them, before they reach the towns.",
+      "done_text": "The host is thinner. But he is still in his mound.",
+      "steps": [
+        {
+          "kind": "kill",
+          "archetype": "sluagh",
+          "count": 6
+        }
+      ],
+      "xp": 400,
+      "reward": [
+        {
+          "item": "pingin airgid",
+          "count": 15
+        }
+      ]
+    },
+    {
+      "name": "the dark god",
+      "title": "The Dark God",
+      "giver": "manach",
+      "after": "the restless mound",
+      "level": 8,
+      "text": "Crom Dubh waits in the mound at Brú na Bóinne. No one goes in alone and comes out. Gather a company (the group finder will find you one) and end him.",
+      "opening": "The Dark God\nBeneath Brú na Bóinne, Crom Dubh waits for you.",
+      "closing": "Crom Dubh falls\nAnd far off, on the Hill of Tara, something stirs.",
+      "done_text": "You did it. Go to Tara, quickly. I think the stone is waking.",
+      "steps": [
+        {
+          "kind": "visit",
+          "place": "bru na boinne"
+        },
+        {
+          "kind": "kill",
+          "archetype": "crom dubh",
+          "count": 1
+        }
+      ],
+      "xp": 800,
+      "reward": [
+        {
+          "item": "deoch leighis",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "the stone speaks",
+      "title": "The Stone Speaks",
+      "giver": "manach",
+      "after": "the dark god",
+      "turn_in": "laoch",
+      "text": "Stand by the Lia Fáil on Tara, and then tell the arms trader in Áth Cliath what you heard.",
+      "opening": "The Stone Speaks\nThe Lia Fáil roars beneath your feet.",
+      "closing": "The Stone of Destiny\nThe stone has spoken. Ireland will remember your name.",
+      "done_text": "It roared? Then there's a true heart in Ireland yet. Take this; you've earned more than gold.",
+      "steps": [
+        {
+          "kind": "visit",
+          "place": "tara"
+        }
+      ],
+      "xp": 1000,
+      "reward": [
+        {
+          "item": "fainne oir",
+          "count": 1
+        }
+      ]
     }
   ],
   "zones": [

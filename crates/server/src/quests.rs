@@ -139,6 +139,12 @@ impl Sim {
                 self.change_repute(s, h, 10); // a good turn for one of its folk
             }
             let said = if q.done_text.is_empty() { format!("Quest done: {}", q.title) } else { format!("{} ({} done)", q.done_text, q.title) };
+            if !q.closing.is_empty() {
+                self.notes.push((s, 0, proto::chat::channel::BANNER, q.closing.clone()));
+            }
+            if !q.done_text.is_empty() && (!q.opening.is_empty() || !q.closing.is_empty()) {
+                self.npc_say.push((t, false, q.done_text.chars().take(proto::chat::MAX_TEXT).collect())); // a story's giver speaks
+            }
             if q.xp > 0 && self.levels.is_some() {
                 self.award(s, q.xp, Some(format!("{said} +{} experience", q.xp)));
             } else {
@@ -173,10 +179,14 @@ impl Sim {
         }
         let name = q.name.clone();
         let title = q.title.clone();
+        let opening = q.opening.clone();
         self.ents.quests[s].retain(|r| r.name != name);
         self.ents.quests[s].push(crate::quests::QuestRun { name, step: 0, count: 0, state: QUEST_ACTIVE });
         self.ents.offer[s] = proto::wire::NO_OFFER;
         self.tells.push((s, format!("Quest taken: {title}")));
+        if !opening.is_empty() {
+            self.notes.push((s, 0, proto::chat::channel::BANNER, opening));
+        }
         self.bump_quests(s);
         let last = self.ents.quests[s].len() - 1;
         self.check_now(s, last);
@@ -415,6 +425,17 @@ mod tests {
         assert_eq!(s.ents.quests[me][0].step, 1, "on to building anything");
         s.quest_build(me, 0);
         assert_eq!(s.ents.quests[me][0].state, QUEST_READY);
+    }
+
+    #[test]
+    fn a_story_quest_opens_with_a_scene() {
+        let mut g = GameFile::default_game();
+        g.quests.push(QuestFile { name: "tale".into(), title: "A Tale".into(), giver: "merchant".into(), steps: vec![QuestStep::Talk { archetype: "drifter".into() }], opening: "Once upon a time".into(), ..Default::default() });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        s.ents.offer[me] = 0;
+        assert!(s.accept(me, 0));
+        assert!(s.notes.iter().any(|n| n.0 == me && n.2 == proto::chat::channel::BANNER && n.3 == "Once upon a time"), "{:?}", s.notes);
     }
 
     #[test]

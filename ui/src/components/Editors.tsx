@@ -739,6 +739,12 @@ export function QuestsEditor({ game, setGame }: Edit) {
               <div className="col-span-4">
                 <TextField label="On hand-in (optional)" value={q.done_text ?? ''} allowEmpty maxLength={600} onCommit={(t) => patch(i, { done_text: t.slice(0, 600) || undefined })} />
               </div>
+              <div className="col-span-2">
+                <TextField label="Scene on taking it (a story's banner)" value={q.opening ?? ''} allowEmpty maxLength={200} onCommit={(t) => patch(i, { opening: t.slice(0, 200) || undefined })} />
+              </div>
+              <div className="col-span-2">
+                <TextField label="Scene on handing it in" value={q.closing ?? ''} allowEmpty maxLength={200} onCommit={(t) => patch(i, { closing: t.slice(0, 200) || undefined })} />
+              </div>
             </div>
             <div className="pt-1">
               <p className="lbl">Steps, in order</p>

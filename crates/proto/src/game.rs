@@ -1128,6 +1128,12 @@ pub struct QuestFile {
     pub text: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub done_text: String,
+    /// A scene told across the screen of whoever takes it (`opening`) and hands it in (`closing`), for a story; the
+    /// one it is handed to also says `done_text` aloud.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub opening: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub closing: String,
     /// The bot type that offers it.
     pub giver: String,
     /// The bot type it is handed in to (absent: the giver).
@@ -3011,7 +3017,7 @@ impl GameFile {
             if q.name.trim().is_empty() || q.name.len() > 48 || !names.insert(q.name.as_str()) {
                 return Err(format!("{ctx}: quest names must be unique, non-empty and at most 48 bytes"));
             }
-            if q.title.trim().is_empty() || q.title.chars().count() > 64 || q.text.chars().count() > 600 || q.done_text.chars().count() > 600 {
+            if q.title.trim().is_empty() || q.title.chars().count() > 64 || q.text.chars().count() > 600 || q.done_text.chars().count() > 600 || q.opening.chars().count() > 200 || q.closing.chars().count() > 200 {
                 return Err(format!("{ctx}: a title (at most 64 characters) and texts of at most 600"));
             }
             if !arch(&q.giver) || q.turn_in.as_deref().is_some_and(|t| !arch(t)) {

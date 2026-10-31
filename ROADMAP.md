@@ -131,9 +131,12 @@ on Saturdays at 19:00 and a great raid on Fridays at 20:00.
 
 Deep water swum (slow, no fighting), boats bought and sailed between docks.
 
-## 11. A main story
+## 11. A main story — done
 
-A chain of quests through the world's towns, with scenes told in banners and speech.
+A quest's `opening` and `closing` are scenes told across the screen of whoever takes and hands it in, and its giver
+says its `done_text` aloud. "The Stone of Destiny" in both worlds: six quests from Áth Cliath to Tara, Kells,
+Clonmacnoise and Glendalough, the sluagh, Crom Dubh in Brú na Bóinne (with a company), and the Lia Fáil roaring
+again.
 
 ## 12. Furnishing houses
 
