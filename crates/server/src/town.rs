@@ -69,6 +69,7 @@ impl Sim {
         self.earned[s].clear();
         self.title[s].clear();
         self.talents[s].clear();
+        self.look[s] = Default::default();
     }
 
     /// The bot in `s` is busy with town life this AI tick (in a brawl, running with a purse, after a thief): its

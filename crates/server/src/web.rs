@@ -58,8 +58,8 @@ pub struct Gateway {
     statics: Arc<crate::statics::Statics>,
     /// Built blocks, served at /play/blocks.
     blocks: RwLock<crate::blocks::Feed>,
-    /// Every entity's name by slot, with the id it was for (`/play/names`).
-    names: RwLock<Vec<(u32, Arc<str>)>>,
+    /// Every entity's name by slot, with the id it was for (`/play/names`), and a player's look (`/play/looks`).
+    names: RwLock<Vec<(u32, Arc<str>, Arc<str>)>>,
     pub stats: GwStats,
 }
 
@@ -100,14 +100,14 @@ impl Gateway {
     /// the tick; the lock is held only to copy a handful of pointers.
     pub fn names_changed(&self, sim: &crate::sim::Sim) {
         let slots: Vec<usize> = if sim.names_all { (0..sim.ents.high).collect() } else { sim.ents.renamed.iter().map(|&s| s as usize).collect() };
-        let fresh: Vec<(usize, u32, Arc<str>)> =
-            slots.into_iter().filter(|&s| sim.ents.alive[s]).map(|s| (s, sim.ents.id_of(s), sim.feed_name(s))).collect();
+        let fresh: Vec<(usize, u32, Arc<str>, Arc<str>)> =
+            slots.into_iter().filter(|&s| sim.ents.alive[s]).map(|s| (s, sim.ents.id_of(s), sim.feed_name(s), Arc::from(sim.look[s].code()))).collect();
         if let Ok(mut t) = self.names.write() {
             if t.len() < sim.ents.cap() {
-                t.resize(sim.ents.cap(), (u32::MAX, Arc::from("")));
+                t.resize(sim.ents.cap(), (u32::MAX, Arc::from(""), Arc::from("")));
             }
-            for (s, id, n) in fresh {
-                t[s] = (id, n);
+            for (s, id, n, l) in fresh {
+                t[s] = (id, n, l);
             }
         }
     }
@@ -118,9 +118,24 @@ impl Gateway {
         let mut out = serde_json::Map::new();
         if let Ok(t) = t {
             for &id in ids {
-                if let Some((have, n)) = t.get((id & crate::sim::SLOT_MASK) as usize) {
+                if let Some((have, n, _)) = t.get((id & crate::sim::SLOT_MASK) as usize) {
                     if *have == id {
                         out.insert(id.to_string(), serde_json::Value::String(n.to_string()));
+                    }
+                }
+            }
+        }
+        serde_json::Value::Object(out).to_string()
+    }
+
+    /// `{"<id>": "cape,helmet", ...}` for those of `ids` alive with a look of their own (`looks.rs`).
+    pub fn looks_json(&self, ids: &[u32]) -> String {
+        let mut out = serde_json::Map::new();
+        if let Ok(t) = self.names.read() {
+            for &id in ids {
+                if let Some((have, _, l)) = t.get((id & crate::sim::SLOT_MASK) as usize) {
+                    if *have == id && !l.is_empty() {
+                        out.insert(id.to_string(), serde_json::Value::String(l.to_string()));
                     }
                 }
             }
@@ -355,6 +370,14 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
                 return respond(&mut conn, 400, "text/plain", format!("at most {NAMES_MAX} ids").as_bytes());
             }
             respond(&mut conn, 200, "application/json", gw.names_json(&ids).as_bytes())
+        }
+        "/play/looks" => {
+            // ?ids=1,2,3: the looks of those players that have one ("cape,helmet").
+            let ids: Vec<u32> = head.query.split('&').find_map(|kv| kv.strip_prefix("ids=")).unwrap_or("").split(',').filter_map(|v| v.parse().ok()).collect();
+            if ids.len() > NAMES_MAX {
+                return respond(&mut conn, 400, "text/plain", format!("at most {NAMES_MAX} ids").as_bytes());
+            }
+            respond(&mut conn, 200, "application/json", gw.looks_json(&ids).as_bytes())
         }
         "/play/blocks" => {
             let since = head.query.split('&').find_map(|kv| kv.strip_prefix("since=")).and_then(|v| v.parse().ok()).unwrap_or(0);

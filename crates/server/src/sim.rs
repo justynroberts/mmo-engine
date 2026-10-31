@@ -490,6 +490,8 @@ pub struct Sim {
     pub title: Vec<String>,
     /// Per slot: points spent in their class's talents, by talent name (`talents.rs`).
     pub talents: Vec<Vec<(String, u8)>>,
+    /// Per slot: their look (`looks.rs`), served at `/play/looks`.
+    pub look: Vec<crate::looks::Look>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -739,6 +741,7 @@ impl Sim {
             earned: vec![Vec::new(); cap],
             title: vec![String::new(); cap],
             talents: vec![Vec::new(); cap],
+            look: vec![Default::default(); cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -944,6 +947,7 @@ impl Sim {
             earned: self.earned[slot].clone(),
             title: self.title[slot].clone(),
             talents: self.talents[slot].clone(),
+            look: self.look[slot].code(),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
         }
     }
@@ -1045,6 +1049,7 @@ impl Sim {
         self.earned[slot] = rec.earned.clone();
         self.title[slot] = rec.title.clone();
         self.talents[slot] = rec.talents.clone();
+        self.look[slot] = crate::looks::Look::parse(&rec.look);
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();
     }
 
@@ -3177,7 +3182,7 @@ mod tests {
     fn a_material_with_an_item_costs_one_and_breaking_your_own_gives_it_back() {
         use proto::game::{build_arg, build_target, ItemRt, ACT_BREAK, ACT_BUILD};
         let mut s = sim();
-        let stone = ItemRt { name: "stone".into(), color: "#888888".into(), stack_max: 50, uses: vec![], consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: Some(0) };
+        let stone = ItemRt { name: "stone".into(), color: "#888888".into(), stack_max: 50, uses: vec![], consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: Some(0), dye: None };
         s.set_items(vec![stone]);
         let a = s.spawn(0).unwrap();
         s.set_account(a, Some("aaaaaaaaaaaaaaaa"));
@@ -3422,7 +3427,7 @@ mod tests {
     #[test]
     fn falling_can_cost_experience_coin_and_the_bag_and_rising_can_wait() {
         use proto::game::{ItemDef, LevelsFile};
-        let item = |name: &str| ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None };
+        let item = |name: &str| ItemDef { name: name.into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None };
         let mut s = sim_with(|g| {
             g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
             g.items = vec![item("silver"), item("stone")];
@@ -3471,7 +3476,7 @@ mod tests {
     fn reaching_a_level_can_give_things_as_well() {
         use proto::game::{ItemDef, LevelReward, LevelsFile};
         let mut s = sim_with(|g| {
-            g.items = vec![ItemDef { name: "brick".into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }];
+            g.items = vec![ItemDef { name: "brick".into(), color: "#ffffff".into(), stack_max: 50, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None }];
             let reward = |level: u8, n: u8| LevelReward { level, items: vec![proto::realm::Stack { item: "brick".into(), count: n }], text: format!("Level {level}: bricks.") };
             g.levels = Some(LevelsFile { cap: 5, base: 100.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![reward(2, 10), reward(3, 20)], grow: Default::default() });
         });

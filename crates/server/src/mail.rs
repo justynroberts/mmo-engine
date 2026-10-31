@@ -207,7 +207,7 @@ mod tests {
     /// Two players with accounts, one at a market; gold is the last item and the currency. (Sim, a, b, gold)
     fn world() -> (Sim, usize, usize, usize) {
         let mut g = GameFile::default_game();
-        g.items.push(ItemDef { name: "gold".into(), color: "#ffd700".into(), stack_max: 99, uses: Vec::new(), consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None });
+        g.items.push(ItemDef { name: "gold".into(), color: "#ffd700".into(), stack_max: 99, uses: Vec::new(), consume: false, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None });
         let gold = g.items.len() - 1;
         g.currency = Some("gold".into());
         g.places.push(Place { name: "square".into(), x: 100.0, y: 100.0, r: 20.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: true });

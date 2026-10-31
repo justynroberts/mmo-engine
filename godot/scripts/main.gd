@@ -235,6 +235,8 @@ var crumbled := 0                       # blocks seen to crumble (the smoke test
 # Names: the web gateway's /play/names, asked for the ids we do not know yet and refreshed now and then (players rename).
 var names := {}           # entity id -> name (a bot's kind, "Trader": what shops, quests and looks go by)
 var given := {}           # entity id -> a bot's own name ("Bridget"), for its nameplate and its words
+var looks := {}           # entity id -> a player's look, "cape,helmet" (/play/looks): what their model wears
+var _looks_shown := {}    # entity id -> the look its node was last dressed in
 var bubbles: CanvasLayer  # speech bubbles over whoever speaks: scripts/bubbles.gd
 var _names_want := {}     # ids to ask about next
 var _names_busy := false
@@ -332,6 +334,7 @@ func _ready() -> void:
 	shopui.auction_requested.connect(_open_auction)
 	classui = ClassPickScript.new()
 	add_child(classui)
+	classui.look.connect(func(t: String): net.say(t, false))
 	classui.chosen.connect(func(i: int):
 		_class_asked = t_total # give the server time to say so before asking again
 		net.act_arg(ACT_CLASS, 0, i))
@@ -860,6 +863,9 @@ func _process(delta: float) -> void:
 		if node.has_method("hold_pose"): # sitting and the like: a held emote, by the server's `pose`
 			node.hold_pose(_pose_clip(int(round(float(e.get("pose", 0.0))))))
 		# Sneaking: in the dark, someone whose light is out shows no name and no health bar (and carries no torch).
+		if String(looks.get(id, "")) != String(_looks_shown.get(id, "")):
+			_dress(node, String(looks.get(id, "")))
+			_looks_shown[id] = String(looks.get(id, ""))
 		if not mine and node.has_node("tag"):
 			var label := node.get_node("tag") as Label3D
 			var nm := _name(id)
@@ -1172,6 +1178,15 @@ func _poll_names(delta: float, list: Array) -> void:
 				given[int(k)] = parts[1]
 			else:
 				given.erase(int(k))
+	# Players' looks, for the same ones (an older server has none to give).
+	var lt := await _fetch("%s/play/looks?ids=%s" % [_web_url(), ",".join(ids.map(func(i): return str(i)))])
+	var gl = JSON.parse_string(lt) if lt != "" else null
+	if gl is Dictionary:
+		for id in ids:
+			if gl.has(str(id)):
+				looks[int(id)] = String(gl[str(id)])
+			else:
+				looks.erase(int(id))
 
 # ---------------------------------------------------------------- walls by tile
 
@@ -3148,6 +3163,25 @@ func _turn_to_me(id: int) -> void:
 		_face(them, me.position)
 		if track.has(id):
 			track[id]["face_until"] = t_total + 4.0
+
+## Dress a player's model in their look ("cape,helmet"): the cape (and a mage's hat) in its colour, the helmet shown
+## or not. "" puts the model back as it came.
+func _dress(node: Node3D, code: String) -> void:
+	var parts := code.split(",")
+	var cape := Color(parts[0]) if parts.size() > 0 and parts[0].begins_with("#") else Color.WHITE
+	var helmet := parts.size() < 2 or parts[1] != "0"
+	for m in node.find_children("*", "MeshInstance3D", true, false):
+		var n := String(m.name)
+		if n.ends_with("_Cape"):
+			if cape == Color.WHITE:
+				m.material_override = null
+			else:
+				var base = m.mesh.surface_get_material(0) if m.mesh and m.mesh.get_surface_count() > 0 else null
+				var mat := (base.duplicate() if base is StandardMaterial3D else StandardMaterial3D.new()) as StandardMaterial3D
+				mat.albedo_color = cape.lightened(0.15)
+				m.material_override = mat
+		elif n.ends_with("_Helmet") or n.ends_with("_Hat") or n.ends_with("_Hood") or n.ends_with("_Hat_Hood"):
+			m.visible = helmet
 
 ## How a line names its speaker: a player by their name, a bot by its own name and kind ("Bridget the Trader").
 func _called(id: int) -> String:

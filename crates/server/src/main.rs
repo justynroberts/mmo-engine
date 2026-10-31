@@ -16,6 +16,7 @@ mod hail;
 mod homes;
 mod items;
 mod life;
+mod looks;
 mod mail;
 mod market;
 mod io;

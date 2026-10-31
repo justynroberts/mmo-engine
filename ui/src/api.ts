@@ -267,6 +267,8 @@ export interface ItemDef {
   /** A block of this material (one of MATERIALS): building one uses one up, and breaking your own gives it back.
    *  At most one item per material; a material no item is a block of costs nothing to build. Gods build free. */
   block?: string
+  /** A dye: using one colours the user's cape this (#rrggbb), used up. */
+  dye?: string
 }
 
 /** The block materials a player can build, by number (proto::game::BLOCK_NAMES up to the crops). */

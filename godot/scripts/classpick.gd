@@ -3,6 +3,11 @@ extends CanvasLayer
 ## its strengths and its spells, and a button to take it. The server keeps the choice for good.
 
 signal chosen(index: int)
+signal look(text: String)   # a look picked as the character is made: "/look cape red", "/look helmet off"
+
+## The cape colours on offer (crates/server/src/looks.rs PALETTE); dyes give others later.
+const CAPES := [["red", "#a8322d"], ["blue", "#2f4f8f"], ["green", "#3f7a3a"], ["yellow", "#c9a227"], ["black", "#22201e"],
+	["white", "#e8e2d4"], ["brown", "#6b4a2f"], ["grey", "#7d7f80"], ["purple", "#5d3a7a"], ["saffron", "#d98b2b"]]
 
 const HUD := preload("res://scripts/hud.gd")
 
@@ -44,6 +49,33 @@ func _ready() -> void:
 	v.add_child(sub)
 	_list.add_theme_constant_override("separation", 14)
 	v.add_child(_list)
+	# How you look: a cape colour and whether the helmet shows (changed later with /look, or a dye).
+	var looks := HBoxContainer.new()
+	looks.add_theme_constant_override("separation", 6)
+	var ll := Label.new()
+	ll.text = "Your cape"
+	ll.add_theme_color_override("font_color", HUD.MUTED)
+	looks.add_child(ll)
+	for c in CAPES:
+		var sw := Button.new()
+		sw.custom_minimum_size = Vector2(28, 28)
+		sw.focus_mode = Control.FOCUS_NONE
+		sw.tooltip_text = c[0]
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(c[1])
+		st.set_corner_radius_all(3)
+		for k in ["normal", "hover", "pressed"]:
+			sw.add_theme_stylebox_override(k, st)
+		var cname: String = c[0]
+		sw.pressed.connect(func(): look.emit("/look cape " + cname))
+		looks.add_child(sw)
+	var helm := Button.new()
+	helm.text = "Helmet off"
+	helm.toggle_mode = true
+	helm.focus_mode = Control.FOCUS_NONE
+	helm.toggled.connect(func(on: bool): look.emit("/look helmet " + ("off" if on else "on")))
+	looks.add_child(helm)
+	v.add_child(looks)
 
 ## Show the classes ([{name, title, desc, might, toughness, spells}]) with spell titles from `spell_title`.
 func open(classes: Array, spell_title: Callable) -> void:

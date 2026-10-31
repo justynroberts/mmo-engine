@@ -1072,6 +1072,18 @@
         {
           "item": "siol cabaiste",
           "price": 2
+        },
+        {
+          "item": "glaisin",
+          "price": 12
+        },
+        {
+          "item": "madar",
+          "price": 12
+        },
+        {
+          "item": "croch",
+          "price": 12
         }
       ],
       "names": [
@@ -7567,6 +7579,30 @@
       ],
       "consume": true,
       "value": 3
+    },
+    {
+      "name": "glaisin",
+      "title": "Woad Dye",
+      "color": "#24407a",
+      "stack_max": 10,
+      "value": 6,
+      "dye": "#24407a"
+    },
+    {
+      "name": "madar",
+      "title": "Madder Dye",
+      "color": "#8e1b1b",
+      "stack_max": 10,
+      "value": 6,
+      "dye": "#8e1b1b"
+    },
+    {
+      "name": "croch",
+      "title": "Saffron Dye",
+      "color": "#e0a020",
+      "stack_max": 10,
+      "value": 6,
+      "dye": "#e0a020"
     }
   ],
   "weather": [

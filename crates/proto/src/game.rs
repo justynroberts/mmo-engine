@@ -1315,6 +1315,9 @@ pub struct ItemDef {
     /// material no item is a block of costs nothing to build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block: Option<String>,
+    /// A dye: using one colours the user's cape this ("#rrggbb"), used up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dye: Option<String>,
 }
 
 fn is_zero_u16(v: &u16) -> bool {
@@ -1468,6 +1471,7 @@ pub struct ItemRt {
     pub rarity: crate::realm::Rarity,
     /// The material this is a block of.
     pub block: Option<u8>,
+    pub dye: Option<String>,
     /// `ItemDef::title`, empty when it has none (`shown`).
     pub title: String,
 }
@@ -1934,8 +1938,13 @@ pub struct Game {
 pub const MAX_WALLS: usize = 2000;
 
 /// A usable item with the given effects (none makes it a keepsake or trade good).
+/// "#rrggbb".
+pub fn is_hex_colour(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
 fn item(name: &str, color: &str, stack_max: u8, uses: &[(&str, f32)]) -> ItemDef {
-    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None }
+    ItemDef { name: name.into(), color: color.into(), stack_max, uses: uses.iter().map(|&(a, d)| UseEffect { attr: a.into(), delta: d }).collect(), consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None }
 }
 
 /// What the sample bots leave behind.
@@ -2467,6 +2476,9 @@ impl GameFile {
                     Some(k)
                 }
             };
+            if it.dye.as_deref().is_some_and(|d| !is_hex_colour(d)) {
+                return Err(format!("{ctx}: a dye is a colour as #rrggbb"));
+            }
             items.push(ItemRt {
                 name: it.name.clone(),
                 color: it.color.clone(),
@@ -2479,6 +2491,7 @@ impl GameFile {
                 rarity: it.rarity,
                 block,
                 title: it.title.clone(),
+                dye: it.dye.clone(),
             });
         }
         let mut seen = HashSet::new();
@@ -3381,7 +3394,7 @@ mod tests {
         .unwrap();
         assert!(old.build().is_ok());
         let mut more = ok.clone();
-        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None });
+        more.items.push(ItemDef { name: "gadget".into(), color: "#999999".into(), stack_max: 9, uses: vec![], consume: true, value: 0, equip: None, mount: 0.0, rarity: Default::default(), title: String::new(), block: None, dye: None });
         assert_eq!(ok.build().unwrap().defs.content_hash(), more.build().unwrap().defs.content_hash());
         g.items.clear();
         assert!(g.build().is_err(), "drops of items that no longer exist are caught");
