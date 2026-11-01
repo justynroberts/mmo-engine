@@ -5,7 +5,9 @@
 # Needs Godot 4.6 on the PATH with its Windows export template (windows_release_x86_64.exe in the export templates),
 # the x86_64-pc-windows-gnu Rust target (rustup target add x86_64-pc-windows-gnu) and MinGW (brew install mingw-w64).
 # The DLL needs only Windows' own libraries (the UCRT, so Windows 10 or later). It is not code-signed, so
-# SmartScreen asks once ("More info", "Run anyway").
+# SmartScreen asks once ("More info", "Run anyway"). Also writes dist/windows.json (version, size, sha256) for
+# scripts/publish_clients.sh; the client updates itself from the newest GitHub release of UPDATE_REPO (owner/name,
+# default this checkout's GitHub remote; UPDATE_REPO= for none).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 server="${1:-hibernian.apps.fintonlabs.com}"
@@ -15,7 +17,9 @@ cp -f target/x86_64-pc-windows-gnu/release/mmo_godot.dll godot/bin/
 echo "$server" > godot/default_server.txt
 version=$(date -u +%Y%m%d.%H%M%S)
 echo "$version" > godot/version.txt
-trap 'rm -f godot/default_server.txt godot/version.txt' EXIT
+repo="${UPDATE_REPO-$(git remote get-url origin 2>/dev/null | sed -n 's#.*github.com[:/]\([^/]*/[^/.]*\).*#\1#p')}"
+printf '%s' "$repo" > godot/update_repo.txt
+trap 'rm -f godot/default_server.txt godot/version.txt godot/update_repo.txt' EXIT
 rm -rf dist/windows dist/mmo-client-windows.zip
 mkdir -p dist/windows
 godot --headless --path godot --export-release Windows ../dist/windows/mmo-client.exe
@@ -24,3 +28,4 @@ godot --headless --path godot --export-release Windows ../dist/windows/mmo-clien
 [ -f dist/windows/mmo_godot.dll ] || cp -f godot/bin/mmo_godot.dll dist/windows/
 (cd dist && mv windows Hibernian && zip -qr mmo-client-windows.zip Hibernian && mv Hibernian windows)
 echo "dist/mmo-client-windows.zip (version $version, server $server)"
+printf '{"version":"%s","size":%s,"sha256":"%s"}\n' "$version" "$(stat -f %z dist/mmo-client-windows.zip)" "$(shasum -a 256 dist/mmo-client-windows.zip | cut -d' ' -f1)" > dist/windows.json

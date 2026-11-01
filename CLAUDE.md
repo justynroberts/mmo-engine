@@ -123,11 +123,11 @@ Block materials are listed in six places that must stay the same length: `proto:
 
 ## Client updates
 
-`scripts/package_godot.sh` stamps the app with a version (`godot/version.txt`, the UTC packaging time) and publishes the signed zip as `data/client/mac.zip` plus `mac.json` (version, size, sha256). The web gateway serves them at `/play/client` and `/play/client/mac.zip` (streamed; `web.rs` `stream_file`). A packaged app's join screen (`join.gd`) offers a newer version, downloads it, checks the checksum and hands over to a small shell script that swaps the .app and reopens it (to `~/Applications` when macOS runs the app translocated).
+`scripts/package_godot.sh` stamps the app with a version (`godot/version.txt`, the UTC packaging time) and publishes the signed zip as `data/client/mac.zip` plus `mac.json` (version, size, sha256). The web gateway serves them at `/play/client` and `/play/client/mac.zip` (streamed; `web.rs` `stream_file`). Both packaging scripts also write `dist/<platform>.json` and bake in `update_repo.txt` (the GitHub repository, from the checkout's remote or `UPDATE_REPO`); `scripts/publish_clients.sh` puts the zips and manifests on a GitHub release. A packaged app's join screen (`join.gd` `_newest`) looks on its server (macOS) and then the newest such release, offers a newer version, downloads it, checks the checksum and hands over to a small script that swaps it in and restarts: a shell script swapping the .app on macOS (to `~/Applications` when macOS runs the app translocated), a batch file copying the unpacked folder over the install on Windows. `godot/tools/check_update.gd` prints what would be offered.
 
 ## Windows client
 
-`scripts/package_windows.sh [server]` cross-builds the client on a Mac (`rustup target add x86_64-pc-windows-gnu`, `brew install mingw-w64`, and Godot's `windows_release_x86_64.exe` export template) into `dist/mmo-client-windows.zip`: the exe, its .pck and `mmo_godot.dll` (needs only Windows' own libraries). It is not signed, and only the macOS app updates itself (`join.gd`). Cross-building the DLL inside the Rancher VM stalls; build it on the Mac.
+`scripts/package_windows.sh [server]` cross-builds the client on a Mac (`rustup target add x86_64-pc-windows-gnu`, `brew install mingw-w64`, and Godot's `windows_release_x86_64.exe` export template) into `dist/mmo-client-windows.zip`: the exe, its .pck and `mmo_godot.dll` (needs only Windows' own libraries). It is not signed; it updates itself from GitHub releases like the macOS app (`join.gd`). Cross-building the DLL inside the Rancher VM stalls; build it on the Mac.
 
 ## Docker
 

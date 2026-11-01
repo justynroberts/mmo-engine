@@ -16,9 +16,13 @@ const ART := "res://ui/title.jpg"
 ## and it never updates itself.
 const VERSION_FILE := "res://version.txt"
 const UPDATE_ZIP := "user://update.zip"
+## owner/name of the GitHub repository whose releases carry the clients (written by the packaging scripts).
+const UPDATE_REPO_FILE := "res://update_repo.txt"
 
 var server_in := LineEdit.new()
 var update_btn := Button.new()
+var repo_override := ""            # tools/check_update.gd: another repository, or platform, to look in
+var platform_override := ""
 var _update := {}          # what the server offers: {version, size, sha256}
 var _dl: HTTPRequest       # the download, while it runs
 var name_in := LineEdit.new()
@@ -240,31 +244,72 @@ static func version() -> String:
 func _web(server: String) -> String:
 	return HUD.web_base(server)
 
-## Ask the server for the newest client; offer it when it is newer than this one (versions are dates, so they
-## sort as text). Only a packaged app updates itself.
-func _check_update() -> void:
-	await get_tree().create_timer(1.6).timeout # after the saved-server check has had its say
-	var mine := version()
-	# Only the macOS app has updates to offer (the server publishes mac.zip); other builds are replaced by hand.
-	if mine == "" or not OS.has_feature("template") or OS.get_name() != "macOS" or server_in.text.strip_edges() == "":
-		return
+## "mac" or "windows": the clients that update themselves; "" for any other build.
+func platform() -> String:
+	return platform_override if platform_override != "" else {"macOS": "mac", "Windows": "windows"}.get(OS.get_name(), "")
+
+## A GET's body as JSON (null when it fails).
+func _get_json(url: String, wait := 4.0) -> Variant:
 	var r := HTTPRequest.new()
-	r.timeout = 3.0
+	r.timeout = wait
 	add_child(r)
-	if r.request("%s/play/client" % _web(server_in.text)) != OK:
+	if r.request(url, ["Accept: application/json", "User-Agent: mmo-engine-client"]) != OK:
 		r.queue_free()
-		return
+		return null
 	var res: Array = await r.request_completed
 	r.queue_free()
 	if res[0] != HTTPRequest.RESULT_SUCCESS or res[1] != 200:
+		return null
+	return JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8())
+
+## The newest client for this platform: from the server (/play/client, macOS only, as a local server publishes
+## it), else from the newest GitHub release of UPDATE_REPO that carries one (its <platform>.json manifest beside
+## mmo-client-<platform>.zip). A manifest with the url to download it from, or {}.
+func _newest() -> Dictionary:
+	var best := {}
+	if platform() == "mac" and server_in.text.strip_edges() != "":
+		var m = await _get_json("%s/play/client" % _web(server_in.text), 3.0)
+		if m is Dictionary and m.has("version"):
+			best = m
+			best["url"] = "%s/play/client/mac.zip" % _web(server_in.text)
+			best["from"] = "this server"
+	var repo := repo_override if repo_override != "" else (FileAccess.get_file_as_string(UPDATE_REPO_FILE).strip_edges() if FileAccess.file_exists(UPDATE_REPO_FILE) else "")
+	if repo == "":
+		return best
+	var releases = await _get_json("https://api.github.com/repos/%s/releases?per_page=10" % repo, 6.0)
+	if not (releases is Array):
+		return best
+	for rel in releases:
+		if not (rel is Dictionary) or rel.get("draft", false):
+			continue
+		var urls := {}
+		for a in rel.get("assets", []):
+			urls[String(a.get("name", ""))] = String(a.get("browser_download_url", ""))
+		var zip_name := "mmo-client-%s.zip" % platform()
+		if not (urls.has(platform() + ".json") and urls.has(zip_name)):
+			continue
+		var m = await _get_json(urls[platform() + ".json"], 8.0)
+		if m is Dictionary and String(m.get("version", "")) > String(best.get("version", "")):
+			best = m
+			best["url"] = urls[zip_name]
+			best["from"] = "GitHub"
+		break # the newest release with a client for us is the one
+	return best
+
+## Look for a newer client; offer it when it is newer than this one (versions are dates, so they sort as text).
+## Only a packaged app on macOS or Windows updates itself.
+func _check_update() -> void:
+	await get_tree().create_timer(1.6).timeout # after the saved-server check has had its say
+	var mine := version()
+	if mine == "" or not OS.has_feature("template") or platform() == "":
 		return
-	var m = JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8())
-	if not (m is Dictionary) or String(m.get("version", "")) <= mine:
+	var m := await _newest()
+	if m.is_empty() or String(m.get("version", "")) <= mine:
 		return
 	_update = m
 	update_btn.text = "Update to the newest version (%d MB)" % int(float(m.get("size", 0)) / 1048576.0)
 	update_btn.visible = true
-	note.text = "A newer version of the game is on this server."
+	note.text = "A newer version of the game is out (on %s)." % String(m.get("from", "the server"))
 
 func _start_update() -> void:
 	if _dl != null or _update.is_empty():
@@ -276,7 +321,7 @@ func _start_update() -> void:
 	_dl.timeout = 600.0
 	add_child(_dl)
 	_dl.request_completed.connect(_downloaded)
-	if _dl.request("%s/play/client/mac.zip" % _web(server_in.text)) != OK:
+	if _dl.request(String(_update["url"]), ["User-Agent: mmo-engine-client"]) != OK:
 		_update_failed("could not start the download")
 
 func _process(_delta: float) -> void:
@@ -294,7 +339,10 @@ func _downloaded(result: int, code: int, _h: PackedStringArray, _b: PackedByteAr
 	if FileAccess.get_sha256(UPDATE_ZIP) != String(_update.get("sha256", "")):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(UPDATE_ZIP))
 		return _update_failed("the download was damaged")
-	_install()
+	if platform() == "windows":
+		_install_windows()
+	else:
+		_install()
 
 ## Swap the app for the new one and start it: a small script waits for this process to end, unpacks the new app
 ## next to the old, moves it into place (putting the old one back if that fails) and opens it. An app macOS runs
@@ -326,6 +374,44 @@ open "$app"
 	f.store_string(script)
 	f.close()
 	var pid := OS.create_process("/bin/sh", [path, str(OS.get_process_id()), ProjectSettings.globalize_path(UPDATE_ZIP), app])
+	if pid <= 0:
+		return _update_failed("cannot start the installer")
+	update_btn.text = "Restarting with the new version..."
+	await get_tree().create_timer(0.4).timeout
+	get_tree().quit()
+
+## Windows: a small batch file waits for this process to end, unpacks the new build beside the old (PowerShell's
+## Expand-Archive), copies it over the folder the game runs from and starts it again; it leaves the old files be if
+## the copy fails.
+func _install_windows() -> void:
+	var dir := OS.get_executable_path().get_base_dir()
+	var exe := OS.get_executable_path().get_file()
+	var script := """@echo off
+setlocal
+set "pid=%~1"
+set "zip=%~2"
+set "dir=%~3"
+set "exe=%~4"
+:wait
+tasklist /FI "PID eq %pid%" 2>nul | find "%pid%" >nul && (timeout /t 1 /nobreak >nul & goto wait)
+set "work=%TEMP%\\hibernian-update"
+rmdir /s /q "%work%" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force -LiteralPath '%zip%' -DestinationPath '%work%'" || goto start
+for /d %%d in ("%work%\\*") do set "new=%%d"
+if not defined new set "new=%work%"
+robocopy "%new%" "%dir%" /E /NFL /NDL /NJH /NJS /R:3 /W:1 >nul
+:start
+del "%zip%" 2>nul
+rmdir /s /q "%work%" 2>nul
+start "" "%dir%\\%exe%"
+"""
+	var path := ProjectSettings.globalize_path("user://update.cmd")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return _update_failed("cannot write the installer")
+	f.store_string(script.replace("\n", "\r\n"))
+	f.close()
+	var pid := OS.create_process("cmd.exe", ["/c", path.replace("/", "\\"), str(OS.get_process_id()), ProjectSettings.globalize_path(UPDATE_ZIP).replace("/", "\\"), dir.replace("/", "\\"), exe])
 	if pid <= 0:
 		return _update_failed("cannot start the installer")
 	update_btn.text = "Restarting with the new version..."

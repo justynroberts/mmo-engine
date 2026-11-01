@@ -3,7 +3,9 @@
 # screen, the server field filled in with SERVER (default: the public server, hibernian.apps.fintonlabs.com).
 #   scripts/package_godot.sh [server]      -> dist/mmo-client-mac.zip
 # It also publishes the zip for the in-game updater: data/client/mac.zip and mac.json (version, size, sha256), which
-# the server's web gateway serves at /play/client (CLIENT_DIR to put them elsewhere, CLIENT_DIR= to skip).
+# the server's web gateway serves at /play/client (CLIENT_DIR to put them elsewhere, CLIENT_DIR= to skip), and
+# writes dist/mac.json for scripts/publish_clients.sh, which puts the clients on a GitHub release; the app looks
+# there too (UPDATE_REPO, owner/name, default this checkout's GitHub remote; UPDATE_REPO= for none).
 # Needs Godot 4.6 on the PATH and its macOS export template (Editor > Manage Export Templates). Apple silicon only.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,7 +15,9 @@ echo "$server" > godot/default_server.txt
 # Versions are the packaging time, so they sort as text: an app offers an update when the server has a later one.
 version=$(date -u +%Y%m%d.%H%M%S)
 echo "$version" > godot/version.txt
-trap 'rm -f godot/default_server.txt godot/version.txt' EXIT
+repo="${UPDATE_REPO-$(git remote get-url origin 2>/dev/null | sed -n 's#.*github.com[:/]\([^/]*/[^/.]*\).*#\1#p')}"
+printf '%s' "$repo" > godot/update_repo.txt
+trap 'rm -f godot/default_server.txt godot/version.txt godot/update_repo.txt' EXIT
 mkdir -p dist
 rm -rf dist/mmo-client.zip dist/mmo-client-mac.zip
 godot --headless --path godot --export-release macOS ../dist/mmo-client.zip
@@ -46,6 +50,7 @@ if [ -n "$identity" ]; then
 fi
 mv dist/mmo-client.zip dist/mmo-client-mac.zip
 echo "dist/mmo-client-mac.zip (server $server, version $version)"
+printf '{"version":"%s","size":%s,"sha256":"%s"}\n' "$version" "$(stat -f %z dist/mmo-client-mac.zip)" "$(shasum -a 256 dist/mmo-client-mac.zip | cut -d' ' -f1)" > dist/mac.json
 
 client_dir="${CLIENT_DIR-data/client}"
 if [ -n "$client_dir" ]; then
