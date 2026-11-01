@@ -39,6 +39,9 @@ impl Sim {
         } else {
             return;
         };
+        if self.ents.god[player] {
+            return; // bots pay a god no mind
+        }
         self.boss_engaged(bot, player);
         let pid = self.ents.id_of(player);
         match self.foe[bot] {
@@ -205,6 +208,22 @@ mod tests {
         let d = s.spawn_as(NONE, drone, Some((300.0, 300.0))).unwrap();
         (s.ents.x[me], s.ents.y[me]) = (304.0, 300.0);
         (s, me, d)
+    }
+
+    #[test]
+    fn bots_pay_a_god_no_mind_and_let_go_when_god_mode_starts() {
+        let (mut s, me, d) = fight();
+        let did = s.ents.id_of(d);
+        s.step(&[PendingAction { slot: me, action: ZAP, target: did, arg: 0 }]);
+        assert_eq!(s.pursuers[me], vec![did], "locked on");
+        s.set_god(me, true);
+        assert!(s.pursuers[me].is_empty() && s.foe[d].is_none(), "god mode ends the chase");
+        for _ in 0..40 {
+            s.step(&[PendingAction { slot: me, action: ZAP, target: did, arg: 0 }]);
+        }
+        assert!(s.pursuers[me].is_empty() && s.foe[d].is_none(), "a god's blows lock nothing on");
+        s.set_god(me, false);
+        assert!(s.pursuers[me].is_empty(), "out of god mode with nothing on our heels");
     }
 
     #[test]

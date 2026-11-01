@@ -1752,7 +1752,7 @@ impl Sim {
                 if d2 > scan * scan * m * m {
                     return;
                 }
-                if e.owner[t] == GHOST || e.hidden[t] || sheltered[t] {
+                if e.owner[t] == GHOST || e.hidden[t] || sheltered[t] || e.god[t] {
                     return;
                 }
                 for k in kinds.iter_mut() {
@@ -2031,8 +2031,8 @@ impl Sim {
                 let sheltered = &self.sheltered;
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
-                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] || e.hidden[t] {
-                        return; // its own kind, in another phase (a dungeon's copy) it cannot meet, under a roof or indoors
+                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] || e.hidden[t] || e.god[t] {
+                        return; // its own kind, in another phase (a dungeon's copy) it cannot meet, under a roof, indoors, or a god
                     }
                     if hunter && e.owner[t] >= DRIVEN {
                         let in_town = towns.iter().any(|&(tx, ty, r2)| (e.x[t] - tx).powi(2) + (e.y[t] - ty).powi(2) <= r2);
@@ -2665,7 +2665,16 @@ impl Sim {
     }
 
     /// God mode on or off. Off puts speed back to its default (and off any mount), since god mode held it at the top.
+    /// On, every bot hunting them lets go: bots pay a god no mind (their scans skip one, and nothing locks on).
     pub fn set_god(&mut self, s: usize, on: bool) {
+        if on && !self.pursuers[s].is_empty() {
+            for b in std::mem::take(&mut self.pursuers[s]) {
+                if let Some(b) = self.ents.resolve(b) {
+                    self.foe[b] = None;
+                }
+            }
+            self.pursuer_ver[s] = self.pursuer_ver[s].wrapping_add(1);
+        }
         if self.ents.god[s] && !on {
             if let Some(a) = self.speed_attr {
                 self.ents.attrs[a][s] = self.defs.attrs[a].default;

@@ -82,7 +82,7 @@ var _bag_count := -1
 var cam := Camera3D.new()
 var yaw := 0.0
 var zoom := 17.0
-var heading := 0.0        # the way we are going, in the camera's terms (yaw), kept while we stand still
+var heading := 0.0        # the way we face, in the camera's terms (yaw): our character's, or the camera's in first person
 var has_lit := false      # the game has a `lit` attribute: lights are known to the server, so you can sneak
 var lit_of := {}          # entity id -> whether its light is on (as the snapshots say)
 var my_lit := true        # ours, as the server has it
@@ -993,9 +993,17 @@ func _process(delta: float) -> void:
 	t = theme.lap("map", t)
 	_drive()
 	t = theme.lap("drive", t)
-	if me_pos.distance_to(_heading_from) > 0.05:
+	# The way we face, for the minimap and the map's arrow: the camera's in first person, else our character's (it
+	# turns to where it walks and to what it strikes; the models face +Z, and (-sin, -cos) of heading is forward, as
+	# for yaw). Before our character is in, the way we last went.
+	var facing_node: Node3D = ents.get(self_id)
+	if fpv:
+		heading = yaw
+	elif facing_node != null:
+		heading = wrapf(facing_node.rotation.y + PI, -PI, PI)
+	elif me_pos.distance_to(_heading_from) > 0.05:
 		var d := me_pos - _heading_from
-		heading = atan2(-d.x, -d.y) # so (-sin, -cos) of it is the way we went, as forward is for yaw
+		heading = atan2(-d.x, -d.y)
 		_heading_from = me_pos
 	stream_t += delta
 	if stream_t > 0.4 and me_pos.distance_to(last_stream) > 20.0:
