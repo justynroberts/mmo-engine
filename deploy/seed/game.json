@@ -4860,6 +4860,304 @@
       "guards": true,
       "rules": [],
       "respawn_secs": 180
+    },
+    {
+      "name": "taibhse uaimhe",
+      "title": "Cave Wraith",
+      "color": "#5f7f9f",
+      "count": 0,
+      "behaviour": "idle",
+      "speed_mult": 0.8,
+      "sight": 30.0,
+      "attack": "mallacht",
+      "attrs": {
+        "health": 140.0
+      },
+      "home": "uaimh chruachan istigh",
+      "rules": [
+        {
+          "when": {
+            "kind": "sees",
+            "who": "player",
+            "within": 26.0
+          },
+          "then": {
+            "kind": "chase"
+          }
+        }
+      ],
+      "drops": [
+        {
+          "item": "miodh",
+          "chance_pct": 25.0,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "xp": 70,
+      "level": 13,
+      "ambush": false
+    },
+    {
+      "name": "an morrigan",
+      "title": "An Mhór-Ríon",
+      "color": "#2b1d3a",
+      "count": 0,
+      "behaviour": "chase",
+      "speed_mult": 0.9,
+      "sight": 60.0,
+      "attack": "buille",
+      "attrs": {
+        "health": 300.0
+      },
+      "home": "uaimh chruachan istigh",
+      "rules": [],
+      "drops": [
+        {
+          "item": "fainne oir",
+          "chance_pct": 100.0,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "item": "deoch nirt",
+          "chance_pct": 100.0,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "item": "deoch draiochta",
+          "chance_pct": 60.0,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "xp": 700,
+      "level": 15,
+      "leash": 120.0,
+      "boss": {
+        "phases": [
+          {
+            "below": 100,
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 6,
+                "at": "tank"
+              },
+              {
+                "action": "sioc",
+                "every_secs": 8,
+                "warn_secs": 2.0,
+                "at": "random",
+                "radius": 6,
+                "say": "The Morrígan's breath turns the cave to frost!"
+              }
+            ]
+          },
+          {
+            "below": 60,
+            "say": "The Morrígan screams, and the dead of the cave answer!",
+            "adds": [
+              {
+                "bot": "taibhse uaimhe",
+                "count": 3
+              }
+            ],
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 6,
+                "at": "tank"
+              },
+              {
+                "action": "tintreach",
+                "every_secs": 9,
+                "warn_secs": 2.0,
+                "at": "farthest",
+                "radius": 6
+              },
+              {
+                "action": "codladh",
+                "every_secs": 14,
+                "at": "random"
+              }
+            ]
+          },
+          {
+            "below": 30,
+            "say": "Battle-crow and queen: the Morrígan fills the cave with ruin!",
+            "moves": [
+              {
+                "action": "sui fola",
+                "every_secs": 5,
+                "at": "tank"
+              },
+              {
+                "action": "ceo nimhe",
+                "every_secs": 7,
+                "warn_secs": 2.5,
+                "at": "self",
+                "radius": 10
+              }
+            ]
+          }
+        ],
+        "enrage_secs": 360,
+        "enrage_might": 3,
+        "defeat": "The Morrígan breaks into a storm of crows and is gone. The cave is still."
+      }
+    },
+    {
+      "name": "gofraidh",
+      "title": "Gofraidh the Jarl",
+      "color": "#4e342e",
+      "count": 0,
+      "behaviour": "chase",
+      "speed_mult": 1.0,
+      "sight": 45.0,
+      "attack": "buille",
+      "attrs": {
+        "health": 300.0
+      },
+      "home": "dun mor istigh",
+      "drops": [
+        {
+          "item": "tua chatha",
+          "chance_pct": 50.0,
+          "min": 1,
+          "max": 1
+        },
+        {
+          "item": "clogad lochlannach",
+          "chance_pct": 35.0,
+          "min": 1,
+          "max": 1
+        },
+        {
+          "item": "pingin airgid",
+          "chance_pct": 100.0,
+          "min": 25,
+          "max": 50
+        },
+        {
+          "item": "deoch iarainn",
+          "chance_pct": 100.0,
+          "min": 1,
+          "max": 2
+        }
+      ],
+      "xp": 900,
+      "level": 18,
+      "ambush": false,
+      "leash": 120.0,
+      "rules": [],
+      "boss": {
+        "phases": [
+          {
+            "below": 100,
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 7,
+                "at": "tank"
+              },
+              {
+                "action": "liathroid tine",
+                "every_secs": 7,
+                "warn_secs": 2.0,
+                "at": "farthest",
+                "radius": 6,
+                "say": "Gofraidh hurls burning pitch!"
+              }
+            ]
+          },
+          {
+            "below": 55,
+            "say": "To me, my sworn men! Odin is watching!",
+            "adds": [
+              {
+                "bot": "huscarl",
+                "count": 4
+              }
+            ],
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 6,
+                "at": "tank"
+              },
+              {
+                "action": "liathroid tine",
+                "every_secs": 6,
+                "warn_secs": 1.8,
+                "at": "random",
+                "radius": 6
+              }
+            ]
+          },
+          {
+            "below": 25,
+            "say": "The Jarl roars and the cave mouth fills with fire!",
+            "moves": [
+              {
+                "action": "mallacht",
+                "every_secs": 5,
+                "at": "tank"
+              },
+              {
+                "action": "liathroid tine",
+                "every_secs": 4,
+                "warn_secs": 1.6,
+                "at": "random",
+                "radius": 7
+              },
+              {
+                "action": "tintreach",
+                "every_secs": 9,
+                "warn_secs": 2.0,
+                "at": "self",
+                "radius": 9
+              }
+            ]
+          }
+        ],
+        "enrage_secs": 420,
+        "enrage_might": 3,
+        "defeat": "Gofraidh the Jarl falls on his hoard. Dún Mór is yours."
+      }
+    },
+    {
+      "name": "huscarl",
+      "title": "Jarl's Huscarl",
+      "color": "#8d6e63",
+      "count": 0,
+      "behaviour": "chase",
+      "speed_mult": 1.0,
+      "sight": 45.0,
+      "attack": "buille",
+      "attrs": {
+        "health": 160.0
+      },
+      "home": "dun mor istigh",
+      "rules": [],
+      "drops": [
+        {
+          "item": "pingin airgid",
+          "chance_pct": 80.0,
+          "min": 2,
+          "max": 5
+        },
+        {
+          "item": "clogad lochlannach",
+          "chance_pct": 4.0,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "xp": 80,
+      "level": 16,
+      "ambush": false
     }
   ],
   "places": [
@@ -5590,6 +5888,40 @@
       "r": 512.0,
       "title": "An Tuaisceart",
       "sound": "wind"
+    },
+    {
+      "name": "uaimh chruachan",
+      "x": 1990.0,
+      "y": 1800.0,
+      "r": 8.0,
+      "title": "Uaimh Chruachan",
+      "sound": "crypt",
+      "music": "eerie"
+    },
+    {
+      "name": "dun mor",
+      "x": 2530.0,
+      "y": 2650.0,
+      "r": 8.0,
+      "title": "Uaimh Dhún Mór",
+      "sound": "crypt",
+      "music": "battle"
+    },
+    {
+      "name": "uaimh chruachan istigh",
+      "x": 260.0,
+      "y": 200.0,
+      "r": 220.0,
+      "sound": "crypt",
+      "music": "eerie"
+    },
+    {
+      "name": "dun mor istigh",
+      "x": 260.0,
+      "y": 520.0,
+      "r": 240.0,
+      "sound": "crypt",
+      "music": "battle"
     }
   ],
   "routes": [
@@ -10245,6 +10577,58 @@
       "reward": {
         "item": "deoch leighis",
         "count": 3
+      }
+    },
+    {
+      "name": "Uaimh Chruachan",
+      "place": "uaimh chruachan",
+      "bots": [
+        {
+          "bot": "taibhse uaimhe",
+          "count": 6
+        },
+        {
+          "bot": "an morrigan",
+          "count": 1
+        }
+      ],
+      "xp": 900,
+      "reward": {
+        "item": "fainne oir",
+        "count": 1
+      },
+      "group": 3,
+      "respawn_mins": 45.0,
+      "interior": {
+        "place": "uaimh chruachan istigh",
+        "rooms": 5,
+        "seed": 7
+      }
+    },
+    {
+      "name": "Uaimh Dhún Mór",
+      "place": "dun mor",
+      "bots": [
+        {
+          "bot": "huscarl",
+          "count": 8
+        },
+        {
+          "bot": "gofraidh",
+          "count": 1
+        }
+      ],
+      "xp": 1200,
+      "reward": {
+        "item": "deoch nirt",
+        "count": 2
+      },
+      "group": 3,
+      "respawn_mins": 60.0,
+      "interior": {
+        "place": "dun mor istigh",
+        "rooms": 6,
+        "seed": 11
       }
     }
   ],

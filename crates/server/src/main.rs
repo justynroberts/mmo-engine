@@ -40,6 +40,7 @@ mod skills;
 mod social;
 mod statics;
 mod store;
+mod interior;
 mod potions;
 mod talents;
 mod trade;
@@ -276,28 +277,40 @@ fn main() {
         eprintln!("using the world file {} (made in the console's World tab, or pass --world)", world_path.display());
         cfg.world_file = Some(world_path.clone());
     }
+    // Dungeon interiors' walls, added to whichever walls the world has.
+    let interiors = interior::all(&game.places, &game.realm.dungeons);
     let world_file = cfg.world_file.as_deref().map(|p| {
-        let w = worldfile::load(p).unwrap_or_else(|e| {
+        let mut w = worldfile::load(p).unwrap_or_else(|e| {
             eprintln!("{e}");
             std::process::exit(1);
         });
+        if let Err(e) = w.add_interiors(&interiors) {
+            eprintln!("dungeon interiors: {e}");
+            std::process::exit(1);
+        }
         if game_file.walls.is_some() {
             eprintln!("note: {} has hand-placed walls; the world file's walls are used instead", cfg.game.display());
         }
         cfg.world_size = w.size as u32;
         std::sync::Arc::new(w)
     });
-    let world = match &world_file {
+    let mut world = match &world_file {
         Some(w) => w.world(cfg.seed),
         None => game_file.world(cfg.world_size, cfg.seed).unwrap_or_else(|e| {
             eprintln!("{}: {e}", cfg.game.display());
             std::process::exit(1);
         }),
     };
+    let mut classes = vec![proto::tiles::class::WALL; world.boxes.len()];
+    if world_file.is_none() && !interiors.is_empty() {
+        let (boxes, c) = interior::apply(&world.boxes, &classes, &interiors);
+        classes = c;
+        world.set_boxes(boxes);
+    }
     // The walls as the admin API and the gateway serve them, read on their own threads.
     let tiles = match &world_file {
         Some(w) => w.tiles.clone(),
-        None => std::sync::Arc::new(proto::tiles::TileSet::build(world.size, world.boxes.clone(), Vec::new()).unwrap_or_else(|e| {
+        None => std::sync::Arc::new(proto::tiles::TileSet::build(world.size, world.boxes.clone(), classes).unwrap_or_else(|e| {
             eprintln!("{}: {e}", cfg.game.display());
             std::process::exit(1);
         })),

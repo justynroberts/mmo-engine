@@ -82,6 +82,8 @@ var bar := HBoxContainer.new()          # the action bar: abilities, the bag, ma
 var slots: Array[Slot] = []
 var spellbar := HBoxContainer.new()     # the game's spells (its actions after the first), over the action bar
 var spell_slots: Array[Slot] = []
+var attackers_box := VBoxContainer.new() # who is fighting you, under your target's frame (main.gd _show_attackers)
+var _attackers_key := ""
 var potion_row := HBoxContainer.new() # the potions working on you, under your frame, counting down
 var _potions: Array = []                 # [[title, colour, ends at (seconds since start)], ...]
 var party_box := VBoxContainer.new()    # party mates under your frame: name and health
@@ -246,6 +248,11 @@ func _ready() -> void:
 	spellbar.alignment = BoxContainer.ALIGNMENT_CENTER
 	spellbar.visible = false
 	root.add_child(spellbar)
+	attackers_box.position = Vector2(14 + Frame.W + 12, 150)
+	attackers_box.add_theme_constant_override("separation", 3)
+	attackers_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	attackers_box.visible = false
+	root.add_child(attackers_box)
 	potion_row.position = Vector2(16, 100)
 	potion_row.add_theme_constant_override("separation", 4)
 	potion_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -645,6 +652,72 @@ static func _outline(l: Label, px: int) -> void:
 ## Your frame. bars: [[label, fraction, text, colour], ...]; badges: short words shown under it (GOD, SNEAKING).
 func set_player(title: String, sub: String, initial: String, bars: Array, badges: Array) -> void:
 	me_frame.set_data(title, sub, initial, bars, badges)
+
+## Who is fighting you, nearest first: [[name, health 0..1, distance, targeted], ...]; hidden when nobody is.
+func set_attackers(rows: Array) -> void:
+	var key := str(rows.map(func(r): return [r[0], snappedf(r[1], 0.02), r[2], r[3]]))
+	if key == _attackers_key:
+		return
+	_attackers_key = key
+	for c in attackers_box.get_children():
+		attackers_box.remove_child(c)
+		c.queue_free()
+	attackers_box.visible = not rows.is_empty()
+	if rows.is_empty():
+		return
+	var head := Label.new()
+	head.text = "ATTACKERS %d   Tab to switch" % rows.size()
+	head.add_theme_font_size_override("font_size", 12)
+	head.add_theme_color_override("font_color", Color("ff8a70"))
+	_outline(head, 3)
+	attackers_box.add_child(head)
+	for r in rows.slice(0, 6):
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var mark := Label.new()
+		mark.text = "▶" if r[3] else " "
+		mark.custom_minimum_size = Vector2(12, 0)
+		mark.add_theme_font_size_override("font_size", 11)
+		mark.add_theme_color_override("font_color", ACCENT)
+		_outline(mark, 3)
+		row.add_child(mark)
+		var name := Label.new()
+		name.text = String(r[0])
+		name.custom_minimum_size = Vector2(130, 0)
+		name.clip_text = true
+		name.add_theme_font_size_override("font_size", 12)
+		name.add_theme_color_override("font_color", ACCENT if r[3] else TEXT)
+		_outline(name, 3)
+		row.add_child(name)
+		var bar := ProgressBar.new()
+		bar.show_percentage = false
+		bar.custom_minimum_size = Vector2(90, 8)
+		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		bar.max_value = 1.0
+		bar.value = float(r[1])
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0, 0, 0, 0.6)
+		var fill := StyleBoxFlat.new()
+		fill.bg_color = Color("c0392b")
+		bar.add_theme_stylebox_override("background", bg)
+		bar.add_theme_stylebox_override("fill", fill)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(bar)
+		var d := Label.new()
+		d.text = "%dm" % int(r[2])
+		d.add_theme_font_size_override("font_size", 11)
+		d.add_theme_color_override("font_color", MUTED)
+		_outline(d, 3)
+		row.add_child(d)
+		attackers_box.add_child(row)
+	if rows.size() > 6:
+		var more := Label.new()
+		more.text = "+%d more" % (rows.size() - 6)
+		more.add_theme_font_size_override("font_size", 11)
+		more.add_theme_color_override("font_color", MUTED)
+		_outline(more, 3)
+		attackers_box.add_child(more)
 
 ## The potions working on you: [[title, colour, seconds left], ...] (chat channel 21); they count down here.
 func set_potions(list: Array) -> void:

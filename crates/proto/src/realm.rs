@@ -205,7 +205,10 @@ fn d_plot_size() -> u16 {
 }
 
 /// A dungeon: whoever walks into `place` (with their party) gets their own copy of its monsters, which nobody else
-/// sees or meets. When the last of them falls the party is rewarded; when everyone has left it closes.
+/// sees or meets. When the last of them falls the party is rewarded; when everyone has left it closes. Each player
+/// who cleared it may not run it again for `respawn_mins`. With an `interior`, walking into `place` takes the party
+/// inside: rooms and corridors laid out in the interior's own place (`crates/server/src/interior.rs`), the last
+/// one the boss's, and a way out in the first.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DungeonDef {
@@ -219,6 +222,35 @@ pub struct DungeonDef {
     /// How many players the group finder brings together for it (3 when left out).
     #[serde(default = "d_group", skip_serializing_if = "is_default_group")]
     pub group: u8,
+    /// Minutes a player who cleared it waits before running it again (30 when left out).
+    #[serde(default = "d_respawn", skip_serializing_if = "is_default_respawn")]
+    pub respawn_mins: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interior: Option<InteriorFile>,
+}
+
+/// Where a dungeon's rooms are and how many: laid out inside `place` (a place of its own, out of everyone's way:
+/// its walls close it in, and its bots take it as home), from `seed`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct InteriorFile {
+    pub place: String,
+    #[serde(default = "d_rooms")]
+    pub rooms: u8,
+    #[serde(default)]
+    pub seed: u32,
+}
+
+fn d_rooms() -> u8 {
+    4
+}
+
+fn d_respawn() -> f32 {
+    30.0
+}
+
+fn is_default_respawn(m: &f32) -> bool {
+    *m == 30.0
 }
 
 fn d_group() -> u8 {
@@ -292,6 +324,16 @@ pub struct DungeonRt {
     pub xp: u32,
     pub reward: Option<(usize, u8)>,
     pub group: u8,
+    pub respawn_mins: f32,
+    pub interior: Option<InteriorRt>,
+}
+
+/// An interior resolved: its place by index.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteriorRt {
+    pub place: usize,
+    pub rooms: u8,
+    pub seed: u32,
 }
 
 /// The checked, resolved form of the realm parts of a game file.
@@ -515,7 +557,23 @@ impl GameFile {
             if d.group == 0 {
                 return Err(format!("dungeon '{}': a group of at least 1", d.name));
             }
-            dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group });
+            if !(d.respawn_mins.is_finite() && (0.0..=10_080.0).contains(&d.respawn_mins)) {
+                return Err(format!("{ctx}: respawn_mins is 0..10080 (a week)"));
+            }
+            let interior = match &d.interior {
+                None => None,
+                Some(i) => {
+                    if !(2..=8).contains(&i.rooms) {
+                        return Err(format!("{ctx}: an interior has 2 to 8 rooms"));
+                    }
+                    let ip = place(&i.place, &ctx)?;
+                    if ip == at || dungeons.iter().any(|o: &DungeonRt| o.interior.as_ref().is_some_and(|x| x.place == ip) || o.place == ip) {
+                        return Err(format!("{ctx}: the interior's place '{}' must be its own", i.place));
+                    }
+                    Some(InteriorRt { place: ip, rooms: i.rooms, seed: i.seed })
+                }
+            };
+            dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group, respawn_mins: d.respawn_mins, interior });
         }
 
         Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons, skills: self.skills.clone(), achievements: self.achievements.clone(), arch_skill })

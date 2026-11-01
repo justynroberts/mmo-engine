@@ -74,6 +74,8 @@ impl Sim {
         self.gear_maker[s] = vec![(0, String::new()); proto::game::GEAR_SLOTS];
         self.makers_sent[s].clear();
         (self.draughts[s], self.potion_at[s]) = (Vec::new(), 0);
+        (self.lockouts[s], self.lock_told[s]) = (Vec::new(), 0);
+        self.lockouts_sent[s].clear();
         self.draughts_sent[s].clear();
         if let Some(t) = self.holds.told.get_mut(s) {
             *t = u32::MAX; // whoever comes into this slot is told the holds afresh

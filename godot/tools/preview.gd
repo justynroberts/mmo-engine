@@ -1,9 +1,10 @@
 extends SceneTree
 ## The fantasy theme's look at given points of a world file, with no server: for comparing what the theme draws.
 ##   godot --path godot --script res://tools/preview.gd -- --world FILE [--game game.json] --at X,Y[;X,Y...]
-##       --out PREFIX [--zoom 34] [--time 0.3] [--pitch 0.85] [--yaw 0.6] [--size 1280x720] [--blocks DIR]
+##       --out PREFIX [--zoom 34] [--time 0.3] [--pitch 0.85] [--yaw 0.6] [--size 1280x720] [--blocks DIR] [--info FILE]
 ##       [--wet 0..1] [--puddles 0..1] [--autumn 0..1] [--snow 0..1] [--rain 0..1]
-## --blocks draws what is built, from a server's <world>.blocks.d region files.
+## --blocks draws what is built, from a server's <world>.blocks.d region files; --info takes a server's /play/info
+## (saved to a file) for its realm, so dungeon interiors are drawn.
 ## Saves PREFIX_0.png, PREFIX_1.png ... one per point, and prints the settlement each point is in.
 var a := {}
 
@@ -34,6 +35,10 @@ func _run() -> void:
 		if g is Dictionary:
 			for p in g.get("places", []):
 				info["locations"].append({"title": p.get("name", ""), "x": p.get("x", 0.0), "y": p.get("y", 0.0), "r": p.get("r", 0.0)})
+	if a.has("info"): # a server's /play/info, saved: its realm (dungeon interiors among it)
+		var pi = JSON.parse_string(FileAccess.get_file_as_string(String(a["info"])))
+		if pi is Dictionary and pi.get("realm") is Dictionary:
+			info["realm"] = pi["realm"]
 	var theme = load("res://themes/fantasy/theme.gd").new()
 	root.add_child(theme)
 	theme.setup(info, world)

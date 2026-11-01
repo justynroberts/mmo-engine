@@ -167,3 +167,15 @@ by using them, a quarter turn more each time, and picked up again with `/unfurni
 and told to everyone near on chat channel 19, so visitors see them; the Godot client draws each piece on the ground
 or the floor built under it (`crates/server/src/furnish.rs`, `main.gd` `_draw_furniture`). Seven pieces at the
 merchant in both worlds.
+
+## 13. Client updates everywhere — next
+
+Today only the macOS app updates itself, and only from a server whose `data/client/` holds a published zip; the live
+server's never does (nothing copies the zip into its Coolify volume), and the Windows build is replaced by hand.
+
+- Publish each client build (macOS and Windows) as assets of a GitHub release, each with a small `<platform>.json`
+  (version, size, sha256), from `scripts/package_godot.sh` and `scripts/package_windows.sh`.
+- The server's `/play/client` answers from its own `data/client/` when it has one, else from the latest release
+  (fetched off the tick and cached), so the live server offers updates with no files copied in.
+- `join.gd` offers updates on Windows too: download, check the checksum, and hand over to a small batch script that
+  waits for the exe to exit, swaps the folder and starts it again.

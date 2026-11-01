@@ -71,6 +71,16 @@ pub struct Terrain {
 }
 
 impl WorldFile {
+    /// Put dungeon interiors (`interior.rs`) into its walls, so the world it makes has them and clients draw them
+    /// their own way.
+    pub fn add_interiors(&mut self, layouts: &[crate::interior::Layout]) -> Result<(), String> {
+        if !layouts.is_empty() {
+            let (boxes, classes) = crate::interior::apply(&self.tiles.boxes, &self.tiles.class, layouts);
+            self.tiles = Arc::new(self.tiles.with_boxes(boxes, classes)?);
+        }
+        Ok(())
+    }
+
     /// The collision world this file makes: its walls and its roads.
     pub fn world(&self, seed: u64) -> proto::World {
         let mut w = proto::World::from_boxes(self.size, seed, self.tiles.boxes.clone());

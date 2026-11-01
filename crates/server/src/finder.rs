@@ -73,6 +73,13 @@ impl Sim {
             self.tells.push((slot, format!("Your party is bigger than {} wants.", self.realm.dungeons[d].name)));
             return;
         }
+        let now = crate::realm::unix_secs();
+        if let Some((s, until)) = members.iter().filter_map(|&id| self.ents.resolve(id)).find_map(|s| self.locked_out(s, d, now).map(|u| (s, u))) {
+            let mins = (until.saturating_sub(now) as f32 / 60.0).ceil() as u32;
+            let who = if s == slot { "You".to_string() } else { self.name_of(s).to_string() };
+            self.tells.push((slot, format!("{who} cleared {} lately: it stirs again in {mins} min.", self.realm.dungeons[d].name)));
+            return;
+        }
         self.finder.retain(|t| !t.members.iter().any(|m| members.contains(m)));
         self.finder.push(Ticket { dungeon: d, members: members.clone(), role, at: self.tick });
         self.finder_dirty = true;
@@ -220,7 +227,7 @@ mod tests {
         let mut g = GameFile::default_game();
         g.archetypes.iter_mut().for_each(|a| a.count = 0);
         g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 10.0, ..g.places[0].clone() });
-        g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 1 }], xp: 0, reward: None, group: 3 }];
+        g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 1 }], xp: 0, reward: None, group: 3, respawn_mins: 30.0, interior: None }];
         Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1)
     }
 

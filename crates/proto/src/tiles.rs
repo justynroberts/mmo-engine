@@ -158,6 +158,15 @@ impl TileSet {
         Ok(TileSet { ver: h ^ boxes.len() as u64, size, boxes, class, tiles, roads: HashMap::new(), waters: HashMap::new() })
     }
 
+    /// The same roads and water with other walls (a world file's with dungeon interiors cut into them).
+    pub fn with_boxes(&self, boxes: Vec<Aabb>, classes: Vec<u8>) -> Result<TileSet, String> {
+        let mut t = TileSet::build(self.size, boxes, classes)?;
+        t.roads = self.roads.clone();
+        t.waters = self.waters.clone();
+        t.ver ^= self.ver.rotate_left(17);
+        Ok(t)
+    }
+
     /// Add road cells (`world::road_key`s): each goes to the tile it is in, and the version changes with them.
     pub fn with_roads(mut self, cells: &[u32]) -> TileSet {
         self.roads.clear();

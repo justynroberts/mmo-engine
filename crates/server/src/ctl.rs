@@ -360,10 +360,18 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
     let dungeons: Vec<serde_json::Value> = sim.realm.dungeons.iter().map(|d| {
         let p = sim.places.get(d.place);
         let foes = d.bots.iter().filter_map(|&(a, n)| sim.archs.get(a).map(|a| (a, n)));
-        json!({"name": d.name, "place": p.map(|p| p.name.clone()), "x": p.map(|p| p.x), "y": p.map(|p| p.y), "r": p.map(|p| p.r),
+        let mut v = json!({"name": d.name, "place": p.map(|p| p.name.clone()), "x": p.map(|p| p.x), "y": p.map(|p| p.y), "r": p.map(|p| p.r),
             "level": foes.clone().map(|(a, _)| a.level).max().unwrap_or(0),
             "boss": foes.clone().find(|(a, _)| a.boss.is_some()).map(|(a, _)| if a.title.is_empty() { a.name.clone() } else { a.title.clone() }),
-            "foes": foes.map(|(_, n)| n as u32).sum::<u32>(), "group": d.group})
+            "foes": foes.map(|(_, n)| n as u32).sum::<u32>(), "group": d.group, "respawn_mins": d.respawn_mins});
+        // Its rooms, for a client to draw (their walls come with the world's, as scenery): floors and walls as
+        // [x0, y0, x1, y1], the way in and the way out.
+        if let Some(l) = crate::interior::of(&sim.places, d) {
+            let r = |b: &proto::world::Aabb| json!([b.x0, b.y0, b.x1, b.y1]);
+            v["interior"] = json!({"bounds": r(&l.bounds), "rooms": l.rooms.iter().map(r).collect::<Vec<_>>(), "corridors": l.corridors.iter().map(r).collect::<Vec<_>>(),
+                "walls": l.walls.iter().map(r).collect::<Vec<_>>(), "entry": [l.entry.0, l.entry.1], "exit": [l.exit.0, l.exit.1], "boss": [l.boss_at().0, l.boss_at().1]});
+        }
+        v
     }).collect();
     json!({
         "server_key": to_hex(&hs.keys.public),
@@ -1055,7 +1063,12 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
 /// different size needs a restart (the file is kept and used then). Cheap: the file was read, indexed and its
 /// collision world built before it got here.
 fn use_world(c: &mut Ctl, p: crate::statics::Prepared) -> (u16, String) {
-    let crate::statics::Prepared { file: w, world } = p;
+    let crate::statics::Prepared { file: mut w, mut world } = p;
+    // The dungeon interiors' walls go in again, as at the start.
+    if let Err(e) = w.add_interiors(&crate::interior::all(&c.sim.places, &c.sim.realm.dungeons)) {
+        return (400, json!({ "ok": false, "error": format!("dungeon interiors: {e}") }).to_string());
+    }
+    world.set_boxes(w.tiles.boxes.clone());
     if w.size != c.sim.world.size {
         return (
             200,

@@ -26,6 +26,11 @@ pub const PLOTS_MAX: usize = 20_000;
 pub const CROPS_MAX: usize = 50_000;
 /// How far past a dungeon place's edge a player still counts as inside (so stepping on the edge does not flicker).
 pub const DUNGEON_SLACK: f32 = 1.5;
+
+/// Seconds since 1970, for lockouts that outlast a restart.
+pub fn unix_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
 /// How far round a player the land held is told to them (world units).
 pub const LAND_REACH: f32 = 160.0;
 
@@ -426,28 +431,65 @@ impl Sim {
     }
 
     fn system_dungeons(&mut self) {
+        let now = unix_secs();
         for d in 0..self.realm.dungeons.len() {
             let Some(place) = self.places.get(self.realm.dungeons[d].place).cloned() else { continue };
+            let inner = crate::interior::of(&self.places, &self.realm.dungeons[d]);
             let r2 = (place.r + DUNGEON_SLACK).powi(2);
             for s in 0..self.ents.high {
                 if !self.is_live_player(s) {
                     continue;
                 }
-                let inside = (self.ents.x[s] - place.x).powi(2) + (self.ents.y[s] - place.y).powi(2) <= r2;
+                let (x, y) = (self.ents.x[s], self.ents.y[s]);
+                let at_door = (x - place.x).powi(2) + (y - place.y).powi(2) <= r2;
                 let ph = self.rs.phase[s];
-                let mine = self.rs.runs.iter().position(|r| r.phase == ph && ph != 0);
-                if inside && ph == 0 {
+                let mine = self.rs.runs.iter().position(|r| r.phase == ph && ph != 0).is_some_and(|i| self.rs.runs[i].dungeon == d);
+                if ph == 0 && at_door {
+                    if let Some(until) = self.locked_out(s, d, now) {
+                        if self.tick.saturating_sub(self.lock_told[s]) > 10 * self.tick_hz || self.lock_told[s] == 0 {
+                            self.lock_told[s] = self.tick.max(1);
+                            let mins = (until.saturating_sub(now) as f32 / 60.0).ceil() as u32;
+                            self.tells.push((s, format!("You cleared {} lately: it stirs again in {mins} min.", self.realm.dungeons[d].name)));
+                        }
+                        continue;
+                    }
                     let owner = if self.party[s] != 0 { self.party[s] } else { self.ents.id_of(s) | 1 << 31 };
                     let run = match self.rs.runs.iter().position(|r| r.dungeon == d && r.owner == owner) {
                         Some(i) => i,
                         None => self.open_run(d, owner, place.x, place.y, place.r),
                     };
                     self.rs.phase[s] = self.rs.runs[run].phase;
+                    if let Some(l) = &inner {
+                        // In through the door: put down in the first room, a little apart from the others.
+                        let k = (s % 5) as f32 - 2.0;
+                        self.put(s, l.entry.0, l.entry.1 + k * 2.5);
+                        self.notes.push((s, 0, proto::chat::channel::BANNER, format!("{}\nThe way out is behind you", self.realm.dungeons[d].name)));
+                    }
                     let line = format!("You enter {}.", self.realm.dungeons[d].name);
                     self.tells.push((s, line));
-                } else if !inside && mine.is_some_and(|i| self.rs.runs[i].dungeon == d) {
-                    self.rs.phase[s] = 0;
-                    self.tells.push((s, format!("You leave {}.", self.realm.dungeons[d].name)));
+                } else if mine {
+                    match &inner {
+                        Some(l) if l.inside(x, y) => {
+                            if (x - l.exit.0).powi(2) + (y - l.exit.1).powi(2) <= 9.0 {
+                                self.rs.phase[s] = 0;
+                                self.put_at_door(s, &place);
+                                self.tells.push((s, format!("You climb back out of {}.", self.realm.dungeons[d].name)));
+                            }
+                        }
+                        Some(_) => {
+                            self.rs.phase[s] = 0; // out some other way: fallen and risen, sent, sailed
+                            self.tells.push((s, format!("You leave {}.", self.realm.dungeons[d].name)));
+                        }
+                        None if !at_door => {
+                            self.rs.phase[s] = 0;
+                            self.tells.push((s, format!("You leave {}.", self.realm.dungeons[d].name)));
+                        }
+                        None => {}
+                    }
+                } else if ph == 0 && inner.as_ref().is_some_and(|l| l.inside(x, y)) {
+                    // Inside with no run to be in (signed in where they left, or the run closed): back to the door.
+                    self.put_at_door(s, &place);
+                    self.tells.push((s, format!("You find yourself outside {} again.", self.realm.dungeons[d].name)));
                 }
             }
         }
@@ -464,6 +506,7 @@ impl Sim {
             if alive == 0 && !self.rs.runs[i].cleared {
                 self.rs.runs[i].cleared = true;
                 let d = self.realm.dungeons[self.rs.runs[i].dungeon].clone();
+                let until = now + (d.respawn_mins * 60.0) as u64;
                 for &s in &inside {
                     if d.xp > 0 {
                         self.award(s, d.xp, None);
@@ -471,8 +514,15 @@ impl Sim {
                     if let Some((item, n)) = d.reward {
                         self.give_or_drop(s, item, n as u32);
                     }
-                    self.tells.push((s, format!("{} is cleared!", d.name)));
+                    let again = if d.respawn_mins > 0.0 { format!(" It stirs again in {:.0} min.", d.respawn_mins) } else { String::new() };
+                    let out = if d.interior.is_some() { " The way out is in the first room." } else { "" };
+                    self.tells.push((s, format!("{} is cleared!{again}{out}", d.name)));
                     self.deed(s, "dungeons", 1);
+                    if d.respawn_mins > 0.0 {
+                        self.lockouts[s].retain(|l| l.0 != d.name);
+                        self.lockouts[s].push((d.name.clone(), until));
+                        self.progress_ver[s] = self.progress_ver[s].wrapping_add(1); // saved at once
+                    }
                 }
             }
             if self.tick.saturating_sub(self.rs.runs[i].seen) > idle {
@@ -486,19 +536,75 @@ impl Sim {
             }
             i += 1;
         }
+        self.tell_lockouts(now);
+    }
+
+    /// When the player in `s` may run dungeon `d` again, if they may not yet.
+    pub fn locked_out(&self, s: usize, d: usize, now: u64) -> Option<u64> {
+        let name = &self.realm.dungeons.get(d)?.name;
+        self.lockouts[s].iter().find(|l| &l.0 == name && l.1 > now).map(|l| l.1)
+    }
+
+    /// Just outside a dungeon's door, on the side facing the world's middle.
+    fn put_at_door(&mut self, s: usize, place: &proto::game::Place) {
+        let mid = self.world.size / 2.0;
+        let a = (mid - place.y).atan2(mid - place.x) + (s % 7) as f32 * 0.05;
+        let r = place.r + DUNGEON_SLACK + 4.0;
+        if !self.put(s, place.x + a.cos() * r, place.y + a.sin() * r) {
+            self.put(s, place.x + a.cos() * (r + 6.0), place.y + a.sin() * (r + 6.0));
+        }
+    }
+
+    /// Each player: the dungeons shut to them and for how long, on chat channel 16 as "D|name,secs;..." when it
+    /// changes (the client counts down). Run-out lockouts are dropped.
+    fn tell_lockouts(&mut self, now: u64) {
+        for s in 0..self.ents.high {
+            if self.lockouts[s].is_empty() && self.lockouts_sent[s].is_empty() {
+                continue;
+            }
+            if !self.is_live_player(s) {
+                continue;
+            }
+            self.lockouts[s].retain(|l| l.1 > now);
+            let key: Vec<String> = self.lockouts[s].iter().map(|l| format!("{}@{}", l.0, l.1)).collect();
+            let key = key.join(";");
+            if key == self.lockouts_sent[s] {
+                continue;
+            }
+            self.lockouts_sent[s] = key;
+            let list: Vec<String> = self.lockouts[s].iter().map(|l| format!("{},{}", l.0.replace([',', ';', '|'], " "), l.1 - now)).collect();
+            self.notes.push((s, 0, proto::chat::channel::FINDER, format!("D|{}", list.join(";"))));
+        }
     }
 
     fn open_run(&mut self, d: usize, owner: u32, x: f32, y: f32, r: f32) -> usize {
         self.rs.next_phase = self.rs.next_phase.wrapping_add(1).max(1);
         let phase = self.rs.next_phase;
+        let inner = crate::interior::of(&self.places, &self.realm.dungeons[d]);
+        let home = self.realm.dungeons[d].interior.as_ref().map(|i| i.place);
         let mut bots = Vec::new();
+        let mut k = 0;
         for (arch, n) in self.realm.dungeons[d].bots.clone() {
+            let boss = self.archs.get(arch).is_some_and(|a| a.boss.is_some());
             for _ in 0..n {
-                let ang = self.rng.f32() * std::f32::consts::TAU;
-                let dist = self.rng.f32().sqrt() * r * 0.8;
-                let Some(slot) = self.spawn_as(NONE, arch as u8, Some((x + ang.cos() * dist, y + ang.sin() * dist))) else { continue };
+                let at = match &inner {
+                    Some(l) if boss => l.boss_at(),
+                    Some(l) => {
+                        k += 1;
+                        l.foe_at(k - 1)
+                    }
+                    None => {
+                        let ang = self.rng.f32() * std::f32::consts::TAU;
+                        let dist = self.rng.f32().sqrt() * r * 0.8;
+                        (x + ang.cos() * dist, y + ang.sin() * dist)
+                    }
+                };
+                let Some(slot) = self.spawn_as(NONE, arch as u8, Some(at)) else { continue };
                 self.ents.fleeting[slot] = true;
                 self.rs.phase[slot] = phase;
+                if home.is_some() {
+                    self.home_over[slot] = home;
+                }
                 bots.push(self.ents.id_of(slot));
             }
         }
@@ -1307,7 +1413,7 @@ mod tests {
     fn a_dungeon_gives_each_party_its_own_monsters() {
         let mut s = sim_with(|g| {
             g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
-            g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3 }];
+            g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3, respawn_mins: 30.0, interior: None }];
         });
         let (a, b) = (player(&mut s, 300.0, 300.0, "a"), player(&mut s, 305.0, 300.0, "b"));
         s.system_realm();
@@ -1336,5 +1442,46 @@ mod tests {
         s.system_realm();
         assert!(s.rs.runs.is_empty());
         assert!(theirs.iter().all(|&m| !s.ents.alive[m]), "its monsters went with it");
+    }
+    #[test]
+    fn a_dungeon_with_rooms_takes_the_party_inside_lets_them_out_and_shuts_to_them_once_cleared() {
+        let mut s = sim_with(|g| {
+            let place = |name: &str, x: f32, y: f32, r: f32| proto::game::Place { name: name.into(), x, y, r, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false };
+            g.places.push(place("barrow", 100.0, 400.0, 10.0));
+            g.places.push(place("barrow inside", 300.0, 150.0, 150.0));
+            let interior = Some(proto::realm::InteriorFile { place: "barrow inside".into(), rooms: 3, seed: 1 });
+            g.dungeons = vec![DungeonDef { name: "The Barrow".into(), place: "barrow".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 2 }], xp: 0, reward: None, group: 3, respawn_mins: 30.0, interior }];
+        });
+        let lay = crate::interior::of(&s.places, &s.realm.dungeons[0]).unwrap();
+        let a = player(&mut s, 100.0, 400.0, "a");
+        s.system_realm();
+        assert_ne!(s.rs.phase[a], 0);
+        assert!(lay.inside(s.ents.x[a], s.ents.y[a]), "taken inside: {} {}", s.ents.x[a], s.ents.y[a]);
+        let foes: Vec<usize> = s.rs.runs[0].bots.iter().filter_map(|&id| s.ents.resolve(id)).collect();
+        assert!(foes.iter().all(|&m| lay.inside(s.ents.x[m], s.ents.y[m])), "its foes are in its rooms");
+        let inside_place = s.places.iter().position(|p| p.name == "barrow inside");
+        assert!(foes.iter().all(|&m| s.home_over[m] == inside_place), "and live there");
+        for &m in &foes {
+            s.ents.despawn(m);
+        }
+        s.system_realm();
+        assert!(s.locked_out(a, 0, unix_secs()).is_some(), "cleared: shut to them for a while");
+        assert!(s.record_of(a).lockouts.iter().any(|l| l.0 == "The Barrow"), "kept with the character");
+        assert!(s.notes.iter().any(|n| n.0 == a && n.2 == proto::chat::channel::FINDER && n.3.starts_with("D|The Barrow,")));
+        // The way out, in the first room.
+        (s.ents.x[a], s.ents.y[a]) = lay.exit;
+        s.system_realm();
+        assert_eq!(s.rs.phase[a], 0);
+        let d = (s.ents.x[a] - 100.0).hypot(s.ents.y[a] - 400.0);
+        assert!(d > 10.0 && d < 20.0, "outside its door: {d}");
+        // Back to the door: refused while it is shut to them.
+        (s.ents.x[a], s.ents.y[a]) = (100.0, 400.0);
+        s.system_realm();
+        assert_eq!(s.rs.phase[a], 0);
+        assert!(s.tells.iter().any(|(w, t)| *w == a && t.contains("stirs again")));
+        // Found inside with no run (signed in where they left off): put outside.
+        (s.ents.x[a], s.ents.y[a]) = lay.entry;
+        s.system_realm();
+        assert!(!lay.inside(s.ents.x[a], s.ents.y[a]));
     }
 }

@@ -374,6 +374,12 @@ export interface DungeonDef {
   reward?: Stack
   /** Players the group finder brings together for it (3 when left out). */
   group?: number
+  /** Minutes a player who cleared it waits before running it again (0..10080; 30 when left out). */
+  respawn_mins?: number
+  /** Rooms inside: walking into place takes the party into rooms (2..8) laid out in this place of its own (put it
+   *  out of everyone's way, at sea: its footprint is cut out of the solid sea), the boss in the last. A restart moves
+   *  its walls. */
+  interior?: { place: string; rooms?: number; seed?: number }
 }
 export const GEAR_SLOTS = ['weapon', 'armour', 'trinket'] as const
 export type GearSlot = (typeof GEAR_SLOTS)[number]

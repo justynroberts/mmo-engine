@@ -502,6 +502,11 @@ pub struct Sim {
     pub draughts: Vec<Vec<crate::potions::Draught>>,
     pub draughts_sent: Vec<String>,
     pub potion_at: Vec<u32>,
+    /// Per player: dungeons cleared, by name, with the Unix second each may be run again; what they were last told of
+    /// them (chat channel 16 "D|"), and the tick they were last told one is shut to them.
+    pub lockouts: Vec<Vec<(String, u64)>>,
+    pub lockouts_sent: Vec<String>,
+    pub lock_told: Vec<u32>,
     pub plea: Vec<Option<crate::repute::Plea>>,
     pub plea_at: Vec<u32>,
     /// The part of the day the evening bell last saw (`folk.rs`): it rings as dusk comes, not when the server
@@ -759,6 +764,9 @@ impl Sim {
             draughts: vec![Vec::new(); cap],
             draughts_sent: vec![String::new(); cap],
             potion_at: vec![0; cap],
+            lockouts: vec![Vec::new(); cap],
+            lockouts_sent: vec![String::new(); cap],
+            lock_told: vec![0; cap],
             plea: vec![None; cap],
             plea_at: vec![0; cap],
             bell_seen: None,
@@ -964,6 +972,7 @@ impl Sim {
             earned: self.earned[slot].clone(),
             title: self.title[slot].clone(),
             talents: self.talents[slot].clone(),
+            lockouts: self.lockouts[slot].clone(),
             look: self.look[slot].code(),
             made: self.makers_saved(slot),
             faction: self.rs.faction[slot].checked_sub(1).and_then(|f| self.factions.get(f as usize)).map(|f| f.name.clone()).unwrap_or_default(),
@@ -1067,6 +1076,7 @@ impl Sim {
         self.earned[slot] = rec.earned.clone();
         self.title[slot] = rec.title.clone();
         self.talents[slot] = rec.talents.clone();
+        self.lockouts[slot] = rec.lockouts.clone();
         self.look[slot] = crate::looks::Look::parse(&rec.look);
         self.makers_restore(slot, &rec.made);
         self.repute[slot] = rec.towns.iter().map(|(n, v)| (n.clone(), (*v).clamp(-crate::repute::REPUTE_MAX, crate::repute::REPUTE_MAX))).collect();

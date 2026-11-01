@@ -69,7 +69,12 @@ export function rewriteRealmRefs(g: GameFile, kind: RefKind, from: string, to: s
       })
     }
     if (g.dungeons) {
-      next.dungeons = g.dungeons.flatMap((d) => (d.place !== from ? [d] : to === null ? [] : [{ ...d, place: to }]))
+      next.dungeons = g.dungeons.flatMap((d) => {
+        const inner = d.interior && d.interior.place === from ? (to === null ? undefined : { ...d.interior, place: to }) : d.interior
+        const kept = { ...d, interior: inner }
+        if (inner === undefined) delete kept.interior
+        return d.place !== from ? [kept] : to === null ? [] : [{ ...kept, place: to }]
+      })
     }
   }
   return next

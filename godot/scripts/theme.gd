@@ -29,11 +29,34 @@ var _queue: Array = []
 var _queued := {}         # [ground?, key] -> true, for what is in _queue
 var _centre := Vector2.ZERO
 var _cell_of := {}        # chunk key -> its cell (Vector2i), to rebuild it
+## Dungeon interiors (/play/info realm dungeons' `interior` bounds): flat floors at interior_floor, whatever the land
+## under them (they stand out at sea), for characters and the camera.
+var interior_rects: Array[Rect2] = []
+var interior_floor := 0.5
+
+## Read the dungeon interiors' bounds out of /play/info, their floors a little above the sea.
+func set_interiors(p_info: Dictionary) -> void:
+	interior_rects.clear()
+	interior_floor = (float(world.sea_level) if world and world.has_sea else 0.0) + 1.5
+	var realm = p_info.get("realm", {})
+	for d in (realm.get("dungeons", []) if realm is Dictionary else []):
+		if d is Dictionary and d.get("interior") is Dictionary:
+			var b: Array = d["interior"].get("bounds", [])
+			if b.size() == 4:
+				interior_rects.append(Rect2(float(b[0]), float(b[1]), float(b[2]) - float(b[0]), float(b[3]) - float(b[1])))
+
+## Whether a point is inside a dungeon interior.
+func in_interior(x: float, y: float) -> bool:
+	for r in interior_rects:
+		if x > r.position.x and x < r.end.x and y > r.position.y and y < r.end.y:
+			return true
+	return false
 
 ## Called once, when the world is known: sky, light, ground, anything static.
 func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
 	world = p_world
+	set_interiors(p_info)
 	entity_scale = float(info.get("entity_radius", 0.5)) / 0.5
 	var we := WorldEnvironment.new()
 	_env = Environment.new()
@@ -234,6 +257,8 @@ func block(o: Dictionary) -> MeshInstance3D:
 
 ## Ground height at a point, so characters and the camera stand on the land.
 func height(x: float, y: float) -> float:
+	if not interior_rects.is_empty() and in_interior(x, y):
+		return interior_floor
 	return world.height(x, y)
 
 ## A character's body. The client adds the name and health bar on top, and drives it through these optional

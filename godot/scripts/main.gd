@@ -147,6 +147,7 @@ var finderui: CanvasLayer   # the group finder (F5): scripts/finder.gd
 var socialui: CanvasLayer   # guild, letters and standing (F6): scripts/social.gd
 var shipsui: CanvasLayer    # taking ship at a dock (F there): scripts/ships.gd
 var _potions_had: Array = []  # titles of the potions working on us last we heard (main.gd _on_potions)
+var _foes_seen := 0            # how many were in a fight with us last frame: one more drops us out of build mode
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
 var bagui: CanvasLayer      # the whole bag and the bank (F4): scripts/bag.gd
 var tradeui: CanvasLayer    # trading with another player: scripts/trade.gd
@@ -1042,6 +1043,7 @@ func _process(delta: float) -> void:
 		target_id = 0
 		hud.set_target("", "", [])
 		hud.show_invite("")
+	_show_attackers()
 	var cls := String(classes[my_class - 1]["title"]) if my_class > 0 and my_class <= classes.size() else String(args.get("class", "knight"))
 	var badges := []
 	if god:
@@ -1908,6 +1910,7 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 			sound.play("hurt", -2.0)
 			sound.play("hit", -3.0)
 			_fight_at = t_total
+			_under_attack()
 		elif near < 40.0:
 			sound.play("hit", SoundScript.at_distance(near) - 3.0)
 			if near < action_range + 4.0:
@@ -2811,7 +2814,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			elif k == KEY_ESCAPE:
 				journal.open_menu()
 			elif k == KEY_TAB:
-				_cycle_target()
+				_cycle_target(ev.shift_pressed)
 			elif k == KEY_SPACE:
 				_attack()
 			elif k == KEY_F:
@@ -4126,23 +4129,51 @@ func _toggle_god() -> void:
 			return
 	net.say("/god %s" % ("off" if god else "on"), false)
 
-func _cycle_target() -> void:
-	var best := 0
-	var best_d := 40.0
-	var after := target_id
-	var cands: Array = []
-	for e in net.entities():
-		if e["id"] == net.get_self_id():
-			continue
-		var d: float = (e["position"] as Vector2).distance_to(me_pos)
-		if d < 40.0:
-			cands.append([d, e["id"]])
-	cands.sort()
-	for c in cands:
-		if c[1] != after:
-			best = c[1]
-			break
-	target_id = best if best != 0 else target_id
+## Those in a fight with us that we can see (the server's encounter list), nearest first.
+func _attackers() -> Array:
+	var foes := []
+	for id in net.encounter():
+		if ents.has(int(id)) and int(id) != net.get_self_id():
+			foes.append(int(id))
+	foes.sort_custom(func(a, b): return _dist_to(a) < _dist_to(b))
+	return foes
+
+## Tab: the next of those fighting us, nearest first, round and round (Shift+Tab goes back); with nobody fighting
+## us, the next living thing within 40 units that is not of our party.
+func _cycle_target(back := false) -> void:
+	var pool := _attackers()
+	if pool.is_empty():
+		var me: int = net.get_self_id()
+		var mates := Array(net.party())
+		for e in net.entities():
+			var id := int(e["id"])
+			if id == me or mates.has(id) or not ents.has(id) or float(track.get(id, {}).get("hp", 1.0)) <= 0.0:
+				continue
+			if (e["position"] as Vector2).distance_to(me_pos) < 40.0:
+				pool.append(id)
+		pool.sort_custom(func(a, b): return _dist_to(a) < _dist_to(b))
+	if pool.is_empty():
+		return
+	var i := pool.find(target_id)
+	target_id = pool[0] if i < 0 else pool[posmod(i + (-1 if back else 1), pool.size())]
+
+## Set on: hurt, or one more of them locked on us. Out of build mode, so the fight can be fought.
+func _under_attack() -> void:
+	if building:
+		_set_building(false)
+		_notice("Under attack! Out of build mode.")
+
+## The attackers' list beside our target (hud.gd set_attackers), and one more of them than last time drops us out of
+## build mode.
+func _show_attackers() -> void:
+	var foes := _attackers()
+	if foes.size() > _foes_seen:
+		_under_attack()
+	_foes_seen = foes.size()
+	var rows := []
+	for id in foes:
+		rows.append([_name(id), clampf(float(track.get(id, {}).get("hp", 1.0)), 0.0, 1.0), int(_dist_to(id)), id == target_id])
+	hud.set_attackers(rows)
 
 func _pick(screen: Vector2) -> void:
 	var from := cam.project_ray_origin(screen)

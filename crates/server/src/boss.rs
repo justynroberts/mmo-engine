@@ -181,6 +181,7 @@ impl Sim {
                 let Some(a) = self.spawn_as(NONE, k as u8, Some((x + ang.cos() * 6.0, y + ang.sin() * 6.0))) else { break };
                 self.ents.fleeting[a] = true;
                 self.rs.phase[a] = self.rs.phase[s];
+                self.home_over[a] = self.home_over[s]; // in a dungeon's interior, its rooms
                 if let Some(t) = top {
                     self.engage(a, t);
                 }

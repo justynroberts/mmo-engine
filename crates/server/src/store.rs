@@ -85,6 +85,9 @@ pub struct Record {
     /// Who made what they carry and wear (`crafted.rs`): bag slot (or "g0".."g2") and maker.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub made: Vec<(String, String)>,
+    /// Dungeons cleared and not yet stirring again: name and the Unix second they may be run again (`realm.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lockouts: Vec<(String, u64)>,
 }
 
 fn is_zero(v: &u32) -> bool {

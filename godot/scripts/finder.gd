@@ -2,7 +2,8 @@ extends CanvasLayer
 ## The group finder (F5): the realm's dungeons with their level, boss and group size, a role to queue as, and how
 ## the queue stands. Queueing is "/queue Name role" and leaving "/unqueue" (crates/server/src/finder.rs); when the
 ## finder has a group the server makes it a party and puts it at the dungeon's door. The queue's state comes on chat
-## channel 16 ("Q|dungeon|queued|wanted|role", "Q|" once out).
+## channel 16 ("Q|dungeon|queued|wanted|role", "Q|" once out), and the dungeons you cleared lately with how long
+## until each stirs again ("D|name,secs;...", crates/server/src/realm.rs `tell_lockouts`).
 
 signal command(text: String)
 
@@ -15,6 +16,7 @@ var role := "damage"
 var wait_secs := 60.0              # past this the finder goes with whoever is queued (rules.finder_wait_secs)
 var _dungeons: Array = []          # [[Vector2, name, level, boss, foes, group], ...] (main.gd _dungeons)
 var _queued := []                  # [dungeon, queued, wanted, role] while in a queue, else empty
+var _locked := {}                  # dungeon name -> when it opens again (seconds, Time.get_ticks_msec clock)
 var _since := 0.0                  # seconds in the queue
 var _list := VBoxContainer.new()
 var _status := Label.new()
@@ -79,6 +81,15 @@ func set_dungeons(list: Array) -> void:
 
 ## A line on chat channel 16.
 func on_line(text: String) -> void:
+	if text.begins_with("D|"):
+		_locked.clear()
+		var now := Time.get_ticks_msec() / 1000.0
+		for e in text.substr(2).split(";", false):
+			var p := e.split(",")
+			if p.size() >= 2:
+				_locked[p[0]] = now + float(p[1])
+		_rebuild()
+		return
 	var f := text.split("|")
 	var was := not _queued.is_empty()
 	_queued = [f[1], int(f[2]), int(f[3]), f[4]] if f.size() >= 5 else []
@@ -89,8 +100,14 @@ func on_line(text: String) -> void:
 func queued() -> bool:
 	return not _queued.is_empty()
 
-## Each frame: the time in the queue.
+## Seconds until dungeon `name` stirs again for us, 0 if it is open.
+func _locked_for(name: String) -> int:
+	return maxi(0, int(ceil(float(_locked.get(name, 0.0)) - Time.get_ticks_msec() / 1000.0)))
+
+## Each frame: the time in the queue, and the lockouts counting down.
 func tick(delta: float) -> void:
+	if panel.visible and not _locked.is_empty() and int(Time.get_ticks_msec() / 1000) != int((Time.get_ticks_msec() - delta * 1000.0) / 1000):
+		_rebuild()
 	if _queued.is_empty():
 		return
 	_since += delta
@@ -115,11 +132,19 @@ func _rebuild() -> void:
 		row.add_child(l)
 		var name: String = d[1]
 		var mine: bool = not _queued.is_empty() and _queued[0] == name
-		var b := Button.new()
-		b.text = "Leave queue" if mine else "Queue"
-		b.focus_mode = Control.FOCUS_NONE
-		b.pressed.connect(func(): command.emit("/unqueue" if mine else "/queue %s %s" % [name, role]))
-		row.add_child(b)
+		var left := _locked_for(name)
+		if left > 0:
+			var lk := Label.new()
+			lk.text = "cleared: again in %d:%02d" % [left / 60, left % 60]
+			lk.add_theme_color_override("font_color", HUD.MUTED)
+			lk.add_theme_font_size_override("font_size", 13)
+			row.add_child(lk)
+		else:
+			var b := Button.new()
+			b.text = "Leave queue" if mine else "Queue"
+			b.focus_mode = Control.FOCUS_NONE
+			b.pressed.connect(func(): command.emit("/unqueue" if mine else "/queue %s %s" % [name, role]))
+			row.add_child(b)
 		_list.add_child(row)
 	_show_status()
 

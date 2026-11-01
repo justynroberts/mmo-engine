@@ -30,6 +30,8 @@ var _built_bodies := 0       # how many KayKit characters were made (for the smo
 const LifeScript := preload("res://themes/fantasy/life.gd")
 const TownsScript := preload("res://themes/fantasy/towns.gd")
 const LandScript := preload("res://themes/fantasy/land.gd")
+const InteriorsScript := preload("res://themes/fantasy/interiors.gd")
+var _under := 0.0                # how far underground the look is: 1 inside a dungeon interior, easing
 var life: Node3D             # birds, deer, stock, chimney smoke, fireflies, and the weather on the ground (life.gd)
 var _life_ms := 0
 var _chimney_at := Vector3.INF # set by _house_roof: where the last house's chimney stands (before its base height)
@@ -49,6 +51,7 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	info = p_info
 	world = p_world
 	land.setup(world, towns)
+	set_interiors(info)
 	towns.cold_at = land.cold_at
 	towns.survey(world)
 	_prefetch()
@@ -106,6 +109,11 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	env.environment = e
 	add_child(env)
 	_env = e
+	# Dungeon interiors, built once where the server lays them out.
+	var realm = info.get("realm", {})
+	for d in (realm.get("dungeons", []) if realm is Dictionary else []):
+		if d is Dictionary and d.get("interior") is Dictionary:
+			add_child(InteriorsScript.new().build(self, d, interior_floor))
 	var sun := DirectionalLight3D.new()
 	_sun = sun
 	sun.rotation_degrees = Vector3(-48, -35, 0)
@@ -559,6 +567,7 @@ func frame(center: Vector2, camera_zoom: float) -> void:
 	_life_ms = now
 	if life:
 		life.step(center, dt)
+		life.visible = _under < 0.5 # no birds, leaves or fireflies underground
 	t = lap("life", t)
 	_warm(center, 1.5)
 	lap("warm", t)
@@ -663,6 +672,23 @@ func _daylight_frame(dt: float) -> void:
 	# Between the weathers, the air's own: dawn mist in the hollows, a haze that comes and goes, drifting wisps.
 	var morning := fposmod(day_phase() - 0.25 + 0.5, 1.0) < 0.5 # before noon
 	air.frame(e, dt, _here, height(_here.x, _here.y), sun_dir.y, morning, day, dusk, k, float(_wx["wind"]))
+	# Underground (in a dungeon's interior): no sun or sky, a little warm light, and the dark closing in.
+	_under = move_toward(_under, 1.0 if in_interior(_here.x, _here.y) else 0.0, dt * 2.0)
+	if not interior_rects.is_empty():
+		RenderingServer.global_shader_parameter_set("world_interior_eye", Vector3(_here.x, height(_here.x, _here.y) + 1.2, _here.y))
+	if _under > 0.0:
+		var u := _under
+		_sun.light_energy *= 1.0 - u
+		e.ambient_light_color = e.ambient_light_color.lerp(Color("8a6e58"), u)
+		e.ambient_light_energy = lerpf(e.ambient_light_energy, 1.3, u)
+		e.tonemap_exposure = lerpf(e.tonemap_exposure, 1.0, u)
+		e.fog_light_color = e.fog_light_color.lerp(Color(0.01, 0.01, 0.012), u)
+		e.fog_density = lerpf(e.fog_density, 0.02, u)
+		e.fog_sky_affect = lerpf(e.fog_sky_affect, 1.0, u)
+		e.volumetric_fog_density = lerpf(e.volumetric_fog_density, 0.012, u)
+		e.volumetric_fog_albedo = e.volumetric_fog_albedo.lerp(Color(0.3, 0.24, 0.2), u)
+		e.volumetric_fog_sky_affect = lerpf(e.volumetric_fog_sky_affect, 1.0, u)
+		sky_mat.set_shader_parameter("dark", lerpf(dark, 1.0, u))
 
 ## Move every part of the weather's look a step toward the new weather, so a change takes about WEATHER_SECS: most of
 ## the way in the first few seconds and settling gently, the way weather really rolls in.
@@ -683,7 +709,7 @@ func _ease_weather(dt: float) -> void:
 				_set_rain(_rain_kind, float(_wx_want["k"]), _wx_want["col"])
 	else:
 		_rain_ratio = move_toward(_rain_ratio, _rain_want if _rain_kind != "" else 0.0, dt / WEATHER_SECS)
-	rain.emitting = _rain_kind != "" and _rain_ratio > 0.0
+	rain.emitting = _rain_kind != "" and _rain_ratio > 0.0 and _under < 0.5 # nothing falls underground
 	rain.amount_ratio = _rain_ratio
 
 ## One cell of the world: each object drawn by its type, and every piece of the same kind in the cell sharing
