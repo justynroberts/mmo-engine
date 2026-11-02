@@ -146,6 +146,7 @@ var questui: CanvasLayer    # quest offers, the quest log and the tracker: scrip
 var finderui: CanvasLayer   # the group finder (F5): scripts/finder.gd
 var socialui: CanvasLayer   # guild, letters and standing (F6): scripts/social.gd
 var shipsui: CanvasLayer    # taking ship at a dock (F there): scripts/ships.gd
+var _connect_from := 0.0      # when we started the handshake (t_total), for the loading screen's honest wait
 var _potions_had: Array = []  # titles of the potions working on us last we heard (main.gd _on_potions)
 var _foes_seen := 0            # how many were in a fight with us last frame: one more drops us out of build mode
 var shopui: CanvasLayer     # a merchant's shop: scripts/shop.gd
@@ -411,21 +412,32 @@ func _parse_args() -> Dictionary:
 func _web_url() -> String:
 	return HudScript.web_base(String(args["web"]))
 
-func _fetch(url: String) -> String:
+## A GET's body as text ("" when it fails). Gives up after `wait` seconds, so a stalled request cannot hold the
+## loading screen for ever; a failure is written to the log (user://logs/godot.log) with why.
+func _fetch(url: String, wait := 30.0) -> String:
 	var r := HTTPRequest.new()
+	r.timeout = wait
 	add_child(r)
 	if r.request(url) != OK:
 		r.queue_free()
+		print("JOIN could not start GET %s" % url)
 		return ""
 	var res: Array = await r.request_completed
 	r.queue_free()
 	if res[1] != 200:
+		print("JOIN GET %s failed: result %d (%s), status %d" % [url, res[0], _http_result(res[0]), res[1]])
 		return ""
 	return (res[3] as PackedByteArray).get_string_from_utf8()
+
+static func _http_result(r: int) -> String:
+	return {HTTPRequest.RESULT_CANT_CONNECT: "cannot connect", HTTPRequest.RESULT_CANT_RESOLVE: "cannot resolve the name",
+		HTTPRequest.RESULT_CONNECTION_ERROR: "connection error", HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR: "TLS handshake failed",
+		HTTPRequest.RESULT_TIMEOUT: "timed out", HTTPRequest.RESULT_NO_RESPONSE: "no response"}.get(r, "ok" if r == 0 else "error")
 
 ## A GET's status and body as bytes (gzip is taken and undone by HTTPRequest).
 func _fetch_raw(url: String) -> Array:
 	var r := HTTPRequest.new()
+	r.timeout = 60.0
 	add_child(r)
 	if r.request(url) != OK:
 		r.queue_free()
@@ -455,11 +467,13 @@ func _start() -> void:
 	if not smoke and not args.has("shot"):
 		_loading = true
 		hud.loading(0.02, _quip("server"))
-	info_text = await _fetch("%s/play/info" % _web_url())
+	print("JOIN %s: asking %s/play/info (%s %s)" % [Time.get_time_string_from_system(), _web_url(), OS.get_name(), OS.get_version()])
+	info_text = await _fetch("%s/play/info" % _web_url(), 20.0)
 	if _loading:
 		hud.loading(0.1, _quip("world"))
 	if info_text == "":
-		return _fail("could not reach %s/play/info" % _web_url())
+		return _fail("could not reach %s/play/info (the web side of the server): see the log for why" % _web_url())
+	print("JOIN %s: info read (%d bytes)" % [Time.get_time_string_from_system(), info_text.length()])
 	info = JSON.parse_string(info_text)
 	if args.has("joined"):
 		args["udp"] = str(int(info.get("udp_port", 7777)))
@@ -691,6 +705,8 @@ func _start() -> void:
 	my_identity = id
 	if _loading:
 		hud.loading(0.25, _quip("connect"))
+	print("JOIN %s: world drawn, connecting to %s:%d (UDP)" % [Time.get_time_string_from_system(), args["host"], int(args["udp"])])
+	_connect_from = t_total
 	var err: String = net.connect_to(String(args["host"]), int(args["udp"]), info_text, id)
 	if err != "":
 		return _fail(err)
@@ -860,9 +876,11 @@ func _process(delta: float) -> void:
 	var status: int = net.get_status()
 	if status == 1 and not _was_in and ents.has(net.get_self_id()):
 		_was_in = true
+		print("JOIN %s: in the world after %.1f s of handshake" % [Time.get_time_string_from_system(), t_total - _connect_from])
 	# Never got in: the first launch compiles shaders and can stall long enough for the handshake to lapse. Try again.
 	if status == 3 and not _was_in and _retries < 3 and not smoke:
 		_retries += 1
+		print("JOIN %s: no answer from %s:%d (UDP): %s; trying again (%d of 3)" % [Time.get_time_string_from_system(), args["host"], int(args["udp"]), net.get_status_text(), _retries])
 		if net.connect_to(String(args["host"]), int(args["udp"]), info_text, my_identity) == "":
 			if args.has("name") and args["name"] is String:
 				net.set_display_name(String(args["name"]))
@@ -1096,7 +1114,10 @@ func _process(delta: float) -> void:
 	_show_land()
 	hud.set_abilities(theme.torch_mode, theme.torch_lit(), building, world_map.visible, not build.is_empty())
 	if status > 1:
-		hud.status.text = ["", "", "The server refused the connection.", "Disconnected from the server."][clampi(status, 0, 3)]
+		var why: String = net.get_status_text()
+		hud.status.text = ["", "", "The server refused the connection", "Disconnected from the server"][clampi(status, 0, 3)] + ((": " + why) if why != "" else ".")
+		if not _was_in and status == 3:
+			hud.status.text += " Nothing came back from %s:%d over UDP: a firewall, VPN or the network may be blocking it." % [args["host"], int(args["udp"])]
 	if _arriving and status == 1 and ents.has(self_id):
 		_arriving = false
 		hud.arrive()
@@ -1129,7 +1150,13 @@ func _load_step(delta: float, status: int) -> void:
 			hud.loaded()
 		return
 	if not _was_in:
-		hud.loading(0.35, _quip("you"))
+		# The handshake goes over UDP, which some networks and firewalls stop while letting the web through: after a
+		# few seconds with no answer, say so plainly rather than tell jokes.
+		var waited := t_total - _connect_from
+		if waited > 8.0:
+			hud.loading(0.35, "No answer yet from the game server at %s:%d (UDP, %d s). If this goes on, a firewall, VPN or the network is blocking UDP to it." % [args["host"], int(args["udp"]), int(waited)])
+		else:
+			hud.loading(0.35, _quip("you"))
 		return
 	_load_since += delta
 	var parts := 0.0
