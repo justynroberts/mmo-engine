@@ -57,6 +57,7 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	_prefetch()
 	# Every palette's tinted materials and washed textures now, while loading, not as the first village comes near;
 	# its copy of each piece over the next frames (_warm).
+	_prewash(["Roof_RoundTiles_6x8", "Wall_UnevenBrick_Window_Wide_Round", "Roof_Front_Brick6"])
 	for pal in TownsScript.PALETTES.size():
 		for piece in ["Roof_RoundTiles_6x8", "Wall_UnevenBrick_Window_Wide_Round", "Roof_Front_Brick6"]:
 			_mesh_pal(VILLAGE + piece + ".gltf", pal)
@@ -780,6 +781,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 			_:
 				if o.get("solid", false):
 					node.add_child(block(o)) # a type this theme does not know: draw it plainly
+		pt += await cell_pause() # a town's cell is too much for one frame
 	pt = lap("cell objects", pt)
 	_land_dress(cx, cy, node, batch, lights)
 	pt = lap("cell land", pt)
@@ -795,6 +797,7 @@ func build_cell(cx: int, cy: int) -> Node3D:
 		if m:
 			node.add_child(_multi(m, batch[key], tint))
 		pt = lap("cell multi", pt)
+		pt += await cell_pause()
 	pt = lap("cell multimesh", pt)
 	# The ground under the cell again, now its trees have streamed in (woodland floor).
 	var gk: int = world.key(cx, cy)
@@ -1765,8 +1768,19 @@ func _mesh_pal(path: String, pal: int) -> Mesh:
 	var key := "%s#%d" % [path, pal]
 	if _pal_meshes.has(key):
 		return _pal_meshes[key]
+	# A mesh of its own: loaded again, uncached (a few milliseconds), as duplicating the loaded one reads it back from
+	# the GPU (tens). A piece put together from parts has no scene of its own to load, so that one is duplicated.
+	var fresh: Mesh = null
+	if not path.begins_with(COAST) and ResourceLoader.exists(path):
+		fresh = _scene_mesh(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene)
+	var am: ArrayMesh = fresh if fresh is ArrayMesh else (m as ArrayMesh).duplicate() as ArrayMesh
+	_pal_tint(am, pal)
+	_pal_meshes[key] = am
+	return am
+
+## Give a mesh of its own the palette's materials (each palette material made once).
+func _pal_tint(am: ArrayMesh, pal: int) -> void:
 	var tints: Dictionary = TownsScript.PALETTES[pal]
-	var am := (m as ArrayMesh).duplicate() as ArrayMesh
 	for i in am.get_surface_count():
 		var src := am.surface_get_material(i)
 		if src is BaseMaterial3D and tints.has(src.resource_name):
@@ -1780,8 +1794,40 @@ func _mesh_pal(path: String, pal: int) -> Mesh:
 				t.albedo_color = (src as BaseMaterial3D).albedo_color * (tint as Color)
 				_pal_mats[mk] = t
 			am.surface_set_material(i, _pal_mats[mk])
-	_pal_meshes[key] = am
-	return am
+
+## Wash every texture the palettes wash on these pieces at once, on the worker threads (each is a decompress, a
+## colour pass and mipmaps over a large image: seconds, one after another on the main thread).
+func _prewash(pieces: Array) -> void:
+	var jobs := []   # [texture, sat, key]
+	for piece in pieces:
+		var m := _mesh(VILLAGE + piece + ".gltf")
+		if m == null:
+			continue
+		for i in m.get_surface_count():
+			var src := m.surface_get_material(i)
+			if not src is BaseMaterial3D or (src as BaseMaterial3D).albedo_texture == null:
+				continue
+			for pal in TownsScript.PALETTES.size():
+				var tint = TownsScript.PALETTES[pal].get(src.resource_name)
+				if tint is Array and float(tint[1]) < 1.0:
+					var tex: Texture2D = (src as BaseMaterial3D).albedo_texture
+					var k := "%d#%.2f" % [tex.get_rid().get_id(), float(tint[1])]
+					if not _washed_tex.has(k) and not jobs.any(func(j): return j[2] == k):
+						jobs.append([tex, float(tint[1]), k])
+	if jobs.is_empty():
+		return
+	var images := []
+	for j in jobs:
+		images.append((j[0] as Texture2D).get_image()) # read back here: the threads only work on the images
+	var wash := func(i: int) -> void:
+		var img: Image = images[i]
+		if img.is_compressed():
+			img.decompress()
+		img.adjust_bcs(1.0, 1.0, float(jobs[i][1]))
+		img.generate_mipmaps()
+	WorkerThreadPool.wait_for_group_task_completion(WorkerThreadPool.add_group_task(wash, jobs.size()))
+	for i in jobs.size():
+		_washed_tex[jobs[i][2]] = ImageTexture.create_from_image(images[i])
 
 ## A texture with its colour washed out to `sat` (0 grey .. 1 as it was), made once.
 var _washed_tex := {}
@@ -1799,11 +1845,15 @@ func _washed(tex: Texture2D, sat: float) -> Texture2D:
 	return _washed_tex[k]
 
 var _warming: Array = [] # [piece, palette] copies still to make
+var _copying := {}        # piece -> the palette its fresh copy (loading on the loader's threads) is for
 
-## Make palette copies of loaded pieces for up to `budget_ms`, so a village's first cell finds them made. The
-## palettes of the settlements nearest us go first.
+## Make palette copies of pieces, so a village's first cell finds them made; the palettes of the settlements nearest
+## us go first. A copy is the piece loaded again from disk on the loader's threads, uncached so its mesh is its own
+## (its textures, files of their own, still come from the cache),
+## then given the palette's materials: duplicating the loaded mesh instead reads it back from the GPU, tens of
+## milliseconds each on the main thread. A few load at once; `budget_ms` bounds the main thread's share.
 func _warm(center: Vector2, budget_ms: float) -> void:
-	if _warming.is_empty():
+	if _warming.is_empty() and _copying.is_empty():
 		return
 	if _warm_sorted_at.distance_to(center) > 200.0:
 		_warm_sorted_at = center
@@ -1812,16 +1862,49 @@ func _warm(center: Vector2, budget_ms: float) -> void:
 			near[t["pal"]] = minf(near.get(t["pal"], INF), (t["c"] as Vector2).distance_to(center))
 		_warming.sort_custom(func(a, b): return near.get(a[1], INF) < near.get(b[1], INF))
 	var t0 := Time.get_ticks_usec()
+	# Copies that have come in: tint them.
+	for path in _copying.keys():
+		if (Time.get_ticks_usec() - t0) > budget_ms * 1000.0:
+			return
+		var st := ResourceLoader.load_threaded_get_status(path)
+		if st == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			continue
+		var pal: int = _copying[path]
+		_copying.erase(path)
+		var key := "%s#%d" % [path, pal]
+		if st == ResourceLoader.THREAD_LOAD_LOADED and not _pal_meshes.has(key):
+			var m := _scene_mesh(ResourceLoader.load_threaded_get(path) as PackedScene)
+			if m is ArrayMesh:
+				_pal_tint(m as ArrayMesh, pal)
+				_pal_meshes[key] = m
+	# Start the next few, the original piece loaded first (a fresh copy must not race its first load).
 	var i := 0
-	while i < _warming.size() and (Time.get_ticks_usec() - t0) < budget_ms * 1000.0:
+	while i < _warming.size() and _copying.size() < WARM_AT_ONCE:
 		var w: Array = _warming[i]
-		if meshes.has(w[0]) or ResourceLoader.load_threaded_get_status(w[0]) == ResourceLoader.THREAD_LOAD_LOADED:
-			_mesh_pal(w[0], w[1])
+		var key := "%s#%d" % [w[0], w[1]]
+		if _pal_meshes.has(key):
 			_warming.remove_at(i)
-		else:
+			continue
+		if _copying.has(w[0]) or not (meshes.has(w[0]) or ResourceLoader.load_threaded_get_status(w[0]) == ResourceLoader.THREAD_LOAD_LOADED):
 			i += 1
 			if i > 64:
 				break # the rest are still loading
+			continue
+		_mesh(w[0]) # take the original out of the loader first
+		if ResourceLoader.load_threaded_request(w[0], "", false, ResourceLoader.CACHE_MODE_IGNORE) == OK:
+			_copying[w[0]] = w[1]
+		_warming.remove_at(i)
+
+const WARM_AT_ONCE := 6
+
+## On the way out, let the copies still loading finish: one left running while the renderer shuts down makes
+## materials that are no longer anywhere (a flood of errors and a hang on quitting).
+func _exit_tree() -> void:
+	for path in _copying.keys():
+		if ResourceLoader.load_threaded_get_status(path) == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			ResourceLoader.load_threaded_get(path)
+	_copying.clear()
+	_warming.clear()
 var _warm_sorted_at := Vector2.INF
 
 ## Start loading every piece the theme may draw on the loader's threads, so the first village that needs one does
@@ -1843,7 +1926,17 @@ func _mesh(path: String) -> Mesh:
 	var m: Mesh = null
 	if ResourceLoader.exists(path):
 		var res: Resource = ResourceLoader.load_threaded_get(path) if _fetching.has(path) else load(path)
-		var inst := (res as PackedScene).instantiate()
+		m = _scene_mesh(res as PackedScene)
+	if m is ArrayMesh and path.begins_with(COAST):
+		_coast_colours(m as ArrayMesh)
+	meshes[path] = m
+	return m
+
+## The one mesh of a piece's scene: its mesh, or its parts' meshes made one.
+static func _scene_mesh(scene: PackedScene) -> Mesh:
+	var m: Mesh = null
+	if scene != null:
+		var inst := scene.instantiate()
 		var found := inst.find_children("*", "MeshInstance3D", true, false)
 		if found.size() == 1:
 			m = (found[0] as MeshInstance3D).mesh
@@ -1864,9 +1957,6 @@ func _mesh(path: String) -> Mesh:
 					st.commit(am)
 			m = am
 		inst.free()
-	if m is ArrayMesh and path.begins_with(COAST):
-		_coast_colours(m as ArrayMesh)
-	meshes[path] = m
 	return m
 
 ## The Nature Kit is pastel (teal grass, peach rock): its materials, by name, in the colours of the rest of the land.

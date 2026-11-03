@@ -218,12 +218,43 @@ func extent() -> Rect2:
 
 ## True on or right beside water, where scenery would look wrong.
 func wet(x: float, y: float) -> bool:
-	for r in rivers:
-		var pts: Array = r["pts"]
-		var reach := float(r.get("half_width", 5.0)) + 3.0
-		for k in pts.size() - 1:
-			var a := Vector2(pts[k][0], pts[k][1])
-			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
-			if Geometry2D.get_closest_point_to_segment(Vector2(x, y), a, b).distance_to(Vector2(x, y)) < reach:
-				return true
+	var p := Vector2(x, y)
+	for s in water_near(x, y).rivers:
+		if Geometry2D.get_closest_point_to_segment(p, s[0], s[1]).distance_to(p) < float(s[2]):
+			return true
 	return false
+
+## The rivers' segments ([a, b, reach]) and lakes ({b, level}) touching each CELL, made the first time anyone asks:
+## a big world has thousands of river points and lakes, too many to run through for every spot looked at.
+var _water_cells := {}
+var _water_indexed := false
+const _NO_WATER := {"rivers": [], "lakes": []}
+
+func water_near(x: float, y: float) -> Dictionary:
+	if not _water_indexed:
+		_water_indexed = true
+		for r in rivers:
+			var pts: Array = r["pts"]
+			var reach := float(r.get("half_width", 5.0)) + 3.0
+			for k in pts.size() - 1:
+				var a := Vector2(pts[k][0], pts[k][1])
+				var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+				for c in _cells_over(Rect2(a, Vector2.ZERO).expand(b).grow(reach)):
+					_water_at(c).rivers.append([a, b, reach])
+		for l in lakes:
+			var b: Array = l["b"]
+			for c in _cells_over(Rect2(float(b[0]), float(b[1]), float(b[2]) - float(b[0]), float(b[3]) - float(b[1])).grow(2.0)):
+				_water_at(c).lakes.append(l)
+	return _water_cells.get(key(int(floor(x / CELL)), int(floor(y / CELL))), _NO_WATER)
+
+func _water_at(k: int) -> Dictionary:
+	if not _water_cells.has(k):
+		_water_cells[k] = {"rivers": [], "lakes": []}
+	return _water_cells[k]
+
+func _cells_over(r: Rect2) -> Array:
+	var out := []
+	for cx in range(int(floor(r.position.x / CELL)), int(floor(r.end.x / CELL)) + 1):
+		for cy in range(int(floor(r.position.y / CELL)), int(floor(r.end.y / CELL)) + 1):
+			out.append(key(cx, cy))
+	return out

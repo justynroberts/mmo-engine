@@ -176,7 +176,7 @@ func _sea_at(p: Vector2) -> bool:
 	return theme.world.has_sea and _h(p.x, p.y) < theme.world.sea_level - 0.2
 
 func _lake_at(p: Vector2) -> bool:
-	for l in theme.world.lakes:
+	for l in theme.world.water_near(p.x, p.y).lakes:
 		var b: Array = l["b"]
 		if p.x > float(b[0]) - 2.0 and p.x < float(b[2]) + 2.0 and p.y > float(b[1]) - 2.0 and p.y < float(b[3]) + 2.0:
 			return true
@@ -274,19 +274,23 @@ func _survey() -> void:
 						_water = p
 					break
 				prev = p
-	for rv in world.rivers:
-		var pts: Array = rv["pts"]
-		for k in pts.size() - 1:
-			var a := Vector2(pts[k][0], pts[k][1])
-			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
-			if a.distance_to(_center) > NEAR * 2.0 and b.distance_to(_center) > NEAR * 2.0:
-				continue
-			var q := Geometry2D.get_closest_point_to_segment(_center, a, b)
-			var d := q.distance_to(_center)
-			if d < best:
-				best = d
-				_water = q
-	for l in world.lakes:
+	# Rivers and lakes from the cells round us (world_data.gd water_near), not every one in the world.
+	var near_rivers := []
+	var near_lakes := []
+	for i in range(cx - 2, cx + 3):
+		for j in range(cy - 2, cy + 3):
+			var wn: Dictionary = world.water_near((i + 0.5) * world.CELL, (j + 0.5) * world.CELL)
+			near_rivers.append_array(wn.rivers)
+			for l in wn.lakes:
+				if not near_lakes.has(l):
+					near_lakes.append(l)
+	for s in near_rivers:
+		var q := Geometry2D.get_closest_point_to_segment(_center, s[0], s[1])
+		var d := q.distance_to(_center)
+		if d < best:
+			best = d
+			_water = q
+	for l in near_lakes:
 		var b: Array = l["b"]
 		var q := Vector2(clampf(_center.x, float(b[0]), float(b[2])), clampf(_center.y, float(b[1]), float(b[3])))
 		var d := q.distance_to(_center)

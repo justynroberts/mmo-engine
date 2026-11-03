@@ -72,6 +72,8 @@ const COLD_PALETTES := [1, 6, 3] # slate, charcoal, moss
 var _country := {}     # stretch of country key -> farmstead character
 
 ## Look the world over once: its squares, and what is round each.
+const HOUSE_GRID := 110.0
+
 func survey(world: RefCounted) -> void:
 	list.clear()
 	_country.clear()
@@ -89,6 +91,13 @@ func survey(world: RefCounted) -> void:
 			"square": squares.append([c, absi(int(o.get("v", 0)))])
 			"crag": crags.append(c)
 			"house": houses.append(c)
+	# Houses by HOUSE_GRID square, so counting those round a square looks at its neighbours, not every house there is.
+	var grid := {}
+	for h in houses:
+		var k := Vector2i(int(floor(h.x / HOUSE_GRID)), int(floor(h.y / HOUSE_GRID)))
+		if not grid.has(k):
+			grid[k] = []
+		grid[k].append(h)
 	var city_done := false
 	for s in squares:
 		var c: Vector2 = s[0]
@@ -100,9 +109,11 @@ func survey(world: RefCounted) -> void:
 			list.append(_make(_city.get_center(), _city.size.length() / 2.0, v, "market", world))
 			continue
 		var count := 0
-		for h in houses:
-			if (h as Vector2).distance_to(c) < 110.0:
-				count += 1
+		for gx in range(int(floor(c.x / HOUSE_GRID)) - 1, int(floor(c.x / HOUSE_GRID)) + 2):
+			for gy in range(int(floor(c.y / HOUSE_GRID)) - 1, int(floor(c.y / HOUSE_GRID)) + 2):
+				for h in grid.get(Vector2i(gx, gy), []):
+					if (h as Vector2).distance_to(c) < 110.0:
+						count += 1
 		var trade := "farming"
 		if _near_water(world, c, 110.0):
 			trade = "fishing"
@@ -174,9 +185,13 @@ static func _near_water(world: RefCounted, c: Vector2, d: float) -> bool:
 				var p := c + Vector2(cos(a), sin(a)) * r
 				if world.height(p.x, p.y) < world.sea_level - 0.2:
 					return true
-	for l in world.lakes:
-		var b: Array = l["b"]
-		var q := Vector2(clampf(c.x, float(b[0]), float(b[2])), clampf(c.y, float(b[1]), float(b[3])))
-		if q.distance_to(c) < d:
-			return true
+	# The lakes of the cells within `d` (world_data.gd water_near), not every lake there is.
+	var cell: float = world.CELL
+	for gx in range(int(floor((c.x - d) / cell)), int(floor((c.x + d) / cell)) + 1):
+		for gy in range(int(floor((c.y - d) / cell)), int(floor((c.y + d) / cell)) + 1):
+			for l in world.water_near((gx + 0.5) * cell, (gy + 0.5) * cell).lakes:
+				var b: Array = l["b"]
+				var q := Vector2(clampf(c.x, float(b[0]), float(b[2])), clampf(c.y, float(b[1]), float(b[3])))
+				if q.distance_to(c) < d:
+					return true
 	return false

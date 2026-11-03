@@ -145,9 +145,16 @@ func _sort_queue() -> void:
 		return da < db)
 
 ## Build queued cells for up to `budget_ms` (at least one); called every frame from `frame`. Returns how many are
-## still waiting.
+## still waiting. A theme's `build_cell` may take more than one frame over a big cell (it pauses at `cell_pause`
+## once past `cell_deadline`); while one is under way no other starts.
+var cell_deadline := 0       # Time.get_ticks_usec() a cell being built should pause at; 0 builds it in one go
+var _building := false
 func build_some(budget_ms := BUILD_MS) -> int:
+	if _building:
+		return _queue.size()
+	_building = true
 	var t0 := Time.get_ticks_usec()
+	cell_deadline = 0 if budget_ms >= 100.0 else t0 + int(budget_ms * 1000.0)
 	while not _queue.is_empty():
 		var q: Array = _queue.pop_front()
 		_queued.erase([q[0], q[3]])
@@ -163,7 +170,7 @@ func build_some(budget_ms := BUILD_MS) -> int:
 		else:
 			# Lights belong to the cell: the old drawing's go now, and building the new one adds its own.
 			remove_lights(k)
-			var n := build_cell(q[1], q[2])
+			var n: Node3D = await build_cell(q[1], q[2])
 			if _chunks.has(k):
 				_chunks[k].queue_free()
 			_chunks[k] = n
@@ -171,13 +178,24 @@ func build_some(budget_ms := BUILD_MS) -> int:
 			lt = Time.get_ticks_usec()
 			add_child(n)
 			lap("cell add", lt)
-		if (Time.get_ticks_usec() - t0) / 1000.0 >= budget_ms:
+		if (Time.get_ticks_usec() - t0) / 1000.0 >= budget_ms or Time.get_ticks_usec() > cell_deadline and cell_deadline > 0:
 			break
+	_building = false
 	return _queue.size()
+
+## In a theme's `build_cell`: wait for the next frame once this frame's share is spent (never while flushing). How
+## long it waited (microseconds), for timings that should leave the wait out.
+func cell_pause() -> int:
+	if cell_deadline <= 0 or Time.get_ticks_usec() <= cell_deadline:
+		return 0
+	var t := Time.get_ticks_usec()
+	await get_tree().process_frame
+	cell_deadline = Time.get_ticks_usec() + int(BUILD_MS * 1000.0)
+	return Time.get_ticks_usec() - t
 
 ## Build everything queued now (before the world is first shown, where a stall does not matter).
 func flush() -> void:
-	while build_some(1000.0) > 0:
+	while await build_some(1000.0) > 0:
 		pass
 
 func _update_ground(center: Vector2) -> void:

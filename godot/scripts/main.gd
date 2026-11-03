@@ -412,6 +412,27 @@ func _parse_args() -> Dictionary:
 func _web_url() -> String:
 	return HudScript.web_base(String(args["web"]))
 
+## Where a file of the on-disk cache (user://cache) lives.
+static func _cache_path(name: String) -> String:
+	return "user://cache/" + name.validate_filename()
+
+## Keep `bytes` in the cache as `path`, dropping older files of the same kind (`prefix`: same server, older world).
+static func _cache_put(path: String, prefix: String, bytes: PackedByteArray) -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://cache"))
+	var keep := path.get_file()
+	for f in DirAccess.get_files_at("user://cache"):
+		if f.begins_with(prefix.validate_filename()) and f != keep:
+			DirAccess.remove_absolute(ProjectSettings.globalize_path("user://cache/" + f))
+	var fa := FileAccess.open(path, FileAccess.WRITE)
+	if fa:
+		fa.store_buffer(bytes)
+		fa.close()
+
+## What changes when the client's drawing might: its packaged version, or (run from source) when the theme last changed.
+static func _build_tag() -> String:
+	var v := FileAccess.get_file_as_string("res://version.txt").strip_edges() if FileAccess.file_exists("res://version.txt") else ""
+	return v if v != "" else "dev%d" % FileAccess.get_modified_time("res://themes/fantasy/theme.gd")
+
 ## A GET's body as text ("" when it fails). Gives up after `wait` seconds, so a stalled request cannot hold the
 ## loading screen for ever; a failure is written to the log (user://logs/godot.log) with why.
 func _fetch(url: String, wait := 30.0) -> String:
@@ -486,8 +507,16 @@ func _start() -> void:
 		var wi: Dictionary = info["world"]
 		world_parts = bool(wi.get("parts", false))
 		world_ver = String(wi.get("ver", ""))
-		var text := await _fetch("%s/play/world%s" % [_web_url(), "/head" if world_parts else ""])
+		var cached := _cache_path("world_%s_%s%s.json" % [HudScript.game_host(String(args.get("web", ""))), world_ver, "_head" if world_parts else ""])
+		var text := FileAccess.get_file_as_string(cached) if world_ver != "" and FileAccess.file_exists(cached) else ""
+		var from_cache := text != ""
+		if text == "":
+			text = await _fetch("%s/play/world%s" % [_web_url(), "/head" if world_parts else ""], 120.0)
+			if text != "" and world_ver != "":
+				_cache_put(cached, "world_%s_" % HudScript.game_host(String(args.get("web", ""))), text.to_utf8_buffer())
+		print("JOIN %s: world file %s (%d bytes)" % [Time.get_time_string_from_system(), "from the cache" if from_cache else "downloaded", text.length()])
 		world = WorldData.from_file(text) if text != "" else null
+		print("JOIN %s: world file parsed" % Time.get_time_string_from_system())
 		if world == null:
 			return _fail("could not read the world file at %s/play/world" % _web_url())
 	else:
@@ -503,11 +532,20 @@ func _start() -> void:
 	for a in info.get("attrs", []):
 		has_lit = has_lit or String(a.get("name", "")) == "lit"
 	theme.setup(info, world)
+	print("JOIN %s: theme set up" % Time.get_time_string_from_system())
 	_apply_settings(settingsui.values) # the theme's lights are here now (shadows follow the graphics setting)
 	theme.set_zones(info.get("weather_zones", []) if info.get("weather_zones") is Array else [])
 	locations = info.get("locations", []) if info.get("locations") is Array else []
 	# One picture of the world serves the minimap and the world map (M); a big world gets more pixels for it.
-	var map_img: Image = await theme.map_image(1024 if world.size > 16384.0 else 512)
+	# Drawing it takes seconds on a big world, so it is kept on disk by world version and client build.
+	var map_px := 1024 if world.size > 16384.0 else 512
+	var map_cache := _cache_path("map_%s_%s_%s_%d.png" % [HudScript.game_host(String(args.get("web", ""))), world_ver, _build_tag(), map_px])
+	var map_img: Image = Image.load_from_file(ProjectSettings.globalize_path(map_cache)) if world_ver != "" and FileAccess.file_exists(map_cache) else null
+	if map_img == null or map_img.get_width() != map_px:
+		map_img = await theme.map_image(map_px)
+		if world_ver != "":
+			_cache_put(map_cache, "map_%s_" % HudScript.game_host(String(args.get("web", ""))), map_img.save_png_to_buffer())
+	print("JOIN %s: map drawn" % Time.get_time_string_from_system())
 	hud.set_map(map_img, world.size)
 	world_map.build(map_img, world.size)
 	if theme.has_method("map_area"):
@@ -868,8 +906,8 @@ func _process(delta: float) -> void:
 				Performance.get_monitor(Performance.OBJECT_NODE_COUNT), ents.size(), Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576])
 			var vp := get_viewport().get_viewport_rid()
 			RenderingServer.viewport_set_measure_render_time(vp, true)
-			print("PERF render cpu %.1f ms  lights %d  darkness %.2f  weather %s" % [RenderingServer.viewport_get_measured_render_time_cpu(vp),
-				theme.lights_burning(), theme.darkness, _shown_weather.get("name", "clear")])
+			print("PERF render cpu %.1f ms  gpu %.1f ms  lights %d  darkness %.2f  weather %s" % [RenderingServer.viewport_get_measured_render_time_cpu(vp), RenderingServer.viewport_get_measured_render_time_gpu(vp),
+				theme.lights_burning() if theme else 0, theme.darkness if theme else 0.0, _shown_weather.get("name", "clear")])
 	if net == null:
 		return
 	t_total += delta
@@ -1181,7 +1219,7 @@ func _load_step(delta: float, status: int) -> void:
 		return
 	if _load_frames == 0:
 		theme.update(me_pos) # draw what has come before we are shown
-		theme.flush()
+		await theme.flush()
 		last_stream = me_pos
 		spellfx.prewarm(Vector3(me_pos.x, _height(me_pos.x, me_pos.y), me_pos.y))
 	_load_frames += 1
