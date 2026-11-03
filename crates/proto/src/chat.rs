@@ -87,6 +87,9 @@ pub mod channel {
     /// Server to client, from the server (0): the potions working on a player (`potions.rs`), when they change:
     /// "P0|title,colour,secs left;..." ("P0|" for none); the client counts the seconds down. Not shown as chat.
     pub const POTIONS: u8 = 21;
+    /// Server to client, from the server (0): the damage meter of a player's party's latest fight (`meter.rs`), once a
+    /// second while it changes: "M|secs;name,dealt,mended;..." most dealt first, "M|" when it clears.
+    pub const METER: u8 = 22;
 }
 
 pub mod kind {

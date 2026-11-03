@@ -77,6 +77,7 @@ impl Sim {
         (self.lockouts[s], self.lock_told[s]) = (Vec::new(), 0);
         self.lockouts_sent[s].clear();
         self.draughts_sent[s].clear();
+        (self.meter[s], self.meter_sent[s]) = (Default::default(), String::new());
         if let Some(t) = self.holds.told.get_mut(s) {
             *t = u32::MAX; // whoever comes into this slot is told the holds afresh
         }

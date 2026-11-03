@@ -12,6 +12,13 @@ they are not long straight lines at the new size), the named settlements, the la
 a place that is a town follows its town to where the generator put it (and keeps its size); a place near a town
 keeps its offset from it; anything else (lakes, mountains, the north) is scaled. Routes are scaled. Standing stones
 are added: one in each town that leads to the capital, and a ring in the capital that leads to each town.
+
+  scripts/hibernia_big.py country --world world.json --game deploy/hibernia-65536/game.json
+
+`country` (also part of `game`) peoples the country between the towns, editing the game file in place: farmsteads
+near the towns get a place of their own and a smallholder each, and villages along the highways an inn (a place
+named for it, an innkeeper who sells food, drink and a horse, so a traveller has a market there, and villagers).
+Run again, it replaces what it added before.
 """
 
 import argparse
@@ -144,13 +151,169 @@ def objects_of(world_path):
             b = o["b"]
             squares.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, min(b[2] - b[0], b[3] - b[1]) / 2))
     settled = w.get("settled", [])
-    return w["size"], settled, squares
+    return w["size"], settled, squares, w
+
+
+FARM = "feirm "
+INN = "teach osta "
+FARMER = "feirmeoir"
+INNKEEPER = "ostoir"
+
+
+def add_country(g, w, farms=96, inns=24):
+    """Farmsteads and highway inns, with folk: see the module's doc. `w` is the world file."""
+    g["places"] = [p for p in g["places"] if not p["name"].startswith((FARM, INN))]
+    g["archetypes"] = [a for a in g["archetypes"] if a["name"] not in (FARMER, INNKEEPER)]
+    arch = {a["name"]: a for a in g["archetypes"]}
+    for a in g["archetypes"]:
+        if a.get("homes"):
+            ours = [h for h in a["homes"] if h.startswith(INN)]
+            a["homes"] = [h for h in a["homes"] if not h.startswith((FARM, INN))]
+            if a["name"] == "villager":
+                a["count"] = a.get("count", 0) - 2 * len(ours)  # the two each inn was given
+    houses = [o["b"] for o in w.get("objects", []) if o.get("t") == "house"]
+    # The villages are the squares out of the named places; the world file names none of them, so each is called
+    # something from where it lies (the same every run).
+    first = ["Baile", "Cill", "Ráth", "Dún", "Áth", "Cluain", "Lios", "Tulach", "Achadh", "Gort", "Doire", "Mainistir"]
+    second = ["an Mhuilinn", "na Coille", "Mór", "Beag", "an Droichid", "na hAbhann", "Bhuí", "Glas", "na gCloch",
+              "an Chnoic", "Rua", "an Iarainn", "na Móna", "an Fhia", "Locha", "na Sceiche"]
+    villages = []
+    for o in w.get("objects", []):
+        if o.get("t") != "square":
+            continue
+        b = o["b"]
+        x, y = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        if any(math.hypot(x - p["x"], y - p["y"]) <= p["r"] + 100 for p in g["places"]):
+            continue
+        h = (int(x) * 73856093) ^ (int(y) * 19349663)
+        villages.append((x, y, f"{first[h % len(first)]} {second[(h // len(first)) % len(second)]}"))
+    towns = [(p["x"], p["y"], p["r"]) for p in g["places"] if p["r"] >= 60 and p.get("title") and not p.get("exit")]
+    room = 256 - len(g["places"])
+    farms, inns = min(farms, room * 4 // 5), min(inns, room // 5)
+    taken = {p["name"] for p in g["places"]}
+
+    def in_place(x, y, slack):
+        return any(math.hypot(x - p["x"], y - p["y"]) <= p["r"] + slack for p in g["places"])
+
+    def unique(base):
+        base = base[:32].rstrip()
+        n, name = 2, base
+        while name in taken:
+            tail = f" {n}"
+            name, n = base[:32 - len(tail)].rstrip() + tail, n + 1
+        taken.add(name)
+        return name
+
+    def plain(text):
+        """A place name: lower case, no marks (as the game's other names are)."""
+        import unicodedata
+        return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
+
+    # Inns: villages beside a highway (a long road as wide as a street), out of the towns, well apart.
+    highway = []
+    for r in w.get("roads", []):
+        pts = r.get("pts", [])
+        if abs(float(r.get("half_width", 3.0)) - 3.5) > 0.05 or len(pts) < 2:
+            continue
+        if sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])) < 1500:
+            continue
+        for a, b in zip(pts, pts[1:]):
+            n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) // 40))
+            highway += [(a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n) for t in range(n)]
+    cell = 256.0
+    hgrid = {}
+    for x, y in highway:
+        hgrid.setdefault((int(x // cell), int(y // cell)), []).append((x, y))
+
+    def near_highway(x, y, reach):
+        cx, cy = int(x // cell), int(y // cell)
+        return any(math.hypot(x - hx, y - hy) <= reach for dx in (-1, 0, 1) for dy in (-1, 0, 1) for hx, hy in hgrid.get((cx + dx, cy + dy), []))
+
+    near_town = lambda x, y: min((math.hypot(x - tx, y - ty) - tr for tx, ty, tr in towns), default=1e9)
+    picked = []
+    for x, y, name in sorted(villages, key=lambda v: near_town(v[0], v[1])):
+        if len(picked) >= inns:
+            break
+        if near_town(x, y) < 1000 or in_place(x, y, 200) or not near_highway(x, y, 120):
+            continue
+        if any(math.hypot(x - px, y - py) < 2200 for px, py, _ in picked):
+            continue
+        picked.append((x, y, name))
+    inn_places = []
+    for x, y, name in picked:
+        r = 55.0
+        inn_places.append({"name": unique(INN + plain(name)), "x": round(x, 1), "y": round(y, 1), "r": r, "title": f"{name} (An Teach Ósta)"[:40], "music": "tavern"})
+
+    # Farmsteads: houses out of every place and village, a farmhouse and its barn taken as one, near the towns first.
+    village_at = [(x, y) for x, y, _ in villages]
+    vgrid = {}
+    for x, y in village_at:
+        vgrid.setdefault((int(x // 512), int(y // 512)), []).append((x, y))
+
+    def by_village(x, y):
+        cx, cy = int(x // 512), int(y // 512)
+        return any(math.hypot(x - vx, y - vy) < 260 for dx in (-1, 0, 1) for dy in (-1, 0, 1) for vx, vy in vgrid.get((cx + dx, cy + dy), []))
+
+    steads = []
+    for b in houses:
+        x, y = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        if (b[2] - b[0]) * (b[3] - b[1]) < 40 or by_village(x, y) or in_place(x, y, 80):
+            continue
+        steads.append((x, y))
+    farm_at = []
+    for x, y in sorted(steads, key=lambda p: near_town(p[0], p[1])):
+        if len(farm_at) >= farms:
+            break
+        if near_town(x, y) < 250 or any(math.hypot(x - fx, y - fy) < 1100 for fx, fy in farm_at):
+            continue
+        if any(math.hypot(x - p["x"], y - p["y"]) < 400 for p in inn_places):
+            continue
+        farm_at.append((x, y))
+
+    def village_name(x, y):
+        best = min(villages, key=lambda v: math.hypot(x - v[0], y - v[1]), default=None)
+        return best[2] if best else "na tuaithe"
+
+    farm_places = [{"name": unique(FARM + plain(village_name(x, y))), "x": round(x, 1), "y": round(y, 1), "r": 40.0} for x, y in farm_at]
+    g["places"] += inn_places + farm_places
+
+    flee = lambda a: [r for r in a.get("rules", []) if r["then"]["kind"] in ("flee", "indoors")]
+    if farm_places and "farmer" in arch:
+        f = {k: v for k, v in arch["farmer"].items() if k not in ("homes",)}
+        f.update({"name": FARMER, "title": "Smallholder", "home": farm_places[0]["name"], "homes": [p["name"] for p in farm_places[1:]],
+                  "count": len(farm_places), "work": "fields"})
+        f["rules"] = flee(arch["farmer"]) + [
+            {"when": {"kind": "during", "parts": ["dawn"]}, "then": {"kind": "chat", "lines": ["The cows are bawling for me already.", "Mist on the low field again."]}},
+            {"when": {"kind": "during", "parts": ["day"]}, "then": {"kind": "chat", "lines": ["It's a long way to market from here.", "Mind the gate, it sticks.", "Not many come up this boreen.", "The hay won't save itself."]}},
+            {"when": {"kind": "sees", "who": "player", "within": 12.0}, "then": {"kind": "chat", "lines": [
+                "A traveller! You're a long way from the town.", "Stay on the road after dark, friend.", "There's an inn on the highway, if you're tired.", "God bless the work."]}},
+        ]
+        g["archetypes"].append(f)
+    if inn_places and "ceannai" in arch:
+        keep = {"aran", "miodh", "deoch leighis", "capall"}
+        k = {kk: v for kk, v in arch["ceannai"].items() if kk not in ("homes",)}
+        k.update({"name": INNKEEPER, "title": "Innkeeper", "home": inn_places[0]["name"], "homes": [p["name"] for p in inn_places[1:]],
+                  "count": len(inn_places), "work": "square", "color": "#8d5524",
+                  "shop": [s for s in arch["ceannai"].get("shop", []) if s["item"] in keep]})
+        k["rules"] = [r for r in flee(arch["ceannai"]) if r["then"]["kind"] == "flee"] + [
+            {"when": {"kind": "during", "parts": ["night"]}, "then": {"kind": "indoors"}},
+            {"when": {"kind": "during", "parts": ["day", "dusk"]}, "then": {"kind": "chat", "lines": [
+                "A bed and a hot supper, traveller?", "The road's long; rest your feet a while.", "Mead's fresh today.", "Horses for hire, or for keeps!"]}},
+            {"when": {"kind": "sees", "who": "player", "within": 14.0}, "then": {"kind": "chat", "lines": [
+                "Come in, come in! You look half dead from the road.", "News from the towns? Sit down and tell it.", "Bread, mead and a draught for your wounds."]}},
+        ]
+        g["archetypes"].append(k)
+        if "villager" in arch:
+            v = arch["villager"]
+            v["homes"] = (v.get("homes") or []) + [p["name"] for p in inn_places]
+            v["count"] = v.get("count", 0) + 2 * len(inn_places)
+    return len(farm_places), len(inn_places)
 
 
 def big_game(seed_dir, world_path):
     g = load(f"{seed_dir}/game.json")
     ow = load(f"{seed_dir}/world.json")
-    size, settled, squares = objects_of(world_path)
+    size, settled, squares, world = objects_of(world_path)
     k = size / ow["size"]
     old_at = {s["name"]: s["at"] for s in ow["settled"] if s.get("at") and s.get("name")}
     new_at = {s["name"]: s["at"] for s in settled if s.get("at") and s.get("name")}
@@ -234,6 +397,7 @@ def big_game(seed_dir, world_path):
                                 "exit": {"x": round(tx + 12.0, 1), "y": round(ty, 1)}})
             names |= {stone_t, stone_c}
     add_dungeons(g)
+    add_country(g, world)
 
     # New characters, and those whose saved spot was on the old map, come into the world at the capital.
     cap = by_title.get(capital) if capital else None
@@ -304,13 +468,22 @@ def add_dungeons(g):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["recipe", "game"])
+    ap.add_argument("what", choices=["recipe", "game", "country"])
+    ap.add_argument("--game", help="country: the game file to edit in place")
     ap.add_argument("--size", type=float, default=65536.0)
     ap.add_argument("--from", dest="src", default=SEED_DIR)
     ap.add_argument("--world")
     a = ap.parse_args()
     if a.what == "recipe":
         json.dump(big_recipe(a.src, a.size), sys.stdout)
+    elif a.what == "country":
+        if not (a.world and a.game):
+            ap.error("country needs --world and --game")
+        g = load(a.game)
+        farms, inns = add_country(g, load(a.world))
+        with open(a.game, "w") as f:
+            json.dump(g, f, ensure_ascii=False, indent=1)
+        print(f"{farms} farmsteads, {inns} inns", file=sys.stderr)
     else:
         if not a.world:
             ap.error("game needs --world")

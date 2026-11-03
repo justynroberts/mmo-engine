@@ -502,6 +502,9 @@ pub struct Sim {
     pub draughts: Vec<Vec<crate::potions::Draught>>,
     pub draughts_sent: Vec<String>,
     pub potion_at: Vec<u32>,
+    /// Each player's part in their latest fight (`meter.rs`), and the meter they were last sent.
+    pub meter: Vec<crate::meter::Meter>,
+    pub meter_sent: Vec<String>,
     /// Per player: dungeons cleared, by name, with the Unix second each may be run again; what they were last told of
     /// them (chat channel 16 "D|"), and the tick they were last told one is shut to them.
     pub lockouts: Vec<Vec<(String, u64)>>,
@@ -763,6 +766,8 @@ impl Sim {
             makers_sent: vec![String::new(); cap],
             draughts: vec![Vec::new(); cap],
             draughts_sent: vec![String::new(); cap],
+            meter: vec![Default::default(); cap],
+            meter_sent: vec![String::new(); cap],
             potion_at: vec![0; cap],
             lockouts: vec![Vec::new(); cap],
             lockouts_sent: vec![String::new(); cap],
@@ -2433,6 +2438,12 @@ impl Sim {
             let mended = self.ents.attrs[attr][s] - was;
             if let Some(by) = self.ents.resolve(src).filter(|_| mended > 0.0) {
                 self.heal_threat(s, by, mended);
+            }
+        }
+        if attr == proto::defs::ATTR_HEALTH as usize && src != 0 {
+            let changed = self.ents.attrs[attr][s] - was;
+            if let Some(by) = self.ents.resolve(src).filter(|&b| changed != 0.0 && (b != s || changed > 0.0)) {
+                self.meter_add(by, -changed.min(0.0), changed.max(0.0));
             }
         }
         if attr == proto::defs::ATTR_HEALTH as usize && delta < 0.0 {

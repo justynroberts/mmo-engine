@@ -651,6 +651,14 @@ func _start() -> void:
 				var f := e.split(",")
 				if f.size() == 3:
 					plague_towns.append(Vector3(float(f[0]), float(f[1]), float(f[2])))
+		elif channel == 22: # our party's damage meter: "M|secs;name,dealt,mended;..."
+			var mf := text.substr(2).split(";", false)
+			var rows := []
+			for e in mf.slice(1):
+				var f := e.split(",")
+				if f.size() >= 3:
+					rows.append([f[0], float(f[1]), float(f[2])])
+			hud.set_meter(int(mf[0]) if mf.size() > 0 else 0, rows)
 		elif channel == 21: # the potions working on us: "P0|title,colour,secs;..."
 			_on_potions(text)
 		elif channel == 20: # who made what we carry: "K0|slot,name;..."
@@ -3729,14 +3737,14 @@ func _draw_land_edges() -> void:
 	im.surface_end()
 
 ## The realm's dungeons with where they are, from /play/info (a server too old to say where is left out):
-## [[Vector2, name, level, boss, foes, group], ...].
+## [[Vector2, name, level, boss, foes, group, raid], ...].
 func _dungeons() -> Array:
 	var out := []
 	var realm = info.get("realm", {})
 	for d in (realm.get("dungeons", []) if realm is Dictionary else []):
 		if d is Dictionary and d.get("x") != null and d.get("y") != null:
 			out.append([Vector2(float(d["x"]), float(d["y"])), String(d.get("name", "")), int(d.get("level", 0)),
-				String(d["boss"]) if d.get("boss") is String else "", int(d.get("foes", 0)), int(d.get("group", 3))])
+				String(d["boss"]) if d.get("boss") is String else "", int(d.get("foes", 0)), int(d.get("group", 3)), bool(d.get("raid", false))])
 	return out
 
 ## The server's word on a dungeon (entering, leaving, clearing it), also across the screen.

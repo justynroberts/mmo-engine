@@ -14,7 +14,7 @@ const ROLES := ["tank", "healer", "damage"]
 var panel := PanelContainer.new()
 var role := "damage"
 var wait_secs := 60.0              # past this the finder goes with whoever is queued (rules.finder_wait_secs)
-var _dungeons: Array = []          # [[Vector2, name, level, boss, foes, group], ...] (main.gd _dungeons)
+var _dungeons: Array = []          # [[Vector2, name, level, boss, foes, group, raid], ...] (main.gd _dungeons)
 var _queued := []                  # [dungeon, queued, wanted, role] while in a queue, else empty
 var _locked := {}                  # dungeon name -> when it opens again (seconds, Time.get_ticks_msec clock)
 var _since := 0.0                  # seconds in the queue
@@ -126,7 +126,7 @@ func _rebuild() -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
 		var l := Label.new()
-		l.text = "%s   level %d%s, a group of %d" % [d[1], d[2], (", " + String(d[3])) if String(d[3]) != "" else "", int(d[5])]
+		l.text = "%s   level %d%s, %s of %d" % [d[1], d[2], (", " + String(d[3])) if String(d[3]) != "" else "", "a raid" if d.size() > 6 and d[6] else "a group", int(d[5])]
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		l.add_theme_color_override("font_color", HUD.TEXT)
 		row.add_child(l)

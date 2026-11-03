@@ -10,7 +10,8 @@ The server already has dungeons, parties, farming, plots, crafting, guilds and 2
 through chat commands a new player never finds. This pass puts each behind a window, a marker or a quest, in this
 order (each step is playable on its own):
 
-**A. Dungeons and groups** — done (raids are a party grown past 5 with `/raid`; dungeons do not yet ask for one)
+**A. Dungeons and groups** — done (raids are a party grown past 5 with `/raid`; a dungeon with `raid` lets in only
+a raid, and the finder makes its group one)
 1. The seed world gets its two dungeons (Brú na Bóinne with Crom Dubh, the brigands' camp with the Brigand King),
    bosses included, as the 65,536 world has them.
 2. Dungeons marked on the map and minimap, with a level and "party of N" note; a banner on entering and clearing.
@@ -57,26 +58,32 @@ A bot type with a `boss` section fights by script rather than by its rule stack 
   worn down a bit at a time.
 
 Edited in the bot builder's Boss fight section or through the MCP; Godot and the browser client draw the marks.
-Still to do: a dungeon in the deploy seed with a boss in it (changing the seed changes the live server's world).
-Damage shown per player (a meter) would help groups learn a fight.
+Both deploy worlds have dungeons with bosses. The damage meter (`crates/server/src/meter.rs`): what each player
+dealt and mended in their party's latest fight, once a second on chat channel 22, drawn bottom right in the Godot
+HUD with a bar each and damage a second.
 
-## 2. Mail — first cut done
+## 2. Mail — done
 
 `/mail Name words` from anywhere; `/send Name 10 gold` (any item, coin included) from a market; `/mailbox` reads
 letters anywhere and takes what was sent at a market. Waiting letters are kept with the realm's save; a player is
 told when one comes and when they next join. `rules.mail_waiting` caps a mailbox.
 
-Still to do: a mailbox window in the Godot client (it works through chat for now), and auction proceeds arriving as
-letters rather than by the auction house's runner.
+The F6 window lists letters with buttons to write and to take goods. What the auction house owes (a sale's coin,
+goods unsold or taken down) comes as a letter from "The auction house" saying what it is for, reaching sellers
+whether or not they are on, and waits for room when their mailbox is full.
 
-## Hibernia at 65,536 — built, not deployed
+## Hibernia at 65,536 — deployed
 
 `deploy/hibernia-65536/`: the seed world sixteen times bigger, with tiered roads, farmsteads, fields and hedgerows,
 and standing stones between the towns and the capital. Dungeons come separately, as their own maps joined by zone
 lines. Deployed 2026-10-30. Since then: regions (flat lowland to rugged upland), mountains where the named ranges
 are (with a treeline and snow scaled to their height), heights twice as fine, lakes as one water, a sharp minimap.
-Two instanced dungeons with bosses (Brú na Bóinne, Campa na nDíbheirgeach). Still to do: folk for the new
-farmsteads, waymarks and inns along the highways, dungeons as maps of their own (zone lines).
+Two instanced dungeons with bosses (Brú na Bóinne, Campa na nDíbheirgeach), with rooms of their own (interiors) in
+place of separate maps. The country between is peopled (`scripts/hibernia_big.py country`): 96 farmsteads near the
+towns each have a place and a smallholder, and 17 villages on the highways an inn (named on the map, tavern music,
+an innkeeper selling bread, mead, healing draughts and a horse, so a traveller has a market there, and villagers).
+The Godot theme sets a waymark stone on the verge every 640 units along the highways in open country
+(`land.gd` `milestones`).
 
 ## 3. Gathering and crafting skills — done
 

@@ -3199,7 +3199,7 @@
    "name": "villager",
    "title": "Villager",
    "color": "#7a6a55",
-   "count": 111,
+   "count": 145,
    "behaviour": "wander",
    "speed_mult": 0.6,
    "sight": 30.0,
@@ -3459,7 +3459,24 @@
     "youghal",
     "kinsale",
     "ardee",
-    "listowel"
+    "listowel",
+    "teach osta cluain an chnoic",
+    "teach osta rath na habhann",
+    "teach osta dun na coille",
+    "teach osta ath bhui",
+    "teach osta baile rua",
+    "teach osta mainistir na coille",
+    "teach osta cill mor",
+    "teach osta rath na coille",
+    "teach osta doire locha",
+    "teach osta baile na mona",
+    "teach osta gort na habhann",
+    "teach osta rath na sceiche",
+    "teach osta doire bhui",
+    "teach osta cluain an fhia",
+    "teach osta cill an chnoic",
+    "teach osta ath an chnoic",
+    "teach osta gort an fhia"
    ],
    "surnames": [
     "Byrne",
@@ -5158,6 +5175,561 @@
    "xp": 80,
    "level": 16,
    "ambush": false
+  },
+  {
+   "name": "feirmeoir",
+   "title": "Smallholder",
+   "color": "#6b7a3a",
+   "count": 96,
+   "behaviour": "wander",
+   "speed_mult": 0.55,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "feirm achadh an fhia",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "mac tire",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "dibheirgeach",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "weather",
+      "names": [
+       "baisteach"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dusk",
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "dawn"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "The cows are bawling for me already.",
+       "Mist on the low field again."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "It's a long way to market from here.",
+       "Mind the gate, it sticks.",
+       "Not many come up this boreen.",
+       "The hay won't save itself."
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "A traveller! You're a long way from the town.",
+       "Stay on the road after dark, friend.",
+       "There's an inn on the highway, if you're tired.",
+       "God bless the work."
+      ]
+     }
+    }
+   ],
+   "names": [
+    "Seamus",
+    "Diarmuid",
+    "Tomas",
+    "Fintan",
+    "Lorcan",
+    "Oisin",
+    "Ruairi",
+    "Tadhg",
+    "Malachy",
+    "Cathal",
+    "Brendan",
+    "Donal",
+    "Ciaran",
+    "Eamon",
+    "Colm",
+    "Aidan",
+    "Declan",
+    "Ronan",
+    "Niall",
+    "Fergus",
+    "Cormac",
+    "Denis",
+    "Joseph",
+    "Francis",
+    "Peter",
+    "Martin",
+    "Kevin",
+    "Sean",
+    "Liam",
+    "Dermot",
+    "Conor",
+    "Brian",
+    "Daniel",
+    "Owen",
+    "Hugh",
+    "James",
+    "Thomas",
+    "John",
+    "Michael",
+    "Patrick"
+   ],
+   "work": "fields",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ],
+   "homes": [
+    "feirm achadh na coille",
+    "feirm doire beag",
+    "feirm lios na gcloch",
+    "feirm doire mor",
+    "feirm achadh mor",
+    "feirm tulach bhui",
+    "feirm ath na coille",
+    "feirm ath na coille 2",
+    "feirm baile na mona",
+    "feirm ath na coille 3",
+    "feirm doire na coille",
+    "feirm rath locha",
+    "feirm mainistir an mhuilinn",
+    "feirm rath na mona",
+    "feirm gort an chnoic",
+    "feirm dun mor",
+    "feirm gort an mhuilinn",
+    "feirm doire locha",
+    "feirm gort na sceiche",
+    "feirm baile na gcloch",
+    "feirm baile na sceiche",
+    "feirm doire na gcloch",
+    "feirm achadh mor 2",
+    "feirm cluain na sceiche",
+    "feirm cill na coille",
+    "feirm cill an iarainn",
+    "feirm cluain na sceiche 2",
+    "feirm mainistir na habhann",
+    "feirm cill an mhuilinn",
+    "feirm gort an fhia",
+    "feirm baile mor",
+    "feirm dun na habhann",
+    "feirm lios bhui",
+    "feirm ath locha",
+    "feirm baile na gcloch 2",
+    "feirm ath an droichid",
+    "feirm doire an droichid",
+    "feirm gort na coille",
+    "feirm cill an iarainn 2",
+    "feirm cluain na gcloch",
+    "feirm gort na habhann",
+    "feirm ath na habhann",
+    "feirm ath an iarainn",
+    "feirm mainistir rua",
+    "feirm cill na mona",
+    "feirm cluain an iarainn",
+    "feirm mainistir mor",
+    "feirm achadh locha",
+    "feirm cluain an fhia",
+    "feirm ath na sceiche",
+    "feirm baile an fhia",
+    "feirm lios na habhann",
+    "feirm achadh locha 2",
+    "feirm lios na habhann 2",
+    "feirm baile na gcloch 3",
+    "feirm ath glas",
+    "feirm rath locha 2",
+    "feirm achadh na mona",
+    "feirm dun rua",
+    "feirm achadh an chnoic",
+    "feirm doire beag 2",
+    "feirm mainistir an droichid",
+    "feirm cluain na coille",
+    "feirm ath na coille 4",
+    "feirm ath bhui",
+    "feirm mainistir mor 2",
+    "feirm mainistir an droichid 2",
+    "feirm mainistir glas",
+    "feirm dun na sceiche",
+    "feirm rath an fhia",
+    "feirm ath rua",
+    "feirm rath na habhann",
+    "feirm rath an chnoic",
+    "feirm gort an droichid",
+    "feirm baile bhui",
+    "feirm cill mor",
+    "feirm achadh na habhann",
+    "feirm rath na mona 2",
+    "feirm dun an fhia",
+    "feirm baile na gcloch 4",
+    "feirm rath an chnoic 2",
+    "feirm lios glas",
+    "feirm tulach na coille",
+    "feirm doire na coille 2",
+    "feirm doire mor 2",
+    "feirm gort na coille 2",
+    "feirm rath an droichid",
+    "feirm ath na sceiche 2",
+    "feirm cill na coille 2",
+    "feirm cluain na coille 2",
+    "feirm tulach na gcloch",
+    "feirm doire na habhann",
+    "feirm cluain na sceiche 3",
+    "feirm tulach an droichid",
+    "feirm ath na coille 5"
+   ]
+  },
+  {
+   "name": "ostoir",
+   "title": "Innkeeper",
+   "color": "#8d5524",
+   "count": 17,
+   "behaviour": "wander",
+   "speed_mult": 0.4,
+   "sight": 30.0,
+   "attack": null,
+   "attrs": {},
+   "home": "teach osta cluain an chnoic",
+   "rules": [
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "lochlannach",
+      "within": 35.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "tine",
+      "within": 10.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "sluagh mairseala",
+      "within": 30.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "sees_kind",
+      "bot": "meirleach",
+      "within": 25.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "night"
+      ]
+     },
+     "then": {
+      "kind": "indoors"
+     }
+    },
+    {
+     "when": {
+      "kind": "during",
+      "parts": [
+       "day",
+       "dusk"
+      ]
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "A bed and a hot supper, traveller?",
+       "The road's long; rest your feet a while.",
+       "Mead's fresh today.",
+       "Horses for hire, or for keeps!"
+      ]
+     }
+    },
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 14.0
+     },
+     "then": {
+      "kind": "chat",
+      "lines": [
+       "Come in, come in! You look half dead from the road.",
+       "News from the towns? Sit down and tell it.",
+       "Bread, mead and a draught for your wounds."
+      ]
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 3
+    },
+    {
+     "item": "miodh",
+     "chance_pct": 30.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "shop": [
+    {
+     "item": "aran",
+     "price": 2
+    },
+    {
+     "item": "miodh",
+     "price": 3
+    },
+    {
+     "item": "deoch leighis",
+     "price": 6
+    },
+    {
+     "item": "capall",
+     "price": 60
+    }
+   ],
+   "names": [
+    "Martin",
+    "Agnes",
+    "Peter",
+    "Alice",
+    "Richard"
+   ],
+   "work": "square",
+   "surnames": [
+    "Byrne",
+    "Kavanagh",
+    "Walsh",
+    "Murphy",
+    "Kelly",
+    "O'Brien",
+    "Ryan",
+    "O'Neill",
+    "Doyle",
+    "Gallagher",
+    "Quinn",
+    "Brennan",
+    "Flynn",
+    "Nolan",
+    "Duffy",
+    "Fitzgerald",
+    "Burke",
+    "Power",
+    "Lynch",
+    "Kennedy",
+    "Daly",
+    "McCarthy",
+    "O'Sullivan",
+    "Carroll",
+    "Dunne",
+    "Hayes",
+    "Moran",
+    "Healy",
+    "Doherty",
+    "Connolly",
+    "Kearney",
+    "Maguire",
+    "Mulligan",
+    "O'Connor",
+    "O'Donnell",
+    "O'Reilly",
+    "Regan",
+    "Sheehan",
+    "Tierney",
+    "Whelan",
+    "Keane",
+    "Hogan",
+    "Farrell",
+    "Fallon",
+    "Boyle",
+    "Costello",
+    "Delaney",
+    "Egan",
+    "Galvin",
+    "Hennessy",
+    "Joyce",
+    "Kinsella",
+    "Lacey",
+    "MacNamara",
+    "Molloy",
+    "Nugent",
+    "Phelan",
+    "Rafferty",
+    "Sweeney",
+    "Tobin",
+    "Ward",
+    "Cassidy",
+    "Dolan",
+    "Grady",
+    "Hurley",
+    "Madden",
+    "Mooney",
+    "Roche",
+    "Scanlon",
+    "Tully"
+   ],
+   "homes": [
+    "teach osta rath na habhann",
+    "teach osta dun na coille",
+    "teach osta ath bhui",
+    "teach osta baile rua",
+    "teach osta mainistir na coille",
+    "teach osta cill mor",
+    "teach osta rath na coille",
+    "teach osta doire locha",
+    "teach osta baile na mona",
+    "teach osta gort na habhann",
+    "teach osta rath na sceiche",
+    "teach osta doire bhui",
+    "teach osta cluain an fhia",
+    "teach osta cill an chnoic",
+    "teach osta ath an chnoic",
+    "teach osta gort an fhia"
+   ]
   }
  ],
  "places": [
@@ -6164,6 +6736,718 @@
    "r": 240.0,
    "sound": "crypt",
    "music": "battle"
+  },
+  {
+   "name": "teach osta cluain an chnoic",
+   "x": 30909.5,
+   "y": 28392.6,
+   "r": 55.0,
+   "title": "Cluain an Chnoic (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta rath na habhann",
+   "x": 33130.7,
+   "y": 43332.7,
+   "r": 55.0,
+   "title": "Ráth na hAbhann (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta dun na coille",
+   "x": 36363.6,
+   "y": 50576.3,
+   "r": 55.0,
+   "title": "Dún na Coille (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta ath bhui",
+   "x": 41662.3,
+   "y": 48694.8,
+   "r": 55.0,
+   "title": "Áth Bhuí (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta baile rua",
+   "x": 32678.1,
+   "y": 52362.5,
+   "r": 55.0,
+   "title": "Baile Rua (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta mainistir na coille",
+   "x": 25686.8,
+   "y": 40055.1,
+   "r": 55.0,
+   "title": "Mainistir na Coille (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta cill mor",
+   "x": 24494.3,
+   "y": 36081.8,
+   "r": 55.0,
+   "title": "Cill Mór (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta rath na coille",
+   "x": 39245.6,
+   "y": 45226.0,
+   "r": 55.0,
+   "title": "Ráth na Coille (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta doire locha",
+   "x": 43848.2,
+   "y": 47847.0,
+   "r": 55.0,
+   "title": "Doire Locha (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta baile na mona",
+   "x": 44263.7,
+   "y": 31845.1,
+   "r": 55.0,
+   "title": "Baile na Móna (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta gort na habhann",
+   "x": 30516.2,
+   "y": 32767.8,
+   "r": 55.0,
+   "title": "Gort na hAbhann (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta rath na sceiche",
+   "x": 26180.4,
+   "y": 33790.3,
+   "r": 55.0,
+   "title": "Ráth na Sceiche (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta doire bhui",
+   "x": 44641.2,
+   "y": 21874.0,
+   "r": 55.0,
+   "title": "Doire Bhuí (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta cluain an fhia",
+   "x": 27672.5,
+   "y": 51335.0,
+   "r": 55.0,
+   "title": "Cluain an Fhia (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta cill an chnoic",
+   "x": 40551.4,
+   "y": 32378.6,
+   "r": 55.0,
+   "title": "Cill an Chnoic (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta ath an chnoic",
+   "x": 30211.9,
+   "y": 26297.4,
+   "r": 55.0,
+   "title": "Áth an Chnoic (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "teach osta gort an fhia",
+   "x": 28374.7,
+   "y": 33541.3,
+   "r": 55.0,
+   "title": "Gort an Fhia (An Teach Ósta)",
+   "music": "tavern"
+  },
+  {
+   "name": "feirm achadh an fhia",
+   "x": 46152.5,
+   "y": 31225.3,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh na coille",
+   "x": 31769.2,
+   "y": 30900.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire beag",
+   "x": 44070.0,
+   "y": 19178.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm lios na gcloch",
+   "x": 33943.5,
+   "y": 48941.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire mor",
+   "x": 34898.4,
+   "y": 37190.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh mor",
+   "x": 46427.8,
+   "y": 18705.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm tulach bhui",
+   "x": 34191.4,
+   "y": 53257.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na coille",
+   "x": 34540.1,
+   "y": 18819.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na coille 2",
+   "x": 28292.2,
+   "y": 54427.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile na mona",
+   "x": 38379.2,
+   "y": 30675.3,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na coille 3",
+   "x": 41961.4,
+   "y": 40445.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire na coille",
+   "x": 33332.1,
+   "y": 50365.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath locha",
+   "x": 35520.8,
+   "y": 47689.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir an mhuilinn",
+   "x": 35832.6,
+   "y": 49104.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath na mona",
+   "x": 23433.8,
+   "y": 34142.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort an chnoic",
+   "x": 26915.4,
+   "y": 42941.3,
+   "r": 40.0
+  },
+  {
+   "name": "feirm dun mor",
+   "x": 45536.4,
+   "y": 24258.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort an mhuilinn",
+   "x": 35986.1,
+   "y": 19482.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire locha",
+   "x": 51850.0,
+   "y": 19670.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort na sceiche",
+   "x": 16185.4,
+   "y": 31412.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile na gcloch",
+   "x": 51791.6,
+   "y": 17835.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile na sceiche",
+   "x": 24348.3,
+   "y": 41072.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire na gcloch",
+   "x": 29041.6,
+   "y": 20183.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh mor 2",
+   "x": 12393.8,
+   "y": 49479.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain na sceiche",
+   "x": 39895.5,
+   "y": 17424.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill na coille",
+   "x": 31312.4,
+   "y": 29780.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill an iarainn",
+   "x": 45201.3,
+   "y": 26081.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain na sceiche 2",
+   "x": 30716.3,
+   "y": 46695.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir na habhann",
+   "x": 19528.3,
+   "y": 26740.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill an mhuilinn",
+   "x": 22839.8,
+   "y": 32855.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort an fhia",
+   "x": 17310.3,
+   "y": 48866.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile mor",
+   "x": 30462.7,
+   "y": 18408.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm dun na habhann",
+   "x": 29171.2,
+   "y": 40199.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm lios bhui",
+   "x": 21760.2,
+   "y": 29980.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath locha",
+   "x": 46248.5,
+   "y": 38215.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile na gcloch 2",
+   "x": 20126.4,
+   "y": 46004.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath an droichid",
+   "x": 33628.2,
+   "y": 29870.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire an droichid",
+   "x": 37214.1,
+   "y": 37412.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort na coille",
+   "x": 35706.7,
+   "y": 40186.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill an iarainn 2",
+   "x": 46698.2,
+   "y": 33923.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain na gcloch",
+   "x": 42639.8,
+   "y": 44025.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort na habhann",
+   "x": 43748.5,
+   "y": 44835.3,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na habhann",
+   "x": 33466.0,
+   "y": 21742.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath an iarainn",
+   "x": 36622.7,
+   "y": 18567.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir rua",
+   "x": 42360.0,
+   "y": 27656.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill na mona",
+   "x": 41589.2,
+   "y": 35629.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain an iarainn",
+   "x": 47043.0,
+   "y": 37155.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir mor",
+   "x": 31418.0,
+   "y": 23134.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh locha",
+   "x": 19226.8,
+   "y": 51156.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain an fhia",
+   "x": 21683.2,
+   "y": 33453.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na sceiche",
+   "x": 34878.1,
+   "y": 20895.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile an fhia",
+   "x": 20873.9,
+   "y": 28429.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm lios na habhann",
+   "x": 48417.1,
+   "y": 18396.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh locha 2",
+   "x": 20007.5,
+   "y": 30118.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm lios na habhann 2",
+   "x": 44966.4,
+   "y": 37025.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile na gcloch 3",
+   "x": 19177.8,
+   "y": 46705.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath glas",
+   "x": 40461.4,
+   "y": 20509.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath locha 2",
+   "x": 49099.8,
+   "y": 20667.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh na mona",
+   "x": 45600.6,
+   "y": 47110.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm dun rua",
+   "x": 41772.0,
+   "y": 20507.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh an chnoic",
+   "x": 20506.5,
+   "y": 57053.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire beag 2",
+   "x": 44139.0,
+   "y": 26528.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir an droichid",
+   "x": 40566.0,
+   "y": 48220.1,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain na coille",
+   "x": 16403.3,
+   "y": 50618.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na coille 4",
+   "x": 37446.8,
+   "y": 49171.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath bhui",
+   "x": 19425.2,
+   "y": 52482.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir mor 2",
+   "x": 28661.6,
+   "y": 21223.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir an droichid 2",
+   "x": 34798.1,
+   "y": 43536.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm mainistir glas",
+   "x": 22344.4,
+   "y": 31086.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm dun na sceiche",
+   "x": 16346.4,
+   "y": 52027.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath an fhia",
+   "x": 30813.4,
+   "y": 40551.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath rua",
+   "x": 46330.9,
+   "y": 32321.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath na habhann",
+   "x": 45379.3,
+   "y": 48416.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath an chnoic",
+   "x": 17204.4,
+   "y": 30243.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort an droichid",
+   "x": 50962.6,
+   "y": 18895.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile bhui",
+   "x": 42420.3,
+   "y": 36788.3,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill mor",
+   "x": 28291.3,
+   "y": 38826.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm achadh na habhann",
+   "x": 18087.6,
+   "y": 47955.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath na mona 2",
+   "x": 46339.0,
+   "y": 23490.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm dun an fhia",
+   "x": 38045.3,
+   "y": 43482.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm baile na gcloch 4",
+   "x": 50378.2,
+   "y": 17496.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath an chnoic 2",
+   "x": 33422.0,
+   "y": 51518.4,
+   "r": 40.0
+  },
+  {
+   "name": "feirm lios glas",
+   "x": 46325.5,
+   "y": 29228.6,
+   "r": 40.0
+  },
+  {
+   "name": "feirm tulach na coille",
+   "x": 43000.6,
+   "y": 45992.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire na coille 2",
+   "x": 32195.4,
+   "y": 50607.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire mor 2",
+   "x": 35320.7,
+   "y": 35926.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm gort na coille 2",
+   "x": 43286.8,
+   "y": 20190.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm rath an droichid",
+   "x": 30963.2,
+   "y": 22083.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na sceiche 2",
+   "x": 33837.1,
+   "y": 20299.5,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cill na coille 2",
+   "x": 31526.5,
+   "y": 28700.9,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain na coille 2",
+   "x": 45547.7,
+   "y": 19516.0,
+   "r": 40.0
+  },
+  {
+   "name": "feirm tulach na gcloch",
+   "x": 18794.3,
+   "y": 56906.7,
+   "r": 40.0
+  },
+  {
+   "name": "feirm doire na habhann",
+   "x": 33614.1,
+   "y": 38956.2,
+   "r": 40.0
+  },
+  {
+   "name": "feirm cluain na sceiche 3",
+   "x": 39352.1,
+   "y": 49465.3,
+   "r": 40.0
+  },
+  {
+   "name": "feirm tulach an droichid",
+   "x": 41089.1,
+   "y": 28683.8,
+   "r": 40.0
+  },
+  {
+   "name": "feirm ath na coille 5",
+   "x": 28040.2,
+   "y": 53014.6,
+   "r": 40.0
   }
  ],
  "routes": [

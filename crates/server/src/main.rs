@@ -41,6 +41,7 @@ mod social;
 mod statics;
 mod store;
 mod interior;
+mod meter;
 mod potions;
 mod talents;
 mod trade;

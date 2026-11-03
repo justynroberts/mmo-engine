@@ -208,7 +208,8 @@ fn d_plot_size() -> u16 {
 /// sees or meets. When the last of them falls the party is rewarded; when everyone has left it closes. Each player
 /// who cleared it may not run it again for `respawn_mins`. With an `interior`, walking into `place` takes the party
 /// inside: rooms and corridors laid out in the interior's own place (`crates/server/src/interior.rs`), the last
-/// one the boss's, and a way out in the first.
+/// one the boss's, and a way out in the first. A `raid` dungeon lets in only a raid (a party grown with `/raid`, or
+/// one the group finder made for it).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DungeonDef {
@@ -227,6 +228,8 @@ pub struct DungeonDef {
     pub respawn_mins: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interior: Option<InteriorFile>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub raid: bool,
 }
 
 /// Where a dungeon's rooms are and how many: laid out inside `place` (a place of its own, out of everyone's way:
@@ -326,6 +329,7 @@ pub struct DungeonRt {
     pub group: u8,
     pub respawn_mins: f32,
     pub interior: Option<InteriorRt>,
+    pub raid: bool,
 }
 
 /// An interior resolved: its place by index.
@@ -573,7 +577,7 @@ impl GameFile {
                     Some(InteriorRt { place: ip, rooms: i.rooms, seed: i.seed })
                 }
             };
-            dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group, respawn_mins: d.respawn_mins, interior });
+            dungeons.push(DungeonRt { name: d.name.clone(), place: at, bots, xp: d.xp, reward, group: d.group, respawn_mins: d.respawn_mins, interior, raid: d.raid });
         }
 
         Ok(Realm { loot, recipes, crops, plots: self.plots.clone(), dungeons, skills: self.skills.clone(), achievements: self.achievements.clone(), arch_skill })

@@ -85,6 +85,7 @@ var spell_slots: Array[Slot] = []
 var attackers_box := VBoxContainer.new() # who is fighting you, under your target's frame (main.gd _show_attackers)
 var _attackers_key := ""
 var potion_row := HBoxContainer.new() # the potions working on you, under your frame, counting down
+var meter_box := VBoxContainer.new()  # bottom right: the damage meter of your party's latest fight (set_meter)
 var _potions: Array = []                 # [[title, colour, ends at (seconds since start)], ...]
 var party_box := VBoxContainer.new()    # party mates under your frame: name and health
 var party_head := HBoxContainer.new()   # over them: PARTY n/size and a Leave button
@@ -253,6 +254,16 @@ func _ready() -> void:
 	attackers_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	attackers_box.visible = false
 	root.add_child(attackers_box)
+	meter_box.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	meter_box.offset_left = -300
+	meter_box.offset_top = -300
+	meter_box.offset_right = -16
+	meter_box.offset_bottom = -110
+	meter_box.alignment = BoxContainer.ALIGNMENT_END
+	meter_box.add_theme_constant_override("separation", 2)
+	meter_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	meter_box.visible = false
+	root.add_child(meter_box)
 	potion_row.position = Vector2(16, 100)
 	potion_row.add_theme_constant_override("separation", 4)
 	potion_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -718,6 +729,63 @@ func set_attackers(rows: Array) -> void:
 		more.add_theme_color_override("font_color", MUTED)
 		_outline(more, 3)
 		attackers_box.add_child(more)
+
+## The damage meter (chat channel 22): the fight's length in seconds and [[name, dealt, mended], ...], most dealt
+## first; each row a bar of its share of the most dealt, with dealt and mended a second beside it.
+func set_meter(secs: int, rows: Array) -> void:
+	for c in meter_box.get_children():
+		meter_box.remove_child(c)
+		c.queue_free()
+	meter_box.visible = not rows.is_empty()
+	if rows.is_empty():
+		return
+	var head := Label.new()
+	head.text = "DAMAGE   %d:%02d" % [secs / 60, secs % 60]
+	head.add_theme_font_size_override("font_size", 12)
+	head.add_theme_color_override("font_color", ACCENT)
+	_outline(head, 3)
+	meter_box.add_child(head)
+	var top := 1.0
+	for r in rows:
+		top = maxf(top, maxf(float(r[1]), float(r[2])))
+	var s := maxf(1.0, float(secs))
+	for r in rows.slice(0, 10):
+		var row := Control.new()
+		row.custom_minimum_size = Vector2(284, 18)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var bg := ColorRect.new()
+		bg.color = Color(0, 0, 0, 0.55)
+		bg.size = Vector2(284, 18)
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(bg)
+		for part in [[float(r[1]), Color("c0392b")], [float(r[2]), Color("3aa856", 0.75)]]:
+			if part[0] <= 0.0:
+				continue
+			var fill := ColorRect.new()
+			fill.color = part[1]
+			fill.size = Vector2(284.0 * part[0] / top, 18 if part[1] == Color("c0392b") else 4)
+			fill.position = Vector2(0, 0 if part[1] == Color("c0392b") else 14)
+			fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(fill)
+		var l := Label.new()
+		l.text = " %s" % r[0]
+		l.size = Vector2(150, 18)
+		l.clip_text = true
+		l.add_theme_font_size_override("font_size", 12)
+		l.add_theme_color_override("font_color", TEXT)
+		_outline(l, 3)
+		row.add_child(l)
+		var n := Label.new()
+		var dealt := float(r[1])
+		var mended := float(r[2])
+		n.text = "%d (%.0f/s)" % [int(dealt), dealt / s] if mended <= 0.0 else "%d (%.0f/s)  +%d" % [int(dealt), dealt / s, int(mended)]
+		n.size = Vector2(280, 18)
+		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		n.add_theme_font_size_override("font_size", 11)
+		n.add_theme_color_override("font_color", TEXT)
+		_outline(n, 3)
+		row.add_child(n)
+		meter_box.add_child(row)
 
 ## The potions working on you: [[title, colour, seconds left], ...] (chat channel 21); they count down here.
 func set_potions(list: Array) -> void:

@@ -376,6 +376,8 @@ export interface DungeonDef {
   group?: number
   /** Minutes a player who cleared it waits before running it again (0..10080; 30 when left out). */
   respawn_mins?: number
+  /** Only a raid may go in (a party grown with /raid, or one the group finder made for it). */
+  raid?: boolean
   /** Rooms inside: walking into place takes the party into rooms (2..8) laid out in this place of its own (put it
    *  out of everyone's way, at sea: its footprint is cut out of the solid sea), the boss in the last. A restart moves
    *  its walls. */

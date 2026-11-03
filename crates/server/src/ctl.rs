@@ -363,7 +363,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         let mut v = json!({"name": d.name, "place": p.map(|p| p.name.clone()), "x": p.map(|p| p.x), "y": p.map(|p| p.y), "r": p.map(|p| p.r),
             "level": foes.clone().map(|(a, _)| a.level).max().unwrap_or(0),
             "boss": foes.clone().find(|(a, _)| a.boss.is_some()).map(|(a, _)| if a.title.is_empty() { a.name.clone() } else { a.title.clone() }),
-            "foes": foes.map(|(_, n)| n as u32).sum::<u32>(), "group": d.group, "respawn_mins": d.respawn_mins});
+            "foes": foes.map(|(_, n)| n as u32).sum::<u32>(), "group": d.group, "respawn_mins": d.respawn_mins, "raid": d.raid});
         // Its rooms, for a client to draw (their walls come with the world's, as scenery): floors and walls as
         // [x0, y0, x1, y1], the way in and the way out.
         if let Some(l) = crate::interior::of(&sim.places, d) {

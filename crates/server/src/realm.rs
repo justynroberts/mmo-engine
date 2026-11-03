@@ -353,6 +353,7 @@ impl Sim {
         self.system_furniture();
         self.system_makers();
         self.system_potions();
+        self.system_meter();
     }
 
     /// Each player is told the land held within `LAND_REACH` of them, theirs marked, when that changes (chat channel
@@ -450,6 +451,13 @@ impl Sim {
                             self.lock_told[s] = self.tick.max(1);
                             let mins = (until.saturating_sub(now) as f32 / 60.0).ceil() as u32;
                             self.tells.push((s, format!("You cleared {} lately: it stirs again in {mins} min.", self.realm.dungeons[d].name)));
+                        }
+                        continue;
+                    }
+                    if self.realm.dungeons[d].raid && !self.ents.god[s] && !(self.party[s] != 0 && self.raids.contains(&self.party[s])) {
+                        if self.tick.saturating_sub(self.lock_told[s]) > 10 * self.tick_hz || self.lock_told[s] == 0 {
+                            self.lock_told[s] = self.tick.max(1);
+                            self.tells.push((s, format!("{} lets in only a raid: grow your party with /raid, or queue for it with /queue.", self.realm.dungeons[d].name)));
                         }
                         continue;
                     }
@@ -1410,10 +1418,28 @@ mod tests {
     }
 
     #[test]
+    fn a_raid_dungeon_lets_in_only_a_raid() {
+        let mut s = sim_with(|g| {
+            g.places.push(proto::game::Place { name: "hall".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Hall".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
+            g.dungeons = vec![DungeonDef { name: "The Hall".into(), place: "hall".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 1 }], xp: 0, reward: None, group: 8, respawn_mins: 30.0, interior: None, raid: true }];
+        });
+        let (a, b) = (player(&mut s, 300.0, 300.0, "a"), player(&mut s, 305.0, 300.0, "b"));
+        s.party[a] = 7;
+        s.party[b] = 7;
+        s.system_realm();
+        assert!(s.rs.runs.is_empty(), "a party is turned away");
+        assert!(s.tells.iter().any(|(w, t)| *w == a && t.contains("only a raid")));
+        s.raids.insert(7);
+        s.system_realm();
+        assert_eq!(s.rs.runs.len(), 1, "a raid goes in, together");
+        assert_eq!(s.rs.phase[a], s.rs.phase[b]);
+    }
+
+    #[test]
     fn a_dungeon_gives_each_party_its_own_monsters() {
         let mut s = sim_with(|g| {
             g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 20.0, title: "The Crypt".into(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
-            g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3, respawn_mins: 30.0, interior: None }];
+            g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 3 }], xp: 0, reward: Some(Stack { item: "medkit".into(), count: 1 }), group: 3, respawn_mins: 30.0, interior: None, raid: false }];
         });
         let (a, b) = (player(&mut s, 300.0, 300.0, "a"), player(&mut s, 305.0, 300.0, "b"));
         s.system_realm();
@@ -1450,7 +1476,7 @@ mod tests {
             g.places.push(place("barrow", 100.0, 400.0, 10.0));
             g.places.push(place("barrow inside", 300.0, 150.0, 150.0));
             let interior = Some(proto::realm::InteriorFile { place: "barrow inside".into(), rooms: 3, seed: 1 });
-            g.dungeons = vec![DungeonDef { name: "The Barrow".into(), place: "barrow".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 2 }], xp: 0, reward: None, group: 3, respawn_mins: 30.0, interior }];
+            g.dungeons = vec![DungeonDef { name: "The Barrow".into(), place: "barrow".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 2 }], xp: 0, reward: None, group: 3, respawn_mins: 30.0, interior, raid: false }];
         });
         let lay = crate::interior::of(&s.places, &s.realm.dungeons[0]).unwrap();
         let a = player(&mut s, 100.0, 400.0, "a");

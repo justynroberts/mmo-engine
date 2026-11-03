@@ -55,13 +55,20 @@ pub struct Listing {
     pub ends: u64,
 }
 
-/// Owed to a player: money from a sale, or goods that did not sell. Handed over when they are about with room.
+/// Owed to a player: money from a sale, or goods that did not sell or were taken down. Sent as a letter from the
+/// auction house (`mail.rs`) once their mailbox has room, so it reaches them whether or not they are on.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Post {
     pub owner: String,
     pub item: String,
     pub count: u32,
+    /// The letter's words.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
+
+/// Who auction letters are from.
+pub const AUCTION_HOUSE: &str = "The auction house";
 
 /// The market's live state.
 #[derive(Default)]
@@ -502,7 +509,8 @@ impl Sim {
             auction_op::CANCEL => {
                 let Some(k) = self.market.listings.iter().position(|l| l.id == target && l.seller == me) else { return false };
                 let l = self.market.listings.remove(k);
-                self.market.post.push(Post { owner: me.clone(), item: l.item, count: l.count as u32 });
+                let note = format!("Your {} {}, taken down as you asked.", l.count, l.item);
+                self.market.post.push(Post { owner: me.clone(), item: l.item, count: l.count as u32, note });
                 self.rs.dirty = true;
                 self.send_listings(s, &me, 0, 0, true);
                 true
@@ -564,7 +572,8 @@ impl Sim {
         self.bump_bag(s);
         self.market.listings.remove(k);
         let money = self.items[c].name.clone();
-        self.market.post.push(Post { owner: l.seller.clone(), item: money, count: l.price });
+        let note = format!("{} bought your {} {} for {}.", self.name_of(s), l.count, l.item, l.price);
+        self.market.post.push(Post { owner: l.seller.clone(), item: money, count: l.price, note });
         self.rs.dirty = true;
         self.tells.push((s, format!("Bought {} {} for {}.", l.count, l.item, l.price)));
         for p in 0..self.ents.high {
@@ -596,47 +605,33 @@ impl Sim {
         }
     }
 
-    /// Listings that ran out go back to their sellers, and what is owed is handed to those about with room.
+    /// Listings that ran out go back to their sellers, and what is owed goes out as letters to mailboxes with room.
     fn system_auction(&mut self) {
         let now = unix_now();
         if self.market.listings.iter().any(|l| l.ends <= now) {
             let (gone, kept): (Vec<Listing>, Vec<Listing>) = std::mem::take(&mut self.market.listings).into_iter().partition(|l| l.ends <= now);
             self.market.listings = kept;
             for l in gone {
-                self.market.post.push(Post { owner: l.seller, item: l.item, count: l.count as u32 });
+                let note = format!("Your {} {} did not sell.", l.count, l.item);
+                self.market.post.push(Post { owner: l.seller, item: l.item, count: l.count as u32, note });
             }
             self.rs.dirty = true;
         }
         if self.market.post.is_empty() || self.tick % (5 * self.tick_hz.max(1)) != 0 {
             return;
         }
-        for s in 0..self.ents.high {
-            if !self.live_player(s) {
+        let mut k = 0;
+        while k < self.market.post.len() {
+            let p = &self.market.post[k];
+            if !self.items.iter().any(|x| x.name == p.item) {
+                self.market.post.remove(k); // an item the game no longer has
                 continue;
             }
-            let Some(me) = self.tag_of(s) else { continue };
-            let mut k = 0;
-            while k < self.market.post.len() {
-                if self.market.post[k].owner != me {
-                    k += 1;
-                    continue;
-                }
-                let Some(i) = self.items.iter().position(|x| x.name == self.market.post[k].item) else {
-                    self.market.post.remove(k); // an item the game no longer has
-                    continue;
-                };
-                let n = self.market.post[k].count;
-                let left = self.give(s, i, n);
-                if left < n {
-                    self.tells.push((s, format!("A runner from the auction house brings you {} {}.", n - left, self.items[i].shown())));
-                    self.rs.dirty = true;
-                }
-                if left == 0 {
-                    self.market.post.remove(k);
-                } else {
-                    self.market.post[k].count = left;
-                    break; // the bag is full
-                }
+            let letter = crate::mail::Letter { to: p.owner.clone(), from: AUCTION_HOUSE.into(), text: p.note.clone(), item: p.item.clone(), count: p.count, sent: now, told: false };
+            if self.post_letter(letter).is_ok() {
+                self.market.post.remove(k);
+            } else {
+                k += 1; // their mailbox is full: it waits
             }
         }
     }
@@ -783,13 +778,22 @@ mod tests {
         let id = s.market.listings.iter().find(|l| l.item == "sword").unwrap().id;
         act(&mut s, b, ACT_AUCTION, id, (auction_op::BUY as u16) << 8);
         assert_eq!((count(&s, b, sword as u8 + 1), count(&s, b, coin)), (1, 15));
-        // The seller is paid within a few seconds; the bread runs out and comes home.
+        // The seller's pay comes by letter within a few seconds; the bread runs out and comes back the same way,
+        // taken from the mailbox at a market.
         s.market.listings[0].ends = 0;
         for _ in 0..120 {
             s.step(&[]);
         }
-        assert_eq!((count(&s, a, coin), count(&s, a, bread as u8 + 1)), (25, 3));
         assert!(s.market.post.is_empty() && s.market.listings.is_empty());
+        let tag = s.tag_of(a).unwrap();
+        assert_eq!(s.letters_for(&tag), 2);
+        assert!(s.market.mail.iter().all(|l| l.from == super::AUCTION_HOUSE));
+        assert!(s.market.mail.iter().any(|l| l.text.contains("bought your 1 sword for 25")), "{:?}", s.market.mail);
+        assert_eq!(count(&s, a, coin), 0);
+        let read = s.read_mail(a);
+        assert_eq!(read.len(), 2, "{read:?}");
+        assert_eq!((count(&s, a, coin), count(&s, a, bread as u8 + 1)), (25, 3));
+        assert_eq!(s.letters_for(&tag), 0);
         // And it all survives a restart.
         let at = s.inv[a].iter().position(|x| x.0 == bread as u8 + 1).unwrap() as u16;
         act(&mut s, a, ACT_AUCTION, 7, (auction_op::SELL as u16) << 8 | at);

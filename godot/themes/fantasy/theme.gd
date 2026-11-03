@@ -943,6 +943,11 @@ func _land_dress(cx: int, cy: int, node: Node3D, batch: Dictionary, lights: Arra
 		var sign_at := p + Vector2(cos(mid + 0.5), sin(mid + 0.5)) * 6.5
 		if free.call(sign_at):
 			node.add_child(_signpost(Vector3(sign_at.x, height(sign_at.x, sign_at.y), sign_at.y), dirs))
+	# Waymarks along the highways, out in the country: a squat cut stone, its face to the road.
+	for m in land.milestones(cx, cy):
+		var mp: Vector2 = m[0]
+		if cell.has_point(mp) and free.call(mp) and towns.at(mp).get("farmstead", false):
+			node.add_child(_milestone(Vector3(mp.x, height(mp.x, mp.y), mp.y), m[1]))
 	# Verge stones and the odd bush along country roads, out of the settlements.
 	for sg in world.road_segments(cx, cy):
 		var a := Vector2(sg[0], sg[1])
@@ -1054,6 +1059,34 @@ func _signpost(at: Vector3, dirs: Array) -> Node3D:
 		arm.rotation.y = -ang
 		arm.position = Vector3(d.x * 0.45, 2.05 - 0.3 * k, d.y * 0.45)
 		root.add_child(arm)
+	return root
+
+const MILESTONE := Color(0.58, 0.57, 0.53)
+
+## A highway waymark: a cut stone a little taller than wide, capped, its broad face to the road (`dir` along it).
+func _milestone(at: Vector3, dir: Vector2) -> Node3D:
+	var root := Node3D.new()
+	root.position = at
+	root.rotation.y = -atan2(dir.y, dir.x)
+	var body := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.55, 1.0, 0.3)
+	body.mesh = bm
+	body.material_override = _plain_mat(MILESTONE)
+	body.position.y = 0.42
+	root.add_child(body)
+	var cap := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.0
+	cm.bottom_radius = 0.3
+	cm.height = 0.22
+	cm.radial_segments = 4
+	cap.mesh = cm
+	cap.material_override = _plain_mat(MILESTONE.darkened(0.08))
+	cap.position.y = 1.02
+	cap.rotation.y = PI / 4.0
+	cap.scale = Vector3(1.0, 1.0, 0.55)
+	root.add_child(cap)
 	return root
 
 ## A ford: stepping stones across the water along the road, and a lantern post on each bank.

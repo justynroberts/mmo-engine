@@ -17,6 +17,7 @@ var towns: RefCounted
 var cold_band := Vector2(-1e9, -1e9)
 var _fields := {}                 # cell key -> fields_of_cell, for the farmhouses in it
 var _junctions := {}              # cell key -> [[Vector2, [unit directions...]], ...] where roads end or meet
+var _milestones := {}             # cell key -> [[point, direction of the road], ...] (_find_milestones)
 var _river_segs := {}             # cell key -> [[a, b, half width, level at a, level at b], ...] reaching near it
 
 func setup(p_world: RefCounted, p_towns: RefCounted) -> void:
@@ -26,6 +27,7 @@ func setup(p_world: RefCounted, p_towns: RefCounted) -> void:
 	if world.has_heights:
 		cold_band = Vector2(ext.position.y + ext.size.y * 0.2, ext.position.y + ext.size.y * 0.48)
 	_find_junctions()
+	_find_milestones()
 	_index_rivers()
 
 ## Every river segment, by the cells it comes within WET_REACH of, so nothing scans every river for one spot.
@@ -78,6 +80,45 @@ func _find_junctions() -> void:
 		if not _junctions.has(ck):
 			_junctions[ck] = []
 		_junctions[ck].append([p, ends[key][1]])
+
+## A big world's highways (as wide as a city street, but long: MILE_ROAD and more) have a waymark every MILE along
+## them, on alternate verges; whether one stands in open country is left to the theme.
+const MILE := 640.0
+const MILE_ROAD := 1500.0
+
+func _find_milestones() -> void:
+	for r in world.roads:
+		var pts: Array = r["pts"]
+		if pts.size() < 2 or absf(float(r.get("half_width", 3.0)) - 3.5) > 0.05:
+			continue
+		var length := 0.0
+		for i in pts.size() - 1:
+			length += Vector2(pts[i][0], pts[i][1]).distance_to(Vector2(pts[i + 1][0], pts[i + 1][1]))
+		if length < MILE_ROAD:
+			continue
+		var next := MILE * 0.5
+		var run := 0.0
+		var side := 1.0
+		for i in pts.size() - 1:
+			var a := Vector2(pts[i][0], pts[i][1])
+			var b := Vector2(pts[i + 1][0], pts[i + 1][1])
+			var seg := a.distance_to(b)
+			if seg < 0.01:
+				continue
+			var dir := (b - a) / seg
+			while run + seg >= next:
+				var p := a + dir * (next - run) + Vector2(-dir.y, dir.x) * side * (3.5 + 1.6)
+				var ck: Variant = world.key(int(floor(p.x / world.CELL)), int(floor(p.y / world.CELL)))
+				if not _milestones.has(ck):
+					_milestones[ck] = []
+				_milestones[ck].append([p, dir])
+				next += MILE
+				side = -side
+			run += seg
+
+## The highway waymarks in a cell: [[point, direction of the road], ...].
+func milestones(cx: int, cy: int) -> Array:
+	return _milestones.get(world.key(cx, cy), [])
 
 ## Where roads end or meet in a cell: [[point, [directions of the roads leaving it]], ...].
 func junctions(cx: int, cy: int) -> Array:

@@ -49,7 +49,7 @@ impl Sim {
 
     /// Post a letter (and goods, already taken from the sender) to the account `to`. Err says why not, and nothing
     /// was posted.
-    fn post_letter(&mut self, letter: Letter) -> Result<(), String> {
+    pub(crate) fn post_letter(&mut self, letter: Letter) -> Result<(), String> {
         if self.letters_for(&letter.to) >= self.rules.mail_waiting as usize || self.market.mail.len() >= MAIL_MAX {
             return Err("Their mailbox is full.".into());
         }

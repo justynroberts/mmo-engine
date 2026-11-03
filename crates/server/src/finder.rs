@@ -170,7 +170,7 @@ impl Sim {
             self.party[s] = party;
             self.party_ver[s] = self.party_ver[s].wrapping_add(1);
         }
-        if slots.len() > self.rules.party_size as usize {
+        if slots.len() > self.rules.party_size as usize || self.realm.dungeons[d].raid {
             self.raids.insert(party);
         }
         // The door: just outside the dungeon's place, on the side facing the world's middle, spread out a little.
@@ -227,7 +227,7 @@ mod tests {
         let mut g = GameFile::default_game();
         g.archetypes.iter_mut().for_each(|a| a.count = 0);
         g.places.push(proto::game::Place { name: "crypt".into(), x: 300.0, y: 300.0, r: 10.0, ..g.places[0].clone() });
-        g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 1 }], xp: 0, reward: None, group: 3, respawn_mins: 30.0, interior: None }];
+        g.dungeons = vec![DungeonDef { name: "The Crypt".into(), place: "crypt".into(), bots: vec![DungeonBot { bot: g.archetypes[0].name.clone(), count: 1 }], xp: 0, reward: None, group: 3, respawn_mins: 30.0, interior: None, raid: false }];
         Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1)
     }
 
