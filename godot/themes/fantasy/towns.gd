@@ -31,10 +31,10 @@ const PALETTES := [
 ## piles round its edge.
 const TRADES := {
 	"farming": {
-		"yard": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.2], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Log_A", 1.2], ["v:Prop_Wagon", 1.4], ["Textiles_B", 1.2], ["t:bucket_metal", 1.2]],
+		"yard": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.2], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Log_A", 1.2], ["v:Prop_Wagon", 1.4], ["Textiles_B", 1.2], ["t:bucket_metal", 1.2], ["d:trunk_small_A", 1.0]],
 		"work": [["Wood_Log_A", 1.3], ["t:axe", 1.4], ["t:saw", 1.3], ["t:mallet", 1.3], ["Wood_Planks_Stack_Medium", 1.2], ["Wood_Log_Stack", 1.3]],
 		"work_every": 4,
-		"stall": ["Textiles_Stack_Small", "Textiles_B", "d:plate_food_A", "Textiles_A"],
+		"stall": ["Textiles_Stack_Small", "d:plate_food_B", "Textiles_B", "d:plate_food_A", "Textiles_A", "d:plate_stack", "d:bottle_C_brown"],
 		"square": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.3], ["v:Prop_Wagon", 1.4], ["Pallet_Wood_Covered_B", 1.2]],
 		"stalls": 2,
 	},
@@ -42,7 +42,7 @@ const TRADES := {
 		"yard": [["Pallet_Wood_Covered_A", 1.2], ["t:rope_bundle_A", 1.4], ["d:barrel_small_stack", 1.0], ["t:rope_bundle_B", 1.4], ["Wood_Planks_Stack_Small", 1.2], ["t:bucket_metal", 1.2], ["d:crates_stacked", 1.0]],
 		"work": [["Pallet_Wood_Covered_B", 1.2], ["t:rope_bundle_A", 1.4], ["t:rope_bundle_B", 1.4], ["t:bucket_metal", 1.2], ["t:lantern", 1.3], ["d:barrel_small", 1.0]],
 		"work_every": 3,
-		"stall": ["d:plate_food_A", "d:barrel_small", "t:bucket_metal", "d:box_small"],
+		"stall": ["d:plate_food_A", "d:barrel_small", "t:bucket_metal", "d:plate_food_B", "d:box_small", "d:bottle_C_green", "d:plate_stack"],
 		"square": [["d:barrel_large", 1.0], ["t:rope_bundle_B", 1.5], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Planks_Stack_Medium", 1.2]],
 		"stalls": 3,
 	},
@@ -50,16 +50,16 @@ const TRADES := {
 		"yard": [["Stone_Bricks_Stack_Small", 1.2], ["t:pickaxe", 1.3], ["Iron_Nuggets", 1.4], ["t:shovel", 1.3], ["Copper_Nuggets", 1.4], ["t:bucket_metal", 1.2], ["t:torch_burnt", 1.3], ["v:Prop_Wagon", 1.4]],
 		"work": [["t:anvil", 1.4], ["t:grindstone", 1.3], ["t:tongs", 1.3], ["t:hammer", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["Stone_Chunks_Small", 1.3]],
 		"work_every": 3,
-		"stall": ["Iron_Bars_Stack_Small", "Copper_Bars_Stack_Small", "Iron_Nuggets", "t:pickaxe"],
-		"square": [["Stone_Bricks_Stack_Large", 1.2], ["Stone_Chunks_Large", 1.3], ["Iron_Bars_Stack_Medium", 1.2], ["t:anvil", 1.4]],
+		"stall": ["Iron_Bars_Stack_Small", "d:sword_shield", "Copper_Bars_Stack_Small", "d:keyring", "Iron_Nuggets", "t:pickaxe", "d:sword_shield_broken"],
+		"square": [["Stone_Bricks_Stack_Large", 1.2], ["Stone_Chunks_Large", 1.3], ["Iron_Bars_Stack_Medium", 1.2], ["t:anvil", 1.4], ["d:trunk_medium_A", 1.0]],
 		"stalls": 2,
 	},
 	"market": {
-		"yard": [["d:crates_stacked", 1.0], ["d:barrel_small", 1.0], ["Textiles_Stack_Large_Colored", 1.1], ["d:keg", 1.0], ["Pallet_Wood_Covered_B", 1.2], ["v:Prop_Crate", 1.4]],
+		"yard": [["d:crates_stacked", 1.0], ["d:barrel_small", 1.0], ["Textiles_Stack_Large_Colored", 1.1], ["d:keg", 1.0], ["Pallet_Wood_Covered_B", 1.2], ["v:Prop_Crate", 1.4], ["d:trunk_small_C", 1.0], ["d:box_small_decorated", 1.0]],
 		"work": [["t:anvil", 1.4], ["t:grindstone", 1.3], ["t:hammer", 1.3], ["t:tongs", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["d:barrel_small", 1.0]],
 		"work_every": 6,
-		"stall": ["Textiles_Stack_Large_Colored", "Gold_Bars_Stack_Small", "d:coin_stack_small", "t:map", "t:journal_open", "Silver_Bars_Stack_Small"],
-		"square": [["d:barrel_large_decorated", 1.0], ["d:crates_stacked", 1.0], ["Textiles_Stack_Large", 1.1], ["d:keg", 1.0]],
+		"stall": ["Textiles_Stack_Large_Colored", "Gold_Bars_Stack_Small", "d:coin_stack_medium", "t:map", "d:sword_shield_gold", "t:journal_open", "Silver_Bars_Stack_Small", "d:bottle_A_labeled_brown", "d:coin_stack_small", "d:box_small_decorated"],
+		"square": [["d:barrel_large_decorated", 1.0], ["d:crates_stacked", 1.0], ["Textiles_Stack_Large", 1.1], ["d:keg", 1.0], ["d:trunk_medium_A", 1.0], ["d:coin_stack_large", 1.0]],
 		"stalls": 6,
 	},
 }
@@ -122,6 +122,25 @@ func survey(world: RefCounted) -> void:
 		elif count >= 20:
 			trade = "market"
 		list.append(_make(c, REACH, v, trade, world))
+	# Each settlement's inn, as the server picks it (folk.rs inn_of): the house nearest its square, the city's nearest
+	# its middle. Folk gather there of an evening; the theme sets tables outside.
+	inns.clear()
+	for s in list:
+		var c: Vector2 = s["c"]
+		var best := Vector2.INF
+		for gx in range(int(floor(c.x / HOUSE_GRID)) - 1, int(floor(c.x / HOUSE_GRID)) + 2):
+			for gy in range(int(floor(c.y / HOUSE_GRID)) - 1, int(floor(c.y / HOUSE_GRID)) + 2):
+				for h in grid.get(Vector2i(gx, gy), []):
+					if (h as Vector2).distance_to(c) < best.distance_to(c):
+						best = h
+		if best.distance_to(c) < 80.0:
+			inns[Vector2i(roundi(best.x), roundi(best.y))] = true
+
+var inns := {} # rounded house middle -> true
+
+## Whether the house with this middle is its settlement's inn.
+func is_inn(middle: Vector2) -> bool:
+	return inns.has(Vector2i(roundi(middle.x), roundi(middle.y)))
 
 func in_city(p: Vector2) -> bool:
 	return _city.has_area() and _city.has_point(p)

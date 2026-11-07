@@ -981,8 +981,8 @@ func _land_dress(cx: int, cy: int, node: Node3D, batch: Dictionary, lights: Arra
 	_fences(cx, cy, put)
 	_rubble(cell, free, put)
 
-## Now and then, out in the country, the tumbled stones of something long fallen: low enough to walk over, so it needs
-## no footprint on the server.
+## Now and then, out in the country, the tumbled stones of something long fallen, with a stump of wall or a column
+## left: none of it is known to the server, so you walk through it like the shore's boulders.
 func _rubble(cell: Rect2, free: Callable, put: Callable) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector2i(roundi(cell.position.x), roundi(cell.position.y))) + 4242
@@ -1005,6 +1005,20 @@ func _rubble(cell: Rect2, free: Callable, put: Callable) -> void:
 			continue
 		var sc := rng.randf_range(0.8, 1.2)
 		put.call(path, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * sc), Vector3(q.x, height(q.x, q.y) - m.get_aabb().position.y * sc - 0.1, q.y)))
+	# What still stands of it: a broken wall or two, sunk a little into the ground, and a column fallen or upright.
+	var face := rng.randf() * TAU
+	for k in rng.randi_range(1, 2):
+		var q := c + Vector2(cos(face + PI / 2.0), sin(face + PI / 2.0)) * (k * 3.6 - 1.8)
+		var m := _mesh(_dress_path("d:wall_broken"))
+		if m != null and free.call(q):
+			var tilt := Basis(Vector3.UP, face + k * PI / 2.0 * float(rng.randi() % 2)).scaled(Vector3.ONE * rng.randf_range(0.5, 0.7))
+			put.call(_dress_path("d:wall_broken"), Transform3D(tilt, Vector3(q.x, height(q.x, q.y) - 0.4, q.y)))
+	var cq := c + Vector2(cos(face), sin(face)) * 4.5
+	var col := _mesh(_dress_path("d:column"))
+	if col != null and free.call(cq):
+		var fallen := rng.randf() < 0.5
+		var cb := Basis(Vector3.UP, rng.randf() * TAU) * (Basis(Vector3(1, 0, 0), PI / 2.0) if fallen else Basis.IDENTITY)
+		put.call(_dress_path("d:column"), Transform3D(cb.scaled(Vector3.ONE * 1.3), Vector3(cq.x, height(cq.x, cq.y) + (0.35 * 1.3 - 0.1 if fallen else -0.1), cq.y)))
 
 ## Whether a point is on a road other than segment `sg` (a junction's mouth, where verge stones would sit in the way).
 func _on_other_road(q: Vector2, sg: Array, cx: int, cy: int) -> bool:
@@ -2273,7 +2287,7 @@ func _build_house(b: Array, base: float, v: int, batch: Dictionary, town: Dictio
 	put.call("Corner_Exterior_TopOnly", Transform3D(Basis.from_scale(Vector3.ONE * VS), Vector3(x0, tall * floors, y0)))
 	_house_roof(put, b, tall * floors, tower, hsh, float(style["pitch"]), int(style["chimney"]))
 	var dress := {}
-	_house_yard(put, rng, door_at, door_out, hsh, town, dress, base)
+	_house_yard(put, rng, door_at, door_out, hsh, town, dress, base, not grand and towns.is_inn(Vector2((x0 + x1) / 2.0, (y0 + y1) / 2.0)))
 	_house_porch(put, door_at, door_out, hsh)
 	if floors == 2 and not jetty and not grand:
 		_house_stairs(put, sides[(door_side + 1) % 4], tall, hsh)
@@ -2433,7 +2447,7 @@ func _square_dress(o: Dictionary, batch: Dictionary) -> void:
 	var piles: Array = trade["square"]
 	var corners := [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]
 	for k in 4:
-		var g: Array = piles[k % piles.size()]
+		var g: Array = piles[(k + rng.randi() % piles.size()) % piles.size()]
 		var p: Vector2 = c + (corners[k] as Vector2) * Vector2(w / 2.0 - 2.5, d / 2.0 - 2.5)
 		_dress(dress, String(g[0]), float(g[1]), on_ground.call(p), rng.randf() * TAU)
 	for pth in dress:
@@ -2459,7 +2473,7 @@ func _crag_diggings(b: Array, v: int, batch: Dictionary) -> void:
 ## The yard in front of the door: a paved path, the settlement's kind of fence each side, an arch, a lean-to shed
 ## or a stall roof, and what its trade leaves lying about (towns.gd TRADES), into `dress` by file. All outside the
 ## box, so you walk through them (the server only knows the house).
-func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int, town: Dictionary, dress: Dictionary, base: float) -> void:
+func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: Vector3, hsh: int, town: Dictionary, dress: Dictionary, base: float, inn := false) -> void:
 	if out == Vector3.ZERO:
 		return
 	var style: Dictionary = town["style"]
@@ -2523,7 +2537,9 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 	# The trade's workshop (a smithy's anvil and grindstone, a sawpit, a fish store) on one house in a few; a couple
 	# more of the trade's things out in the yard on the rest.
 	var trade: Dictionary = TownsScript.TRADES[town["trade"]]
-	if (hsh / 5) % int(trade["work_every"]) == 0:
+	if inn:
+		_inn_tables(dress, door, out, side, hsh, gy)
+	elif (hsh / 5) % int(trade["work_every"]) == 0:
 		var work: Array = trade["work"]
 		for k in work.size():
 			var g: Array = work[k]
@@ -2534,6 +2550,29 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 		for k in 2:
 			var g: Array = goods[(hsh / 7 + k * 3 + 1) % goods.size()]
 			_dress(dress, String(g[0]), float(g[1]), gy.call(door + out * (VS * rng.randf_range(2.0, 4.5)) + side * (VS * rng.randf_range(3.4, 4.8) * (1.0 if k == 0 else -1.0))), rng.randf() * TAU)
+
+## Outside the inn, beside its path: a long trestle table with chairs down both sides, food, drink and a candle on
+## it, and the ale keg and a barrel at its far end. Where the town's folk sit of an evening (folk.rs inn_of).
+func _inn_tables(dress: Dictionary, door: Vector3, out: Vector3, side: Vector3, hsh: int, gy: Callable) -> void:
+	var along := atan2(out.x, out.z)        # the table's long side runs out from the house
+	var mid: Vector3 = door + out * (VS * 3.2) + side * (VS * 5.2)
+	var cloth: String = ["d:table_long_tablecloth_decorated_A", "d:table_long_decorated_A", "d:table_long", "d:table_long_tablecloth"][hsh % 4]
+	var floor_at: Vector3 = gy.call(mid)
+	_dress(dress, cloth, 1.2, floor_at, along)
+	var top := floor_at + Vector3(0, 1.2, 0)
+	var on := ["d:plate_food_A", "d:bottle_A_green", "d:plate_food_B", "d:bottle_B_brown", "d:plate", "d:bottle_C_brown"]
+	for k in 4:
+		var f := -1.6 + 1.05 * k
+		var dish: String = on[(hsh + k) % on.size()]
+		_dress(dress, dish, 0.75, top + out * f + side * (0.45 if k % 2 == 0 else -0.45), along + k)
+	_dress(dress, "d:candle_lit", 0.8, top, along)
+	for s2 in [-1.0, 1.0]:
+		for k in 3:
+			var f := -1.6 + 1.6 * k
+			# Chairs face the table: a chair's seat faces its +z.
+			_dress(dress, "d:chair", 1.1, gy.call(mid + side * (s2 * 2.05) + out * f), along - s2 * PI / 2.0 + PI)
+	_dress(dress, "d:keg_decorated", 0.8, gy.call(mid + out * 4.6), along + PI / 2.0)
+	_dress(dress, "d:barrel_small", 1.0, gy.call(mid + out * 4.4 + side * 2.4), float(hsh % 7))
 
 ## A woodpile against the back wall, on most houses: logs for the fire, or the trade's own stack.
 func _woodpile(side: Array, hsh: int, town: Dictionary, dress: Dictionary) -> void:
@@ -2965,7 +3004,9 @@ func _keep(o: Dictionary, batch: Dictionary) -> Node3D:
 			var mid := start + dir * (length / 2.0) - out * 0.5
 			var banners := ["banner_red.gltf", "banner_blue.gltf", "banner_patternA_red.gltf", "banner_patternB_blue.gltf",
 				"banner_shield_green.gltf", "banner_triple_yellow.gltf", "banner_thin_white.gltf", "banner_green.gltf",
-				"banner_patternA_white.gltf", "banner_patternC_red.gltf", "banner_shield_red.gltf", "banner_thin_yellow.gltf", "banner_triple_red.gltf"]
+				"banner_patternA_white.gltf", "banner_patternC_red.gltf", "banner_shield_red.gltf", "banner_thin_yellow.gltf", "banner_triple_red.gltf",
+				"banner_brown.gltf", "banner_yellow.gltf", "banner_white.gltf", "banner_patternB_yellow.gltf", "banner_patternC_green.gltf",
+				"banner_shield_yellow.gltf", "banner_thin_blue.gltf", "banner_triple_blue.gltf"]
 			var deco: String = "torch_mounted.gltf" if (hsh + si) % 3 == 2 else banners[(hsh + si * 5) % banners.size()]
 			var lift := 0.0 if deco.begins_with("banner") else 2.6
 			put.call(deco, Transform3D(rot, mid + out * (0.0 if deco.begins_with("banner") else 0.5) + Vector3(0, lift + 4.0 * (layers - 1), 0)))
