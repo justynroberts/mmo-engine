@@ -766,6 +766,7 @@ func _start() -> void:
 	explored = ExploredScript.new()
 	explored.setup(world.size, "%s_%s" % [HudScript.game_host(String(args.get("web", ""))), my_tag])
 	hud.minimap.fog = explored.tex
+	hud.minimap.explored = explored
 	world_map.explored = explored
 	if args.has("name") and args["name"] is String:
 		net.set_display_name(String(args["name"]))

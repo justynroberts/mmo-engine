@@ -226,10 +226,10 @@ func _draw() -> void:
 	# Icons first, so labels keep clear of them.
 	var icon_at := func(m: Array) -> Vector2:
 		return to.call(m[0])
-	# Under the fog only what you would know without going there: dungeons (talked of) and where quests send you.
+	# Under the fog nothing but where a quest sends you: the rest is found by going there.
 	var known := func(p: Vector2) -> bool:
 		return explored == null or explored.seen(p) > 0.25
-	var shown := marks.filter(func(m): return String(m[1]) in ["dungeon", "goal"] or known.call(m[0]))
+	var shown := marks.filter(func(m): return String(m[1]) == "goal" or known.call(m[0]))
 	for m in shown:
 		var at: Vector2 = icon_at.call(m)
 		if not inside.has_point(at):

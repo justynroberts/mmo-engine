@@ -1331,6 +1331,7 @@ class Minimap extends Control:
 	var local_tex: ImageTexture
 	var local_area := Rect2()  # the world square local_tex shows
 	var fog: ImageTexture      # explored.gd's fog of war over the whole world, laid over the picture
+	var explored: RefCounted   # the same, to leave dungeons not yet found off
 
 	func _init() -> void:
 		custom_minimum_size = Vector2(SIDE, SIDE)
@@ -1381,6 +1382,8 @@ class Minimap extends Control:
 				draw_circle(c + o, 3.0, Color(0, 0, 0, 0.8))
 				draw_circle(c + o, 2.2, ACCENT)
 		for d in dungeons:
+			if explored != null and explored.seen(d[0]) <= 0.25:
+				continue
 			var o: Vector2 = (d[0] - me) * k
 			if o.length() > rad - 8.0:
 				o = o.normalized() * (rad - 8.0)
