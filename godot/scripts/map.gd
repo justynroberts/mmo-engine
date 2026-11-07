@@ -16,6 +16,7 @@ var marks: Array = []
 
 const DUNGEON := Color("e07a5f")
 const GOAL := Color("ffe08a")
+const YOU := Color("3ff0ff")    # nothing else on the map is this colour, so you are found at a glance
 
 ## Where a quest wants you: a bright ring with a dot (the minimap draws it too).
 static func draw_goal(on: CanvasItem, at: Vector2, s: float) -> void:
@@ -25,6 +26,8 @@ static func draw_goal(on: CanvasItem, at: Vector2, s: float) -> void:
 
 ## A dungeon's mark: a dark red diamond with crossed blades (the minimap draws it too).
 static func draw_dungeon(on: CanvasItem, at: Vector2, s: float) -> void:
+	var halo := PackedVector2Array([at + Vector2(0, -s - 2.5), at + Vector2(s + 2.5, 0), at + Vector2(0, s + 2.5), at + Vector2(-s - 2.5, 0)])
+	on.draw_colored_polygon(halo, Color(0, 0, 0, 0.8))
 	var d := PackedVector2Array([at + Vector2(0, -s), at + Vector2(s, 0), at + Vector2(0, s), at + Vector2(-s, 0)])
 	on.draw_colored_polygon(d, Color("5a1a14"))
 	d.append(d[0])
@@ -173,19 +176,21 @@ func update_markers(at: Vector2, yaw: float, around: Array) -> void:
 
 ## A label centred on `at` (its baseline `dy` below); where that would overlap one already put down, it tries the
 ## other side of the point, then either side of it, and is left off if all four are taken.
-func _label(font: Font, at: Vector2, dy: float, text: String, size: int, col: Color, taken: Array[Rect2]) -> void:
+func _label(font: Font, at: Vector2, dy: float, text: String, size: int, col: Color, taken: Array[Rect2], clear := 12.0) -> bool:
 	if text == "":
-		return
+		return false
 	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	var other := size + 12.0 if dy <= 0.0 else -12.0
-	for o in [Vector2(-w / 2.0, dy), Vector2(-w / 2.0, other), Vector2(12, size * 0.4), Vector2(-w - 12, size * 0.4)]:
+	var other := size + clear if dy <= 0.0 else -clear
+	for o in [Vector2(-w / 2.0, dy), Vector2(-w / 2.0, other), Vector2(clear, size * 0.4), Vector2(-w - clear, size * 0.4),
+			Vector2(clear * 0.6, -clear * 0.8), Vector2(clear * 0.6, size + clear * 0.8), Vector2(-w - clear * 0.6, -clear * 0.8), Vector2(-w - clear * 0.6, size + clear * 0.8)]:
 		var box := Rect2(at + o + Vector2(-4, -size - 1), Vector2(w + 8, size + 6))
 		if not _map_rect.encloses(box) or taken.any(func(r): return r.intersects(box)):
 			continue
 		taken.append(box)
 		draw_string_outline(font, at + o, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(0, 0, 0, 0.8))
 		draw_string(font, at + o, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
-		return
+		return true
+	return false
 
 func _draw() -> void:
 	if tex == null:
@@ -233,14 +238,15 @@ func _draw() -> void:
 			"goal":
 				draw_goal(self, at, 6.0)
 			"dungeon":
-				draw_dungeon(self, at, 7.0)
+				draw_dungeon(self, at, 11.0)
 			"trade":
 				var d := PackedVector2Array([at + Vector2(0, -4), at + Vector2(3.5, 0), at + Vector2(0, 4), at + Vector2(-3.5, 0)])
 				draw_colored_polygon(d, TRADE)
 			_:
 				draw_string_outline(title_font, at + Vector2(-4, 7), m[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, 4, Color(0, 0, 0, 0.9))
 				draw_string(title_font, at + Vector2(-4, 7), m[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, OTHERS)
-		taken.append(Rect2(at - Vector2(7, 9), Vector2(14, 16)))
+		var half := 13.0 if String(m[1]) == "dungeon" else 7.0
+		taken.append(Rect2(at - Vector2(half, half + 2.0), Vector2(half * 2.0, half * 2.0 + 2.0)))
 	for p in others:
 		var op: Vector2 = to.call(p)
 		if inside.has_point(op):
@@ -251,12 +257,19 @@ func _draw() -> void:
 	var c: Vector2 = (to.call(me) as Vector2).clamp(origin + Vector2(10, 10), origin + Vector2(side - 10, side - 10))
 	var fwd := Vector2(-sin(facing), -cos(facing))
 	var right := Vector2(fwd.y, -fwd.x)
-	var arrow := PackedVector2Array([c + fwd * 11.0, c - fwd * 6.0 + right * 6.0, c - fwd * 3.0, c - fwd * 6.0 - right * 6.0])
-	draw_circle(c, 13.0, Color(1, 1, 1, 0.12))
-	draw_colored_polygon(arrow, INK)
+	# Faint lines through you to the map's edges, a dark disc and a bright ring under a large arrow of your own colour.
+	var line_col := Color(YOU.r, YOU.g, YOU.b, 0.35)
+	draw_line(Vector2(origin.x, c.y), Vector2(c.x - 22.0, c.y), line_col, 1.0)
+	draw_line(Vector2(c.x + 22.0, c.y), Vector2(origin.x + side, c.y), line_col, 1.0)
+	draw_line(Vector2(c.x, origin.y), Vector2(c.x, c.y - 22.0), line_col, 1.0)
+	draw_line(Vector2(c.x, c.y + 22.0), Vector2(c.x, origin.y + side), line_col, 1.0)
+	draw_circle(c, 19.0, Color(0, 0, 0, 0.55))
+	draw_arc(c, 18.0, 0.0, TAU, 40, YOU, 2.5, true)
+	var arrow := PackedVector2Array([c + fwd * 14.0, c - fwd * 8.0 + right * 8.0, c - fwd * 4.0, c - fwd * 8.0 - right * 8.0])
+	draw_colored_polygon(arrow, YOU)
 	arrow.append(arrow[0])
-	draw_polyline(arrow, Color("1a1a12"), 1.5)
-	taken.append(Rect2(c - Vector2(12, 12), Vector2(24, 24)))
+	draw_polyline(arrow, Color("06181a"), 2.0)
+	taken.append(Rect2(c - Vector2(20, 20), Vector2(40, 40)))
 	# Labels, most wanted first: where a quest sends you, dungeons, then places by size; one that would overlap is
 	# left off, and a name used twice is written once.
 	for m in marks:
@@ -264,7 +277,11 @@ func _draw() -> void:
 			_label(font, icon_at.call(m), -11.0, String(m[2]), 13, GOAL, taken)
 	for m in marks:
 		if String(m[1]) == "dungeon" and m.size() > 2:
-			_label(font, icon_at.call(m), 20.0, String(m[2]).get_slice("  (", 0), 12, DUNGEON.lightened(0.15), taken)
+			var lvl := String(m[2]).get_slice("level ", 1).get_slice(",", 0).get_slice(")", 0)
+			var dl := String(m[2]).get_slice("  (", 0) + ((" · lvl " + lvl) if lvl != "" else "")
+			# Crowded out with its level, try the name alone, smaller.
+			if not _label(title_font, icon_at.call(m), 32.0, dl, 14, DUNGEON.lightened(0.25), taken, 18.0):
+				_label(font, icon_at.call(m), 30.0, String(m[2]).get_slice("  (", 0), 12, DUNGEON.lightened(0.25), taken, 16.0)
 	var named := places.filter(func(l): return String(l.get("title", "")) != "" and float(l.get("r", 0.0)) * zoom >= 30.0)
 	named.sort_custom(func(a, b): return float(a.get("r", 0.0)) > float(b.get("r", 0.0)))
 	var seen := {}
@@ -301,7 +318,7 @@ func _draw() -> void:
 	var kinds := {}
 	for m in marks:
 		kinds[String(m[1])] = true
-	var key := [["you", INK, true]]
+	var key := [["you", YOU, true]]
 	if not others.is_empty():
 		key.append(["others near", OTHERS, true])
 	for k in [["!", "a quest to take", OTHERS], ["?", "a quest to hand in", OTHERS], ["goal", "where a quest sends you", GOAL], ["dungeon", "dungeon", DUNGEON], ["trade", "trader", TRADE], ["hold", "hold (faction war)", Color("b8b0a0")], ["dock", "boats: F at a dock", DOCK]]:

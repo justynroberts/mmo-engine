@@ -1384,8 +1384,9 @@ class Minimap extends Control:
 			preload("res://scripts/map.gd").draw_goal(self, c + o, 5.0)
 		var fwd := Vector2(-sin(facing), -cos(facing))
 		var right := Vector2(fwd.y, -fwd.x)
-		var arrow := PackedVector2Array([c + fwd * 9.0, c - fwd * 5.0 + right * 5.5, c - fwd * 2.5, c - fwd * 5.0 - right * 5.5])
-		draw_colored_polygon(arrow, Color.WHITE)
+		var arrow := PackedVector2Array([c + fwd * 11.0, c - fwd * 6.0 + right * 6.5, c - fwd * 3.0, c - fwd * 6.0 - right * 6.5])
+		draw_circle(c, 9.5, Color(0, 0, 0, 0.45))
+		draw_colored_polygon(arrow, preload("res://scripts/map.gd").YOU) # your colour on the world map too
 		arrow.append(arrow[0])
 		draw_polyline(arrow, Color(0, 0, 0, 0.9), 1.5)
 		draw_arc(c, rad + 1.0, 0.0, TAU, 72, Color("2a2218"), 5.0, true)

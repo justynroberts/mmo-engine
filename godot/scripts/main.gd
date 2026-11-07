@@ -119,6 +119,7 @@ const FIRES := ["Tine", "Fire"]
 const LANTERNS := ["Lochran", "Lóchrann", "Lantern"]
 const MUSICIANS := ["Musician", "Ceoltóir", "Ceoltoir"]
 const BeastScript := preload("res://scripts/beast.gd")
+const AnimalScript := preload("res://scripts/animal.gd")
 ## The lit windows round us (proto::chat::channel::LIT): "x,y" of a house's middle -> [who is in, an inn].
 var lit := {}
 var _daypart := ""      # the part of the day last heard (dawn, day, dusk, night), for the bells
@@ -2631,17 +2632,29 @@ func _look_of(e: Dictionary, mine: bool) -> String:
 			return b
 	return ""
 
-## How a bot type that is a beast is drawn ("dog", "cow"), by the name players see (/play/info "beasts"), or "".
+## How a bot type that is a beast is drawn ("dog", "cow"; from its name, "deer", "stag", "wolf", "wolf_white", "fox",
+## "horse"), by the name players see (/play/info "beasts" first), or "".
 func _beast_look(kind: String) -> String:
 	for pair in info.get("beasts", []):
 		if pair is Array and pair.size() == 2 and String(pair[0]) == kind:
 			return String(pair[1])
+	var k := " " + kind.get_slice("|", 0).to_lower() + " "
+	for pair in BEAST_WORDS:
+		if k.contains(" " + String(pair[0]) + " "):
+			return pair[1]
 	return ""
+
+## A bot type's name that says what beast it is (English or Irish), most particular first.
+const BEAST_WORDS := [["white wolf", "wolf_white"], ["mac tíre bán", "wolf_white"], ["wolf", "wolf"], ["mac tíre", "wolf"],
+	["stag", "stag"], ["damh", "stag"], ["deer", "deer"], ["fia", "deer"], ["fox", "fox"], ["sionnach", "fox"],
+	["wild horse", "horse"], ["capall", "horse"], ["hound", "dog"]]
 
 func _entity_node(id: int, mine: bool, look := "") -> Node3D:
 	var n: Node3D
 	if look == "fire":
 		n = _fire_node()
+	elif AnimalScript.can_draw(look):
+		n = AnimalScript.make(look)
 	elif look == "dog" or look == "cow":
 		n = BeastScript.make(look)
 	elif look == "lantern":

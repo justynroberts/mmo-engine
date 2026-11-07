@@ -118,6 +118,8 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	for d in (realm.get("dungeons", []) if realm is Dictionary else []):
 		if d is Dictionary and d.get("interior") is Dictionary:
 			add_child(InteriorsScript.new().build(self, d, interior_floor))
+		if d is Dictionary and d.get("x") != null and d.get("y") != null:
+			_dungeon_door(Vector2(float(d["x"]), float(d["y"])))
 	var sun := DirectionalLight3D.new()
 	_sun = sun
 	sun.rotation_degrees = Vector3(-48, -35, 0)
@@ -3068,3 +3070,47 @@ func _tint(path: String) -> Color:
 	if path.begins_with(DUNGEON) and (f.begins_with("wall") or f.begins_with("pillar") or f.begins_with("floor")):
 		return Color(0.78, 0.74, 0.70)
 	return Color.WHITE
+
+## A dungeon's way in, seen from afar: a pale red shaft of light standing up out of it, and two braziers burning
+## either side of the door. Built once at setup, for every dungeon in /play/info.
+func _dungeon_door(at: Vector2) -> void:
+	var y := height(at.x, at.y)
+	var door := Node3D.new()
+	door.name = "dungeon_door"
+	door.position = Vector3(at.x, y, at.y)
+	add_child(door)
+	var brazier := _mesh(DUNGEON + "torch_lit.gltf")
+	for side in [-1.0, 1.0]:
+		if brazier:
+			var b := MeshInstance3D.new()
+			b.mesh = brazier
+			b.scale = Vector3.ONE * 2.0
+			b.position = Vector3(side * 3.2, 0, 0)
+			door.add_child(b)
+		_flame(door, Vector3(side * 3.2, 1.5, 0), 0.25)
+	var shaft := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.2
+	cyl.bottom_radius = 1.1
+	cyl.height = 70.0
+	cyl.radial_segments = 12
+	cyl.cap_top = false
+	cyl.cap_bottom = false
+	shaft.mesh = cyl
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_color = Color(1.0, 0.32, 0.2, 0.22)
+	m.no_depth_test = false
+	shaft.material_override = m
+	shaft.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	shaft.position = Vector3(0, 35.0, 0)
+	door.add_child(shaft)
+	var glow := OmniLight3D.new()
+	glow.light_color = Color("ff6a40")
+	glow.light_energy = 2.0
+	glow.omni_range = 14.0
+	glow.position = Vector3(0, 3.0, 0)
+	door.add_child(glow)
