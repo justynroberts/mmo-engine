@@ -54,13 +54,16 @@ func setup(p_info: Dictionary, p_world: RefCounted) -> void:
 	set_interiors(info)
 	towns.cold_at = land.cold_at
 	towns.survey(world)
-	_prefetch()
 	# Every palette's tinted materials and washed textures now, while loading, not as the first village comes near;
 	# its copy of each piece over the next frames (_warm).
 	_prewash(["Roof_RoundTiles_6x8", "Wall_UnevenBrick_Window_Wide_Round", "Roof_Front_Brick6"])
 	for pal in TownsScript.PALETTES.size():
 		for piece in ["Roof_RoundTiles_6x8", "Wall_UnevenBrick_Window_Wide_Round", "Roof_Front_Brick6"]:
 			_mesh_pal(VILLAGE + piece + ".gltf", pal)
+	# Only now the loader's threads: under Godot 4.7 a piece loaded here on the main thread while a thread is loading
+	# the same one waits for ever (the client hung before connecting).
+	_prefetch()
+	for pal in TownsScript.PALETTES.size():
 		if pal > 0:
 			for f in _fetching:
 				if String(f).begins_with(VILLAGE):
@@ -552,6 +555,7 @@ func block_material(kind: int) -> Material:
 	return m
 
 func frame(center: Vector2, camera_zoom: float) -> void:
+	_pump_fetch()
 	# Rain starts below the camera so no streak brushes past the lens; snow and dust fill the air around us.
 	var above := minf(14.0, camera_zoom * 0.5) if _rain_kind in ["rain", "storm"] else 6.0
 	rain.global_position = Vector3(center.x, height(center.x, center.y) + above, center.y)
@@ -1804,7 +1808,7 @@ func _mesh_pal(path: String, pal: int) -> Mesh:
 	# A mesh of its own: loaded again, uncached (a few milliseconds), as duplicating the loaded one reads it back from
 	# the GPU (tens). A piece put together from parts has no scene of its own to load, so that one is duplicated.
 	var fresh: Mesh = null
-	if not path.begins_with(COAST) and ResourceLoader.exists(path):
+	if not path.begins_with(COAST) and not _copying.has(path) and ResourceLoader.exists(path):
 		fresh = _scene_mesh(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene)
 	var am: ArrayMesh = fresh if fresh is ArrayMesh else (m as ArrayMesh).duplicate() as ArrayMesh
 	_pal_tint(am, pal)
@@ -1905,14 +1909,19 @@ func _warm(center: Vector2, budget_ms: float) -> void:
 		var pal: int = _copying[path]
 		_copying.erase(path)
 		var key := "%s#%d" % [path, pal]
-		if st == ResourceLoader.THREAD_LOAD_LOADED and not _pal_meshes.has(key):
-			var m := _scene_mesh(ResourceLoader.load_threaded_get(path) as PackedScene)
+		if st != ResourceLoader.THREAD_LOAD_LOADED:
+			continue
+		# Taken from the loader even when not wanted (made meanwhile by _mesh_pal): left there, the copy and its own
+		# materials are freed only after the renderer, a flood of errors on quitting.
+		var scene := ResourceLoader.load_threaded_get(path) as PackedScene
+		if not _pal_meshes.has(key):
+			var m := _scene_mesh(scene)
 			if m is ArrayMesh:
 				_pal_tint(m as ArrayMesh, pal)
 				_pal_meshes[key] = m
 	# Start the next few, the original piece loaded first (a fresh copy must not race its first load).
 	var i := 0
-	while i < _warming.size() and _copying.size() < WARM_AT_ONCE:
+	while i < _warming.size() and _thread_free():
 		var w: Array = _warming[i]
 		var key := "%s#%d" % [w[0], w[1]]
 		if _pal_meshes.has(key):
@@ -1926,17 +1935,44 @@ func _warm(center: Vector2, budget_ms: float) -> void:
 		_mesh(w[0]) # take the original out of the loader first
 		if ResourceLoader.load_threaded_request(w[0], "", false, ResourceLoader.CACHE_MODE_IGNORE) == OK:
 			_copying[w[0]] = w[1]
+			_busy = w[0]
 		_warming.remove_at(i)
 
-const WARM_AT_ONCE := 6
+## One piece on the loader's threads at a time (the prefetch and the palette copies alike). Under Godot 4.7 several
+## loading at once, or one loading while the main thread loads another, can wait on each other for ever: the client
+## hung before connecting.
+var _busy := ""
+
+func _thread_free() -> bool:
+	if _busy != "" and ResourceLoader.load_threaded_get_status(_busy) == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+		return false
+	_busy = ""
+	return true
+
+## Start the next prefetched piece once the loader is free.
+func _pump_fetch() -> void:
+	while not _fetch_queue.is_empty() and _thread_free():
+		var path: String = _fetch_queue.pop_front()
+		if meshes.has(path) or not _fetching.has(path):
+			continue
+		if ResourceLoader.load_threaded_request(path) == OK:
+			_fetching[path] = true
+			_busy = path
+		else:
+			_fetching.erase(path)
 
 ## On the way out, let the copies still loading finish: one left running while the renderer shuts down makes
 ## materials that are no longer anywhere (a flood of errors and a hang on quitting).
+## Likewise every prefetched piece nothing has taken yet: left with the loader, it is freed only in the engine's last
+## cleanup, after the renderer, and each of its materials logs an error on the way (hundreds of thousands, minutes).
 func _exit_tree() -> void:
-	for path in _copying.keys():
-		if ResourceLoader.load_threaded_get_status(path) == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+	_fetch_queue.clear()
+	for path in _copying.keys() + _fetching.keys():
+		var st := ResourceLoader.load_threaded_get_status(path)
+		if st == ResourceLoader.THREAD_LOAD_IN_PROGRESS or st == ResourceLoader.THREAD_LOAD_LOADED:
 			ResourceLoader.load_threaded_get(path)
 	_copying.clear()
+	_fetching.clear()
 	_warming.clear()
 var _warm_sorted_at := Vector2.INF
 
@@ -1947,10 +1983,12 @@ func _prefetch() -> void:
 		for f in DirAccess.get_files_at(dir):
 			var name := f.trim_suffix(".import").trim_suffix(".remap") # an exported game lists the import files
 			if (name.ends_with(".gltf") or name.ends_with(".glb")) and not _fetching.has(dir + name):
-				_fetching[dir + name] = true
-				ResourceLoader.load_threaded_request(dir + name)
+				_fetching[dir + name] = false # queued; true once asked of the loader (_pump_fetch)
+				_fetch_queue.append(dir + name)
+	_pump_fetch()
 
 var _fetching := {}
+var _fetch_queue: Array[String] = []
 
 ## The first mesh in a glTF piece, kept so each piece is loaded once and drawn with MultiMesh.
 func _mesh(path: String) -> Mesh:
@@ -1958,7 +1996,14 @@ func _mesh(path: String) -> Mesh:
 		return meshes[path]
 	var m: Mesh = null
 	if ResourceLoader.exists(path):
-		var res: Resource = ResourceLoader.load_threaded_get(path) if _fetching.has(path) else load(path)
+		var res: Resource
+		if _fetching.get(path, false):
+			res = ResourceLoader.load_threaded_get(path)
+		else:
+			if _fetching.has(path): # still queued: load it here instead
+				_fetch_queue.erase(path)
+			res = load(path)
+		_fetching.erase(path)
 		m = _scene_mesh(res as PackedScene)
 	if m is ArrayMesh and path.begins_with(COAST):
 		_coast_colours(m as ArrayMesh)

@@ -193,10 +193,17 @@ func cell_pause() -> int:
 	cell_deadline = Time.get_ticks_usec() + int(BUILD_MS * 1000.0)
 	return Time.get_ticks_usec() - t
 
-## Build everything queued now (before the world is first shown, where a stall does not matter).
+## Build everything queued now (before the world is first shown, where a stall does not matter). A cell already part
+## built over frames (paused at `cell_pause`) is let finish first: build_some will not start another meanwhile, so
+## looping on it without a frame going by would spin for ever.
 func flush() -> void:
-	while await build_some(1000.0) > 0:
-		pass
+	while true:
+		if _building:
+			cell_deadline = 0 # the paused cell builds the rest in one go when it resumes
+			await get_tree().process_frame
+			continue
+		if await build_some(1000.0) == 0:
+			break
 
 func _update_ground(center: Vector2) -> void:
 	var ext: Rect2 = world.extent()
