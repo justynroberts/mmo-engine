@@ -1330,6 +1330,7 @@ class Minimap extends Control:
 	var span := 240.0       # world units from the middle to the rim
 	var local_tex: ImageTexture
 	var local_area := Rect2()  # the world square local_tex shows
+	var fog: ImageTexture      # explored.gd's fog of war over the whole world, laid over the picture
 
 	func _init() -> void:
 		custom_minimum_size = Vector2(SIDE, SIDE)
@@ -1366,6 +1367,12 @@ class Minimap extends Control:
 			draw_colored_polygon(pts, Color(1, 1, 1), uvs, tex)
 		else:
 			draw_colored_polygon(pts, Color(0.2, 0.25, 0.18))
+		if fog:
+			var fuv := PackedVector2Array()
+			for i in 64:
+				var a := TAU * i / 64.0
+				fuv.append((me + Vector2(cos(a), sin(a)) * span) / world)
+			draw_colored_polygon(pts, Color(1, 1, 1), fuv, fog)
 		var k := rad / span
 		for p in others:
 			var o: Vector2 = (p - me) * k
@@ -1384,11 +1391,11 @@ class Minimap extends Control:
 			preload("res://scripts/map.gd").draw_goal(self, c + o, 5.0)
 		var fwd := Vector2(-sin(facing), -cos(facing))
 		var right := Vector2(fwd.y, -fwd.x)
-		var arrow := PackedVector2Array([c + fwd * 11.0, c - fwd * 6.0 + right * 6.5, c - fwd * 3.0, c - fwd * 6.0 - right * 6.5])
-		draw_circle(c, 9.5, Color(0, 0, 0, 0.45))
-		draw_colored_polygon(arrow, preload("res://scripts/map.gd").YOU) # your colour on the world map too
+		# You are always the middle here, so a small quiet arrow will do (the world map makes more of you).
+		var arrow := PackedVector2Array([c + fwd * 7.5, c - fwd * 4.5 + right * 4.5, c - fwd * 2.0, c - fwd * 4.5 - right * 4.5])
+		draw_colored_polygon(arrow, Color("f3ead2"))
 		arrow.append(arrow[0])
-		draw_polyline(arrow, Color(0, 0, 0, 0.9), 1.5)
+		draw_polyline(arrow, Color(0, 0, 0, 0.75), 1.0)
 		draw_arc(c, rad + 1.0, 0.0, TAU, 72, Color("2a2218"), 5.0, true)
 		draw_arc(c, rad + 3.5, 0.0, TAU, 72, EDGE, 1.5, true)
 		draw_arc(c, rad - 1.5, 0.0, TAU, 72, Color(0, 0, 0, 0.6), 1.0, true)

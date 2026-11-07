@@ -13,6 +13,8 @@ var others: Array = []
 ## a trader; or [Vector2, "dungeon", label]) drawn over the picture.
 var places: Array = []
 var marks: Array = []
+## Fog of war (explored.gd): laid over the picture, and places and marks in it left unnamed.
+var explored: RefCounted
 
 const DUNGEON := Color("e07a5f")
 const GOAL := Color("ffe08a")
@@ -209,6 +211,9 @@ func _draw() -> void:
 		var dpx := float(_detail_tex.get_width()) / _detail_rect.size.x
 		var on := Rect2(origin + (both.position - view.position) / view.size.x * side, both.size / view.size.x * side)
 		draw_texture_rect_region(_detail_tex, on, Rect2((both.position - _detail_rect.position) * dpx, both.size * dpx))
+	if explored != null and explored.tex != null:
+		var fpx: float = float(explored.GRID) / world
+		draw_texture_rect_region(explored.tex, Rect2(origin, Vector2(side, side)), Rect2(view.position * fpx, view.size * fpx))
 	draw_rect(Rect2(origin - Vector2(3, 3), Vector2(side + 6, side + 6)), Color(0, 0, 0, 0.6), false, 3.0)
 	draw_rect(Rect2(origin - Vector2(1, 1), Vector2(side + 2, side + 2)), FRAME, false, 1.5)
 	var to := func(p: Vector2) -> Vector2:
@@ -221,7 +226,11 @@ func _draw() -> void:
 	# Icons first, so labels keep clear of them.
 	var icon_at := func(m: Array) -> Vector2:
 		return to.call(m[0])
-	for m in marks:
+	# Under the fog only what you would know without going there: dungeons (talked of) and where quests send you.
+	var known := func(p: Vector2) -> bool:
+		return explored == null or explored.seen(p) > 0.25
+	var shown := marks.filter(func(m): return String(m[1]) in ["dungeon", "goal"] or known.call(m[0]))
+	for m in shown:
 		var at: Vector2 = icon_at.call(m)
 		if not inside.has_point(at):
 			continue
@@ -272,10 +281,10 @@ func _draw() -> void:
 	taken.append(Rect2(c - Vector2(20, 20), Vector2(40, 40)))
 	# Labels, most wanted first: where a quest sends you, dungeons, then places by size; one that would overlap is
 	# left off, and a name used twice is written once.
-	for m in marks:
+	for m in shown:
 		if String(m[1]) == "goal" and m.size() > 2:
 			_label(font, icon_at.call(m), -11.0, String(m[2]), 13, GOAL, taken)
-	for m in marks:
+	for m in shown:
 		if String(m[1]) == "dungeon" and m.size() > 2:
 			var lvl := String(m[2]).get_slice("level ", 1).get_slice(",", 0).get_slice(")", 0)
 			var dl := String(m[2]).get_slice("  (", 0) + ((" · lvl " + lvl) if lvl != "" else "")
@@ -293,13 +302,13 @@ func _draw() -> void:
 		var pr := float(l.get("r", 20.0))
 		var wp := Vector2(float(l["x"]), float(l["y"]))
 		var at: Vector2 = to.call(wp)
-		if not inside.has_point(at):
+		if not inside.has_point(at) or not known.call(wp):
 			continue
 		if _is_water_at(wp):
 			_label(font, at, 4.0, t, 11, WATER_INK, taken)
 		else:
 			_label(title_font, at, -4.0, t, 15 if pr >= 100.0 else 13, INK, taken)
-	for m in marks:
+	for m in shown:
 		if String(m[1]) == "hold" and m.size() > 2:
 			var ht := String(m[2]).get_slice(" (", 0)
 			if not seen.has(ht):
@@ -316,9 +325,11 @@ func _draw() -> void:
 	draw_string(title_font, n + Vector2(-5, -18), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK)
 	# The key, beside the map: only what is on it.
 	var kinds := {}
-	for m in marks:
+	for m in shown:
 		kinds[String(m[1])] = true
 	var key := [["you", YOU, true]]
+	if explored != null:
+		key.append(["not yet explored", Color(0.25, 0.23, 0.2), true])
 	if not others.is_empty():
 		key.append(["others near", OTHERS, true])
 	for k in [["!", "a quest to take", OTHERS], ["?", "a quest to hand in", OTHERS], ["goal", "where a quest sends you", GOAL], ["dungeon", "dungeon", DUNGEON], ["trade", "trader", TRADE], ["hold", "hold (faction war)", Color("b8b0a0")], ["dock", "boats: F at a dock", DOCK]]:

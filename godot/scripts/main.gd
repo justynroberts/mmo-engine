@@ -94,6 +94,8 @@ const LOOK := 0.0035      # radians per pixel of mouse movement
 var ents := {}      # id -> Node3D
 var gems := {}      # ground id -> Node3D
 const MapScript := preload("res://scripts/map.gd")
+const ExploredScript := preload("res://scripts/explored.gd")
+var explored: RefCounted = null  # fog of war: what this character has seen (explored.gd)
 var world_map: Control
 var weather := {}         # what /play/info says now: {name, color, intensity}, empty for clear sky
 var _shown_weather := {}  # what the theme is drawing: a zone's weather where we stand, else `weather`
@@ -761,6 +763,10 @@ func _start() -> void:
 	if info.get("zone_lines", false) == true:
 		net.set_follow_redirects(false)
 	my_tag = net.account_tag()
+	explored = ExploredScript.new()
+	explored.setup(world.size, "%s_%s" % [HudScript.game_host(String(args.get("web", ""))), my_tag])
+	hud.minimap.fog = explored.tex
+	world_map.explored = explored
 	if args.has("name") and args["name"] is String:
 		net.set_display_name(String(args["name"]))
 	if smoke:
@@ -1145,6 +1151,9 @@ func _process(delta: float) -> void:
 		_goal_in = 0.25
 		questui.update_distances(me_pos, homes)
 		hud.set_prompt(_blueprint_words() if building else ("" if fallen.down else _f_prompt()))
+	if explored != null and self_id != 0:
+		explored.visit(me_pos)
+		explored.tick(delta)
 	hud.update_minimap(me_pos, heading, others)
 	_local_map()
 	if Input.is_key_pressed(KEY_SPACE) and not building and not hud.typing() and not smoke:
@@ -4563,3 +4572,8 @@ func _slot_of(name: String) -> int:
 		if s["item"] == name:
 			return s["slot"]
 	return 0
+
+## What the character has seen is kept on the way out too, not only every 20 seconds.
+func _notification(what: int) -> void:
+	if (what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE) and explored != null:
+		explored.save()
