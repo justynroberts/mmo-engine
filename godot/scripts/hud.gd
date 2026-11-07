@@ -1327,7 +1327,7 @@ class Minimap extends Control:
 	var others: Array = []
 	var dungeons: Array = [] # [[Vector2, name, ...], ...]: marked, and pinned to the rim when out of view
 	var goals: Array = []    # [[Vector2, title, r], ...]: where our quests want us, the same way
-	var span := 240.0       # world units from the middle to the rim
+	var span := 500.0       # world units from the middle to the rim (past explored.gd SIGHT, so the fog shows)
 	var local_tex: ImageTexture
 	var local_area := Rect2()  # the world square local_tex shows
 	var fog: ImageTexture      # explored.gd's fog of war over the whole world, laid over the picture

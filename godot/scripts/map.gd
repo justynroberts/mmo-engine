@@ -266,12 +266,7 @@ func _draw() -> void:
 	var c: Vector2 = (to.call(me) as Vector2).clamp(origin + Vector2(10, 10), origin + Vector2(side - 10, side - 10))
 	var fwd := Vector2(-sin(facing), -cos(facing))
 	var right := Vector2(fwd.y, -fwd.x)
-	# Faint lines through you to the map's edges, a dark disc and a bright ring under a large arrow of your own colour.
-	var line_col := Color(YOU.r, YOU.g, YOU.b, 0.35)
-	draw_line(Vector2(origin.x, c.y), Vector2(c.x - 22.0, c.y), line_col, 1.0)
-	draw_line(Vector2(c.x + 22.0, c.y), Vector2(origin.x + side, c.y), line_col, 1.0)
-	draw_line(Vector2(c.x, origin.y), Vector2(c.x, c.y - 22.0), line_col, 1.0)
-	draw_line(Vector2(c.x, c.y + 22.0), Vector2(c.x, origin.y + side), line_col, 1.0)
+	# A dark disc and a bright ring under a large arrow of your own colour.
 	draw_circle(c, 19.0, Color(0, 0, 0, 0.55))
 	draw_arc(c, 18.0, 0.0, TAU, 40, YOU, 2.5, true)
 	var arrow := PackedVector2Array([c + fwd * 14.0, c - fwd * 8.0 + right * 8.0, c - fwd * 4.0, c - fwd * 8.0 - right * 8.0])

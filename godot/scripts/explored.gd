@@ -5,9 +5,9 @@ extends RefCounted
 ## character in user://explored, so the map fills in over a character's life.
 
 const GRID := 1024
-const SIGHT := 150.0           # world units cleared round you: less than the minimap's reach, so its rim shows the fog
-const FOG := Color(0.07, 0.065, 0.055)
-const FOG_ALPHA := 0.86        # how much of the picture the fog hides
+const SIGHT := 350.0           # world units cleared round you: less than the minimap's reach, so its rim shows the fog
+const FOG := Color(0.03, 0.035, 0.03)   # the world map's own background, so no coast shows through
+const FOG_ALPHA := 1.0         # unexplored is hidden outright; only the edge of what you have seen fades
 
 var world := 1024.0
 var img: Image                 # LA8: grey and alpha, the alpha is the fog
@@ -21,9 +21,20 @@ var _tex_in := 0.0
 
 func setup(world_size: float, key: String) -> void:
 	world = world_size
-	_path = "user://explored/%s.png" % key.validate_filename()
+	_path = "user://explored/%s_v2.png" % key.validate_filename()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://explored"))
 	var saved: Image = Image.load_from_file(ProjectSettings.globalize_path(_path)) if FileAccess.file_exists(_path) else null
+	var old := _path.replace("_v2.png", ".png")
+	if saved == null and FileAccess.file_exists(old):
+		# From the first, see-through fog (alpha 0.86): what was seen stays seen, the rest goes fully dark.
+		saved = Image.load_from_file(ProjectSettings.globalize_path(old))
+		if saved != null:
+			saved.convert(Image.FORMAT_LA8)
+			for y in saved.get_height():
+				for x in saved.get_width():
+					var a := saved.get_pixel(x, y).a
+					saved.set_pixel(x, y, Color(FOG.r, FOG.g, FOG.b, 1.0 if a > 0.8 else a / 0.86))
+			_dirty = true
 	if saved != null and saved.get_width() == saved.get_height() and saved.get_width() >= 64:
 		saved.convert(Image.FORMAT_LA8)
 		if saved.get_width() != GRID:
@@ -57,7 +68,7 @@ func visit(p: Vector2) -> void:
 			if d > SIGHT:
 				continue
 			# Clear in the middle, thinning to the edge of sight.
-			var a := FOG_ALPHA * smoothstep(SIGHT * 0.5, SIGHT, d)
+			var a := FOG_ALPHA * smoothstep(SIGHT * 0.7, SIGHT, d)
 			var was := img.get_pixel(x, y).a
 			if a < was - 0.01:
 				img.set_pixel(x, y, Color(FOG.r, FOG.g, FOG.b, a))
