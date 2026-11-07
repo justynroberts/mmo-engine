@@ -122,8 +122,9 @@ func build(t: Node, d: Dictionary, ground: float) -> Node3D:
 		var bits := ["rubble_large.gltf", "rubble_half.gltf", "rubble_half.gltf", "barrel_small.gltf", "crates_stacked.gltf"]
 		for b in 2 + rng.randi() % 3:
 			var along := rng.randf()
-			var at := Vector3(r.position.x + 3.0 + along * (r.size.x - 6.0), ground, (r.position.y + 2.5) if rng.randf() < 0.5 else (r.end.y - 2.5))
+			var at := Vector3(r.position.x + r.size.x * (0.3 + 0.4 * along), ground, (r.position.y + 2.5) if rng.randf() < 0.5 else (r.end.y - 2.5))
 			put.call(bits[rng.randi() % bits.size()], Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at))
+		_furnish(put, r, ri, rooms.size(), ground, rng)
 	# The boss's room: pillars two storeys high in from its corners, braziers, banners and a chest at the far end.
 	if not rooms.is_empty():
 		var br: Rect2 = rooms[rooms.size() - 1]
@@ -147,6 +148,15 @@ func build(t: Node, d: Dictionary, ground: float) -> Node3D:
 		put.call("candle_triple.gltf", Transform3D(Basis(), far + Vector3(0, 0, -2.2)))
 		put.call("banner_triple_red.gltf", Transform3D(Basis(Vector3.UP, -PI / 2.0), Vector3(br.end.x - 0.2, ground + 1.0, br.get_center().y - 6.0)))
 		put.call("banner_triple_red.gltf", Transform3D(Basis(Vector3.UP, -PI / 2.0), Vector3(br.end.x - 0.2, ground + 1.0, br.get_center().y + 6.0)))
+		# The hoard round the chest: coin, a trunk either side, a gilded sword and shield, the keys.
+		var y := Basis(Vector3.UP, -PI / 2.0)
+		put.call("coin_stack_large.gltf", Transform3D(y, far + Vector3(-1.8, 0, 0.9)))
+		put.call("coin_stack_medium.gltf", Transform3D(y.rotated(Vector3.UP, 0.7), far + Vector3(-1.5, 0, -1.1)))
+		put.call("coin_stack_medium.gltf", Transform3D(y.rotated(Vector3.UP, 2.1), far + Vector3(0.6, 0, 3.4)))
+		put.call("trunk_medium_A.gltf", Transform3D(y.rotated(Vector3.UP, 0.25), far + Vector3(0.4, 0, 4.4)))
+		put.call("trunk_small_C.gltf", Transform3D(y.rotated(Vector3.UP, -0.3), far + Vector3(0.4, 0, -4.4)))
+		put.call("sword_shield_gold.gltf", Transform3D(y, far + Vector3(-0.6, 0, -3.3)))
+		put.call("keyring.gltf", Transform3D(Basis(), far + Vector3(-2.4, 0, -0.2)))
 		var red := OmniLight3D.new()
 		red.light_color = Color("ff5a3c")
 		red.light_energy = 3.0
@@ -216,3 +226,61 @@ func build(t: Node, d: Dictionary, ground: float) -> Node3D:
 			mmi.material_override = mat
 		node.add_child(mmi)
 	return node
+
+## A room's corners: a guardroom's table with its chairs and leavings, a store's shelves and trunks, or a hall
+## fallen in (a heap of wall, columns standing and down, a broken table); banners either side of the way on.
+## Kept out of the band across the middle, where the corridors come in. The boss's room (`last`) gets a fallen
+## corner only; its hoard is by the chest. Seeded by the room, so every client lays it out the same.
+func _furnish(put: Callable, r: Rect2, ri: int, count: int, ground: float, rng: RandomNumberGenerator) -> void:
+	if r.size.x < 18.0 or r.size.y < 16.0:
+		return
+	var last := ri == count - 1
+	var corners := [[0, 1.0], [1, -1.0], [1, 1.0], [0, -1.0]] # [west (0) or east (1), north (1) or south (-1)]
+	var first := rng.randi() % 4
+	var kinds: Array = ["ruin"] if last else (["table", "store"] if rng.randf() < 0.5 else ["table", "ruin"])
+	if not last and rng.randf() < 0.3:
+		kinds = ["store", "ruin"]
+	for k in kinds.size():
+		var kind: String = kinds[k]
+		var c: Array = corners[(first + k) % 4]               # the next corner round: across the room from the last
+		var s: float = c[1]                                   # into the room from its wall
+		var wall_z := r.position.y if s > 0 else r.end.y
+		var cx := (r.position.x + 5.0) if c[0] == 0 else (r.end.x - 5.0)
+		var at := Vector3(cx, ground, wall_z + s * 3.4)
+		var face := 0.0 if s > 0 else PI                      # a piece's front (+z) turned into the room
+		var inward := 1.0 if c[0] == 0 else -1.0              # towards the room's middle, along x
+		match kind:
+			"table":
+				var cloth: String = ["table_long.gltf", "table_long_decorated_A.gltf", "table_long_tablecloth.gltf"][rng.randi() % 3]
+				put.call(cloth, Transform3D(Basis(Vector3.UP, PI / 2.0), at))
+				for side in [-1.0, 1.0]:
+					for dx in [-1.0, 1.0]:
+						if rng.randf() < 0.8:
+							var chair_at := at + Vector3(dx + rng.randf_range(-0.15, 0.15), 0, side * 1.45)
+							put.call("chair.gltf", Transform3D(Basis(Vector3.UP, (0.0 if side < 0 else PI) + rng.randf_range(-0.3, 0.3)), chair_at))
+				var top: Array = ["plate_food_B.gltf", "plate.gltf", "bottle_A_green.gltf", "bottle_B_brown.gltf", "plate_small.gltf", "bottle_C_brown.gltf"]
+				for dx in [-1.3, -0.4, 0.5, 1.4]:
+					put.call(top[rng.randi() % top.size()], Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at + Vector3(dx, 1.0, rng.randf_range(-0.35, 0.35))))
+				put.call("candle_lit.gltf", Transform3D(Basis(), at + Vector3(0.0, 1.0, 0.0)))
+				put.call("sword_shield.gltf", Transform3D(Basis(Vector3.UP, face + PI / 2.0), at + Vector3(inward * 2.9, 0, 0)))
+			"store":
+				for dx in [-1.05, 1.05]:
+					put.call("shelves.gltf", Transform3D(Basis(Vector3.UP, face), Vector3(cx + dx, ground, wall_z + s * 0.05)))
+				put.call("trunk_medium_A.gltf", Transform3D(Basis(Vector3.UP, face + rng.randf_range(-0.3, 0.3)), at + Vector3(-1.2, 0, s * -0.4)))
+				put.call("trunk_small_A.gltf", Transform3D(Basis(Vector3.UP, face + rng.randf_range(-0.5, 0.5)), at + Vector3(0.6, 0, s * -0.2)))
+				put.call("box_small_decorated.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at + Vector3(inward * 2.4, 0, s * 0.6)))
+				put.call("barrel_small.gltf", Transform3D(Basis(), at + Vector3(inward * 3.4, 0, s * -0.9)))
+			"ruin":
+				put.call("wall_broken.gltf", Transform3D(Basis(Vector3.UP, face).scaled(Vector3.ONE * 0.65), at + Vector3(0, -0.4, s * -1.2)))
+				put.call("column.gltf", Transform3D(Basis().scaled(Vector3.ONE * 1.6), at + Vector3(inward * 2.6, 0, s * 0.4)))
+				var down := Basis(Vector3.UP, rng.randf() * TAU) * Basis(Vector3.RIGHT, PI / 2.0)
+				put.call("column.gltf", Transform3D(down.scaled(Vector3.ONE * 1.6), at + Vector3(-inward * 1.6, 0.55, s * 1.4)))
+				if not last:
+					put.call("table_long_broken.gltf", Transform3D(Basis(Vector3.UP, PI / 2.0 + rng.randf_range(-0.4, 0.4)), at + Vector3(inward * 0.8, 0, s * 2.2)))
+				put.call("sword_shield_broken.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at + Vector3(inward * 1.6, 0, s * 3.2)))
+	# Banners either side of the way on into the next room.
+	if not last and r.size.y >= 18.0:
+		var colours: Array = ["banner_blue.gltf", "banner_green.gltf", "banner_brown.gltf", "banner_yellow.gltf", "banner_white.gltf", "banner_triple_blue.gltf", "banner_patternC_green.gltf", "banner_shield_yellow.gltf"]
+		var b: String = colours[(ri * 3 + int(r.position.y)) % colours.size()]
+		for dz in [-6.0, 6.0]:
+			put.call(b, Transform3D(Basis(Vector3.UP, -PI / 2.0), Vector3(r.end.x - 0.2, ground + 1.0, r.get_center().y + dz)))

@@ -2016,6 +2016,10 @@ func _mesh(path: String) -> Mesh:
 		else:
 			if _fetching.has(path): # still queued: load it here instead
 				_fetch_queue.erase(path)
+			# Not while the loader's thread is at a piece: under Godot 4.7 two loads of pieces that share a texture
+			# (all the Dungeon pieces do) can wait on each other for ever.
+			while not _thread_free():
+				OS.delay_msec(1)
 			res = load(path)
 		_fetching.erase(path)
 		m = _scene_mesh(res as PackedScene)

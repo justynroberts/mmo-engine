@@ -9016,6 +9016,46 @@
         "hour": 20,
         "minute": 0
       }
+    },
+    {
+      "name": "ceo maidine",
+      "every_secs": 0,
+      "chance_pct": 45.0,
+      "when": {
+        "kind": "time",
+        "at": "dawn"
+      },
+      "cooldown_secs": 3000,
+      "limit_secs": 0,
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "A fog comes up off the bogs with the dawn."
+        },
+        {
+          "kind": "weather",
+          "name": "ceo",
+          "duration_secs": 240
+        }
+      ]
+    },
+    {
+      "name": "ceo farraige",
+      "every_secs": 2100,
+      "chance_pct": 30.0,
+      "cooldown_secs": 900,
+      "limit_secs": 0,
+      "steps": [
+        {
+          "kind": "announce",
+          "text": "A sea fog rolls in over the land."
+        },
+        {
+          "kind": "weather",
+          "name": "ceo",
+          "duration_secs": 180
+        }
+      ]
     }
   ],
   "quests": [

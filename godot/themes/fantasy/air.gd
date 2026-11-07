@@ -4,6 +4,10 @@ extends Node3D
 ## here is the server's weather; it only colours the clear spells between, and gives way as real weather comes in.
 ##
 ## It runs off the wall clock, so everyone playing at the same time sees much the same morning.
+##
+## Fog banks: now and then, at any hour, a bank of fog lies over a stretch of country. The land is cut into
+## BANK_CELL squares and each has its own slow clock, so a bank comes in, lies a quarter of an hour or so and
+## lifts, in the same place for everyone; about one square in eight has one at a time, thicker by night.
 
 const WISPS := 5
 const WISP_RANGE := 70.0     # wisps live within this of us, and a new one is laid upwind when one drifts out
@@ -11,6 +15,9 @@ var mist := 0.0              # 0 .. 1, how misty it is now (eased)
 var _ground := 0.0           # the height the mist lies at, following us gently over the hills
 var _wisps: Array[FogVolume] = []
 var _mat: FogMaterial
+const BANK_CELL := 320.0
+const BANKS := 6             # the nearest banks drawn (volumetric fog reaches only so far anyway)
+var _banks: Array[FogVolume] = []
 
 func _ready() -> void:
 	_mat = FogMaterial.new()
@@ -26,6 +33,18 @@ func _ready() -> void:
 		v.visible = false
 		add_child(v)
 		_wisps.append(v)
+	for i in BANKS:
+		var b := FogVolume.new()
+		b.shape = RenderingServer.FOG_VOLUME_SHAPE_ELLIPSOID
+		var m := FogMaterial.new()
+		m.albedo = Color("e9eef0")
+		m.height_falloff = 0.25
+		m.edge_fade = 0.9
+		m.density = 0.0
+		b.material = m
+		b.visible = false
+		add_child(b)
+		_banks.append(b)
 
 ## Slow value noise in time: smooth, between 0 and 1, changing over `period` seconds.
 static func _drift(t: float, period: float, seed: float) -> float:
@@ -71,3 +90,35 @@ func frame(e: Environment, dt: float, center: Vector2, ground: float, sun_y: flo
 			p = center + Vector2(cos(a), sin(a)) * randf_range(20.0, WISP_RANGE * 0.9)
 		v.position = Vector3(p.x, 0.0, p.y)
 		v.position.y = get_parent().height(p.x, p.y) + 1.2
+	_fog_banks(t, center, day, k, wind)
+
+static func _hash(x: int, y: int, salt: int) -> float:
+	return fposmod(sin(float(x) * 127.1 + float(y) * 311.7 + float(salt) * 74.7) * 43758.5453, 1.0)
+
+## The banks in the squares round us: each square's own clock says how thick its bank is (most of the time none).
+func _fog_banks(t: float, center: Vector2, day: float, k: float, wind: float) -> void:
+	var near: Array = []
+	var cx := floori(center.x / BANK_CELL)
+	var cy := floori(center.y / BANK_CELL)
+	for j in range(cy - 1, cy + 2):
+		for i in range(cx - 1, cx + 2):
+			var thick := smoothstep(0.78, 0.93, _drift(t, 1100.0 + 500.0 * _hash(i, j, 1), 40.0 * _hash(i, j, 2)))
+			if thick <= 0.01:
+				continue
+			# The bank's middle wanders slowly downwind round its spot in the square.
+			var spot := Vector2((i + 0.2 + 0.6 * _hash(i, j, 3)) * BANK_CELL, (j + 0.2 + 0.6 * _hash(i, j, 4)) * BANK_CELL)
+			spot += Vector2(1.0, 0.35).normalized() * (fposmod(t * (0.4 + wind), 160.0) - 80.0)
+			near.append([spot.distance_to(center), spot, thick, _hash(i, j, 5)])
+	near.sort_custom(func(a, b): return a[0] < b[0])
+	for n in _banks.size():
+		var b := _banks[n]
+		if n >= near.size():
+			b.visible = false
+			continue
+		var it: Array = near[n]
+		var p: Vector2 = it[1]
+		b.visible = true
+		b.size = Vector3(110.0 + 90.0 * it[3], 9.0, 80.0 + 70.0 * (1.0 - it[3]))
+		b.position = Vector3(p.x, get_parent().height(p.x, p.y) + 2.0, p.y)
+		# Thicker in the dark and the half-light, thinner in the noon sun, gone under real weather.
+		(b.material as FogMaterial).density = 0.07 * float(it[2]) * (0.6 + 0.4 * (1.0 - day)) * (1.0 - k)

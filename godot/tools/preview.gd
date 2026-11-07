@@ -2,7 +2,7 @@ extends SceneTree
 ## The fantasy theme's look at given points of a world file, with no server: for comparing what the theme draws.
 ##   godot --path godot --script res://tools/preview.gd -- --world FILE [--game game.json] --at X,Y[;X,Y...]
 ##       --out PREFIX [--zoom 34] [--time 0.3] [--pitch 0.85] [--yaw 0.6] [--size 1280x720] [--blocks DIR] [--info FILE]
-##       [--wet 0..1] [--puddles 0..1] [--autumn 0..1] [--snow 0..1] [--rain 0..1]
+##       [--wet 0..1] [--puddles 0..1] [--autumn 0..1] [--snow 0..1] [--rain 0..1] [--exposure N]
 ## --blocks draws what is built, from a server's <world>.blocks.d region files; --info takes a server's /play/info
 ## (saved to a file) for its realm, so dungeon interiors are drawn.
 ## Saves PREFIX_0.png, PREFIX_1.png ... one per point, and prints the settlement each point is in.
@@ -79,6 +79,9 @@ func _run() -> void:
 			for k in ["wet", "puddles", "autumn", "snow", "rain"]:
 				if a.has(k):
 					RenderingServer.global_shader_parameter_set("world_" + k, float(a[k]))
+			if a.has("exposure"): # brighter, to see what stands in a dark room
+				theme._env.tonemap_exposure = float(a["exposure"])
+				theme._env.ambient_light_energy = 1.3 * float(a["exposure"])
 			await process_frame
 		var out := "%s_%d.png" % [a["out"], n]
 		root.get_texture().get_image().save_png(out)
