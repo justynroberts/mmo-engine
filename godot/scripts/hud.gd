@@ -1336,6 +1336,7 @@ class Minimap extends Control:
 		custom_minimum_size = Vector2(SIDE, SIDE)
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		tooltip_text = "Minimap: scroll to zoom, M for the world map"
+		texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR # the fog's cells blend into a soft edge
 
 	func _gui_input(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and ev.pressed:

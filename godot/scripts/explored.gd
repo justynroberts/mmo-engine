@@ -4,30 +4,33 @@ extends RefCounted
 ## over their picture: dark parchment where you have not been, clear where you have. Kept per server and
 ## character in user://explored, so the map fills in over a character's life.
 
-const GRID := 512
-const SIGHT := 400.0           # world units cleared round you
+const GRID := 1024
+const SIGHT := 150.0           # world units cleared round you: less than the minimap's reach, so its rim shows the fog
 const FOG := Color(0.07, 0.065, 0.055)
 const FOG_ALPHA := 0.86        # how much of the picture the fog hides
 
 var world := 1024.0
-var img: Image                 # FORMAT_LA8 would do, but RGBA8 draws with any modulate: alpha is the fog
+var img: Image                 # LA8: grey and alpha, the alpha is the fog
 var tex: ImageTexture
 var _path := ""
 var _dirty := false
 var _tex_due := false
 var _save_in := 20.0
 var _last := Vector2(-1e9, -1e9)
+var _tex_in := 0.0
 
 func setup(world_size: float, key: String) -> void:
 	world = world_size
 	_path = "user://explored/%s.png" % key.validate_filename()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://explored"))
 	var saved: Image = Image.load_from_file(ProjectSettings.globalize_path(_path)) if FileAccess.file_exists(_path) else null
-	if saved != null and saved.get_width() == GRID and saved.get_height() == GRID:
-		saved.convert(Image.FORMAT_RGBA8)
+	if saved != null and saved.get_width() == saved.get_height() and saved.get_width() >= 64:
+		saved.convert(Image.FORMAT_LA8)
+		if saved.get_width() != GRID:
+			saved.resize(GRID, GRID, Image.INTERPOLATE_BILINEAR)
 		img = saved
 	else:
-		img = Image.create(GRID, GRID, false, Image.FORMAT_RGBA8)
+		img = Image.create(GRID, GRID, false, Image.FORMAT_LA8)
 		img.fill(Color(FOG.r, FOG.g, FOG.b, FOG_ALPHA))
 	tex = ImageTexture.create_from_image(img)
 
@@ -41,7 +44,7 @@ func seen(p: Vector2) -> float:
 
 ## Clear the fog round `p` (cheap to call every frame: it only works when we have moved a little).
 func visit(p: Vector2) -> void:
-	if img == null or p.distance_to(_last) < world / GRID * 0.5:
+	if img == null or p == Vector2.ZERO or p.distance_to(_last) < world / GRID * 0.5:
 		return
 	_last = p
 	var cell := world / GRID
@@ -54,7 +57,7 @@ func visit(p: Vector2) -> void:
 			if d > SIGHT:
 				continue
 			# Clear in the middle, thinning to the edge of sight.
-			var a := FOG_ALPHA * smoothstep(SIGHT * 0.55, SIGHT, d)
+			var a := FOG_ALPHA * smoothstep(SIGHT * 0.5, SIGHT, d)
 			var was := img.get_pixel(x, y).a
 			if a < was - 0.01:
 				img.set_pixel(x, y, Color(FOG.r, FOG.g, FOG.b, a))
@@ -63,8 +66,10 @@ func visit(p: Vector2) -> void:
 
 ## Once a frame: hand the GPU what changed (at most a few times a second) and save now and then.
 func tick(delta: float) -> void:
-	if _tex_due and tex != null:
+	_tex_in -= delta
+	if _tex_due and tex != null and _tex_in <= 0.0:
 		_tex_due = false
+		_tex_in = 0.2
 		tex.update(img)
 	_save_in -= delta
 	if _save_in <= 0.0:
