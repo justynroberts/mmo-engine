@@ -1,5 +1,7 @@
 # mmo-engine
 
+Playing: see [GUIDE.md](GUIDE.md) for the keys and chat commands.
+
 A genre-neutral authoritative world server in Rust, a bot load tester that speaks
 the real (encrypted) protocol, and a browser console to define bots and
 attributes and poke at a live world.
