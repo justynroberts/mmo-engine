@@ -466,7 +466,7 @@
    "name": "laoch",
    "title": "Arms Trader",
    "color": "#3f6e5a",
-   "count": 8,
+   "count": 2,
    "behaviour": "wander",
    "speed_mult": 0.7,
    "sight": 45.0,
@@ -507,15 +507,6 @@
        "Quiet night. Too quiet.",
        "Keep your blade sheathed in the town."
       ]
-     }
-    },
-    {
-     "when": {
-      "kind": "always"
-     },
-     "then": {
-      "kind": "patrol",
-      "route": "timpeall an chaisleain"
      }
     }
    ],
@@ -634,7 +625,8 @@
     "Roche",
     "Scanlon",
     "Tully"
-   ]
+   ],
+   "work": "square"
   },
   {
    "name": "tuathanach",
@@ -5730,6 +5722,97 @@
     "teach osta ath an chnoic",
     "teach osta gort an fhia"
    ]
+  },
+  {
+   "name": "damh",
+   "title": "Stag",
+   "color": "#7a4a2a",
+   "count": 90,
+   "behaviour": "wander",
+   "speed_mult": 1.1,
+   "sight": 40.0,
+   "attack": null,
+   "attrs": {},
+   "home": null,
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "any",
+      "within": 32.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "aran",
+     "chance_pct": 40.0,
+     "min": 1,
+     "max": 2
+    }
+   ],
+   "xp": 12,
+   "level": 2,
+   "skill": "fiach"
+  },
+  {
+   "name": "sionnach",
+   "title": "Fox",
+   "color": "#c8642a",
+   "count": 150,
+   "behaviour": "wander",
+   "speed_mult": 1.2,
+   "sight": 40.0,
+   "attack": null,
+   "attrs": {},
+   "home": null,
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "any",
+      "within": 18.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    }
+   ],
+   "drops": [],
+   "xp": 5,
+   "level": 1,
+   "skill": "fiach"
+  },
+  {
+   "name": "capall fiain",
+   "title": "Wild Horse",
+   "color": "#6e5038",
+   "count": 110,
+   "behaviour": "wander",
+   "speed_mult": 1.3,
+   "sight": 40.0,
+   "attack": null,
+   "attrs": {},
+   "home": null,
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "any",
+      "within": 22.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    }
+   ],
+   "drops": [],
+   "xp": 4,
+   "level": 1,
+   "skill": "fiach"
   }
  ],
  "places": [
@@ -10542,6 +10625,46 @@
     "hour": 20,
     "minute": 0
    }
+  },
+  {
+   "name": "ceo maidine",
+   "every_secs": 0,
+   "chance_pct": 45.0,
+   "when": {
+    "kind": "time",
+    "at": "dawn"
+   },
+   "cooldown_secs": 3000,
+   "limit_secs": 0,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "A fog comes up off the bogs with the dawn."
+    },
+    {
+     "kind": "weather",
+     "name": "ceo",
+     "duration_secs": 240
+    }
+   ]
+  },
+  {
+   "name": "ceo farraige",
+   "every_secs": 2100,
+   "chance_pct": 30.0,
+   "cooldown_secs": 900,
+   "limit_secs": 0,
+   "steps": [
+    {
+     "kind": "announce",
+     "text": "A sea fog rolls in over the land."
+    },
+    {
+     "kind": "weather",
+     "name": "ceo",
+     "duration_secs": 180
+    }
+   ]
   }
  ],
  "quests": [

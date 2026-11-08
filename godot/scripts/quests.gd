@@ -206,8 +206,18 @@ func update_distances(me: Vector2, homes: Dictionary) -> void:
 		var text := next_step(_mine[i])
 		if not g.is_empty():
 			var d: float = maxf(0.0, me.distance_to(g[0]) - float(g[2]))
-			text += "   (here)" if d < 1.0 else "   %d u %s" % [int(d), _compass(g[0] - me)]
+			text += "   (here)" if d < 1.0 else "   %s %s %d°" % [far(d), _compass(g[0] - me), bearing(g[0] - me)]
 		(l as Label).text = text
+
+## A distance in world units (a unit is a metre) for people: "40 m", "850 m", "11.5 km".
+static func far(d: float) -> String:
+	if d < 1000.0:
+		return "%d m" % int(round(d / 10.0) * 10.0) if d >= 100.0 else "%d m" % int(d)
+	return "%.1f km" % (d / 1000.0) if d < 100000.0 else "%d km" % int(d / 1000.0)
+
+## Which way in degrees, as a compass bearing: 0 north, 90 east, 180 south, 270 west (north is -y).
+static func bearing(v: Vector2) -> int:
+	return posmod(int(round(rad_to_deg(atan2(v.x, -v.y)))), 360)
 
 ## Which way, as a compass point (north is -y).
 static func _compass(v: Vector2) -> String:

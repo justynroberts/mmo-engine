@@ -1112,7 +1112,7 @@ func _process(delta: float) -> void:
 		elif e["id"] == target_id:
 			tgt_e = e
 	if target_id != 0 and ents.has(target_id) and not tgt_e.is_empty():
-		hud.set_target(_name(target_id), "%d u away" % int(_dist_to(target_id)), _bars(tgt_e, false))
+		hud.set_target(_name(target_id), "%s away" % QuestsScript.far(_dist_to(target_id)), _bars(tgt_e, false))
 		var party = net.party()
 		var mate := false
 		for id in party:
@@ -3500,7 +3500,7 @@ func _show_goal(goals: Array) -> void:
 		hud.goal_mark.show_goal(false)
 		return
 	var w := Vector3(p.x, theme.height(p.x, p.y) + 2.0, p.y)
-	hud.goal_mark.show_goal(true, cam.unproject_position(w), cam.is_position_behind(w), "%s  %d u" % [g[1], int(d)])
+	hud.goal_mark.show_goal(true, cam.unproject_position(w), cam.is_position_behind(w), "%s  %s" % [g[1], QuestsScript.far(d)])
 
 # ------------------------------------------------------------------------------------------------- blueprints
 
