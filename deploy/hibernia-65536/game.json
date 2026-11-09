@@ -5813,6 +5813,449 @@
    "xp": 4,
    "level": 1,
    "skill": "fiach"
+  },
+  {
+   "name": "cearc",
+   "title": "Hen",
+   "color": "#d8c8a0",
+   "count": 150,
+   "behaviour": "wander",
+   "speed_mult": 0.7,
+   "sight": 12.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 20.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "any",
+      "within": 7.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    }
+   ],
+   "drops": [],
+   "xp": 2,
+   "level": 1,
+   "skill": "fiach",
+   "home": "feirm achadh an fhia",
+   "homes": [
+    "feirm achadh na coille",
+    "feirm doire beag",
+    "feirm lios na gcloch",
+    "feirm doire mor",
+    "feirm achadh mor",
+    "feirm tulach bhui",
+    "feirm ath na coille",
+    "feirm ath na coille 2",
+    "feirm baile na mona",
+    "feirm ath na coille 3",
+    "feirm doire na coille",
+    "feirm rath locha",
+    "feirm mainistir an mhuilinn",
+    "feirm rath na mona",
+    "feirm gort an chnoic",
+    "feirm dun mor",
+    "feirm gort an mhuilinn",
+    "feirm doire locha",
+    "feirm gort na sceiche",
+    "feirm baile na gcloch",
+    "feirm baile na sceiche",
+    "feirm doire na gcloch",
+    "feirm achadh mor 2",
+    "feirm cluain na sceiche",
+    "feirm cill na coille",
+    "feirm cill an iarainn",
+    "feirm cluain na sceiche 2",
+    "feirm mainistir na habhann",
+    "feirm cill an mhuilinn",
+    "feirm gort an fhia",
+    "feirm baile mor",
+    "feirm dun na habhann",
+    "feirm lios bhui",
+    "feirm ath locha",
+    "feirm baile na gcloch 2",
+    "feirm ath an droichid",
+    "feirm doire an droichid",
+    "feirm gort na coille",
+    "feirm cill an iarainn 2",
+    "feirm cluain na gcloch",
+    "feirm gort na habhann",
+    "feirm ath na habhann",
+    "feirm ath an iarainn",
+    "feirm mainistir rua",
+    "feirm cill na mona",
+    "feirm cluain an iarainn",
+    "feirm mainistir mor",
+    "feirm achadh locha",
+    "feirm cluain an fhia",
+    "feirm ath na sceiche",
+    "feirm baile an fhia",
+    "feirm lios na habhann",
+    "feirm achadh locha 2",
+    "feirm lios na habhann 2",
+    "feirm baile na gcloch 3",
+    "feirm ath glas",
+    "feirm rath locha 2",
+    "feirm achadh na mona",
+    "feirm dun rua",
+    "feirm achadh an chnoic",
+    "feirm doire beag 2",
+    "feirm mainistir an droichid",
+    "feirm cluain na coille",
+    "feirm ath na coille 4",
+    "feirm ath bhui",
+    "feirm mainistir mor 2",
+    "feirm mainistir an droichid 2",
+    "feirm mainistir glas",
+    "feirm dun na sceiche",
+    "feirm rath an fhia",
+    "feirm ath rua",
+    "feirm rath na habhann",
+    "feirm rath an chnoic",
+    "feirm gort an droichid",
+    "feirm baile bhui",
+    "feirm cill mor",
+    "feirm achadh na habhann",
+    "feirm rath na mona 2",
+    "feirm dun an fhia",
+    "feirm baile na gcloch 4",
+    "feirm rath an chnoic 2",
+    "feirm lios glas",
+    "feirm tulach na coille",
+    "feirm doire na coille 2",
+    "feirm doire mor 2",
+    "feirm gort na coille 2",
+    "feirm rath an droichid",
+    "feirm ath na sceiche 2",
+    "feirm cill na coille 2",
+    "feirm cluain na coille 2",
+    "feirm tulach na gcloch",
+    "feirm doire na habhann",
+    "feirm cluain na sceiche 3",
+    "feirm tulach an droichid",
+    "feirm ath na coille 5"
+   ]
+  },
+  {
+   "name": "loscann",
+   "title": "Frog",
+   "color": "#5f8f3f",
+   "count": 90,
+   "behaviour": "wander",
+   "speed_mult": 0.6,
+   "sight": 10.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 12.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "any",
+      "within": 6.0
+     },
+     "then": {
+      "kind": "flee"
+     }
+    }
+   ],
+   "drops": [],
+   "xp": 1,
+   "level": 1,
+   "skill": "fiach",
+   "home": "loch neathach",
+   "homes": [
+    "loch coirib",
+    "loch measca",
+    "loch deirgeirt",
+    "loch ri",
+    "loch ailin",
+    "loch eirne"
+   ]
+  },
+  {
+   "name": "beacanan",
+   "title": "Shroomling",
+   "color": "#b0483a",
+   "count": 70,
+   "behaviour": "idle",
+   "speed_mult": 0.8,
+   "sight": 20.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 60.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 12.0
+     },
+     "then": {
+      "kind": "chase"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "deoch leighis",
+     "chance_pct": 10.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 14,
+   "level": 3,
+   "ambush": false,
+   "home": "coill na mac tire"
+  },
+  {
+   "name": "ri na mbeacan",
+   "title": "Shroom King",
+   "color": "#c0503a",
+   "count": 3,
+   "behaviour": "idle",
+   "speed_mult": 0.7,
+   "sight": 24.0,
+   "attack": "ceo nimhe",
+   "attrs": {
+    "health": 300.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 18.0
+     },
+     "then": {
+      "kind": "chase"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 100.0,
+     "min": 4,
+     "max": 10
+    },
+    {
+     "item": "deoch draiochta",
+     "chance_pct": 30.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 160,
+   "level": 10,
+   "ambush": false,
+   "home": "coill na mac tire"
+  },
+  {
+   "name": "troll cnoic",
+   "title": "Hill Troll",
+   "color": "#9a8466",
+   "count": 36,
+   "behaviour": "idle",
+   "speed_mult": 0.6,
+   "sight": 24.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 260.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 16.0
+     },
+     "then": {
+      "kind": "chase"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 50.0,
+     "min": 2,
+     "max": 5
+    },
+    {
+     "item": "fainne oir",
+     "chance_pct": 3.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 60,
+   "level": 8,
+   "ambush": false,
+   "home": "sliabh speirin",
+   "homes": [
+    "sliabh bladhma",
+    "cnoc mhaoldomhnaigh",
+    "sliabh mis",
+    "cnoc breanainn"
+   ]
+  },
+  {
+   "name": "fomhorach",
+   "title": "Fomorian",
+   "color": "#4f6b3a",
+   "count": 60,
+   "behaviour": "chase",
+   "speed_mult": 1.0,
+   "sight": 45.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 180.0
+   },
+   "rules": [],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 40.0,
+     "min": 1,
+     "max": 3
+    },
+    {
+     "item": "claiomh",
+     "chance_pct": 4.0,
+     "min": 1,
+     "max": 1
+    },
+    {
+     "item": "tua chatha",
+     "chance_pct": 3.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 55,
+   "level": 9,
+   "ambush": false,
+   "home": "an tuaisceart 1",
+   "homes": [
+    "an tuaisceart 2",
+    "an tuaisceart 3",
+    "an tuaisceart 4",
+    "an tuaisceart 5"
+   ]
+  },
+  {
+   "name": "troll sneachta",
+   "title": "Snow Troll",
+   "color": "#dfe6ea",
+   "count": 40,
+   "behaviour": "idle",
+   "speed_mult": 0.9,
+   "sight": 30.0,
+   "attack": "buille",
+   "attrs": {
+    "health": 300.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 24.0
+     },
+     "then": {
+      "kind": "chase"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 30.0,
+     "min": 2,
+     "max": 4
+    },
+    {
+     "item": "luireach",
+     "chance_pct": 3.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 80,
+   "level": 11,
+   "ambush": false,
+   "home": "an tuaisceart 1",
+   "homes": [
+    "an tuaisceart 2",
+    "an tuaisceart 3",
+    "an tuaisceart 4",
+    "an tuaisceart 5"
+   ]
+  },
+  {
+   "name": "peist locha",
+   "title": "Lake Wyrm",
+   "color": "#3a6a8a",
+   "count": 6,
+   "behaviour": "idle",
+   "speed_mult": 0.9,
+   "sight": 36.0,
+   "attack": "liathroid tine",
+   "attrs": {
+    "health": 300.0
+   },
+   "rules": [
+    {
+     "when": {
+      "kind": "sees",
+      "who": "player",
+      "within": 28.0
+     },
+     "then": {
+      "kind": "chase"
+     }
+    }
+   ],
+   "drops": [
+    {
+     "item": "pingin airgid",
+     "chance_pct": 100.0,
+     "min": 5,
+     "max": 12
+    },
+    {
+     "item": "fainne oir",
+     "chance_pct": 40.0,
+     "min": 1,
+     "max": 1
+    },
+    {
+     "item": "deoch draiochta",
+     "chance_pct": 20.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
+   "xp": 260,
+   "level": 15,
+   "ambush": false,
+   "home": "loch neathach",
+   "homes": [
+    "loch coirib",
+    "loch measca",
+    "loch deirgeirt",
+    "loch ri",
+    "loch ailin"
+   ]
   }
  ],
  "places": [
