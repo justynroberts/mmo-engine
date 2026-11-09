@@ -31,7 +31,7 @@ const PALETTES := [
 ## piles round its edge.
 const TRADES := {
 	"farming": {
-		"yard": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.2], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Log_A", 1.2], ["v:Prop_Wagon", 1.4], ["Textiles_B", 1.2], ["t:bucket_metal", 1.2], ["d:trunk_small_A", 1.0]],
+		"yard": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.2], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Log_A", 1.2], ["Textiles_B", 1.2], ["t:bucket_metal", 1.2], ["d:trunk_small_A", 1.0]],
 		"work": [["Wood_Log_A", 1.3], ["t:axe", 1.4], ["t:saw", 1.3], ["t:mallet", 1.3], ["Wood_Planks_Stack_Medium", 1.2], ["Wood_Log_Stack", 1.3]],
 		"work_every": 4,
 		"stall": ["Textiles_Stack_Small", "d:plate_food_B", "Textiles_B", "d:plate_food_A", "Textiles_A", "d:plate_stack", "d:bottle_C_brown"],
@@ -47,7 +47,7 @@ const TRADES := {
 		"stalls": 3,
 	},
 	"mining": {
-		"yard": [["Stone_Bricks_Stack_Small", 1.2], ["t:pickaxe", 1.3], ["Iron_Nuggets", 1.4], ["t:shovel", 1.3], ["Copper_Nuggets", 1.4], ["t:bucket_metal", 1.2], ["t:torch_burnt", 1.3], ["v:Prop_Wagon", 1.4]],
+		"yard": [["Stone_Bricks_Stack_Small", 1.2], ["t:pickaxe", 1.3], ["Iron_Nuggets", 1.4], ["t:shovel", 1.3], ["Copper_Nuggets", 1.4], ["t:bucket_metal", 1.2], ["t:torch_burnt", 1.3]],
 		"work": [["t:anvil", 1.4], ["t:grindstone", 1.3], ["t:tongs", 1.3], ["t:hammer", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["Stone_Chunks_Small", 1.3]],
 		"work_every": 3,
 		"stall": ["Iron_Bars_Stack_Small", "d:sword_shield", "Copper_Bars_Stack_Small", "d:keyring", "Iron_Nuggets", "t:pickaxe", "d:sword_shield_broken"],

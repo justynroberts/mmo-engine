@@ -2149,7 +2149,7 @@ func _gem_node(color: String, rare := false) -> Node3D:
 
 ## A village house from the Medieval Village kit: a stone ground floor (with the door) and half-timbered upper
 ## floors, corner posts, windows with shutters, a tiled roof with gable ends, chimney and dormers, vines, a
-## balcony now and then, and a paved yard with a fence, a wagon and crates out front. The walls fill the box
+## balcony now and then, and a paved yard with a fence and crates out front (kept off the road). The walls fill the box
 ## exactly, so the house is what the server's wall is.
 ## `town` is the settlement's character (towns.gd): its palette tints every piece, its style sets the odds of each
 ## choice below, so a village is of a piece while its houses still differ. `grand` builds in stone throughout (a
@@ -2455,7 +2455,7 @@ func _square_dress(o: Dictionary, batch: Dictionary) -> void:
 	for k in 4:
 		var g: Array = piles[(k + rng.randi() % piles.size()) % piles.size()]
 		var p: Vector2 = c + (corners[k] as Vector2) * Vector2(w / 2.0 - 2.5, d / 2.0 - 2.5)
-		_dress(dress, String(g[0]), float(g[1]), on_ground.call(p), rng.randf() * TAU)
+		_dress_off_road(dress, String(g[0]), float(g[1]), on_ground.call(p), rng.randf() * TAU)
 	for pth in dress:
 		_batch(batch, pth, dress[pth], 0.0)
 
@@ -2501,12 +2501,15 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 			for s2 in [-1.0, 1.0]:
 				for k in 3:
 					var at: Vector3 = door + out * (VS * (1.0 + 2.0 * k)) + side * s2 * (VS * 2.6)
+					if _on_road(at, 0.8):
+						continue
 					var piece: String = "Prop_WoodenFence_Single" if k == 0 else ["Prop_WoodenFence_Extension1", "Prop_WoodenFence_Extension2"][k % 2]
 					put.call(piece, Transform3D(rot * Basis(Vector3.UP, PI / 2.0) * tile, gy.call(at) - Vector3(0, 0.1, 0)))
 		"metal":
-			put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, gy.call(door + out * (VS * 6.2) + side * (VS * 1.6)) - Vector3(0, 0.1, 0)))
-			put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, gy.call(door + out * (VS * 6.2) - side * (VS * 1.6)) - Vector3(0, 0.1, 0)))
-	if hsh % 3 != 0:
+			if not _on_road(door + out * (VS * 6.2), 2.5):
+				put.call("Prop_MetalFence_Ornament", Transform3D(rot * tile, gy.call(door + out * (VS * 6.2) + side * (VS * 1.6)) - Vector3(0, 0.1, 0)))
+				put.call("Prop_MetalFence_Simple", Transform3D(rot * tile, gy.call(door + out * (VS * 6.2) - side * (VS * 1.6)) - Vector3(0, 0.1, 0)))
+	if hsh % 3 != 0 and not _on_road(door + out * (VS * 6.0), 1.5):
 		# The arch's feet on the lower side of the slope, so neither floats.
 		var arch := door + out * (VS * 6.0)
 		var low := minf(gy.call(arch - side * VS).y, gy.call(arch + side * VS).y)
@@ -2514,8 +2517,9 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 	# A wooden lean-to beside the path on most houses: one sloping roof of the kit's left and right Roof_Wooden_2x1
 	# halves (each trimmed on its outer end only, so they meet without a doubled edge; high along the origin edge,
 	# falling ~1.1 over the 1.5 depth) on four timber posts cut to meet it, high side towards the house.
-	if hsh % 4 != 3:
-		var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
+	# Only on one house in three, and never where it would stand in a road or street.
+	var shed := door + out * (VS * 4.5) - side * (VS * 5.5)
+	if hsh % 3 == 1 and not _on_road(shed, 3.5) and not _on_road(shed - out * VS, 3.5):
 		var high := (2.4 + 0.3 * float(hsh % 3)) * VS          # the eaves above the ground at the back
 		var across := Vector3.UP.cross(out).normalized()      # the roof's own x, so its z runs down the slope, outwards
 		var roof_b := Basis(across, Vector3.UP, out) * tile
@@ -2539,7 +2543,7 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 		var goods: Array = TownsScript.TRADES[town["trade"]]["yard"]
 		for k in 2:
 			var g: Array = goods[(hsh / 3 + k * 2) % goods.size()]
-			_dress(dress, String(g[0]), float(g[1]), gy.call(shed + side * (VS * (k * 2.0 - 1.0))), rng.randf() * TAU)
+			_dress_off_road(dress, String(g[0]), float(g[1]), gy.call(shed + side * (VS * (k * 2.0 - 1.0))), rng.randf() * TAU)
 	# The trade's workshop (a smithy's anvil and grindstone, a sawpit, a fish store) on one house in a few; a couple
 	# more of the trade's things out in the yard on the rest.
 	var trade: Dictionary = TownsScript.TRADES[town["trade"]]
@@ -2550,12 +2554,12 @@ func _house_yard(put: Callable, rng: RandomNumberGenerator, door: Vector3, out: 
 		for k in work.size():
 			var g: Array = work[k]
 			var at: Vector3 = door + out * (VS * (1.6 + 1.5 * (k / 2))) + side * (VS * (3.5 + 1.3 * (k % 2)))
-			_dress(dress, String(g[0]), float(g[1]), gy.call(at), rng.randf_range(-0.4, 0.4) + atan2(out.x, out.z))
+			_dress_off_road(dress, String(g[0]), float(g[1]), gy.call(at), rng.randf_range(-0.4, 0.4) + atan2(out.x, out.z))
 	else:
 		var goods: Array = trade["yard"]
 		for k in 2:
 			var g: Array = goods[(hsh / 7 + k * 3 + 1) % goods.size()]
-			_dress(dress, String(g[0]), float(g[1]), gy.call(door + out * (VS * rng.randf_range(2.0, 4.5)) + side * (VS * rng.randf_range(3.4, 4.8) * (1.0 if k == 0 else -1.0))), rng.randf() * TAU)
+			_dress_off_road(dress, String(g[0]), float(g[1]), gy.call(door + out * (VS * rng.randf_range(2.0, 4.5)) + side * (VS * rng.randf_range(3.4, 4.8) * (1.0 if k == 0 else -1.0))), rng.randf() * TAU)
 
 ## Outside the inn, beside its path: a long trestle table with chairs down both sides, food, drink and a candle on
 ## it, and the ale keg and a barrel at its far end. Where the town's folk sit of an evening (folk.rs inn_of).
@@ -2595,6 +2599,26 @@ func _woodpile(side: Array, hsh: int, town: Dictionary, dress: Dictionary) -> vo
 		_dress(dress, "Stone_Bricks_Stack_Small", 1.2, at + dir * 2.2, turn)
 	elif length > 10.0:
 		_dress(dress, "Wood_Log_Stack", 1.3, at + dir * 2.0, turn + PI)
+
+## Whether `q` (x, z on the ground) is on a road or street, or within `pad` of one.
+func _on_road(q: Vector3, pad: float) -> bool:
+	var p := Vector2(q.x, q.z)
+	var seen := {}
+	for c in [Vector2(-pad, -pad), Vector2(pad, -pad), Vector2(-pad, pad), Vector2(pad, pad)]:
+		var cx := int(floor((p.x + c.x) / world.CELL))
+		var cy := int(floor((p.y + c.y) / world.CELL))
+		if seen.has(Vector2i(cx, cy)):
+			continue
+		seen[Vector2i(cx, cy)] = true
+		for s in world.road_segments(cx, cy):
+			if Geometry2D.get_closest_point_to_segment(p, Vector2(s[0], s[1]), Vector2(s[2], s[3])).distance_to(p) < float(s[4]) + pad:
+				return true
+	return false
+
+## `_dress`, unless the spot is on a road or street (yard and square clutter stays out of the way).
+func _dress_off_road(dress: Dictionary, name: String, scale: float, at: Vector3, turn: float) -> void:
+	if not _on_road(at, 1.2 * scale):
+		_dress(dress, name, scale, at, turn)
 
 ## One loose thing by name (towns.gd: "d:" a Dungeon piece, "v:" a village piece, "t:" a tool, else a Resource
 ## Bits one), resting on the ground at `at` (relative to the building's base), turned `turn`.
