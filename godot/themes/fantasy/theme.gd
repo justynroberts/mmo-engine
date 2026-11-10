@@ -799,7 +799,8 @@ func build_cell(cx: int, cy: int) -> Node3D:
 		var m := _mesh_pal(path, int(String(key).get_slice("#", 1)) if String(key).contains("#") else 0)
 		pt = lap("cell load" if fresh else "cell palette", pt)
 		var f := path.get_file()
-		var tint := _tint(path) * (chill if path.begins_with(FOREST) and (f.begins_with("Tree_") or f.begins_with("Bush_")) else Color.WHITE)
+		var leafy := (path.begins_with(FOREST) and (f.begins_with("Tree_") or f.begins_with("Bush_"))) or (path.begins_with(NATURE) and not f.begins_with("DeadTree"))
+		var tint := _tint(path) * (chill if leafy else Color.WHITE)
 		if m:
 			node.add_child(_multi(m, batch[key], tint))
 		pt = lap("cell multi", pt)
@@ -1369,12 +1370,34 @@ func _prop(o: Dictionary, batch: Dictionary) -> void:
 	var turn := Basis(Vector3.UP, float(o.get("r", 0.0)))
 	var path := ""
 	var cold: float = land.cold_at(y)
+	var fit := 1.0
 	match t:
 		"tree":
-			# Pines take over from the broadleaves going north.
+			# Pines take over from the broadleaves going north. Now and then a tree of the nature kit instead (they are
+			# heavier, so a few in many): a tall pine in the north, a wind-twisted tree in the west, else a tall oak.
 			var pine := cold > 0.3 and float(v % 97) / 97.0 < cold
-			path = FOREST + (PINES[v % PINES.size()] if pine else TREES[v % TREES.size()]) + ".gltf"
-		"tree_bare": path = FOREST + BARE_TREES[v % BARE_TREES.size()] + ".gltf"
+			var roll := float((v / 7) % 100) / 100.0
+			var west := 1.0 - smoothstep(world.size * 0.3, world.size * 0.42, x)
+			var nat := ""
+			if pine and v % 5 == 0:
+				nat = "Pine_%d" % (1 + (v / 5) % 5)
+			elif not pine and roll < 0.16 * west:
+				nat = "TwistedTree_%d" % (1 + (v / 3) % 5)
+			elif not pine and v % 11 == 0:
+				nat = "CommonTree_%d" % (1 + (v / 11) % 5)
+			if nat != "":
+				path = NATURE + nat + ".gltf"
+				fit = float(NATURE_FIT[nat])
+			else:
+				path = FOREST + (PINES[v % PINES.size()] if pine else TREES[v % TREES.size()]) + ".gltf"
+		"tree_bare":
+			# Half the bare trees are the nature kit's gnarled dead ones.
+			if v % 2 == 0:
+				var dead := "DeadTree_%d" % (1 + (v / 2) % 5)
+				path = NATURE + dead + ".gltf"
+				fit = float(NATURE_FIT[dead])
+			else:
+				path = FOREST + BARE_TREES[v % BARE_TREES.size()] + ".gltf"
 		"bush": path = FOREST + BUSHES[v % BUSHES.size()] + ".gltf"
 		"rock": path = FOREST + SMALL_ROCKS[v % SMALL_ROCKS.size()] + ".gltf"
 		"boulder", "spire":
@@ -1386,7 +1409,21 @@ func _prop(o: Dictionary, batch: Dictionary) -> void:
 			return
 	if not batch.has(path):
 		batch[path] = []
-	batch[path].append(Transform3D(turn.scaled(Vector3.ONE * s), Vector3(x, height(x, y) - 0.15, y)))
+	batch[path].append(Transform3D(turn.scaled(Vector3.ONE * s * fit), Vector3(x, height(x, y) - 0.15, y)))
+	# The woodland floor: a fern, a mushroom or a plant under one tree in three, flowers by one bush in four where
+	# it is not cold.
+	if (t == "tree" and v % 3 == 0 and cold < 0.75) or (t == "bush" and v % 4 == 1 and cold < 0.35):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = v * 17 + 3
+		var list: Array = WOOD_FLOOR if t == "tree" else MEADOW
+		var pick: String = list[rng.randi() % list.size()]
+		var a := rng.randf() * TAU
+		var at := Vector2(x, y) + Vector2(cos(a), sin(a)) * rng.randf_range(0.8, 2.2) * s
+		var under := NATURE + pick + ".gltf"
+		if not batch.has(under):
+			batch[under] = []
+		var us := float(NATURE_FIT[pick]) * rng.randf_range(0.8, 1.25)
+		batch[under].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * us), Vector3(at.x, height(at.x, at.y) - 0.05, at.y)))
 	# Undergrowth round trees out in the country: bushes, and stones in the north.
 	if t == "tree" and towns.at(Vector2(x, y)).get("farmstead", false):
 		var rng := RandomNumberGenerator.new()
@@ -1786,6 +1823,21 @@ const VS := 1.4 # Quaternius builds in metres; this brings the village up to the
 const ROOFS := [[4, 4], [4, 6], [4, 8], [6, 4], [6, 6], [6, 8], [6, 10], [6, 12], [6, 14], [8, 8], [8, 10], [8, 12], [8, 14]]
 
 const FOREST := "res://themes/fantasy/assets/forest/"
+const NATURE := "res://themes/fantasy/assets/nature/" # Quaternius Stylized Nature MegaKit: twisted, dead and tall trees, ferns, flowers
+
+## Nature kit pieces by file, the scale that brings each to the size of the KayKit forest it grows among (the kit is
+## made in metres and its trees run to 7-19 tall; ours stand 4-5).
+const NATURE_FIT := {
+	"CommonTree_1": 0.63, "CommonTree_2": 0.6, "CommonTree_3": 0.52, "CommonTree_4": 0.52, "CommonTree_5": 0.66,
+	"TwistedTree_1": 0.4, "TwistedTree_2": 0.35, "TwistedTree_3": 0.41, "TwistedTree_4": 0.35, "TwistedTree_5": 0.42,
+	"DeadTree_1": 0.5, "DeadTree_2": 0.42, "DeadTree_3": 0.37, "DeadTree_4": 0.38, "DeadTree_5": 0.3,
+	"Pine_1": 0.75, "Pine_2": 0.74, "Pine_3": 0.74, "Pine_4": 0.55, "Pine_5": 0.63,
+	"Fern_1": 0.28, "Mushroom_Common": 0.8, "Mushroom_Laetiporus": 0.6, "Flower_3_Group": 0.3, "Flower_4_Group": 0.26,
+	"Bush_Common_Flowers": 0.55, "Clover_1": 0.38, "Clover_2": 0.32, "Plant_1_Big": 0.24, "Plant_7_Big": 1.0,
+}
+## What grows under the trees: in woods, and (warmer, out in the open) flowers.
+const WOOD_FLOOR := ["Fern_1", "Fern_1", "Mushroom_Common", "Plant_1_Big", "Clover_1", "Mushroom_Laetiporus", "Plant_7_Big", "Clover_2"]
+const MEADOW := ["Flower_3_Group", "Flower_4_Group", "Bush_Common_Flowers", "Clover_1"]
 
 ## KayKit rocks for crags and mountains: [file, width, height, how far below its origin it reaches] at scale 1.
 const SPIRES := [["Rock_1_O_Color1", 2.11, 4.58, 0.0], ["Rock_1_N_Color1", 2.3, 4.5, 0.0], ["Rock_1_P_Color1", 2.21, 4.01, 0.0], ["Rock_1_Q_Color1", 2.8, 4.28, 0.0]]
@@ -1996,7 +2048,7 @@ var _warm_sorted_at := Vector2.INF
 ## Start loading every piece the theme may draw on the loader's threads, so the first village that needs one does
 ## not wait for it to load (the pieces come in during the loading screen).
 func _prefetch() -> void:
-	for dir in [VILLAGE, RES, TOOLS, PROPS, DUNGEON, FOREST, COAST]:
+	for dir in [VILLAGE, RES, TOOLS, PROPS, DUNGEON, FOREST, NATURE, COAST]:
 		for f in DirAccess.get_files_at(dir):
 			var name := f.trim_suffix(".import").trim_suffix(".remap") # an exported game lists the import files
 			if (name.ends_with(".gltf") or name.ends_with(".glb")) and not _fetching.has(dir + name):
@@ -2081,11 +2133,28 @@ func _multi(mesh: Mesh, xforms: Array, tint := Color.WHITE) -> MultiMeshInstance
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
 	_snowable(mmi)
-	if tint != Color.WHITE and mesh.get_surface_count() > 0 and mesh.surface_get_material(0) is StandardMaterial3D:
+	if tint != Color.WHITE and mesh.get_surface_count() > 1 and mesh is ArrayMesh:
+		# Bark and leaves (the nature kit): a copy of the mesh with each surface's own material tinted.
+		mm.mesh = _tinted_mesh(mesh as ArrayMesh, tint)
+	elif tint != Color.WHITE and mesh.get_surface_count() > 0 and mesh.surface_get_material(0) is StandardMaterial3D:
 		var m := (mesh.surface_get_material(0) as StandardMaterial3D).duplicate() as StandardMaterial3D
 		m.albedo_color = tint
 		mmi.material_override = m
 	return mmi
+
+var _tinted := {}
+func _tinted_mesh(mesh: ArrayMesh, tint: Color) -> ArrayMesh:
+	var k := [mesh.get_instance_id(), tint.to_html()]
+	if not _tinted.has(k):
+		var copy := mesh.duplicate() as ArrayMesh
+		for i in copy.get_surface_count():
+			var src := mesh.surface_get_material(i) as StandardMaterial3D
+			if src:
+				var m := src.duplicate() as StandardMaterial3D
+				m.albedo_color = Color(src.albedo_color.r * tint.r, src.albedo_color.g * tint.g, src.albedo_color.b * tint.b, src.albedo_color.a)
+				copy.surface_set_material(i, m)
+		_tinted[k] = copy
+	return _tinted[k]
 
 ## Loot is a chest tinted by the item's colour, with a soft beam of the same colour so it can be found in grass.
 ## Every mob scene that is present: the four skeletons, and the Bestiary monsters when their (local only,
