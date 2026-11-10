@@ -1776,6 +1776,7 @@ const DUNGEON := "res://themes/fantasy/assets/dungeon/"
 const VILLAGE := "res://themes/fantasy/assets/village/"
 
 const RES := "res://themes/fantasy/assets/resources/" # KayKit Resource Bits: logs, planks, stone, ore, cloth
+const PROPS := "res://themes/fantasy/assets/props/"    # Quaternius Fantasy Props MegaKit: crates, barrels, stalls' goods, dungeon stores
 const TOOLS := "res://themes/fantasy/assets/tools/"    # KayKit RPG Tools Bits: anvil, grindstone, axes, rope, lanterns
 const COAST := "res://themes/fantasy/assets/coast/"    # Kenney Pirate Kit and Nature Kit (CC0): boats, a wreck, shore rocks, sea stacks, dune grass
 
@@ -1995,7 +1996,7 @@ var _warm_sorted_at := Vector2.INF
 ## Start loading every piece the theme may draw on the loader's threads, so the first village that needs one does
 ## not wait for it to load (the pieces come in during the loading screen).
 func _prefetch() -> void:
-	for dir in [VILLAGE, RES, TOOLS, DUNGEON, FOREST, COAST]:
+	for dir in [VILLAGE, RES, TOOLS, PROPS, DUNGEON, FOREST, COAST]:
 		for f in DirAccess.get_files_at(dir):
 			var name := f.trim_suffix(".import").trim_suffix(".remap") # an exported game lists the import files
 			if (name.ends_with(".gltf") or name.ends_with(".glb")) and not _fetching.has(dir + name):
@@ -2439,7 +2440,9 @@ func _square_dress(o: Dictionary, batch: Dictionary) -> void:
 		_dress(dress, "d:table_medium_tablecloth" if k % 2 == 0 else "d:table_long_tablecloth", 1.2, base, face)
 		for g in 2:
 			var along := Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * (0.5 if g == 0 else -0.5)
-			_dress(dress, String(goods[(k * 2 + g) % goods.size()]), 0.8, base + Vector3(along.x, 1.2, along.y), face + g)
+			var item := String(goods[(k * 2 + g) % goods.size()])
+			# The Fantasy Props pieces are made in metres, the Dungeon ones a little over; small wares a touch larger to read.
+			_dress(dress, item, (1.8 if item.begins_with("p:") else 0.8), base + Vector3(along.x, 1.2, along.y), face + g)
 		# A candle or a couple of bottles at the end of the table.
 		var end := Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * 1.1
 		if k % 2 == 0:
@@ -2576,12 +2579,14 @@ func _inn_tables(dress: Dictionary, door: Vector3, out: Vector3, side: Vector3, 
 		var dish: String = on[(hsh + k) % on.size()]
 		_dress(dress, dish, 0.75, top + out * f + side * (0.45 if k % 2 == 0 else -0.45), along + k)
 	_dress(dress, "d:candle_lit", 0.8, top, along)
+	for k in 3:
+		_dress(dress, "p:Mug", 1.3, top + out * (-1.1 + 1.05 * k) + side * (-0.25 if k % 2 == 0 else 0.25), along + k * 1.7)
 	for s2 in [-1.0, 1.0]:
 		for k in 3:
 			var f := -1.6 + 1.6 * k
 			# Chairs face the table: a chair's seat faces its +z.
 			_dress(dress, "d:chair", 1.1, gy.call(mid + side * (s2 * 2.05) + out * f), along - s2 * PI / 2.0 + PI)
-	_dress(dress, "d:keg_decorated", 0.8, gy.call(mid + out * 4.6), along + PI / 2.0)
+	_dress(dress, "p:Barrel_Holder", 1.3, gy.call(mid + out * 4.6), along + PI / 2.0)
 	_dress(dress, "d:barrel_small", 1.0, gy.call(mid + out * 4.4 + side * 2.4), float(hsh % 7))
 
 ## A woodpile against the back wall, on most houses: logs for the fire, or the trade's own stack.
@@ -2649,6 +2654,7 @@ func _dress_path(name: String) -> String:
 		"d:": return DUNGEON + name.substr(2) + ".gltf"
 		"v:": return VILLAGE + name.substr(2) + ".gltf"
 		"t:": return TOOLS + name.substr(2) + ".gltf"
+		"p:": return PROPS + name.substr(2) + ".gltf"
 	return RES + name + ".gltf"
 
 ## A flame that blooms (brighter than white, so glow picks it up) and the warm light it casts.

@@ -5,6 +5,7 @@ extends RefCounted
 ## all so the sea it stands in never shows. From /play/info realm dungeons' `interior`; built once, at setup.
 
 const DUNGEON := "res://themes/fantasy/assets/dungeon/"
+const PROPS := "res://themes/fantasy/assets/props/"
 const STOREY := 4.0
 const STOREYS := 2
 
@@ -197,7 +198,8 @@ func build(t: Node, d: Dictionary, ground: float) -> Node3D:
 		l.position = e + Vector3(1.0, 2.5, 0)
 		lit.add_child(l)
 	for file in pieces:
-		var m: Mesh = theme._mesh(DUNGEON + String(file))
+		var path := String(file) if String(file).begins_with("res://") else DUNGEON + String(file)
+		var m: Mesh = theme._mesh(path)
 		if m == null:
 			continue
 		var mm := MultiMesh.new()
@@ -209,7 +211,7 @@ func build(t: Node, d: Dictionary, ground: float) -> Node3D:
 			mm.set_instance_transform(i, xs[i])
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
-		var tint: Color = theme._tint(DUNGEON + String(file))
+		var tint: Color = theme._tint(path)
 		var src: StandardMaterial3D = m.surface_get_material(0) as StandardMaterial3D if m.get_surface_count() > 0 else null
 		if String(file).begins_with("wall") and src and src.albedo_texture:
 			if _cutaway == null:
@@ -270,6 +272,21 @@ func _furnish(put: Callable, r: Rect2, ri: int, count: int, ground: float, rng: 
 				put.call("trunk_small_A.gltf", Transform3D(Basis(Vector3.UP, face + rng.randf_range(-0.5, 0.5)), at + Vector3(0.6, 0, s * -0.2)))
 				put.call("box_small_decorated.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at + Vector3(inward * 2.4, 0, s * 0.6)))
 				put.call("barrel_small.gltf", Transform3D(Basis(), at + Vector3(inward * 3.4, 0, s * -0.9)))
+				# A stores room is one of three: an alchemist's (cauldron, bottles), a scholar's (books) or an armoury.
+				var props := Basis.from_scale(Vector3.ONE * 1.3)
+				match rng.randi() % 3:
+					0:
+						put.call(PROPS + "Cauldron.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * props, at + Vector3(inward * 0.6, 0, s * 1.6)))
+						put.call(PROPS + "Shelf_Small_Bottles.gltf", Transform3D(Basis(Vector3.UP, face) * props, Vector3(cx + inward * 3.0, ground + 1.2, wall_z + s * 0.2)))
+						put.call(PROPS + "Potion_2.gltf", Transform3D(props, at + Vector3(inward * 2.4, 0.95, s * 0.6)))
+					1:
+						put.call(PROPS + "Bookcase_2.gltf", Transform3D(Basis(Vector3.UP, face) * props, Vector3(cx + inward * 3.4, ground, wall_z + s * 0.3)))
+						put.call(PROPS + "BookStand.gltf", Transform3D(Basis(Vector3.UP, face + PI) * props, at + Vector3(inward * 0.8, 0, s * 1.8)))
+						put.call(PROPS + "Book_Stack_2.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * props, at + Vector3(inward * 2.4, 0.95, s * 0.6)))
+					_:
+						put.call(PROPS + "WeaponStand.gltf", Transform3D(Basis(Vector3.UP, face) * props, at + Vector3(inward * 0.6, 0, s * 1.4)))
+						put.call(PROPS + "Shield_Wooden.gltf", Transform3D(Basis(Vector3.UP, face) * Basis(Vector3.RIGHT, -0.3) * props, Vector3(cx - inward * 2.2, ground + 0.4, wall_z + s * 0.35)))
+						put.call(PROPS + "Crate_Metal.gltf", Transform3D(Basis(Vector3.UP, rng.randf_range(-0.3, 0.3)) * props, at + Vector3(-inward * 2.6, 0, s * 1.2)))
 			"ruin":
 				put.call("wall_broken.gltf", Transform3D(Basis(Vector3.UP, face).scaled(Vector3.ONE * 0.65), at + Vector3(0, -0.4, s * -1.2)))
 				put.call("column.gltf", Transform3D(Basis().scaled(Vector3.ONE * 1.6), at + Vector3(inward * 2.6, 0, s * 0.4)))
@@ -278,6 +295,10 @@ func _furnish(put: Callable, r: Rect2, ri: int, count: int, ground: float, rng: 
 				if not last:
 					put.call("table_long_broken.gltf", Transform3D(Basis(Vector3.UP, PI / 2.0 + rng.randf_range(-0.4, 0.4)), at + Vector3(inward * 0.8, 0, s * 2.2)))
 				put.call("sword_shield_broken.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at + Vector3(inward * 1.6, 0, s * 3.2)))
+				put.call(PROPS + "Vase_Rubble_Medium.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * 1.3), at + Vector3(-inward * 0.4, 0, s * 2.8)))
+				if rng.randf() < 0.5:
+					put.call(PROPS + "Cage_Small.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * 1.3), at + Vector3(inward * 3.4, 0, s * 1.0)))
+				put.call(PROPS + "Chain_Coil.gltf", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * 1.3), at + Vector3(inward * 2.2, 0.02, s * -0.6)))
 	# Banners either side of the way on into the next room.
 	if not last and r.size.y >= 18.0:
 		var colours: Array = ["banner_blue.gltf", "banner_green.gltf", "banner_brown.gltf", "banner_yellow.gltf", "banner_white.gltf", "banner_triple_blue.gltf", "banner_patternC_green.gltf", "banner_shield_yellow.gltf"]

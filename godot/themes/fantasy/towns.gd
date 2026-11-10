@@ -26,40 +26,40 @@ const PALETTES := [
 ]
 
 ## What lies about, by trade: [name, scale], a name being a Resource Bits file, or "d:" a Dungeon piece, "v:" a
-## village one, "t:" a tool (theme.gd _dress_path). Yards draw a few from `yard`; one house in `work_every` is the
+## village one, "t:" a tool, "p:" a Fantasy Props one (theme.gd _dress_path). Yards draw a few from `yard`; one house in `work_every` is the
 ## trade's workshop and has `work` laid out by its door; the square has `stall` goods on its tables and `square`
 ## piles round its edge.
 const TRADES := {
 	"farming": {
-		"yard": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.2], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Log_A", 1.2], ["Textiles_B", 1.2], ["t:bucket_metal", 1.2], ["d:trunk_small_A", 1.0]],
-		"work": [["Wood_Log_A", 1.3], ["t:axe", 1.4], ["t:saw", 1.3], ["t:mallet", 1.3], ["Wood_Planks_Stack_Medium", 1.2], ["Wood_Log_Stack", 1.3]],
+		"yard": [["Wood_Log_Stack", 1.3], ["p:FarmCrate_Apple", 1.4], ["Pallet_Wood_Covered_A", 1.2], ["p:Barrel_Apples", 1.3], ["Textiles_B", 1.2], ["p:FarmCrate_Carrot", 1.4], ["p:Bucket_Wooden_1", 1.4], ["p:Bag", 1.3], ["d:trunk_small_A", 1.0]],
+		"work": [["p:Workbench", 1.3], ["t:axe", 1.4], ["t:saw", 1.3], ["p:FarmCrate_Empty", 1.4], ["Wood_Planks_Stack_Medium", 1.2], ["Wood_Log_Stack", 1.3]],
 		"work_every": 4,
-		"stall": ["Textiles_Stack_Small", "d:plate_food_B", "Textiles_B", "d:plate_food_A", "Textiles_A", "d:plate_stack", "d:bottle_C_brown"],
-		"square": [["Wood_Log_Stack", 1.3], ["Textiles_Stack_Small", 1.3], ["v:Prop_Wagon", 1.4], ["Pallet_Wood_Covered_B", 1.2]],
+		"stall": ["p:FarmCrate_Apple", "d:plate_food_B", "p:FarmCrate_Carrot", "d:plate_food_A", "Textiles_A", "p:Pot_1_Lid", "d:bottle_C_brown", "p:Carrot"],
+		"square": [["Wood_Log_Stack", 1.3], ["p:Barrel_Apples", 1.3], ["p:Barrel_Holder", 1.3], ["Pallet_Wood_Covered_B", 1.2], ["p:FarmCrate_Carrot", 1.4]],
 		"stalls": 2,
 	},
 	"fishing": {
-		"yard": [["Pallet_Wood_Covered_A", 1.2], ["t:rope_bundle_A", 1.4], ["d:barrel_small_stack", 1.0], ["t:rope_bundle_B", 1.4], ["Wood_Planks_Stack_Small", 1.2], ["t:bucket_metal", 1.2], ["d:crates_stacked", 1.0]],
+		"yard": [["Pallet_Wood_Covered_A", 1.2], ["p:Rope_3", 1.4], ["d:barrel_small_stack", 1.0], ["t:rope_bundle_B", 1.4], ["p:Barrel", 1.3], ["p:Bucket_Wooden_1", 1.4], ["p:Crate_Wooden", 1.2]],
 		"work": [["Pallet_Wood_Covered_B", 1.2], ["t:rope_bundle_A", 1.4], ["t:rope_bundle_B", 1.4], ["t:bucket_metal", 1.2], ["t:lantern", 1.3], ["d:barrel_small", 1.0]],
 		"work_every": 3,
 		"stall": ["d:plate_food_A", "d:barrel_small", "t:bucket_metal", "d:plate_food_B", "d:box_small", "d:bottle_C_green", "d:plate_stack"],
-		"square": [["d:barrel_large", 1.0], ["t:rope_bundle_B", 1.5], ["Pallet_Wood_Covered_A", 1.2], ["Wood_Planks_Stack_Medium", 1.2]],
+		"square": [["d:barrel_large", 1.0], ["p:Rope_2", 1.5], ["Pallet_Wood_Covered_A", 1.2], ["p:Crate_Wooden", 1.2], ["p:Barrel", 1.3]],
 		"stalls": 3,
 	},
 	"mining": {
-		"yard": [["Stone_Bricks_Stack_Small", 1.2], ["t:pickaxe", 1.3], ["Iron_Nuggets", 1.4], ["t:shovel", 1.3], ["Copper_Nuggets", 1.4], ["t:bucket_metal", 1.2], ["t:torch_burnt", 1.3]],
-		"work": [["t:anvil", 1.4], ["t:grindstone", 1.3], ["t:tongs", 1.3], ["t:hammer", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["Stone_Chunks_Small", 1.3]],
+		"yard": [["Stone_Bricks_Stack_Small", 1.2], ["p:Pickaxe_Bronze", 1.3], ["Iron_Nuggets", 1.4], ["t:shovel", 1.3], ["p:Crate_Metal", 1.2], ["t:bucket_metal", 1.2], ["p:Chain_Coil", 1.3]],
+		"work": [["p:Anvil_Log", 1.3], ["p:Whetstone", 1.3], ["t:tongs", 1.3], ["t:hammer", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["p:Crate_Metal", 1.2]],
 		"work_every": 3,
-		"stall": ["Iron_Bars_Stack_Small", "d:sword_shield", "Copper_Bars_Stack_Small", "d:keyring", "Iron_Nuggets", "t:pickaxe", "d:sword_shield_broken"],
+		"stall": ["Iron_Bars_Stack_Small", "p:Sword_Bronze", "Copper_Bars_Stack_Small", "p:Axe_Bronze", "Iron_Nuggets", "p:Pickaxe_Bronze", "p:Shield_Wooden"],
 		"square": [["Stone_Bricks_Stack_Large", 1.2], ["Stone_Chunks_Large", 1.3], ["Iron_Bars_Stack_Medium", 1.2], ["t:anvil", 1.4], ["d:trunk_medium_A", 1.0]],
 		"stalls": 2,
 	},
 	"market": {
-		"yard": [["d:crates_stacked", 1.0], ["d:barrel_small", 1.0], ["Textiles_Stack_Large_Colored", 1.1], ["d:keg", 1.0], ["Pallet_Wood_Covered_B", 1.2], ["v:Prop_Crate", 1.4], ["d:trunk_small_C", 1.0], ["d:box_small_decorated", 1.0]],
-		"work": [["t:anvil", 1.4], ["t:grindstone", 1.3], ["t:hammer", 1.3], ["t:tongs", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["d:barrel_small", 1.0]],
+		"yard": [["d:crates_stacked", 1.0], ["p:Barrel", 1.3], ["Textiles_Stack_Large_Colored", 1.1], ["p:Vase_2", 1.3], ["Pallet_Wood_Covered_B", 1.2], ["p:Crate_Wooden", 1.2], ["p:Vase_4", 1.3], ["d:box_small_decorated", 1.0], ["p:Bag", 1.3]],
+		"work": [["p:Anvil_Log", 1.3], ["p:Whetstone", 1.3], ["t:hammer", 1.3], ["p:WeaponStand", 1.3], ["Iron_Bars_Stack_Small", 1.2], ["p:Dummy", 1.3]],
 		"work_every": 6,
-		"stall": ["Textiles_Stack_Large_Colored", "Gold_Bars_Stack_Small", "d:coin_stack_medium", "t:map", "d:sword_shield_gold", "t:journal_open", "Silver_Bars_Stack_Small", "d:bottle_A_labeled_brown", "d:coin_stack_small", "d:box_small_decorated"],
-		"square": [["d:barrel_large_decorated", 1.0], ["d:crates_stacked", 1.0], ["Textiles_Stack_Large", 1.1], ["d:keg", 1.0], ["d:trunk_medium_A", 1.0], ["d:coin_stack_large", 1.0]],
+		"stall": ["Textiles_Stack_Large_Colored", "p:Potion_1", "d:coin_stack_medium", "t:map", "p:Chalice", "t:journal_open", "p:Potion_4", "p:SmallBottles_1", "p:Coin_Pile_2", "p:Pouch_Large", "p:Book_Stack_1", "p:Vase_4"],
+		"square": [["d:barrel_large_decorated", 1.0], ["p:WeaponStand", 1.3], ["Textiles_Stack_Large", 1.1], ["p:Barrel_Holder", 1.3], ["p:Chest_Wood", 1.2], ["p:Crate_Wooden", 1.2]],
 		"stalls": 6,
 	},
 }
