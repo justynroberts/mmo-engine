@@ -87,6 +87,11 @@ impl Cells {
         }
     }
 
+    /// The middle of every cell a road covers.
+    pub fn centres(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        self.map.keys().map(|&(i, j)| centre(i, j))
+    }
+
     /// True within `pad` of any road.
     pub fn near(&self, x: f32, y: f32, pad: f32) -> bool {
         let reach = (pad / STEP).ceil() as i32;

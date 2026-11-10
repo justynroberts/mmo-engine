@@ -500,6 +500,160 @@ impl Land {
     }
 }
 
+/// Small tarns in the open country, each a lake laid out like any other (a basin, water the server knows), kept
+/// well clear of everything already there, the coast, rivers, roads and fields, on gentle ground below the
+/// mountains. Their own random stream, so nothing else moves.
+fn tarns(l: &mut Layout, land: &Land, rv: &[River], ri: &RiverIndex, roads: &roads::Cells, fields: &fields::FieldIndex, seed: u64, amount: f32) {
+    let size = land.size;
+    let mut rng = Rng(seed ^ 0x7A27_5EED);
+    let tries = ((size / 1000.0).powi(2) * 0.8 * amount) as usize;
+    // Everything laid out, by 512 unit bucket, so each try looks only near it.
+    let mut near: HashMap<(i32, i32), Vec<Box4>> = HashMap::new();
+    for s in &l.things {
+        for cx in ((s.b[0] - 80.0) / 512.0).floor() as i32..=((s.b[2] + 80.0) / 512.0).floor() as i32 {
+            for cy in ((s.b[1] - 80.0) / 512.0).floor() as i32..=((s.b[3] + 80.0) / 512.0).floor() as i32 {
+                near.entry((cx, cy)).or_default().push(s.b);
+            }
+        }
+    }
+    for _ in 0..tries {
+        // Big enough for the heights (a cell is tens of units on a big world) to round the basin into a loch's shape.
+        let (w, d) = (rng.range(140.0, 320.0), rng.range(120.0, 260.0));
+        let (x, y) = (rng.range(400.0, size - 400.0), rng.range(400.0, size - 400.0));
+        let b = [x - w / 2.0, y - d / 2.0, x + w / 2.0, y + d / 2.0];
+        if land.coast.as_ref().is_some_and(|c| c.d(x, y) < 260.0) {
+            continue;
+        }
+        let h = land.raw(x, y);
+        let corners = [(b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3])];
+        let (lo, hi) = corners.iter().fold((h, h), |(a, c), &(px, py)| { let v = land.raw(px, py); (a.min(v), c.max(v)) });
+        if !(2.0..46.0).contains(&h) || hi - lo > 6.0 {
+            continue;
+        }
+        if near.get(&((x / 512.0).floor() as i32, (y / 512.0).floor() as i32)).is_some_and(|v| v.iter().any(|o| overlaps(o, &b, 70.0))) {
+            continue;
+        }
+        if roads.near(x, y, w.max(d) / 2.0 + 40.0) || ri.at(rv, x, y).is_some() {
+            continue;
+        }
+        if corners.iter().chain(std::iter::once(&(x, y))).any(|&(px, py)| fields.at(px, py)) || fields.at(x, y - d) || fields.at(x, y + d) {
+            continue;
+        }
+        let v = rng.v();
+        l.add("lake", b, v, true);
+        l.things.last_mut().unwrap().base = h;
+        for cx in ((b[0] - 80.0) / 512.0).floor() as i32..=((b[2] + 80.0) / 512.0).floor() as i32 {
+            for cy in ((b[1] - 80.0) / 512.0).floor() as i32..=((b[3] + 80.0) / 512.0).floor() as i32 {
+                near.entry((cx, cy)).or_default().push(b);
+            }
+        }
+    }
+}
+
+/// Lesser relief laid over the heights once everything stands where it will (so nothing moves): ground rolling over
+/// a kilometre or so, knolls, and in some country winding gullies, all stronger in some regions than others. It
+/// fades to nothing near anything laid out, roads, rivers and the shore (the samples round them keep their heights
+/// exactly) and is gentle over fields.
+#[allow(clippy::too_many_arguments)]
+fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land: &Land, rv: &[River], roads: &roads::Cells, fields: &fields::FieldIndex, seed: u64, amount: f32) {
+    // Samples that must keep their height: within a cell of something laid out (crags aside: they are mountains),
+    // a road or a river.
+    let mut keep = vec![false; n * n];
+    let mut mark = |b: [f32; 4], pad: f32| {
+        let i0 = (((b[0] - pad - x0) / cell).ceil().max(0.0)) as usize;
+        let j0 = (((b[1] - pad - x0) / cell).ceil().max(0.0)) as usize;
+        let i1 = (((b[2] + pad - x0) / cell).floor().max(-1.0) as i64).min(n as i64 - 1);
+        let j1 = (((b[3] + pad - x0) / cell).floor().max(-1.0) as i64).min(n as i64 - 1);
+        for j in j0 as i64..=j1 {
+            for i in i0 as i64..=i1 {
+                keep[j as usize * n + i as usize] = true;
+            }
+        }
+    };
+    for s in &l.things {
+        if s.t != "crag" {
+            mark(s.b, cell + 4.0);
+        }
+    }
+    for (x, y) in roads.centres() {
+        mark([x, y, x, y], cell);
+    }
+    for r in rv {
+        for w in r.pts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let k = ((b.0 - a.0).hypot(b.1 - a.1) / 8.0).ceil().max(1.0) as i32;
+            for t in 0..=k {
+                let f = t as f32 / k as f32;
+                let (x, y) = (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+                mark([x, y, x, y], RIVER_HALF + RIVER_LIP + cell);
+            }
+        }
+    }
+    // Distance from the nearest kept sample, in cells (two-pass chamfer).
+    let mut dist: Vec<f32> = keep.iter().map(|&k| if k { 0.0 } else { 1e9 }).collect();
+    let d2 = std::f32::consts::SQRT_2;
+    for j in 0..n {
+        for i in 0..n {
+            let k = j * n + i;
+            let mut v = dist[k];
+            if i > 0 { v = v.min(dist[k - 1] + 1.0) }
+            if j > 0 {
+                v = v.min(dist[k - n] + 1.0);
+                if i > 0 { v = v.min(dist[k - n - 1] + d2) }
+                if i + 1 < n { v = v.min(dist[k - n + 1] + d2) }
+            }
+            dist[k] = v;
+        }
+    }
+    for j in (0..n).rev() {
+        for i in (0..n).rev() {
+            let k = j * n + i;
+            let mut v = dist[k];
+            if i + 1 < n { v = v.min(dist[k + 1] + 1.0) }
+            if j + 1 < n {
+                v = v.min(dist[k + n] + 1.0);
+                if i + 1 < n { v = v.min(dist[k + n + 1] + d2) }
+                if i > 0 { v = v.min(dist[k + n - 1] + d2) }
+            }
+            dist[k] = v;
+        }
+    }
+    for j in 0..n {
+        for i in 0..n {
+            let k = j * n + i;
+            let mut m = smooth(1.5, 5.0, dist[k]);
+            if m <= 0.0 {
+                continue;
+            }
+            let (x, y) = (x0 + i as f32 * cell, x0 + j as f32 * cell); // the grid starts at (x0, x0)
+            if let Some(c) = &land.coast {
+                m *= smooth(60.0, 320.0, c.d(x, y));
+                if m <= 0.0 {
+                    continue;
+                }
+            }
+            if fields.at(x, y) {
+                m *= 0.5;
+            }
+            // Never down into the sea: low country stays above the tide whatever the relief says.
+            let was = hs[k];
+            let floor = if land.coast.is_some() { was.min(SHORE + 1.5) } else { f32::MIN };
+            hs[k] = (was + m * amount * lesser_relief(x, y, seed)).max(floor);
+        }
+    }
+}
+
+/// The lesser relief at a point, in units up or down.
+fn lesser_relief(x: f32, y: f32, seed: u64) -> f32 {
+    let region = 0.35 + 1.3 * smooth(0.3, 0.7, fbm(x / 7000.0, y / 7000.0, seed + 201, 3));
+    let roll = (fbm(x / 900.0, y / 900.0, seed + 203, 3) - 0.5) * 26.0;
+    let knoll = (noise(x / 220.0, y / 220.0, seed + 205) - 0.5) * 7.0;
+    // Gullies wind along where a slow noise crosses its middle, only in some country.
+    let v = (noise(x / 600.0, y / 600.0, seed + 207) * 2.0 - 1.0).abs();
+    let gully = -(1.0 - smooth(0.0, 0.09, v)) * 9.0 * smooth(0.35, 0.6, fbm(x / 3000.0, y / 3000.0, seed + 209, 2));
+    region * (roll + knoll) + gully
+}
+
 struct River {
     pts: Vec<(f32, f32, f32)>, // x, y, level
 }
@@ -755,9 +909,14 @@ fn base64(bytes: &[u8]) -> String {
 
 /// Half the side of a scenery object's solid footprint at scale `s`, for the kinds that are solid: about a trunk
 /// for a tree, most of the stone for a rock.
-fn scenery_half(t: &str, s: f32) -> Option<f32> {
+/// Half the narrow width of each bush model the fantasy theme draws, by `v % 22` (godot/themes/fantasy/theme.gd
+/// `BUSHES`, in its order), at scale 1: a bush is solid a little inside its leaves.
+const BUSH_HALF: [f32; 22] = [0.12, 0.36, 0.6, 0.78, 0.66, 0.94, 0.87, 0.26, 0.43, 0.66, 0.51, 1.0, 0.8, 0.52, 0.84, 1.25, 0.29, 0.5, 0.79, 0.64, 1.14, 1.07];
+
+fn scenery_half(t: &str, s: f32, v: u32) -> Option<f32> {
     match t {
         "tree" | "tree_bare" => Some(0.3 * s),
+        "bush" => Some((BUSH_HALF[(v % 22) as usize] * 0.85 * s).clamp(0.25, 2.2)),
         "rock" => Some(0.35 * s),
         "boulder" | "spire" => Some(0.6 * s),
         _ => None,
@@ -771,6 +930,7 @@ fn r2(v: f32) -> f64 {
     (v as f64 * 100.0).round() / 100.0
 }
 
+#[derive(Clone)]
 pub struct Params {
     pub size: f32,
     pub seed: u64,
@@ -785,6 +945,10 @@ pub struct Params {
     /// How wooded the land is (1 = usual, 0 = open meadow) and how tall the hills are (1 = usual, 0 = flat).
     pub forest: f32,
     pub hills: f32,
+    /// Lesser relief over the open country (rolling ground, knolls, winding gullies), 0 for none; and small tarns
+    /// scattered in it, as a multiple of the usual number (0 for none). Both leave what is laid out where it was.
+    pub detail: f32,
+    pub tarns: f32,
     /// Roads between the places, high streets and avenues.
     pub roads: bool,
     /// The land's outlines, if it has a coast (sea outside them); none is land to the edge, with mountains past it.
@@ -824,7 +988,7 @@ const ADDABLE: [(&str, bool); 9] =
 
 impl Default for Params {
     fn default() -> Self {
-        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, roads: true, coast: Vec::new(), courses: Vec::new(), settlements: Vec::new(), edits: Vec::new() }
+        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, detail: 0.0, tarns: 0.0, roads: true, coast: Vec::new(), courses: Vec::new(), settlements: Vec::new(), edits: Vec::new() }
     }
 }
 
@@ -851,7 +1015,7 @@ impl Params {
         if let Some(b) = v.get("roads") {
             p.roads = b.as_bool().ok_or("roads must be true or false")?;
         }
-        for (k, f) in [("villages", &mut p.villages), ("forts", &mut p.forts), ("crags", &mut p.crags), ("lakes", &mut p.lakes), ("forest", &mut p.forest), ("hills", &mut p.hills)] {
+        for (k, f) in [("villages", &mut p.villages), ("forts", &mut p.forts), ("crags", &mut p.crags), ("lakes", &mut p.lakes), ("forest", &mut p.forest), ("hills", &mut p.hills), ("detail", &mut p.detail), ("tarns", &mut p.tarns)] {
             if let Some(n) = num(k, 0.0, 5.0)? {
                 *f = n as f32;
             }
@@ -912,7 +1076,7 @@ impl Params {
             .collect();
         json!({
             "size": self.size, "seed": self.seed, "city": self.city, "villages": self.villages, "forts": self.forts, "crags": self.crags,
-            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "roads": self.roads, "edits": edits,
+            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "detail": self.detail, "tarns": self.tarns, "roads": self.roads, "edits": edits,
             "coast": self.coast.iter().map(|o| o.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "river_courses": self.courses.iter().map(|o| o.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "settlements": self.settlements.iter().map(|s| {
@@ -1213,6 +1377,9 @@ pub fn build(p: &Params) -> Generated {
         road_list.push(t);
     }
     let in_field = fields::FieldIndex::new(&farms.fields);
+    if p.tarns > 0.0 && land.coast.is_some() {
+        tarns(&mut l, &land, &rv, &ri, &road_cells, &in_field, p.seed, p.tarns);
+    }
     // Things by 64 unit cell (padded), so each height sample checks only those nearby.
     let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (i, s) in l.things.iter().enumerate() {
@@ -1236,6 +1403,9 @@ pub fn build(p: &Params) -> Generated {
         for i in 0..n {
             hs.push(h_at(-margin + i as f32 * cell, -margin + j as f32 * cell));
         }
+    }
+    if p.detail > 0.0 {
+        relief_detail(&mut hs, n, -margin, cell, &l, &land, &rv, &road_cells, &in_field, p.seed, p.detail);
     }
     let (lo, hi) = hs.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
     let span = (hi - lo).max(1e-3);
@@ -1315,20 +1485,23 @@ pub fn build(p: &Params) -> Generated {
                 }
             };
             let tree = t.starts_with("tree");
-            if out <= 0.0 && near_thing(x, y, if tree { 7.0 } else { 2.5 }) {
+            let (turn, v) = (rng.range(0.0, std::f32::consts::TAU), rng.v());
+            // A bush is solid as far as its leaves, so it keeps that much further off.
+            let leaves = if t == "bush" { scenery_half(t, s, v).unwrap_or(0.0) } else { 0.0 };
+            if out <= 0.0 && near_thing(x, y, if tree { 7.0 } else { 2.5 + leaves }) {
                 continue;
             }
-            if ri.at(&rv, x, y).is_some_and(|(d, _)| d < RIVER_HALF + RIVER_LIP + 2.0) {
+            if ri.at(&rv, x, y).is_some_and(|(d, _)| d < RIVER_HALF + RIVER_LIP + 2.0 + leaves) {
                 continue;
             }
-            if out <= 0.0 && road_cells.near(x, y, if tree { 4.0 } else { 2.0 }) {
+            if out <= 0.0 && road_cells.near(x, y, if tree { 4.0 } else { 2.0 + leaves }) {
                 continue;
             }
-            let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(rng.range(0.0, std::f32::consts::TAU)), "v": rng.v() });
+            let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(turn), "v": v });
             // Trunks and stones are solid where they stand (bushes are walked through): a square footprint the
             // size of the trunk or stone, if it is inside the world, where the engine makes it a wall. `scenery`
             // tells clients this file draws it, so they add no block of their own.
-            if let Some(h) = scenery_half(t, s) {
+            if let Some(h) = scenery_half(t, s, v) {
                 let (x0, y0, x1, y1) = (r2(x - h), r2(y - h), r2(x + h), r2(y + h));
                 if x0 >= 0.0 && y0 >= 0.0 && x1 <= size as f64 && y1 <= size as f64 {
                     o["solid"] = true.into();
@@ -1347,8 +1520,9 @@ pub fn build(p: &Params) -> Generated {
     }
     let mut hrng = Rng(p.seed ^ 0x4ED6);
     for &(t, x, y, s) in &farms.hedges {
-        let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(hrng.range(0.0, std::f32::consts::TAU)), "v": hrng.v() });
-        if let Some(h) = scenery_half(t, s) {
+        let (turn, v) = (hrng.range(0.0, std::f32::consts::TAU), hrng.v());
+        let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(turn), "v": v });
+        if let Some(h) = scenery_half(t, s, v) {
             let (x0, y0, x1, y1) = (r2(x - h), r2(y - h), r2(x + h), r2(y + h));
             o["solid"] = true.into();
             o["scenery"] = true.into();
@@ -1725,19 +1899,42 @@ mod tests {
         let w = world(2048.0, 3);
         // Fortifications are meant to meet: wall runs overlap at corners and towers straddle them, so they are
         // left out here.
-        let solids: Vec<[f64; 4]> = w["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true && o["t"] != "tower" && o["t"] != "wall").map(|o| {
+        // Scenery (trunks, stones, bushes) may touch other scenery: a bush's leaves grow into its neighbour's.
+        let solids: Vec<([f64; 4], bool)> = w["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true && o["t"] != "tower" && o["t"] != "wall").map(|o| {
             let b = o["b"].as_array().unwrap();
-            [b[0].as_f64().unwrap(), b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap()]
+            ([b[0].as_f64().unwrap(), b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap()], o["scenery"] == true)
         }).collect();
         assert!(solids.len() > 100, "{} solids", solids.len());
-        for (i, a) in solids.iter().enumerate() {
+        for (i, (a, sa)) in solids.iter().enumerate() {
             assert!(a[0] >= 0.0 && a[1] >= 0.0 && a[2] <= 2048.0 && a[3] <= 2048.0 && a[0] < a[2] && a[1] < a[3], "{a:?}");
-            for b in &solids[i + 1..] {
+            for (b, sb) in &solids[i + 1..] {
+                if *sa && *sb {
+                    continue;
+                }
                 // Terraced houses and the castle's towers share edges, which is not an overlap.
                 let ov = a[0] < b[2] - 0.01 && a[2] > b[0] + 0.01 && a[1] < b[3] - 0.01 && a[3] > b[1] + 0.01;
                 assert!(!ov, "{a:?} overlaps {b:?}");
             }
         }
+    }
+
+    #[test]
+    fn lesser_relief_leaves_what_is_laid_out_where_it_was() {
+        let base = Params { size: 20000.0, seed: 7, coast: vec![vec![(2000.0, 2000.0), (18000.0, 2000.0), (18000.0, 18000.0), (2000.0, 18000.0)]], ..Params::default() };
+        let plain = generate(&base);
+        let rich = generate(&Params { detail: 1.0, ..base });
+        let things = |w: &Value| w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == "house" || o["t"] == "square").cloned().collect::<Vec<_>>();
+        assert_eq!(things(&plain), things(&rich), "houses and squares stay where they were, at their heights");
+        assert_eq!(plain["roads"], rich["roads"]);
+        assert_ne!(plain["heights"]["u16le"], rich["heights"]["u16le"], "the open country changes");
+    }
+
+    #[test]
+    fn tarns_are_lakes_laid_in_open_country() {
+        let base = Params { size: 20000.0, seed: 7, lakes: 0.0, villages: 0.2, coast: vec![vec![(2000.0, 2000.0), (18000.0, 2000.0), (18000.0, 18000.0), (2000.0, 18000.0)]], ..Params::default() };
+        let lakes = |w: &Value| w["water"]["lakes"].as_array().unwrap().len();
+        let (plain, wet) = (generate(&base), generate(&Params { tarns: 1.0, ..base.clone() }));
+        assert!(lakes(&wet) >= lakes(&plain) + 5, "{} lakes, {} with tarns", lakes(&plain), lakes(&wet));
     }
 
     #[test]
@@ -1770,12 +1967,12 @@ mod tests {
     }
 
     #[test]
-    fn trees_and_rocks_are_solid_where_they_stand_and_bushes_are_not() {
+    fn trees_rocks_and_bushes_are_solid_where_they_stand() {
         let w = generate(&Params { size: 1024.0, ..Params::default() });
         let objs = w["objects"].as_array().unwrap();
         let solid = |t: &str| objs.iter().filter(|o| o["t"] == t && o["solid"] == true && o["scenery"] == true).count();
         assert!(solid("tree") > 200, "{} solid trees", solid("tree"));
-        assert!(solid("rock") > 0 && solid("bush") == 0);
+        assert!(solid("rock") > 0 && solid("bush") > 200, "{} solid bushes", solid("bush"));
         // Each footprint is inside the world and centred on the object.
         for o in objs.iter().filter(|o| o["t"] == "tree" && o["solid"] == true) {
             let (b, p) = (o["b"].as_array().unwrap(), o["p"].as_array().unwrap());
