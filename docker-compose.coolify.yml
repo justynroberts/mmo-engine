@@ -1,7 +1,8 @@
 # Coolify deployment (Docker Compose build pack): the web gateway behind the platform's proxy and the game's UDP port
-# published on the host. The admin interface stays on the container's loopback; with MMO_ADMIN_PASSWORD set, the web
-# port offers the console at /admin/ behind that password and passes its calls on. The local setup
-# is docker-compose.yml at the root (host networking).
+# published on the host. The admin interface stays on the container's loopback. The console (with MMO_ADMIN_PASSWORD
+# set) is on 7791 inside the container, never on the public web port; the `admin` service publishes it only on
+# MMO_ADMIN_BIND, the host's Tailscale address, so it is reachable from the tailnet and nowhere else (unset, only from
+# the host itself). The local setup is docker-compose.yml at the root (host networking).
 services:
   server:
     build:
@@ -10,12 +11,12 @@ services:
     environment:
       # Behind the proxy: the web port on 7790 serves only the data the Godot client fetches (no browser play page or
       # WebSocket relay), and takes the real address from X-Forwarded-For.
-      - MMO_ARGS=--web 0.0.0.0:7790 --web-trust-proxy --no-browser --workers 4
+      - MMO_ARGS=--web 0.0.0.0:7790 --web-trust-proxy --no-browser --workers 4 --admin-web 0.0.0.0:7791
       # Which world (deploy/entrypoint.sh): Hibernia at 65,536 units, made from its recipe on first start (about five
       # minutes, 800 MB). Changing it moves the old world aside and starts the new one fresh; characters are kept.
       - MMO_SEED=hibernia-65536
-      # The admin console on the web port at /admin/ (and the admin API for the MCP server, as a bearer token): set
-      # in Coolify's environment variables, never here. Unset, the console is not offered.
+      # The admin console's password (and the admin API's bearer token for the MCP server): set in Coolify's
+      # environment variables, never here. Unset, the console is not offered.
       - MMO_ADMIN_PASSWORD=${MMO_ADMIN_PASSWORD:-}
     expose:
       - "7790"
@@ -30,6 +31,17 @@ services:
       retries: 3
       # Long enough for the first start of a new world, while worldgen makes it.
       start_period: 900s
+    restart: unless-stopped
+  # The console on the tailnet only: a TCP relay to the server's 7791, published on the host's Tailscale address
+  # (MMO_ADMIN_BIND in Coolify's environment variables). Kept apart from the server so that the Tailscale address
+  # not being up yet when the host boots can only hold up this relay, never the game.
+  admin:
+    image: alpine/socat:1.8.0.3
+    command: ["tcp-listen:7791,fork,reuseaddr", "tcp-connect:server:7791"]
+    ports:
+      - "${MMO_ADMIN_BIND:-127.0.0.1}:7791:7791"
+    depends_on:
+      - server
     restart: unless-stopped
 volumes:
   mmo-data:

@@ -1,17 +1,20 @@
-//! The admin console from the public web port, behind a password, for a server whose admin interface is on a
-//! loopback nobody can reach (a container behind a platform's proxy).
+//! The admin console on a port of its own (`--admin-web ADDR`), behind a password, for a server whose admin interface
+//! is on a loopback nobody can reach (a container). The public web port never serves it: the deployment publishes
+//! this port only on a private network (the Coolify host's Tailscale address), so the console is not on the internet
+//! at all.
 //!
 //! Off unless `MMO_ADMIN_PASSWORD` is set. Then `/admin/` asks for the password and, given it, sets a session
-//! cookie (HttpOnly, SameSite=Strict, Secure behind a TLS proxy) and serves the console; the console's `/api/*`
-//! calls are passed to the admin interface on loopback as they are. A script or the MCP server can instead send
-//! `Authorization: Bearer <password>` with each `/api/*` call. Wrong passwords are limited per address.
+//! cookie (HttpOnly, SameSite=Strict) and serves the console; the console's `/api/*` calls are passed to the admin
+//! interface on loopback as they are. A script or the MCP server can instead send `Authorization: Bearer <password>`
+//! with each `/api/*` call. Wrong passwords are limited per address.
 //!
-//! Nothing else changes: the admin interface still binds only to loopback and still checks its Host header and the
-//! X-Admin header on writes (which a page on another site cannot send here: no CORS is offered on these paths).
+//! The admin interface still binds only to loopback and still checks its Host header and the X-Admin header on
+//! writes (which a page on another site cannot send here: no CORS is offered).
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -28,7 +31,7 @@ const COOKIE: &str = "mmo_admin";
 pub struct AdminWeb {
     password: blake3::Hash,
     ctl: SocketAddr,
-    /// Behind a TLS proxy: the cookie is marked Secure.
+    /// Served over TLS: the cookie is marked Secure.
     secure: bool,
     sessions: Mutex<HashMap<blake3::Hash, Instant>>,
     fails: Mutex<HashMap<std::net::IpAddr, (u32, Instant)>>,
@@ -61,7 +64,7 @@ impl AdminWeb {
     pub fn from_env(ctl: SocketAddr, secure: bool) -> Option<AdminWeb> {
         let pw = std::env::var("MMO_ADMIN_PASSWORD").ok().filter(|p| !p.is_empty())?;
         if pw.chars().count() < 12 {
-            eprintln!("MMO_ADMIN_PASSWORD is shorter than 12 characters: the console is not offered on the web port");
+            eprintln!("MMO_ADMIN_PASSWORD is shorter than 12 characters: the console is not offered");
             return None;
         }
         Some(AdminWeb { password: blake3::hash(pw.as_bytes()), ctl, secure, sessions: Mutex::default(), fails: Mutex::default() })
@@ -178,6 +181,57 @@ impl AdminWeb {
         std::io::copy(&mut up, conn)?;
         Ok(())
     }
+}
+
+/// Listen on `addr` for the console alone: `/` goes to `/admin/`, anything not the console's is 404.
+pub fn start(addr: SocketAddr, admin: AdminWeb, ui: Option<std::path::PathBuf>) -> std::io::Result<SocketAddr> {
+    let listener = TcpListener::bind(addr)?;
+    let local = listener.local_addr()?;
+    let (admin, ui) = (Arc::new(admin), Arc::new(ui));
+    std::thread::Builder::new().name("admin-web".into()).spawn(move || {
+        let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for conn in listener.incoming().flatten() {
+            use std::sync::atomic::Ordering::Relaxed;
+            // A few people at most: bound the threads all the same.
+            if open.load(Relaxed) >= 64 {
+                continue;
+            }
+            open.fetch_add(1, Relaxed);
+            let (admin, ui, open) = (admin.clone(), ui.clone(), open.clone());
+            let _ = std::thread::Builder::new().name("admin-conn".into()).spawn(move || {
+                let _ = serve_conn(conn, &admin, ui.as_deref());
+                open.fetch_sub(1, Relaxed);
+            });
+        }
+    })?;
+    Ok(local)
+}
+
+fn serve_conn(mut conn: TcpStream, admin: &AdminWeb, ui: Option<&Path>) -> std::io::Result<()> {
+    conn.set_read_timeout(Some(Duration::from_secs(5)))?;
+    conn.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let ip = conn.peer_addr()?.ip();
+    let Some((head, head_len)) = crate::web::peek_head(&conn) else { return Ok(()) };
+    let mut sink = vec![0u8; head_len];
+    conn.read_exact(&mut sink)?;
+    if head.path == "/" {
+        return write!(conn, "HTTP/1.1 303 See Other\r\nLocation: /admin/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    }
+    if !AdminWeb::wants(&head.path) {
+        return plain(&mut conn, 404, "not found");
+    }
+    let r = Req {
+        method: &head.method,
+        path: &head.path,
+        query: &head.query,
+        cookie: head.cookie.as_deref(),
+        auth: head.auth.as_deref(),
+        content_type: head.content_type.as_deref(),
+        content_length: head.content_length,
+        x_admin: head.x_admin,
+        ip,
+    };
+    admin.serve(&mut conn, &r, ui)
 }
 
 fn read_body(conn: &mut TcpStream, n: usize) -> std::io::Result<Vec<u8>> {

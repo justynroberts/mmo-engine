@@ -82,8 +82,6 @@ pub struct WebCfg {
     /// The other zones' web addresses (`--zone-web`): a page one of them served may connect here, since a player
     /// handed over from that zone arrives with that page still open.
     pub zone_hosts: Vec<String>,
-    /// The admin console behind a password (`admin_web.rs`), when `MMO_ADMIN_PASSWORD` is set.
-    pub admin: Option<Arc<crate::admin_web::AdminWeb>>,
 }
 
 impl Gateway {
@@ -203,25 +201,25 @@ pub fn start(cfg: WebCfg, gw: Arc<Gateway>) -> std::io::Result<SocketAddr> {
     Ok(local)
 }
 
-struct Head {
-    method: String,
-    path: String,
+pub(crate) struct Head {
+    pub(crate) method: String,
+    pub(crate) path: String,
     websocket: bool,
-    cookie: Option<String>,
-    auth: Option<String>,
-    content_type: Option<String>,
-    content_length: usize,
-    x_admin: bool,
+    pub(crate) cookie: Option<String>,
+    pub(crate) auth: Option<String>,
+    pub(crate) content_type: Option<String>,
+    pub(crate) content_length: usize,
+    pub(crate) x_admin: bool,
     host: Option<String>,
     origin: Option<String>,
     forwarded: Option<String>,
-    query: String,
+    pub(crate) query: String,
     gzip: bool,
 }
 
 /// Read the request head without consuming it, so a WebSocket upgrade can be handed to
 /// tungstenite untouched.
-fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
+pub(crate) fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
     let mut buf = [0u8; 8192];
     let t = Instant::now();
     loop {
@@ -327,26 +325,6 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
         (Some(f), true) => f.rsplit(',').next().and_then(|s| s.trim().parse::<IpAddr>().ok()).map_or(key_of(peer.ip()), key_of),
         _ => key_of(peer.ip()),
     };
-    if let Some(admin) = cfg.admin.as_ref().filter(|_| crate::admin_web::AdminWeb::wants(&head.path)) {
-        let ip = match (&head.forwarded, cfg.trust_proxy) {
-            (Some(f), true) => f.rsplit(',').next().and_then(|s| s.trim().parse::<IpAddr>().ok()).unwrap_or(peer.ip()),
-            _ => peer.ip(),
-        };
-        let mut sink = vec![0u8; head_len];
-        conn.read_exact(&mut sink)?;
-        let r = crate::admin_web::Req {
-            method: &head.method,
-            path: &head.path,
-            query: &head.query,
-            cookie: head.cookie.as_deref(),
-            auth: head.auth.as_deref(),
-            content_type: head.content_type.as_deref(),
-            content_length: head.content_length,
-            x_admin: head.x_admin,
-            ip,
-        };
-        return admin.serve(&mut conn, &r, cfg.ui_dir.as_deref());
-    }
     if head.method != "GET" {
         return respond(&mut conn, 404, "text/plain", b"not found");
     }

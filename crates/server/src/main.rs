@@ -85,6 +85,7 @@ struct Config {
     game: PathBuf,
     key_file: PathBuf,
     admin: Option<String>,
+    admin_web: Option<String>,
     ui_dir: Option<PathBuf>,
     db: Option<PathBuf>,
     hello_rate: u32,
@@ -131,6 +132,7 @@ fn parse_args() -> Config {
         import_game: false,
         key_file: PathBuf::from("server.key"),
         admin: Some("127.0.0.1:7780".into()),
+        admin_web: None,
         ui_dir: None,
         db: Some(PathBuf::from("data/world.db")),
         hello_rate: 100,
@@ -180,6 +182,7 @@ fn parse_args() -> Config {
             "--key-file" => c.key_file = PathBuf::from(val(a)),
             "--admin" => c.admin = Some(val(a)),
             "--no-admin" => c.admin = None,
+            "--admin-web" => c.admin_web = Some(val(a)),
             "--ui-dir" => c.ui_dir = Some(PathBuf::from(val(a))),
             "--db" => c.db = Some(PathBuf::from(val(a))),
             "--no-db" => c.db = None,
@@ -225,7 +228,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --world FILE      a world file (worldgen): its size and solid objects make the world; served to clients at /play/world (world.json if present)\n  --worldgen FILE   the world generator the console runs (worldgen beside this binary, else on PATH)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --content FILE    keep the game's content in this SQLite database: edited live (a SQLite tool or the console), every version kept for rollback; filled from --game the first time\n  --import-game     put the --game file into the content database as a new version (the old ones are kept)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)\n  --no-browser      the web port serves only the data clients fetch: no play page, no WebSocket relay
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --world FILE      a world file (worldgen): its size and solid objects make the world; served to clients at /play/world (world.json if present)\n  --worldgen FILE   the world generator the console runs (worldgen beside this binary, else on PATH)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --content FILE    keep the game's content in this SQLite database: edited live (a SQLite tool or the console), every version kept for rollback; filled from --game the first time\n  --import-game     put the --game file into the content database as a new version (the old ones are kept)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --admin-web ADDR  the console on this address behind MMO_ADMIN_PASSWORD, for a server whose admin interface nobody can reach (publish it only on a private network)\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)\n  --no-browser      the web port serves only the data clients fetch: no play page, no WebSocket relay
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
@@ -457,13 +460,7 @@ fn main() {
             let d = PathBuf::from("ui/dist");
             d.is_dir().then_some(d)
         });
-        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy, no_browser: cfg.no_browser, zone_hosts: cfg.zone_web.iter().map(|u| u.split("://").nth(1).unwrap_or(u).trim_end_matches('/').to_string()).collect(), admin: None };
-        // The console on this port too, behind MMO_ADMIN_PASSWORD (admin_web.rs), passing its calls to the admin interface.
-        let mut wc = wc;
-        wc.admin = cfg.admin.as_ref().and_then(|a| a.parse::<std::net::SocketAddr>().ok()).and_then(|ctl| admin_web::AdminWeb::from_env(ctl, cfg.web_trust_proxy)).map(std::sync::Arc::new);
-        if wc.admin.is_some() {
-            eprintln!("admin console: on the web port at /admin/, behind MMO_ADMIN_PASSWORD");
-        }
+        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy, no_browser: cfg.no_browser, zone_hosts: cfg.zone_web.iter().map(|u| u.split("://").nth(1).unwrap_or(u).trim_end_matches('/').to_string()).collect() };
         match web::start(wc, gw.clone()) {
             Ok(local) if cfg.no_browser => eprintln!("web gateway: http://{local}/  (client data only: no play page, no WebSocket relay{})", if cfg.web_trust_proxy { ", trusting X-Forwarded-For" } else { "" }),
             Ok(local) => eprintln!("web gateway: http://{local}/  (browsers play through WebSocket, at most {} at once, {} per address{})", cfg.web_max_conns, cfg.web_per_ip, if cfg.web_trust_proxy { ", trusting X-Forwarded-For" } else { "" }),
@@ -509,8 +506,19 @@ fn main() {
         });
         eprintln!(
             "admin ui: http://{a}/  ({})",
-            ui.map_or("no UI directory, API only".to_string(), |d| format!("serving {}", d.display()))
+            ui.as_ref().map_or("no UI directory, API only".to_string(), |d| format!("serving {}", d.display()))
         );
+        // The console on a port of its own (admin_web.rs), passing its calls to the admin interface.
+        if let Some(w) = &cfg.admin_web {
+            let at: std::net::SocketAddr = w.parse().unwrap_or_else(|_| usage("bad --admin-web address"));
+            match admin_web::AdminWeb::from_env(addr, false) {
+                None => eprintln!("admin console: not offered on {w} (MMO_ADMIN_PASSWORD is not set)"),
+                Some(aw) => match admin_web::start(at, aw, ui.clone()) {
+                    Ok(local) => eprintln!("admin console: http://{local}/admin/  (behind MMO_ADMIN_PASSWORD)"),
+                    Err(e) => eprintln!("cannot start the admin console on {w}: {e}"),
+                },
+            }
+        }
         rx
     });
     let admin_rx = admin_rx.map(|(rx, tx)| {
