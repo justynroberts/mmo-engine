@@ -32,12 +32,14 @@ export const TYPE_COLOUR: Record<string, string> = {
   crag: '#6e675e',
   lake: MAP.water,
   square: '#b8a77e',
+  field: '#a8a052',
+  ford: '#7fa7a8',
   city: '#9b8f72',
   block: MAP.stone,
 }
 
 /** Footprints that are open ground, drawn under everything else. */
-export const OPEN = new Set(['city', 'square'])
+export const OPEN = new Set(['city', 'square', 'field', 'ford'])
 /** Footprints the ground picture already shows (the open sea is solid, but it is water): not drawn as blocks. */
 export const UNDRAWN = new Set(['sea'])
 

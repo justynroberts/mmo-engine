@@ -391,6 +391,7 @@ export default function App() {
             themeKey={dark ? 'dark' : 'light'}
             land={shown}
             blocks={blocks}
+            places={live?.places ?? draft?.places ?? []}
             shape={tab === 'world' ? shaper.overlay : null}
           />
           ) : (

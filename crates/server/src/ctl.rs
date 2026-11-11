@@ -527,6 +527,8 @@ struct Http {
     query: String,
     host: String,
     admin_header: bool,
+    /// The caller takes a gzipped answer.
+    gzip: bool,
     body: Vec<u8>,
 }
 
@@ -553,7 +555,7 @@ fn read_request(conn: &mut TcpStream) -> Option<Http> {
     let method = first.next()?.to_string();
     let target = first.next()?;
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let (mut host, mut admin_header, mut clen) = (String::new(), false, 0usize);
+    let (mut host, mut admin_header, mut clen, mut gzip) = (String::new(), false, 0usize, false);
     for l in lines {
         if let Some((k, v)) = l.split_once(':') {
             let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
@@ -561,6 +563,7 @@ fn read_request(conn: &mut TcpStream) -> Option<Http> {
                 "host" => host = v.to_ascii_lowercase(),
                 "x-admin" => admin_header = v == "1",
                 "content-length" => clen = v.parse().ok()?,
+                "accept-encoding" => gzip = v.split(',').any(|e| e.trim().split(';').next() == Some("gzip")),
                 _ => {}
             }
         }
@@ -577,7 +580,17 @@ fn read_request(conn: &mut TcpStream) -> Option<Http> {
         body.extend_from_slice(&tmp[..n]);
     }
     body.truncate(clen);
-    Some(Http { method, path: path.to_string(), query: query.to_string(), host, admin_header, body })
+    Some(Http { method, path: path.to_string(), query: query.to_string(), host, admin_header, gzip, body })
+}
+
+/// Gzipped JSON, for a caller that takes it.
+fn respond_gz(conn: &mut TcpStream, body: &[u8]) -> std::io::Result<()> {
+    write!(
+        conn,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nVary: Accept-Encoding\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+        body.len()
+    )?;
+    conn.write_all(body)
 }
 
 fn respond(conn: &mut TcpStream, status: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
@@ -679,8 +692,12 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/world") => return respond(&mut conn, 200, "application/json", statics.world_json(statics.tiles().size).as_bytes()),
         ("GET", "/api/worldfile") => {
+            // The footprints only (houses, squares, keeps, lakes, the sea: what the console's maps draw), or with
+            // ?whole=1 every tree and bush too (hundreds of megabytes on a big world).
             return match statics.file() {
-                Some(w) => respond(&mut conn, 200, "application/json", &w.bytes),
+                Some(w) if req.query.split('&').any(|kv| kv == "whole=1") => respond(&mut conn, 200, "application/json", &w.bytes),
+                Some(w) if req.gzip => respond_gz(&mut conn, &w.head_gz),
+                Some(w) => respond(&mut conn, 200, "application/json", &w.head),
                 None => respond(&mut conn, 404, "application/json", br#"{"ok":false,"error":"this world has no world file (start the server with --world)"}"#),
             };
         }

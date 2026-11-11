@@ -47,6 +47,7 @@ pub struct Req<'a> {
     pub content_type: Option<&'a str>,
     pub content_length: usize,
     pub x_admin: bool,
+    pub gzip: bool,
     pub ip: std::net::IpAddr,
 }
 
@@ -174,6 +175,9 @@ impl AdminWeb {
         if r.x_admin {
             head.push_str("X-Admin: 1\r\n");
         }
+        if r.gzip {
+            head.push_str("Accept-Encoding: gzip\r\n");
+        }
         head.push_str("\r\n");
         up.write_all(head.as_bytes())?;
         up.write_all(&body)?;
@@ -229,6 +233,7 @@ fn serve_conn(mut conn: TcpStream, admin: &AdminWeb, ui: Option<&Path>) -> std::
         content_type: head.content_type.as_deref(),
         content_length: head.content_length,
         x_admin: head.x_admin,
+        gzip: head.gzip,
         ip,
     };
     admin.serve(&mut conn, &r, ui)

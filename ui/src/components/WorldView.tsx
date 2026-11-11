@@ -49,6 +49,8 @@ interface Props {
   land?: WorldData | null
   /** Blocks players have built. */
   blocks?: BlockCol[]
+  /** The game's places, named on the map when not editing them. */
+  places?: Place[]
 }
 
 interface View {
@@ -288,7 +290,7 @@ export function WorldView(p: Props) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       // The world file if there is one, else the server's walls as plain blocks on flat ground.
       const land = pr.land ?? (pr.world ? fromBoxes(worldSize, pr.world.boxes) : null)
-      if (land && look?.land !== land) look = { land, ground: land.hasHeights ? groundImage(land) : null }
+      if (land && look?.land !== land) look = { land, ground: land.hasHeights ? groundImage(land, land.size > 8192 ? 2048 : 512) : null }
       const fg = MAP.parchment
       const accent = MAP.gold
       ctx.fillStyle = MAP.void
@@ -313,6 +315,7 @@ export function WorldView(p: Props) {
       }
       for (const o of objs) {
         if (!o.b || !OPEN.has(o.t) || !onScreen(o.b)) continue
+        if ((o.b[2] - o.b[0]) * v.scale < 0.7 && (o.b[3] - o.b[1]) * v.scale < 0.7) continue
         ctx.fillStyle = TYPE_COLOUR[o.t] ?? MAP.stone
         ctx.globalAlpha = 0.55
         ctx.fillRect(sx(o.b[0]), sy(o.b[1]), (o.b[2] - o.b[0]) * v.scale, (o.b[3] - o.b[1]) * v.scale)
@@ -378,9 +381,11 @@ export function WorldView(p: Props) {
         const y = sy(o.b[1])
         const bw = (o.b[2] - o.b[0]) * v.scale
         const bh = (o.b[3] - o.b[1]) * v.scale
+        // A big world zoomed out: tens of thousands of houses each smaller than a pixel. Lakes always show.
+        if (bw < 0.7 && bh < 0.7 && o.t !== 'lake') continue
         ctx.fillStyle = TYPE_COLOUR[o.t] ?? MAP.stone
         ctx.fillRect(x, y, bw, bh)
-        if (o.t === 'lake') continue
+        if (o.t === 'lake' || (bw < 3 && bh < 3)) continue
         ctx.strokeStyle = MAP.stoneEdge
         ctx.lineWidth = 1
         ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(bw), Math.round(bh))
@@ -404,13 +409,55 @@ export function WorldView(p: Props) {
         }
       }
 
+      // The places by name (towns, farms, inns, dungeons) once each is big enough on screen to tell apart.
+      if (!pr.edit && pr.places?.length) {
+        ctx.font = '600 11px system-ui, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.lineWidth = 3
+        const named = new Set<string>()
+        for (const p of pr.places) {
+          const rr = p.r * v.scale
+          if (rr < 5) continue
+          const x = sx(p.x)
+          const y = sy(p.y)
+          if (x < -rr || y < -rr || x > w + rr || y > h + rr) continue
+          const label = p.title || p.name
+          // A region made of several big circles is named once; its circles say nothing on the map.
+          if (rr > Math.min(w, h) / 4) {
+            if (named.has(label)) continue
+            named.add(label)
+            ctx.lineWidth = 3
+            ctx.strokeStyle = MAP.ink
+            ctx.strokeText(label, x, y)
+            ctx.fillStyle = MAP.parchment
+            ctx.fillText(label, x, y)
+            continue
+          }
+          ctx.globalAlpha = 0.5
+          ctx.strokeStyle = MAP.parchment
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.arc(x, y, rr, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.globalAlpha = 1
+          ctx.lineWidth = 3
+          ctx.strokeStyle = MAP.ink
+          ctx.strokeText(label, x, y)
+          ctx.fillStyle = MAP.parchment
+          ctx.fillText(label, x, y)
+        }
+        ctx.textAlign = 'start'
+        ctx.textBaseline = 'alphabetic'
+      }
+
       if (pr.edit) drawEdit(ctx, pr.edit, v, w, h, { fg, fg3: MAP.ink, accent, line: MAP.ink, bg: MAP.parchment }, mouse.current, wallDrag.current)
       if (pr.shape) drawShape(ctx, pr.shape, v, w, h, accent, wallDrag.current)
 
       const s = pr.stateRef.current
       let sel: (number[] | undefined)
       if (s) {
-        const px = Math.min(9, Math.max(4, v.scale * 1.4))
+        const px = Math.min(9, Math.max(v.scale < 0.05 ? 2 : 4, v.scale * 1.4))
         const showBars = v.scale > 1.2
         for (const row of s.e) {
           const x = sx(row[1] ?? 0)

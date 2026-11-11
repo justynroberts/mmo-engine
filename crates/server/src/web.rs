@@ -214,7 +214,7 @@ pub(crate) struct Head {
     origin: Option<String>,
     forwarded: Option<String>,
     pub(crate) query: String,
-    gzip: bool,
+    pub(crate) gzip: bool,
 }
 
 /// Read the request head without consuming it, so a WebSocket upgrade can be handed to
