@@ -6,3 +6,4 @@ version.workspace = true
 [dependencies]
 proto = { path = "../proto" }
 libc = "0.2"
+serde_json = "1"

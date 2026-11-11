@@ -41,13 +41,7 @@ impl Sim {
 
     /// The town nearest (x, y), as players know it ("the wilds" in a world without towns).
     pub(crate) fn town_near(&self, x: f32, y: f32) -> String {
-        let near = (0..self.places.len())
-            .filter(|&h| self.town_index.contains(&h))
-            .min_by(|&a, &b| {
-                let d = |h: usize| (self.places[h].x - x).powi(2) + (self.places[h].y - y).powi(2);
-                d(a).total_cmp(&d(b))
-            });
-        near.map_or_else(|| "the wilds".into(), |h| self.place_called(h))
+        self.nearest_town(x, y).map_or_else(|| "the wilds".into(), |h| self.place_called(h))
     }
 
     /// Someone as the news calls them: a player by name, a townsperson by their own name, else "a <kind>".
@@ -104,7 +98,11 @@ impl Sim {
             }
             // The nearest townsperson free to talk, facing nothing more pressing.
             let (px, py) = (self.ents.x[p], self.ents.y[p]);
-            let Some(t) = (0..self.ents.high)
+            // Only those near (the grid's cells are wider than any remark's reach).
+            let mut near: Vec<usize> = Vec::new();
+            self.grid.for_neighbours(px, py, |t| near.push(t as usize));
+            let Some(t) = near
+                .into_iter()
                 .filter(|&t| self.ents.alive[t] && self.ents.owner[t] == NONE && !self.ents.hidden[t] && !self.ents.fallen[t] && self.given[t].is_some() && !self.is_pet(t))
                 .filter(|&t| self.brawl[t].is_none() && self.slip[t].is_none() && self.foe[t].is_none() && !self.archs.get(self.ents.arch[t] as usize).is_some_and(|a| a.thief))
                 .filter(|&t| tick >= self.ents.say_at[t])
@@ -218,6 +216,7 @@ mod tests {
         (s.ents.x[p], s.ents.y[p]) = (503.0, 500.0);
         s.ents.name[p] = Some("Justyn".into());
         let said = |s: &mut Sim| -> String {
+            s.grid.rebuild(&s.ents); // as each tick ends: who is near comes from the grid
             for _ in 0..200 {
                 s.talk_at[p] = 0;
                 s.ents.say_at[t] = 0;

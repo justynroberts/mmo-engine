@@ -402,7 +402,7 @@ pub struct Rule {
 }
 
 pub const MAX_RULES: usize = 16;
-pub const MAX_PLACES: usize = 256;
+pub const MAX_PLACES: usize = 2048;
 /// The widest a place may be (a lake, a mountain range, a weather zone's ground on a big map), in world units.
 pub const MAX_PLACE_R: f32 = 8192.0;
 /// Longest place title players see, in characters.

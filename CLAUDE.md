@@ -29,7 +29,11 @@ scripts/latency.sh [normal] [slow] [delay ms] [jitter ms] [loss %] [secs] [worke
 
 target/release/server --workers 2 [--web 0.0.0.0:7790]   # prints server key; console at http://127.0.0.1:7780/
 target/release/bots --bots 200 --server-key <key>
+target/release/bots --bots 1000 --build 10 --world world.json --game game.json --server-key <key>   # 10% build huts round themselves
+MMO_PROFILE=1 target/release/server ...   # prints each sim system's time every 5 s (the slowest first)
 ```
+
+Load testing from the Mac: build `server` and `bots` in Docker (`rust:1`, cached `mmo-target` volume), run the server and the bots in containers on `--network host` (ports 47900/48900), several bot processes for thousands of players. New players start in the game's `start_place`, so a run is everyone crowded into one town (the hard case). Measured 2026-11-11 on a 4-core Docker VM shared with the bots, the 65,536 world with 5,900 NPCs: 1,000 players tick 10 ms (p99 16), 4,000 18 ms (p99 31), 8,000 40 ms (p99 63), 10,000 51 ms (p99 80) of a 50 ms budget, nobody dropped; past 4,000 the snapshot lanes are the cost. Once-a-second systems must not scan every entity or every place per player: use `Sim::grid` (`for_neighbours`, `for_within`) and the place index (`homes.rs` `places_at`, `nearest_town`, `town_at`).
 
 Run `npm run build` after editing TypeScript in `ui/src/` (it is the type check). First server run writes `game.json`, `server.key`, `data/world.db` and `bots.d/` in the working directory (all gitignored).
 

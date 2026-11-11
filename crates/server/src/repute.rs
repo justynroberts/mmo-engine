@@ -86,9 +86,9 @@ pub struct Plea {
 impl Sim {
     /// The town at (x, y): a town place it is inside (the nearest middle, where they overlap).
     pub(crate) fn town_at(&self, x: f32, y: f32) -> Option<usize> {
-        self.town_index
-            .iter()
-            .copied()
+        self.places_at(x, y)
+            .into_iter()
+            .filter(|&h| self.place_is_town(h))
             .filter(|&h| (self.places[h].x - x).powi(2) + (self.places[h].y - y).powi(2) <= self.places[h].r * self.places[h].r)
             .min_by(|&a, &b| {
                 let d = |h: usize| (self.places[h].x - x).powi(2) + (self.places[h].y - y).powi(2);

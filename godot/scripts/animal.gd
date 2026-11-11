@@ -19,6 +19,8 @@ const KINDS := {
 	"cow": ["cow.glb", 2.7, Color.WHITE, 1.2, 4.5],
 	"horse": ["horse.glb", 2.9, Color.WHITE, 1.8, 7.0],
 	# Quaternius's Ultimate Monsters (assets/beasts): for these the length is their greatest size across.
+	"boar": ["beasts/pig.glb", 1.6, Color(0.5, 0.36, 0.3), 1.2, 5.0],
+	"sheep": ["beasts/sheep.glb", 1.3, Color.WHITE, 1.0, 4.0],
 	"hen": ["beasts/chicken.glb", 0.7, Color.WHITE, 1.0, 3.0],
 	"frog": ["beasts/frog.glb", 0.9, Color.WHITE, 1.0, 3.0],
 	"shroom": ["beasts/mushnub.glb", 1.1, Color.WHITE, 1.2, 4.0],
@@ -37,6 +39,7 @@ const ALIASES := {
 	"Idle": ["Flying_Idle"],
 	"Walk": ["Flying_Idle"],
 	"Gallop": ["Run", "Fast_Flying", "Walk"],
+	"Eating": ["Idle_Eating"],
 	"Death": [],
 }
 
@@ -128,7 +131,7 @@ func _clip(n: String) -> String:
 	if _anim == null:
 		return ""
 	for c in [n] + Array(ALIASES.get(n, [])):
-		for pre in ["", "AnimalArmature|", "CharacterArmature|"]:
+		for pre in ["", "AnimalArmature|", "CharacterArmature|", "AnimalArmature|AnimalArmature|AnimalArmature|"]:
 			if _anim.has_animation(pre + c):
 				return pre + c
 	return ""

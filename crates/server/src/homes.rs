@@ -13,6 +13,9 @@ use proto::world::Aabb;
 /// How far outside a house's wall its door step is.
 const STEP: f32 = 1.5;
 
+/// The side of a square of the place index (`Sim::index_places`).
+pub(crate) const PLACE_CELL: f32 = 1024.0;
+
 impl Sim {
     /// The home place of the bot in `slot` (an index into `places`): its type's homes, shared out by slot.
     pub(crate) fn home_of(&self, s: usize) -> Option<usize> {
@@ -75,9 +78,93 @@ impl Sim {
 
     /// Which places are towns (a house inside), and which bot types are armed: see `Sim::towns`.
     pub(crate) fn find_towns(&mut self) {
-        self.town_index = (0..self.places.len()).filter(|&h| self.houses_in(h).next().is_some()).collect();
+        // Which places have houses changes only with the game file or the world: look again only then (it is every
+        // place against every house).
+        let key = self.places.iter().fold(self.terrain.houses.len() as u64 ^ (self.places.len() as u64) << 32, |k, p| {
+            k.rotate_left(7) ^ (p.x.to_bits() as u64) ^ (p.y.to_bits() as u64) << 17 ^ (p.r.to_bits() as u64) << 34
+        });
+        if key != self.towns_key || self.town_index.is_empty() {
+            self.towns_key = key;
+            self.town_index = (0..self.places.len()).filter(|&h| self.houses_in(h).next().is_some()).collect();
+            self.index_places();
+        }
         self.towns = self.town_index.iter().map(|&h| (self.places[h].x, self.places[h].y, self.places[h].r * self.places[h].r)).collect();
         self.armed = self.archs.iter().map(|a| a.attack.is_some()).collect();
+    }
+
+    /// Places by `PLACE_CELL` square, each in every cell its circle reaches, and which are towns: so "which place is
+    /// here" looks at a handful, not every place in the game.
+    pub(crate) fn index_places(&mut self) {
+        let gw = ((self.world.size / PLACE_CELL).ceil() as usize).max(1);
+        let mut cells: Vec<Vec<u32>> = vec![Vec::new(); gw * gw];
+        for (h, p) in self.places.iter().enumerate() {
+            let c = |v: f32| ((v / PLACE_CELL).floor().max(0.0) as usize).min(gw - 1);
+            for cy in c(p.y - p.r)..=c(p.y + p.r) {
+                for cx in c(p.x - p.r)..=c(p.x + p.r) {
+                    cells[cy * gw + cx].push(h as u32);
+                }
+            }
+        }
+        self.place_cells = (gw, cells);
+        self.is_town = vec![false; self.places.len()];
+        for &h in &self.town_index {
+            self.is_town[h] = true;
+        }
+    }
+
+    /// The places whose circle may reach (x, y): every place, until the index is made.
+    pub(crate) fn places_at(&self, x: f32, y: f32) -> Vec<usize> {
+        let (gw, cells) = &self.place_cells;
+        if cells.is_empty() || self.is_town.len() != self.places.len() {
+            return (0..self.places.len()).collect();
+        }
+        let c = |v: f32| ((v / PLACE_CELL).floor().max(0.0) as usize).min(gw - 1);
+        cells[c(y) * gw + c(x)].iter().map(|&h| h as usize).collect()
+    }
+
+    /// Whether place `h` is a town (has houses).
+    pub(crate) fn place_is_town(&self, h: usize) -> bool {
+        if self.is_town.len() == self.places.len() {
+            self.is_town[h]
+        } else {
+            self.town_index.contains(&h)
+        }
+    }
+
+    /// The nearest town to (x, y), looking out cell by cell (any distance).
+    pub(crate) fn nearest_town(&self, x: f32, y: f32) -> Option<usize> {
+        let d = |h: usize| (self.places[h].x - x).powi(2) + (self.places[h].y - y).powi(2);
+        let (gw, cells) = &self.place_cells;
+        if !cells.is_empty() && self.is_town.len() == self.places.len() {
+            let (cx, cy) = (((x / PLACE_CELL).max(0.0) as usize).min(gw - 1), ((y / PLACE_CELL).max(0.0) as usize).min(gw - 1));
+            let mut best: Option<usize> = None;
+            for k in 0..8usize {
+                for gy in cy.saturating_sub(k)..=(cy + k).min(gw - 1) {
+                    for gx in cx.saturating_sub(k)..=(cx + k).min(gw - 1) {
+                        if gx.abs_diff(cx) != k && gy.abs_diff(cy) != k {
+                            continue; // the ring only: the inside was looked at already
+                        }
+                        for &h in &cells[gy * gw + gx] {
+                            let h = h as usize;
+                            if self.is_town[h] && best.is_none_or(|b| d(h) < d(b)) {
+                                best = Some(h);
+                            }
+                        }
+                    }
+                }
+                // Anything found by ring k is within (k + 1) cells; one ring further can only be nearer if it is
+                // inside that, which the next ring settles.
+                if let Some(b) = best {
+                    if d(b).sqrt() <= k as f32 * PLACE_CELL {
+                        return best;
+                    }
+                }
+            }
+            if best.is_some() {
+                return best;
+            }
+        }
+        self.town_index.iter().copied().min_by(|&a, &b| d(a).total_cmp(&d(b)))
     }
 
     /// The squares whose middle is inside place `h`.

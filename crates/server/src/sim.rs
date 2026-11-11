@@ -342,7 +342,52 @@ pub struct SimStats {
     pub breaks: u64,
 }
 
+/// With `MMO_PROFILE` set, the time each system takes, printed every five seconds (the slowest first): where a
+/// tick goes, for load tests.
+#[derive(Default)]
+pub struct Profile {
+    total: std::collections::HashMap<&'static str, (std::time::Duration, std::time::Duration, u32)>,
+    since: Option<std::time::Instant>,
+}
+
+impl Profile {
+    fn add(&mut self, name: &'static str, d: std::time::Duration) {
+        let e = self.total.entry(name).or_default();
+        e.0 += d;
+        e.1 = e.1.max(d);
+        e.2 += 1;
+    }
+    fn report(&mut self) {
+        let since = *self.since.get_or_insert_with(std::time::Instant::now);
+        if since.elapsed().as_secs() < 5 {
+            return;
+        }
+        let mut rows: Vec<_> = self.total.drain().collect();
+        rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        let line: Vec<String> = rows.iter().take(10).map(|(n, (t, m, c))| format!("{n} {:.2}ms avg/{:.1} max", t.as_secs_f64() * 1000.0 / *c as f64, m.as_secs_f64() * 1000.0)).collect();
+        eprintln!("profile: {}", line.join(" | "));
+        self.since = Some(std::time::Instant::now());
+    }
+}
+
+macro_rules! timed {
+    ($self:ident, $name:expr, $e:expr) => {{
+        let t0 = $self.prof.as_ref().map(|_| std::time::Instant::now());
+        $e;
+        if let (Some(p), Some(t0)) = ($self.prof.as_mut(), t0) {
+            p.add($name, t0.elapsed());
+        }
+    }};
+}
+
 pub struct Sim {
+    /// Per-system timings when `MMO_PROFILE` is set.
+    pub prof: Option<Profile>,
+    /// What `find_towns` last looked over (places and houses), so it looks again only when they change.
+    pub(crate) towns_key: u64,
+    /// Places by square (`homes.rs` `index_places`): the grid's width and each square's places; and which are towns.
+    pub(crate) place_cells: (usize, Vec<Vec<u32>>),
+    pub(crate) is_town: Vec<bool>,
     pub defs: Defs,
     pub world: World,
     pub ents: Entities,
@@ -696,6 +741,10 @@ impl Sim {
             gods,
             talk,
             lit_attr: None,
+            prof: std::env::var_os("MMO_PROFILE").map(|_| Profile::default()),
+            towns_key: 0,
+            place_cells: (0, Vec::new()),
+            is_town: Vec::new(),
             npc_say: Vec::new(),
             npc_chat: Vec::new(),
             npc_actions: Vec::new(),
@@ -1469,52 +1518,55 @@ impl Sim {
             let phase = self.daylight.phase(proto::daylight::now_ms());
             self.night = phase >= 1.0 - self.daylight.night_share();
             self.daypart = proto::game::DayPart::during(phase, self.daylight.night_share());
-            self.system_season();
-            self.system_expire();
+            timed!(self, "system_season", self.system_season());
+            timed!(self, "system_expire", self.system_expire());
         }
         self.npc_actions.clear();
         let old = self.tick.saturating_sub(CAST_TICKS);
         self.casts.retain(|c| c.0 > old);
-        self.system_npc_ai();
-        self.system_hail();
-        self.system_regen();
-        self.system_movement();
-        self.system_actions(pending);
+        timed!(self, "system_npc_ai", self.system_npc_ai());
+        timed!(self, "system_hail", self.system_hail());
+        timed!(self, "system_regen", self.system_regen());
+        timed!(self, "system_movement", self.system_movement());
+        timed!(self, "system_actions", self.system_actions(pending));
         let npc = std::mem::take(&mut self.npc_actions);
-        self.system_actions(&npc);
+        timed!(self, "system_actions", self.system_actions(&npc));
         self.npc_actions = npc;
         let adm = std::mem::take(&mut self.admin_actions);
-        self.system_actions(&adm);
-        self.system_spells();
-        self.system_bosses();
-        self.system_air();
-        self.system_rules();
+        timed!(self, "system_actions", self.system_actions(&adm));
+        timed!(self, "system_spells", self.system_spells());
+        timed!(self, "system_bosses", self.system_bosses());
+        timed!(self, "system_air", self.system_air());
+        timed!(self, "system_rules", self.system_rules());
         if self.tick % self.tick_hz.max(1) == 0 {
-            self.expire_ground();
-            self.system_discover();
-            self.system_quests();
-            self.system_encounters();
-            self.system_night();
-            self.find_towns();
-            self.system_town();
-            self.system_folk();
-            self.system_plague();
-            self.system_repute();
-            self.system_gossip();
-            self.system_life();
+            timed!(self, "expire_ground", self.expire_ground());
+            timed!(self, "system_discover", self.system_discover());
+            timed!(self, "system_quests", self.system_quests());
+            timed!(self, "system_encounters", self.system_encounters());
+            timed!(self, "system_night", self.system_night());
+            timed!(self, "find_towns", self.find_towns());
+            timed!(self, "system_town", self.system_town());
+            timed!(self, "system_folk", self.system_folk());
+            timed!(self, "system_plague", self.system_plague());
+            timed!(self, "system_repute", self.system_repute());
+            timed!(self, "system_gossip", self.system_gossip());
+            timed!(self, "system_life", self.system_life());
             if self.tick % (60 * self.tick_hz.max(1)) == 0 {
-                self.system_forgive();
-                self.repute_forgive();
+                timed!(self, "system_forgive", self.system_forgive());
+                timed!(self, "repute_forgive", self.repute_forgive());
             }
-            self.system_realm();
-            self.system_market();
-            self.system_mail();
+            timed!(self, "system_realm", self.system_realm());
+            timed!(self, "system_market", self.system_market());
+            timed!(self, "system_mail", self.system_mail());
         }
-        self.grid.rebuild(&self.ents);
-        for slot in 0..self.ents.high {
+        timed!(self, "grid", self.grid.rebuild(&self.ents));
+        timed!(self, "entries", for slot in 0..self.ents.high {
             if self.ents.alive[slot] {
                 self.entry_cache[slot] = self.entry_of(slot);
             }
+        });
+        if let Some(p) = self.prof.as_mut() {
+            p.report();
         }
     }
 
@@ -2568,7 +2620,8 @@ impl Sim {
                 continue;
             }
             let (x, y) = (self.ents.x[s], self.ents.y[s]);
-            for p in &self.places {
+            for h in self.places_at(x, y) {
+                let p = &self.places[h];
                 if !p.title.is_empty() && (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r && !self.ents.found[s].contains(&p.name) {
                     found.push((s, p.name.clone(), p.title.clone()));
                 }

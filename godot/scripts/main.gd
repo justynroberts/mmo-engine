@@ -2657,7 +2657,7 @@ func _beast_look(kind: String) -> String:
 ## A bot type's name that says what beast it is (English or Irish), most particular first.
 const BEAST_WORDS := [["white wolf", "wolf_white"], ["mac tíre bán", "wolf_white"], ["wolf", "wolf"], ["mac tíre", "wolf"],
 	["stag", "stag"], ["damh", "stag"], ["deer", "deer"], ["fia", "deer"], ["fox", "fox"], ["sionnach", "fox"],
-	["wild horse", "horse"], ["capall", "horse"], ["hound", "dog"], ["hen", "hen"], ["frog", "frog"],
+	["wild horse", "horse"], ["capall", "horse"], ["hound", "dog"], ["hen", "hen"], ["frog", "frog"], ["boar", "boar"], ["torc", "boar"], ["sheep", "sheep"], ["caora", "sheep"],
 	["hill troll", "troll_hill"], ["shroom king", "shroom_king"], ["shroomling", "shroom"], ["fomorian", "fomorian"],
 	["snow troll", "troll"], ["lake wyrm", "wyrm"], ["restless dead", "ghost"], ["cave wraith", "ghost_skull"]]
 

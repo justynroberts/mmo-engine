@@ -19,6 +19,13 @@ are added: one in each town that leads to the capital, and a ring in the capital
 near the towns get a place of their own and a smallholder each, and villages along the highways an inn (a place
 named for it, an innkeeper who sells food, drink and a horse, so a traveller has a market there, and villagers).
 Run again, it replaces what it added before.
+
+  scripts/hibernia_big.py villages --world world.json --game deploy/hibernia-65536/game.json
+
+`villages` gives every village square out of the named places a place of its own (named from where it lies, as
+`country` names them) and folk: villagers in each, and children, dogs and smallholders in some; sheep and shepherds
+round the farmsteads; wild boar in the country; and more deer, foxes, stags, wild horses, wolves, travellers on the
+roads and brigands. Run again, it replaces what it added before and sets the counts afresh.
 """
 
 import argparse
@@ -310,6 +317,96 @@ def add_country(g, w, farms=96, inns=24):
     return len(farm_places), len(inn_places)
 
 
+VILLAGE = "sraidbhaile "
+VILLAGE_FOLK = {  # bot type: (one in how many villages has one, how many it has)
+    "villager": (1, 1), "child": (4, 1), "madra": (3, 1), "farmer": (3, 1),
+}
+# Bot types whose number is set outright (wildlife and the roads), and the new ones added here.
+COUNTS = {"fia": 1200, "sionnach": 350, "damh": 200, "capall fiain": 200, "mac tire": 100, "cearc": 300,
+          "ceannai taistil": 12, "fear cairte": 12, "oilithreach": 12, "maor bothair": 10, "dibheirgeach": 30, "meirleach": 12}
+
+
+def add_villages(g, w):
+    """Places and folk for the villages: see the module's doc. `w` is the world file."""
+    ours = lambda name: name.startswith(VILLAGE)
+    g["places"] = [p for p in g["places"] if not ours(p["name"])]
+    g["archetypes"] = [a for a in g["archetypes"] if a["name"] not in ("caora", "torc")]
+    base = {}
+    for a in g["archetypes"]:
+        if a.get("homes"):
+            gone = sum(1 for h in a["homes"] if ours(h))
+            a["homes"] = [h for h in a["homes"] if not ours(h)]
+            if a["name"] in VILLAGE_FOLK:
+                # What an earlier run added: its folk per village, taken off again.
+                base[a["name"]] = a.get("count", 0) - VILLAGE_FOLK[a["name"]][1] * gone
+    arch = {a["name"]: a for a in g["archetypes"]}
+    for k in VILLAGE_FOLK:
+        if k in arch:
+            base.setdefault(k, arch[k].get("count", 0))
+    first = ["Baile", "Cill", "Ráth", "Dún", "Áth", "Cluain", "Lios", "Tulach", "Achadh", "Gort", "Doire", "Mainistir"]
+    second = ["an Mhuilinn", "na Coille", "Mór", "Beag", "an Droichid", "na hAbhann", "Bhuí", "Glas", "na gCloch",
+              "an Chnoic", "Rua", "an Iarainn", "na Móna", "an Fhia", "Locha", "na Sceiche"]
+    taken = {p["name"] for p in g["places"]}
+
+    def plain(text):
+        import unicodedata
+        return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
+
+    def unique(name):
+        name = name[:32].rstrip()
+        n, out = 2, name
+        while out in taken:
+            tail = f" {n}"
+            out, n = name[:32 - len(tail)].rstrip() + tail, n + 1
+        taken.add(out)
+        return out
+
+    places = []
+    for o in w.get("objects", []):
+        if o.get("t") != "square":
+            continue
+        b = o["b"]
+        x, y = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        if any(math.hypot(x - p["x"], y - p["y"]) <= p["r"] + 60 for p in g["places"] + places):
+            continue
+        h = (int(x) * 73856093) ^ (int(y) * 19349663)
+        title = f"{first[h % len(first)]} {second[(h // len(first)) % len(second)]}"
+        places.append({"name": unique(VILLAGE + plain(title)), "x": round(x, 1), "y": round(y, 1), "r": 70.0, "title": title})
+    room = 2048 - len(g["places"])
+    places = places[:room]
+    g["places"] += places
+    names = [p["name"] for p in places]
+    for k, (every, n) in VILLAGE_FOLK.items():
+        if k not in arch:
+            continue
+        a = arch[k]
+        mine = names[::every]
+        a["homes"] = (a.get("homes") or []) + mine
+        a["count"] = base[k] + n * len(mine)
+    for k, n in COUNTS.items():
+        if k in arch:
+            arch[k]["count"] = n
+    farms = [p["name"] for p in g["places"] if p["name"].startswith(FARM)]
+    hen = arch.get("cearc")
+    if hen is not None:
+        hen["homes"] = [h for h in hen.get("homes", []) if not ours(h)] + names[::2]
+    if "aoire" in arch and farms:
+        arch["aoire"]["homes"] = farms[1:]
+        arch["aoire"]["home"] = farms[0]
+        arch["aoire"]["count"] = len(farms) // 3 + 5
+    flee = lambda r: [{"when": {"kind": "sees", "who": "any", "within": r}, "then": {"kind": "flee"}}]
+    if farms:
+        # Sheep have a weapon of sorts (a butt) only so the town's ways (quarrels, gossip, mourning) leave them be.
+        g["archetypes"].append({"name": "caora", "title": "Sheep", "color": "#e8e4d8", "count": len(farms) * 4, "behaviour": "wander",
+                                "speed_mult": 0.6, "sight": 14.0, "attack": "buille", "attrs": {"health": 30.0}, "home": farms[0],
+                                "homes": farms[1:] + names[::5], "rules": flee(8.0), "drops": [], "xp": 2, "level": 1, "skill": "fiach"})
+    g["archetypes"].append({"name": "torc", "title": "Wild Boar", "color": "#5a3d2e", "count": 260, "behaviour": "wander",
+                            "speed_mult": 1.05, "sight": 30.0, "attack": "buille", "attrs": {"health": 110.0}, "home": None,
+                            "rules": [{"when": {"kind": "sees", "who": "player", "within": 9.0}, "then": {"kind": "chase"}}],
+                            "drops": [{"item": "aran", "chance_pct": 40.0, "min": 1, "max": 2}], "xp": 22, "level": 4, "skill": "fiach"})
+    return len(places)
+
+
 def big_game(seed_dir, world_path):
     g = load(f"{seed_dir}/game.json")
     ow = load(f"{seed_dir}/world.json")
@@ -468,7 +565,7 @@ def add_dungeons(g):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["recipe", "game", "country"])
+    ap.add_argument("what", choices=["recipe", "game", "country", "villages"])
     ap.add_argument("--game", help="country: the game file to edit in place")
     ap.add_argument("--size", type=float, default=65536.0)
     ap.add_argument("--from", dest="src", default=SEED_DIR)
@@ -476,6 +573,14 @@ def main():
     a = ap.parse_args()
     if a.what == "recipe":
         json.dump(big_recipe(a.src, a.size), sys.stdout)
+    elif a.what == "villages":
+        if not (a.world and a.game):
+            ap.error("villages needs --world and --game")
+        g = load(a.game)
+        n = add_villages(g, load(a.world))
+        with open(a.game, "w") as f:
+            json.dump(g, f, ensure_ascii=False, indent=1)
+        print(f"{n} villages; {sum(x.get('count', 0) for x in g['archetypes'])} bots", file=sys.stderr)
     elif a.what == "country":
         if not (a.world and a.game):
             ap.error("country needs --world and --game")

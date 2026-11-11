@@ -60,6 +60,12 @@ struct Config {
     /// and fights there.
     teams: Vec<String>,
     rally: Option<(f32, f32, f32)>,
+    /// Builders: this percentage of the bots stop where they are and build a hut round themselves, block by block at
+    /// `build_hz`, then take it down and build it again; the ground's heights (for each column's base layer) come
+    /// from the world file `world_file`, as the server reads them.
+    build_pct: u32,
+    build_hz: f32,
+    world_file: Option<String>,
 }
 
 fn usage(msg: &str) -> ! {
@@ -67,7 +73,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --build PCT     this share of the bots build a hut round themselves, take it down and build it again (0)\n  --build-hz N    blocks a builder places or breaks a second (2)\n  --world FILE    the server's world file, for the ground's heights (needed with --build on a world that has them)\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -93,6 +99,9 @@ fn parse_args() -> Config {
         link_hz: 100,
         teams: Vec::new(),
         rally: None,
+        build_pct: 0,
+        build_hz: 2.0,
+        world_file: None,
     };
     let ms = |v: String, n: &str| Duration::from_secs_f64(v.parse::<f64>().unwrap_or_else(|_| usage(&format!("bad {n}"))).max(0.0) / 1000.0);
     let pct = |v: String, n: &str| (v.parse::<f32>().unwrap_or_else(|_| usage(&format!("bad {n}"))) / 100.0).clamp(0.0, 1.0);
@@ -133,6 +142,9 @@ fn parse_args() -> Config {
             "--slow-loss" => c.slow_link.loss = pct(val(a), a),
             "--link-hz" => c.link_hz = val(a).parse().unwrap_or_else(|_| usage("bad --link-hz")),
             "--teams" => c.teams = val(a).split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
+            "--build" => c.build_pct = val(a).parse::<u32>().unwrap_or_else(|_| usage("bad --build")).min(100),
+            "--build-hz" => c.build_hz = val(a).parse::<f32>().unwrap_or_else(|_| usage("bad --build-hz")).clamp(0.1, 20.0),
+            "--world" => c.world_file = Some(val(a)),
             "--rally" => {
                 let v: Vec<f32> = val(a).split(',').map(|n| n.trim().parse().unwrap_or_else(|_| usage("bad --rally"))).collect();
                 c.rally = match v[..] {
@@ -193,6 +205,14 @@ struct Bot {
     link_rng: Rng,
     inbox: Vec<(Instant, Vec<u8>)>,
     outbox: Vec<(Instant, Vec<u8>)>,
+    /// A builder's hut: its centre cell once chosen, the next block in `hut_plan`, taking it down, and the input
+    /// tick of its next block.
+    builder: bool,
+    site: Option<(u32, u32)>,
+    plan: Vec<(u32, u32, i8, u8)>,
+    step: usize,
+    breaking: bool,
+    build_next: u64,
 }
 
 impl Bot {
@@ -277,6 +297,8 @@ struct Totals {
     auth_fail: u64,
     inputs_sent: u64,
     zaps_sent: u64,
+    builds_sent: u64,
+    breaks_sent: u64,
     send_errors: u64,
     chat_sent: u64,
     chat_rx: u64,
@@ -338,6 +360,10 @@ fn main() {
         .and_then(|mut a| a.next())
         .unwrap_or_else(|| usage("cannot resolve --server"));
 
+    let terrain = match &cfg.world_file {
+        Some(f) => Terrain::load(f).unwrap_or_else(|e| usage(&format!("{f}: {e}"))),
+        None => Terrain::default(),
+    };
     let now = Instant::now();
     let mut bots: Vec<Bot> = Vec::with_capacity(cfg.bots);
     for i in 0..cfg.bots {
@@ -373,6 +399,12 @@ fn main() {
             link_rng: Rng::new(cfg.seed.wrapping_mul(7_919).wrapping_add(i as u64 * 31)),
             inbox: Vec::new(),
             outbox: Vec::new(),
+            builder: cfg.build_pct > 0 && (i * 100 / cfg.bots.max(1)) % 100 < cfg.build_pct as usize,
+            site: None,
+            plan: Vec::new(),
+            step: 0,
+            breaking: false,
+            build_next: 0,
         });
     }
 
@@ -654,6 +686,36 @@ fn main() {
                         b.dir = d;
                         b.dir_left = 1;
                     }
+                    // A builder stands still and builds round itself.
+                    let mut build_act: Option<(u8, u32, u16)> = None;
+                    if b.builder {
+                        b.dir = (0, 0);
+                        b.dir_left = u32::MAX;
+                        if b.site.is_none() {
+                            if let Some(me) = b.view.get(b.entity) {
+                                let site = ((dpos(me.x) / proto::world::BLOCK) as u32, (dpos(me.y) / proto::world::BLOCK) as u32);
+                                b.site = Some(site);
+                                b.plan = hut_plan(&terrain, site);
+                                b.build_next = tick + b.rng.below(cfg.hz * 2) as u64;
+                            }
+                        }
+                        if b.site.is_some() && tick >= b.build_next && !b.plan.is_empty() {
+                            b.build_next = tick + (cfg.hz as f32 / cfg.build_hz).max(1.0) as u64;
+                            let (cx, cy, layer, kind) = if b.breaking { b.plan[b.plan.len() - 1 - b.step] } else { b.plan[b.step] };
+                            build_act = Some(if b.breaking {
+                                tot.breaks_sent += 1;
+                                (proto::game::ACT_BREAK, proto::game::build_target(cx, cy), proto::game::build_arg(layer, 0))
+                            } else {
+                                tot.builds_sent += 1;
+                                (proto::game::ACT_BUILD, proto::game::build_target(cx, cy), proto::game::build_arg(layer, kind))
+                            });
+                            b.step += 1;
+                            if b.step == b.plan.len() {
+                                b.step = 0;
+                                b.breaking = !b.breaking;
+                            }
+                        }
+                    }
                     // Random walk: new direction every 1 to 3 seconds, sometimes stand still.
                     if b.dir_left == 0 {
                         b.dir_left = cfg.hz + b.rng.below(cfg.hz * 2);
@@ -667,8 +729,11 @@ fn main() {
                     b.dir_left -= 1;
 
                     // Zap the nearest neighbour if one is in range (the server still validates).
-                    let (mut action, mut target) = (0u8, 0u32);
-                    if let Some(me) = b.view.get(b.entity) {
+                    let (mut action, mut target, mut arg) = (0u8, 0u32, 0u16);
+                    if let Some((a, t, g)) = build_act {
+                        (action, target, arg) = (a, t, g);
+                    } else if b.builder {
+                    } else if let Some(me) = b.view.get(b.entity) {
                         let (mx, my) = (dpos(me.x), dpos(me.y));
                         let mut best = attack_range * attack_range;
                         let mine = faction_k.map(|k| me.attrs[k]);
@@ -685,7 +750,7 @@ fn main() {
                             }
                         }
                     }
-                    if action != 0 {
+                    if action != 0 && build_act.is_none() {
                         tot.zaps_sent += 1;
                     }
 
@@ -716,7 +781,7 @@ fn main() {
                             dir_y: b.dir.1,
                             action,
                             target,
-                            arg: 0,
+                            arg,
                             chat_ack: b.chat.ack(),
                         },
                     );
@@ -785,6 +850,9 @@ fn main() {
         tot.zaps_sent,
         tot.send_errors
     );
+    if cfg.build_pct > 0 {
+        println!("builders {}, blocks built {} and broken {} (asked; the server's rejected_actions says how many it refused)", bots.iter().filter(|b| b.builder).count(), tot.builds_sent, tot.breaks_sent);
+    }
     println!(
         "snapshots applied {} ({:.1}k/s), avg {:.0} B, avg visible entities {:.1}",
         tot.snaps,
@@ -850,4 +918,122 @@ fn pct(sorted: &[u32], p: f64) -> u32 {
         return 0;
     }
     sorted[((sorted.len() as f64 - 1.0) * p).round() as usize]
+}
+
+/// The ground's heights from a world file, sampled as the server does (`server::worldfile::Terrain`), to find the
+/// layer each block column starts in. Flat at 0 without a file.
+#[derive(Default)]
+struct Terrain {
+    x0: f64,
+    y0: f64,
+    cell: f64,
+    w: usize,
+    h: usize,
+    heights: Vec<f32>,
+}
+
+impl Terrain {
+    fn load(path: &str) -> Result<Terrain, String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        // Only the `heights` object: read that one value where it starts, not the whole (big) file.
+        let key = b"\"heights\"";
+        let at = bytes.windows(key.len()).position(|w| w == key).ok_or("no heights")?;
+        let colon = at + key.len() + bytes[at + key.len()..].iter().position(|&c| c == b':').ok_or("bad heights")? + 1;
+        let v: serde_json::Value = serde_json::Deserializer::from_slice(&bytes[colon..]).into_iter().next().ok_or("bad heights")?.map_err(|e| e.to_string())?;
+        let num = |k: &str| v[k].as_f64().ok_or(format!("heights has no {k}"));
+        let (w, h, lo, hi, cell) = (num("w")? as usize, num("h")? as usize, num("lo")?, num("hi")?, num("cell")?);
+        let raw = b64(v["u16le"].as_str().ok_or("no u16le")?).ok_or("u16le is not base64")?;
+        if raw.len() != w * h * 2 {
+            return Err("heights do not match their size".into());
+        }
+        let heights = raw.chunks_exact(2).map(|b| (lo + (hi - lo) * u16::from_le_bytes([b[0], b[1]]) as f64 / 65535.0) as f32).collect();
+        Ok(Terrain { x0: num("x0")?, y0: num("y0")?, cell, w, h, heights })
+    }
+
+    fn height(&self, x: f32, y: f32) -> f32 {
+        if self.heights.is_empty() {
+            return 0.0;
+        }
+        let fx = ((x as f64 - self.x0) / self.cell).clamp(0.0, (self.w - 1) as f64);
+        let fy = ((y as f64 - self.y0) / self.cell).clamp(0.0, (self.h - 1) as f64);
+        let (i, j) = ((fx as usize).min(self.w - 2), (fy as usize).min(self.h - 2));
+        let (tx, ty) = (fx - i as f64, fy - j as f64);
+        let at = |i: usize, j: usize| self.heights[j * self.w + i] as f64;
+        let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+        lerp(lerp(at(i, j), at(i + 1, j), tx), lerp(at(i, j + 1), at(i + 1, j + 1), tx), ty) as f32
+    }
+
+    fn base(&self, cx: u32, cy: u32) -> i8 {
+        let b = proto::world::BLOCK;
+        let (x0, y0) = (cx as f32 * b, cy as f32 * b);
+        let lowest = self.height(x0, y0).min(self.height(x0 + b, y0)).min(self.height(x0, y0 + b)).min(self.height(x0 + b, y0 + b));
+        proto::world::base_layer(lowest)
+    }
+}
+
+fn b64(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let s = s.trim_end_matches('=').as_bytes();
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    for chunk in s.chunks(4) {
+        let mut n = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= (val(c)? as u32) << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
+/// A hut round the cell `site`: walls three blocks high on the ring two cells out (a doorway on the south side),
+/// then a roof one layer above the highest wall top, laid from the edge in so each block rests on one before it.
+/// Each entry is (cx, cy, layer, material).
+fn hut_plan(t: &Terrain, site: (u32, u32)) -> Vec<(u32, u32, i8, u8)> {
+    const TIMBER: u8 = 1;
+    const TILES: u8 = 6;
+    let (sx, sy) = (site.0 as i64, site.1 as i64);
+    let mut plan = Vec::new();
+    let mut top = i8::MIN;
+    for layer in 0..3i8 {
+        for dy in -2i64..=2 {
+            for dx in -2i64..=2 {
+                if dx.abs() != 2 && dy.abs() != 2 {
+                    continue;
+                }
+                if dx == 0 && dy == 2 && layer < 2 {
+                    continue; // the doorway
+                }
+                let (cx, cy) = ((sx + dx).max(0) as u32, (sy + dy).max(0) as u32);
+                let base = t.base(cx, cy);
+                top = top.max(base + 3);
+                plan.push((cx, cy, base + layer, TIMBER));
+            }
+        }
+    }
+    for ring in [2i64, 1, 0] {
+        for dy in -ring..=ring {
+            for dx in -ring..=ring {
+                if dx.abs() == ring || dy.abs() == ring {
+                    let (cx, cy) = ((sx + dx).max(0) as u32, (sy + dy).max(0) as u32);
+                    if top < t.base(cx, cy) + proto::world::COLUMN_LAYERS as i8 {
+                        plan.push((cx, cy, top, TILES));
+                    }
+                }
+            }
+        }
+    }
+    plan
 }

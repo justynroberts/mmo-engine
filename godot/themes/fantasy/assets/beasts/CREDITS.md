@@ -16,3 +16,8 @@ Animated monsters by Quaternius (https://quaternius.com), from the Ultimate Mons
 Their clips are named "CharacterArmature|Idle" and the like: walkers have Idle, Walk, Run, Punch, HitReact, Death;
 small ones Idle, Walk, Bite_Front, HitRecieve, Death; flyers Flying_Idle, Fast_Flying, Headbutt, HitReact, Death.
 scripts/animal.gd maps them onto what it plays.
+
+From Quaternius's animated animals on Poly Pizza (CC0 1.0):
+
+- pig.glb — Pig, drawn darkened as the woods' wild boar
+- sheep.glb — Sheep, the flocks round the farmsteads

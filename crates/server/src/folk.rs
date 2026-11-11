@@ -424,8 +424,14 @@ impl Sim {
     fn dog(&mut self, s: usize, taken: &mut std::collections::HashSet<u32>) {
         let (tick, hz) = (self.tick, self.tick_hz.max(1));
         let home = self.home_of(s);
+        // Who is about: everything within a couple of grid cells (the grid is last tick's, near enough), so a dog
+        // never looks over the whole world.
+        let mut near: Vec<usize> = Vec::new();
+        self.grid.for_within(self.ents.x[s], self.ents.y[s], 2, |o| near.push(o as usize));
         if self.ents.resolve(self.folk[s].master).is_none() {
-            let m = (0..self.ents.high)
+            let m = near
+                .iter()
+                .copied()
                 .filter(|&m| self.adult(m) && self.home_of(m) == home && !taken.contains(&self.ents.id_of(m)))
                 .min_by(|&a, &b| self.d2(s, a).total_cmp(&self.d2(s, b)));
             if let Some(m) = m {
@@ -437,16 +443,16 @@ impl Sim {
             return;
         }
         // A cutpurse on the run: after it.
-        let thief = (0..self.ents.high).filter(|&t| self.ents.alive[t] && tick < self.wanted[t] && self.ents.owner[t] == NONE && self.d2(s, t) <= 20.0 * 20.0).min_by(|&a, &b| self.d2(s, a).total_cmp(&self.d2(s, b)));
+        let thief = near.iter().copied().filter(|&t| self.ents.alive[t] && tick < self.wanted[t] && self.ents.owner[t] == NONE && self.d2(s, t) <= 20.0 * 20.0).min_by(|&a, &b| self.d2(s, a).total_cmp(&self.d2(s, b)));
         let at = if let Some(t) = thief {
             self.folk[s].hunt = self.ents.id_of(t);
             Some(3)
         } else {
             let master = self.folk[s].master;
             // A stranger to its master close by, or a beast in the dark.
-            let stranger = (0..self.ents.high).any(|p| self.ents.alive[p] && self.ents.owner[p] < DRIVEN && !self.ents.hidden[p] && self.d2(s, p) <= 7.0 * 7.0 && !self.met[p].contains(&master));
+            let stranger = near.iter().any(|&p| self.ents.alive[p] && self.ents.owner[p] < DRIVEN && !self.ents.hidden[p] && self.d2(s, p) <= 7.0 * 7.0 && !self.met[p].contains(&master));
             let beast = self.night
-                && (0..self.ents.high).any(|b| self.ents.alive[b] && self.ents.owner[b] == NONE && !self.ents.hidden[b] && self.arch_of(b).is_some_and(|a| a.behaviour == Behaviour::Chase) && self.d2(s, b) <= 30.0 * 30.0);
+                && near.iter().any(|&b| self.ents.alive[b] && self.ents.owner[b] == NONE && !self.ents.hidden[b] && self.arch_of(b).is_some_and(|a| a.behaviour == Behaviour::Chase) && self.d2(s, b) <= 30.0 * 30.0);
             if beast {
                 Some(8)
             } else if stranger && self.rng.f32() < 0.35 {
@@ -714,12 +720,14 @@ mod tests {
         assert!(a_it != b_it, "one is it");
         let m = s.spawn_as(NONE, folk, Some((520.0, 520.0))).unwrap();
         let d = s.spawn_as(NONE, dog, Some((540.0, 540.0))).unwrap();
+        s.grid.rebuild(&s.ents); // as each tick ends: a dog looks about it through the grid
         s.system_folk();
         assert_eq!(s.folk[d].master, s.ents.id_of(m), "a master");
         run(&mut s, 10);
         assert!(s.d2(d, m) < 8.0 * 8.0, "at its master's heel: {}", s.d2(d, m).sqrt());
         let p = s.spawn(0).unwrap();
         (s.ents.x[p], s.ents.y[p]) = (s.ents.x[d] + 2.0, s.ents.y[d]);
+        s.grid.rebuild(&s.ents);
         let mut barked = false;
         for _ in 0..40 {
             s.folk[d].bark_at = 0;
