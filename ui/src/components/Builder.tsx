@@ -3,7 +3,7 @@ import * as Slider from '@radix-ui/react-slider'
 import { Reorder } from 'framer-motion'
 import { Plus, Trash2 } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
-import { MUSIC, SOUNDS, type Act, type Archetype, type Behaviour, type Cond, type GameFile, type Rule, type Seek, type Work } from '../api'
+import { BEAST_MODELS, MUSIC, SOUNDS, type Act, type Archetype, type Behaviour, type Cond, type GameFile, type Rule, type Seek, type Work } from '../api'
 import {
   ACT_KINDS,
   addRule,
@@ -470,6 +470,13 @@ function BotSection({ game, setGame, arch, a }: Edit & { arch: number; a: Archet
         <Toggle label="Dog" checked={!!a.pet} onChange={(on) => patch({ pet: on || undefined })} />
         <Toggle label="Strays" checked={!!a.stray} onChange={(on) => patch({ stray: on || undefined })} />
         <Toggle label="Tends the sick" checked={!!a.healer} onChange={(on) => patch({ healer: on || undefined })} />
+        <SelectField
+          label="Drawn as"
+          value={a.beast ?? ''}
+          options={[{ value: '', label: 'a person (or guessed from its name)' }, ...BEAST_MODELS.map((m) => ({ value: m as string, label: m.replace('_', ' ') }))]}
+          onChange={(m) => patch({ beast: m || undefined })}
+          className="col-span-2"
+        />
         <TextField
           label="Surnames"
           value={(a.surnames ?? []).join(', ')}

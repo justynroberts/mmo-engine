@@ -3826,6 +3826,7 @@ mod tests {
             pet: false,
             stray: false,
             healer: false,
+            beast: None,
             boss: None,
             color: "#112233".into(),
             count: 0,

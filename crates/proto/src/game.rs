@@ -528,6 +528,10 @@ pub struct Archetype {
     /// Tends the sick in a town the plague is in (a plague doctor): goes to them and, now and then, cures one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub healer: bool,
+    /// Drawn by clients as this beast (one of `BEAST_MODELS`) rather than as a person; unset, clients guess from
+    /// its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beast: Option<String>,
     /// A boss: it fights by threat and a script of moves, phases and adds (`BossFile`) as well as its rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boss: Option<BossFile>,
@@ -1914,6 +1918,7 @@ pub struct ArchRt {
     pub pet: bool,
     pub stray: bool,
     pub healer: bool,
+    pub beast: Option<String>,
     pub boss: Option<BossRt>,
 }
 
@@ -1996,6 +2001,10 @@ pub const MAX_WALLS: usize = 2000;
 
 /// A usable item with the given effects (none makes it a keepsake or trade good).
 /// How gear may look in the hand (`ItemDef::look`).
+/// The beasts a client can draw a bot type as (`Archetype::beast`): the Godot client's `animal.gd` KINDS, and its
+/// dog and cow.
+pub const BEAST_MODELS: [&str; 20] = ["deer", "stag", "wolf", "wolf_white", "fox", "dog", "cow", "horse", "boar", "sheep", "hen", "frog", "shroom", "shroom_king", "fomorian", "troll", "troll_hill", "wyrm", "ghost", "ghost_skull"];
+
 pub const LOOKS: [&str; 8] = ["sword", "greatsword", "axe", "greataxe", "staff", "wand", "knife", "crossbow"];
 
 /// "#rrggbb".
@@ -2064,6 +2073,7 @@ impl GameFile {
             pet: false,
             stray: false,
             healer: false,
+            beast: None,
             boss: None,
             color: color.into(),
             count,
@@ -2611,6 +2621,9 @@ impl GameFile {
                     return Err(format!("{ctx}: a name is 1..20 characters, no leading or trailing spaces, no | ('{n}')"));
                 }
             }
+            if let Some(b) = a.beast.as_deref().filter(|b| !BEAST_MODELS.contains(b)) {
+                return Err(format!("{ctx}: beast '{b}' is not one of {}", BEAST_MODELS.join(", ")));
+            }
             if !(a.respawn_secs.is_finite() && (0.0..=86_400.0).contains(&a.respawn_secs)) {
                 return Err(format!("{ctx}: respawn_secs is 0..86400"));
             }
@@ -2797,6 +2810,7 @@ impl GameFile {
                 pet: a.pet,
                 stray: a.stray,
                 healer: a.healer,
+                beast: a.beast.clone(),
                 color: a.color.clone(),
                 count: a.count,
                 behaviour: a.behaviour,
@@ -3289,6 +3303,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_bot_type_is_drawn_only_as_a_beast_clients_have() {
+        let mut g = GameFile::default_game();
+        g.archetypes[0].beast = Some("ghost".into());
+        assert_eq!(g.build().unwrap().archs[0].beast.as_deref(), Some("ghost"));
+        g.archetypes[0].beast = Some("dragon".into());
+        assert!(g.build().unwrap_err().contains("beast 'dragon'"));
+    }
 
     #[test]
     fn default_file_matches_builtin_defs() {

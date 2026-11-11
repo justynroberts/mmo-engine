@@ -400,7 +400,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         "emotes": sim.emotes.iter().map(|e| (e.cmd.as_str(), e.anim.as_str())).collect::<Vec<_>>(),
         // Bot types a client draws as beasts rather than people, by the name players see: dogs (`Archetype::pet`,
         // whose remarks are barks) and strays from the farms (`Archetype::stray`).
-        "beasts": sim.archs.iter().filter(|a| a.pet || a.stray).map(|a| (a.shown(), if a.pet { "dog" } else { "cow" })).collect::<Vec<_>>(),
+        "beasts": sim.archs.iter().filter_map(|a| match (&a.beast, a.pet, a.stray) { (Some(b), _, _) => Some((a.shown(), b.as_str())), (None, true, _) => Some((a.shown(), "dog")), (None, false, true) => Some((a.shown(), "cow")), _ => None }).collect::<Vec<_>>(),
         "entity_radius": sim.defs.entity_radius,
         "interest_radius": sim.defs.interest_radius,
         "max_visible": sim.defs.max_visible,

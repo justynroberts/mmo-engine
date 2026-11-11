@@ -34,6 +34,9 @@ export interface HoldFile {
   secs: number
 }
 /** How a spell looks to clients (proto::game::FX). */
+/** What a client can draw a bot type as instead of a person (proto::game::BEAST_MODELS). */
+export const BEAST_MODELS = ['deer', 'stag', 'wolf', 'wolf_white', 'fox', 'dog', 'cow', 'horse', 'boar', 'sheep', 'hen', 'frog', 'shroom', 'shroom_king', 'fomorian', 'troll', 'troll_hill', 'wyrm', 'ghost', 'ghost_skull'] as const
+
 export const FX = ['fire', 'frost', 'shock', 'holy', 'shadow', 'nature', 'arcane', 'poison', 'mind', 'blood'] as const
 export type Fx = (typeof FX)[number]
 /** The hold kinds as the server reports them (/api/info, and the reserved `held` attribute). */
@@ -421,6 +424,8 @@ export interface Archetype {
   stray?: boolean
   /** Tends the sick while a plague is in town (a plague doctor). */
   healer?: boolean
+  /** Drawn by clients as this beast (BEAST_MODELS) rather than as a person; unset, they guess from its name. */
+  beast?: string
   /** A boss: it fights by threat and a script of moves, phases and adds. */
   boss?: BossFile
   /** More places it lives in besides home: its bots are shared out over all of them. */

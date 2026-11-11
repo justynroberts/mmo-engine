@@ -88,6 +88,10 @@ def main():
             home, homes = pool[0], pool[1:]
         add(beast(m, home, homes))
 
+    for name, model in BEAST_OF.items():
+        if name in arch and not arch[name].get("beast"):
+            arch[name]["beast"] = model
+
     # ---- the population, trebled and spread out
     for name, (count, more) in POPULATION.items():
         a = arch.get(name)
@@ -185,6 +189,12 @@ def folk(f, home, homes, names, surnames):
     return a
 
 
+# Models for bot types already in the game, which the client would otherwise draw as people.
+BEAST_OF = {"bear": "troll_hill", "broc": "fox", "giorria": "fox", "tarbh fiain": "cow", "puca": "horse", "bean si": "ghost",
+            "dubhlachan": "ghost_skull", "gruagach": "troll_hill", "solas si": "ghost", "damhan alla mor": "shroom",
+            "curadh fomhorach": "fomorian", "sluagh mairseala": "ghost", "taibhse uaimhe": "ghost_skull", "peist locha": "wyrm"}
+
+
 def beast(m, home, homes):
     lvl = m["level"]
     # Health tops out at the attribute's max (300); past that a level makes it hit harder.
@@ -261,26 +271,26 @@ FOLK = [
 ]
 
 BEASTS = [
-    dict(name="bear", title="Bear", color="#4a3628", level=6, hp=220, speed_mult=0.9, sight=30.0, behaviour="wander", skill="fiach",
+    dict(name="bear", beast="troll_hill", title="Bear", color="#4a3628", level=6, hp=220, speed_mult=0.9, sight=30.0, behaviour="wander", skill="fiach",
          rules=[{"when": {"kind": "sees", "who": "player", "within": 12.0}, "then": {"kind": "chase"}}], count=160, leash=60.0,
          drops=[{"item": "craiceann beir", "chance_pct": 70.0, "min": 1, "max": 1}], _where=lambda m, l, h, p: ["coill na mac tire"] + m),
-    dict(name="broc", title="Badger", color="#6a6a6a", level=1, hp=30, behaviour="wander", speed_mult=0.8, sight=20.0, attack=None, count=500, skill="fiach",
+    dict(name="broc", beast="fox", title="Badger", color="#6a6a6a", level=1, hp=30, behaviour="wander", speed_mult=0.8, sight=20.0, attack=None, count=500, skill="fiach",
          rules=[{"when": {"kind": "sees", "who": "any", "within": 12.0}, "then": {"kind": "flee"}}],
          drops=[{"item": "craiceann broic", "chance_pct": 50.0, "min": 1, "max": 1}], _where="wild"),
-    dict(name="giorria", title="Hare", color="#a58a6a", level=1, hp=15, behaviour="wander", speed_mult=1.4, sight=30.0, attack=None, count=900, skill="fiach",
+    dict(name="giorria", beast="fox", title="Hare", color="#a58a6a", level=1, hp=15, behaviour="wander", speed_mult=1.4, sight=30.0, attack=None, count=900, skill="fiach",
          rules=[{"when": {"kind": "sees", "who": "any", "within": 20.0}, "then": {"kind": "flee"}}],
          drops=[{"item": "feoil", "chance_pct": 60.0, "min": 1, "max": 1}], _where="wild"),
-    dict(name="tarbh fiain", title="Wild Bull", color="#3a2a22", level=5, hp=200, behaviour="wander", speed_mult=1.1, sight=20.0, count=200, skill="fiach",
+    dict(name="tarbh fiain", beast="cow", title="Wild Bull", color="#3a2a22", level=5, hp=200, behaviour="wander", speed_mult=1.1, sight=20.0, count=200, skill="fiach",
          rules=[{"when": {"kind": "sees", "who": "player", "within": 10.0}, "then": {"kind": "chase"}}],
          drops=[{"item": "adharc tairbh", "chance_pct": 60.0, "min": 1, "max": 2}, {"item": "feoil", "chance_pct": 80.0, "min": 1, "max": 3}], _where="wild"),
-    dict(name="puca", title="Púca", color="#1e1e28", level=7, hp=150, speed_mult=1.3, sight=45.0, count=120, ambush=True, leash=80.0,
+    dict(name="puca", beast="horse", title="Púca", color="#1e1e28", level=7, hp=150, speed_mult=1.3, sight=45.0, count=120, ambush=True, leash=80.0,
          drops=[{"item": "pingin airgid", "chance_pct": 50.0, "min": 1, "max": 4}], _where=lambda m, l, h, p: [n for n in m if n.startswith(("cnoc", "sliabh", "binn"))]),
-    dict(name="bean si", title="Bean Sí", color="#d8dde8", level=12, hp=280, speed_mult=0.9, sight=50.0, behaviour="idle", count=24, leash=40.0,
+    dict(name="bean si", beast="ghost", title="Bean Sí", color="#d8dde8", level=12, hp=280, speed_mult=0.9, sight=50.0, behaviour="idle", count=24, leash=40.0,
          rules=[{"when": {"kind": "sees", "who": "player", "within": 22.0}, "then": {"kind": "chase"}}],
          drops=[{"item": "deoch draiochta", "chance_pct": 40.0, "min": 1, "max": 1}], _where=lambda m, l, h, p: ["bru na boinne", "rathcroghan", "dun ailinne"] + l[:4]),
-    dict(name="dubhlachan", title="Dullahan", color="#151515", level=14, hp=360, speed_mult=1.5, sight=60.0, count=16, ambush=True, leash=120.0,
+    dict(name="dubhlachan", beast="ghost_skull", title="Dullahan", color="#151515", level=14, hp=360, speed_mult=1.5, sight=60.0, count=16, ambush=True, leash=120.0,
          drops=[{"item": "pingin airgid", "chance_pct": 100.0, "min": 5, "max": 12}], _where=lambda m, l, h, p: ["bealach na gcreach", "na staighri dubha", "sliabh bladhma", "na gaibhlte"]),
-    dict(name="gruagach", title="Gruagach", color="#7a6a4a", level=13, hp=420, speed_mult=0.7, sight=30.0, behaviour="idle", count=30, leash=60.0,
+    dict(name="gruagach", beast="troll_hill", title="Gruagach", color="#7a6a4a", level=13, hp=420, speed_mult=0.7, sight=30.0, behaviour="idle", count=30, leash=60.0,
          rules=[{"when": {"kind": "sees", "who": "player", "within": 18.0}, "then": {"kind": "chase"}}],
          drops=[{"item": "craiceann trolla", "chance_pct": 60.0, "min": 1, "max": 2}], _where=lambda m, l, h, p: ["na cruacha dubha", "earagail", "binn ghulbain", "na beanna beola", "cruach phadraig"]),
     dict(name="ceithearnach", title="Kern", color="#5a4a2a", level=6, hp=140, speed_mult=1.05, sight=40.0, count=140, leash=70.0,
@@ -290,9 +300,9 @@ BEASTS = [
     dict(name="creachadoir", title="Cattle Raider", color="#6a3a2a", level=9, hp=190, speed_mult=1.1, sight=45.0, count=80, leash=80.0,
          drops=[{"item": "pingin airgid", "chance_pct": 70.0, "min": 2, "max": 6}, {"item": "adharc tairbh", "chance_pct": 30.0, "min": 1, "max": 1}],
          _where=lambda m, l, h, p: ["binn chuilceach", "sliabh mis", "cnoc breanainn", "beanna boirche", "na staighri dubha"]),
-    dict(name="solas si", title="Will-o'-the-wisp", color="#bfe8ff", level=4, hp=60, speed_mult=1.2, sight=35.0, count=180, ambush=True, leash=60.0,
+    dict(name="solas si", beast="ghost", title="Will-o'-the-wisp", color="#bfe8ff", level=4, hp=60, speed_mult=1.2, sight=35.0, count=180, ambush=True, leash=60.0,
          drops=[{"item": "luibheanna", "chance_pct": 50.0, "min": 1, "max": 2}], _where=lambda m, l, h, p: l),
-    dict(name="damhan alla mor", title="Cave Spider", color="#2a2a2a", level=7, hp=150, speed_mult=1.15, sight=28.0, behaviour="idle", count=90, leash=50.0,
+    dict(name="damhan alla mor", beast="shroom", title="Cave Spider", color="#2a2a2a", level=7, hp=150, speed_mult=1.15, sight=28.0, behaviour="idle", count=90, leash=50.0,
          rules=[{"when": {"kind": "sees", "who": "player", "within": 16.0}, "then": {"kind": "chase"}}],
          drops=[{"item": "sioda damhain", "chance_pct": 60.0, "min": 1, "max": 2}], _where=lambda m, l, h, p: ["coill na mac tire", "na cruacha dubha", "sliabh speirin", "na staighri dubha"]),
     dict(name="fear dearg", title="Far Darrig", color="#a8322d", level=5, hp=90, speed_mult=1.2, sight=30.0, behaviour="wander", attack=None, count=60,
@@ -303,7 +313,7 @@ BEASTS = [
          rules=[{"when": {"kind": "sees", "who": "player", "within": 16.0}, "then": {"kind": "flee"}}],
          drops=[{"item": "pingin airgid", "chance_pct": 100.0, "min": 8, "max": 20}, {"item": "bonn oir", "chance_pct": 25.0, "min": 1, "max": 1}],
          _where=lambda m, l, h, p: ["coill na mac tire"] + l[:3] + m[:4]),
-    dict(name="curadh fomhorach", title="Fomorian Champion", color="#2f4a22", level=16, hp=520, speed_mult=1.0, sight=50.0, count=12, leash=100.0,
+    dict(name="curadh fomhorach", beast="fomorian", title="Fomorian Champion", color="#2f4a22", level=16, hp=520, speed_mult=1.0, sight=50.0, count=12, leash=100.0,
          drops=[{"item": "cnamh fomhorach", "chance_pct": 80.0, "min": 1, "max": 2}], _where=lambda m, l, h, p: ["an tuaisceart 1", "an tuaisceart 2", "an tuaisceart 3", "an tuaisceart 4", "an tuaisceart 5"]),
 ]
 
