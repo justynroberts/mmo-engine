@@ -1,6 +1,7 @@
 // The MCP server: the console's functions as tools, over stdio. Run `node dist-mcp/mmo-mcp.mjs` (after
 // `npm run build:mcp`); MMO_ADMIN picks the server's admin address (default http://127.0.0.1:7780). The admin
-// API only answers on loopback, so for a remote server tunnel its admin port first (ssh -L 7780:127.0.0.1:7780).
+// API only answers on loopback; a remote server with MMO_ADMIN_PASSWORD set offers it on its web port instead:
+// MMO_ADMIN=https://host (the web address) and MMO_ADMIN_PASSWORD=the same password, sent as a bearer token.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -8,6 +9,7 @@ import { Refused, TOOLS } from './tools'
 import type { Ctx } from './tools'
 
 let base = (process.env.MMO_ADMIN ?? 'http://127.0.0.1:7780').replace(/\/+$/, '')
+const password = process.env.MMO_ADMIN_PASSWORD ?? ''
 
 const ctx: Ctx = {
   async call(path, method = 'GET', body) {
@@ -16,7 +18,10 @@ const ctx: Ctx = {
       res = await fetch(base + path, {
         method,
         // Writes carry the console's header: the server refuses writes without it.
-        headers: method === 'GET' ? undefined : { 'X-Admin': '1', 'Content-Type': 'application/json' },
+        headers: {
+          ...(method === 'GET' ? {} : { 'X-Admin': '1', 'Content-Type': 'application/json' }),
+          ...(password ? { Authorization: `Bearer ${password}` } : {}),
+        },
         body: body === undefined ? undefined : JSON.stringify(body),
       })
     } catch (e) {

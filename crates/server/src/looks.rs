@@ -136,7 +136,7 @@ mod tests {
     fn what_is_wielded_shows_and_another_items_look_can_be_shown_instead() {
         let mut g = GameFile::default_game();
         let mut sword = g.items[0].clone();
-        (sword.name, sword.uses, sword.look, sword.equip) = ("sword".into(), vec![], Some("sword".into()), Some(proto::game::EquipFile { slot: proto::game::GearSlot::Weapon, might: 0.1, toughness: 0.0 }));
+        (sword.name, sword.uses, sword.look, sword.equip) = ("sword".into(), vec![], Some("sword".into()), Some(proto::game::EquipFile { slot: proto::game::GearSlot::Weapon, might: 0.1, toughness: 0.0, level: 0 }));
         let mut staff = g.items[0].clone();
         (staff.name, staff.uses, staff.look) = ("staff".into(), vec![], Some("staff".into()));
         g.items.extend([sword, staff]);

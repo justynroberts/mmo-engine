@@ -141,7 +141,11 @@ func set_gear(g: Dictionary) -> void:
 		if name == "":
 			continue
 		any = true
-		_gear_row.add_child(_text("%s: %s" % [slot.capitalize(), HUD.item(name)], 14))
+		var worn := _text("%s: %s" % [slot.capitalize(), HUD.item(name)], 14)
+		if HUD.ITEM_NOTES.has(name):
+			worn.tooltip_text = String(HUD.ITEM_NOTES[name])
+			worn.mouse_filter = Control.MOUSE_FILTER_PASS
+		_gear_row.add_child(worn)
 		_gear_row.add_child(_button("Take off", func(): unequip.emit(k), 76))
 	if not any:
 		_gear_row.add_child(_text("nothing (use a weapon, armour or a trinket from your bag to put it on)", 13, HUD.MUTED))

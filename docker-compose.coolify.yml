@@ -1,5 +1,6 @@
 # Coolify deployment (Docker Compose build pack): the web gateway behind the platform's proxy and the game's UDP port
-# published on the host. The admin console stays on the container's loopback and is never exposed. The local setup
+# published on the host. The admin interface stays on the container's loopback; with MMO_ADMIN_PASSWORD set, the web
+# port offers the console at /admin/ behind that password and passes its calls on. The local setup
 # is docker-compose.yml at the root (host networking).
 services:
   server:
@@ -13,6 +14,9 @@ services:
       # Which world (deploy/entrypoint.sh): Hibernia at 65,536 units, made from its recipe on first start (about five
       # minutes, 800 MB). Changing it moves the old world aside and starts the new one fresh; characters are kept.
       - MMO_SEED=hibernia-65536
+      # The admin console on the web port at /admin/ (and the admin API for the MCP server, as a bearer token): set
+      # in Coolify's environment variables, never here. Unset, the console is not offered.
+      - MMO_ADMIN_PASSWORD=${MMO_ADMIN_PASSWORD:-}
     expose:
       - "7790"
     ports:

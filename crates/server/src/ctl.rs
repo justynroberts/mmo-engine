@@ -28,7 +28,8 @@ const MAX_BODY: usize = 256 * 1024;
 pub enum Cmd {
     Info,
     GetGame,
-    PutGame(String),
+    /// A whole game file to apply, and what made the change (kept with the version).
+    PutGame(String, String),
     State { limit: usize },
     Spawn(SpawnReq),
     Kill(KillReq),
@@ -99,6 +100,8 @@ pub struct GenCfg {
     /// The world file (`--world`, else world.json), and the seed its collision world is built with.
     pub world: PathBuf,
     pub seed: u64,
+    /// The content database, for its history and rollback.
+    pub content: Option<PathBuf>,
 }
 
 /// One world reload or apply at a time: each reads a file, prepares it and hands it to the sim.
@@ -245,6 +248,8 @@ pub struct Params {
     pub plain_npcs: usize,
     pub game_path: Option<PathBuf>,
     pub max_clients: usize,
+    /// The content database's thread (`content.rs`): each version applied is written there too.
+    pub content: Option<Sender<crate::content::Save>>,
 }
 
 /// What a browser needs to join: the server's key, the definitions' hash and shape, and the world.
@@ -421,7 +426,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
             let mut v = json!({"name": i.name, "color": i.color, "stack_max": i.stack_max, "usable": !i.uses.is_empty() || i.equip.is_some() || i.mount > 0.0 || i.potion.is_some()});
             if !i.title.is_empty() { v["title"] = json!(i.title); }
             if i.value > 0 { v["value"] = json!(i.value); }
-            if let Some(e) = &i.equip { v["equip"] = json!({"slot": e.slot as u8, "might": e.might, "toughness": e.toughness}); }
+            if let Some(e) = &i.equip { v["equip"] = json!({"slot": e.slot as u8, "might": e.might, "toughness": e.toughness, "level": e.level}); }
             if i.mount > 0.0 { v["mount"] = json!(i.mount); }
             // A potion: how long it lasts and what it gives while it does.
             if let Some(p) = &i.potion { v["potion"] = json!({"secs": p.secs, "might": p.might, "toughness": p.toughness, "speed": p.speed}); }
@@ -488,7 +493,7 @@ pub struct Ctl<'a> {
     pub director: &'a mut crate::director::Director,
 }
 
-pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg, statics: std::sync::Arc<crate::statics::Statics>) -> std::io::Result<Receiver<Request>> {
+pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg, statics: std::sync::Arc<crate::statics::Statics>) -> std::io::Result<(Receiver<Request>, Sender<Request>)> {
     let gen = std::sync::Arc::new(gen);
     if !addr.ip().is_loopback() {
         return Err(std::io::Error::new(
@@ -498,6 +503,7 @@ pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg, statics: st
     }
     let listener = TcpListener::bind(addr)?;
     let (tx, rx) = channel::<Request>();
+    let own = tx.clone();
     std::thread::Builder::new()
         .name("admin-http".into())
         .spawn(move || {
@@ -510,7 +516,7 @@ pub fn start(addr: SocketAddr, ui_dir: Option<PathBuf>, gen: GenCfg, statics: st
                 });
             }
         })?;
-    Ok(rx)
+    Ok((rx, own))
 }
 
 // -------------------------------------------------------------------- http
@@ -636,6 +642,38 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
             Err(e) => respond(&mut conn, 400, "application/json", json!({ "ok": false, "error": e }).to_string().as_bytes()),
         };
     }
+    // The content's versions (`content.rs`), read on this thread from the database; a rollback applies the version
+    // through the sim as an edit is, and becomes the newest version.
+    if req.path.starts_with("/api/content/") {
+        let fail = |conn: &mut TcpStream, status: u16, e: String| respond(conn, status, "application/json", json!({ "ok": false, "error": e }).to_string().as_bytes());
+        let Some(path) = &gen.content else { return fail(&mut conn, 404, "this server keeps no content database (start it with --content)".into()) };
+        let db = match crate::content::Content::open(path) {
+            Ok(db) => db,
+            Err(e) => return fail(&mut conn, 500, e),
+        };
+        let rev = query_get(&req.query, "rev").and_then(|r| r.parse::<i64>().ok());
+        return match (req.method.as_str(), req.path.as_str(), rev) {
+            ("GET", "/api/content/history", _) => {
+                let limit = query_get(&req.query, "limit").and_then(|l| l.parse().ok()).unwrap_or(200).min(2000);
+                match db.history(limit) {
+                    Ok(h) => respond(&mut conn, 200, "application/json", json!({ "ok": true, "versions": h }).to_string().as_bytes()),
+                    Err(e) => fail(&mut conn, 500, e),
+                }
+            }
+            ("GET", "/api/content/version", Some(rev)) => match db.version(rev) {
+                Ok(text) => respond(&mut conn, 200, "application/json", text.as_bytes()),
+                Err(e) => fail(&mut conn, 404, e),
+            },
+            ("POST", "/api/content/rollback", Some(rev)) => match db.version(rev) {
+                Ok(text) => {
+                    drop(db);
+                    ask(&mut conn, tx, Cmd::PutGame(text, format!("rolled back to version {rev}")))
+                }
+                Err(e) => fail(&mut conn, 404, e),
+            },
+            _ => fail(&mut conn, 404, "GET /api/content/history, GET /api/content/version?rev=N, POST /api/content/rollback?rev=N".into()),
+        };
+    }
     // The world's static parts are read, loaded and prepared here, on this connection's thread: the sim only swaps
     // a finished world in.
     match (req.method.as_str(), req.path.as_str()) {
@@ -682,7 +720,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
         ("POST", "/api/ground/clear") => clear_req(&req.body).map(Cmd::GroundClear),
         ("POST", "/api/blocks") => Some(Cmd::BlocksPut(body_str())),
         ("GET", "/api/game") => Some(Cmd::GetGame),
-        ("PUT", "/api/game") => Some(Cmd::PutGame(body_str())),
+        ("PUT", "/api/game") => Some(Cmd::PutGame(body_str(), query_get(&req.query, "note").filter(|n| !n.is_empty()).unwrap_or_else(|| "edited in the console".into()))),
         ("GET", "/api/state") => {
             let limit = req
                 .query
@@ -840,7 +878,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             if let Some(g) = &c.hs.gateway {
                 g.set_info(play_info(c.sim, c.hs));
             }
-            let saved = save_game(c);
+            let saved = save_game(c, "set the time of day");
             (200, json!({ "ok": true, "daylight": c.sim.daylight, "saved": saved }).to_string())
         }
         Cmd::Blocks => (200, format!(r#"{{"ver":{},"total":{},{}"#, c.sim.blocks.ver, c.sim.blocks.total, &c.sim.blocks.to_json()[1..])),
@@ -896,7 +934,7 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             }
             Err(e) => err(400, format!("expected {{\"cols\": [[cx, cy, \"layers\"], ...]}} (materials from the ground up, . for an empty layer): {e}")),
         },
-        Cmd::PutGame(text) => apply_game(&text, c),
+        Cmd::PutGame(text, note) => apply_game(&text, &note, c),
         Cmd::State { limit } => (200, state_json(c, limit)),
         Cmd::Spawn(r) => {
             let Some(a) = c.sim.archs.iter().position(|a| a.name == r.archetype) else {
@@ -1098,7 +1136,10 @@ fn set_walls(hs: &Handshake, world: &World) {
 }
 
 /// Write the game file back (beside it, then renamed into place): true, false for none, or why not.
-fn save_game(c: &Ctl) -> serde_json::Value {
+fn save_game(c: &Ctl, note: &str) -> serde_json::Value {
+    if let Some(tx) = &c.params.content {
+        let _ = tx.send(crate::content::Save { game: c.game.to_json(), note: note.to_string() });
+    }
     match &c.params.game_path {
         Some(p) => {
             let tmp = p.with_extension("json.tmp");
@@ -1111,7 +1152,7 @@ fn save_game(c: &Ctl) -> serde_json::Value {
     }
 }
 
-pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
+pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
     let file = match GameFile::from_json(text) {
         Ok(f) => f,
         Err(e) => return err(400, e),
@@ -1215,7 +1256,7 @@ pub fn apply_game(text: &str, c: &mut Ctl) -> (u16, String) {
     if let Some(g) = &c.hs.gateway {
         g.set_info(play_info(c.sim, c.hs));
     }
-    let saved = save_game(c);
+    let saved = save_game(c, note);
     (
         200,
         json!({ "ok": true, "reset": reset, "dropped_clients": dropped, "moved_entities": moved, "content_hash": format!("{hash:016x}"), "saved": saved })
@@ -1350,4 +1391,27 @@ fn state_json(c: &Ctl, limit: usize) -> String {
     });
     let _ = write!(o, r#"],"shown":{shown},"names":{},"looping":{},"town":{town}}}"#, serde_json::Value::Object(players), json!(looping));
     o
+}
+
+/// A query parameter, percent-decoded (`+` is a space).
+fn query_get(query: &str, key: &str) -> Option<String> {
+    let raw = query.split('&').find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))?;
+    let b = raw.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                match u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).ok()?, 16) {
+                    Ok(v) => out.push(v),
+                    Err(_) => out.push(b'%'),
+                }
+                i += 2;
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).ok()
 }

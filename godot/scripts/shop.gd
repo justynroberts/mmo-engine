@@ -128,6 +128,10 @@ func _row(name: String, price: String, verb: String, ok: bool, on_press: Callabl
 	var n := Label.new()
 	var head := name.get_slice("  ", 0)
 	n.text = HUD.item(head) + name.substr(head.length())
+	if HUD.ITEM_NOTES.has(head):
+		row.tooltip_text = String(HUD.ITEM_NOTES[head])
+		n.tooltip_text = row.tooltip_text
+		n.mouse_filter = Control.MOUSE_FILTER_PASS
 	n.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	n.add_theme_color_override("font_color", HUD.TEXT)
 	row.add_child(n)

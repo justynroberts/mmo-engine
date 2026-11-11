@@ -591,6 +591,16 @@ func _start() -> void:
 			if float(po.get("speed", 0)) > 0.0:
 				gives.append("faster on your feet")
 			HudScript.ITEM_NOTES[String(it["name"])] = "Potion, lasts %d s%s" % [int(po.get("secs", 0)), (": " + ", ".join(gives)) if not gives.is_empty() else ""]
+		if it.get("equip") is Dictionary:
+			var eq: Dictionary = it["equip"]
+			var adds := []
+			if float(eq.get("might", 0)) > 0.0:
+				adds.append("blows %d%% harder" % roundi(float(eq["might"]) * 100.0))
+			if float(eq.get("toughness", 0)) > 0.0:
+				adds.append("wounds %d%% lighter" % roundi(float(eq["toughness"]) * 100.0))
+			var slot: String = ["Weapon", "Armour", "Trinket"][clampi(int(eq.get("slot", 0)), 0, 2)]
+			var lv := int(eq.get("level", 0))
+			HudScript.ITEM_NOTES[String(it["name"])] = slot + ((": " + ", ".join(adds)) if not adds.is_empty() else "") + (("; level %d" % lv) if lv > 1 else "")
 		if it.has("title"):
 			HudScript.ITEM_TITLES[String(it["name"])] = String(it["title"])
 		if it.has("rarity"):

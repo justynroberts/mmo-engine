@@ -7,7 +7,7 @@ import { api, type GameFile, type Info, type PutResult, type State, type WorldGe
 import { Builder, initialBuilder, type BuilderState } from './components/Builder'
 import { ChatPanel } from './components/Chat'
 import { ActionsEditor, AttrsEditor, BotsEditor, ClassesEditor, ItemsEditor, QuestsEditor } from './components/Editors'
-import { ConnectPanel, EntityPanel, RawPanel } from './components/Panels'
+import { ConnectPanel, EntityPanel, HistoryPanel, RawPanel } from './components/Panels'
 import { Header, NetworkPanel } from './components/StatusBar'
 import type { Daylight } from './daylight'
 import { WorldView } from './components/WorldView'
@@ -27,7 +27,7 @@ const SECTIONS: readonly { id: Section; name: string; what: string; icon: Icon; 
   { id: 'sky', name: 'Sky', what: 'Day, weather, zones', icon: CloudSun, map: false, title: 'Sky and weather', help: 'When it is light and dark, the weather everywhere, and weather that stays over one place: mist, storms, a healing spring.' },
   { id: 'events', name: 'Events', what: 'What happens, when', icon: Lightning, map: false, title: 'Events', help: 'World and local events, raids and bosses: scripts that run over time, with banners, waves, a fight to win in time and rewards. Started by hand, on a timer, when players gather, at a time of day, or after another event.' },
   { id: 'rules', name: 'Rules', what: 'Attributes, actions, items, quests, classes', icon: SlidersHorizontal, map: false, title: 'Game rules', help: 'What every character has (health, energy), what they can do to each other, the items in the world, the quests bots give and the classes players pick from. Some changes restart the world: the header says when.' },
-  { id: 'server', name: 'Server', what: 'Connect, network, JSON', icon: HardDrives, map: false, title: 'Server', help: 'How players connect, how the server is coping, and the whole game file as JSON.' },
+  { id: 'server', name: 'Server', what: 'Connect, network, JSON', icon: HardDrives, map: false, title: 'Server', help: 'How players connect, how the server is coping, every version of the content (to roll back to), and the whole game file as JSON.' },
 ]
 /** Pages within a section, where it has more than one. */
 const SUBS: Partial<Record<Section, readonly (readonly [string, string])[]>> = {
@@ -35,7 +35,7 @@ const SUBS: Partial<Record<Section, readonly (readonly [string, string])[]>> = {
   world: [['terrain', 'Terrain'], ['build', 'Places, routes and walls']],
   bots: [['types', 'Bot types'], ['spawn', 'Spawn and scatter']],
   rules: [['attrs', 'Attributes'], ['actions', 'Actions'], ['items', 'Items'], ['quests', 'Quests'], ['classes', 'Classes']],
-  server: [['connect', 'Connect'], ['network', 'Network'], ['json', 'Game file (JSON)']],
+  server: [['connect', 'Connect'], ['network', 'Network'], ['history', 'History and rollback'], ['json', 'Game file (JSON)']],
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -475,6 +475,8 @@ export default function App() {
       case 'server':
         return sub === 'network' ? (
           <NetworkPanel s={stats} />
+        ) : sub === 'history' ? (
+          <HistoryPanel onRolledBack={() => void loadGame()} />
         ) : sub === 'json' ? (
           <RawPanel
             text={rawText}

@@ -1382,6 +1382,9 @@ pub struct EquipFile {
     pub might: f32,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub toughness: f32,
+    /// The level a player must have reached to put it on (0 or 1: anyone).
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

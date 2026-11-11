@@ -289,3 +289,98 @@ function Bag({ id, items }: { id: number; items: string[] }) {
     </div>
   )
 }
+
+/** One kept version of the game's content (`/api/content/history`). */
+interface ContentVersion {
+  rev: number
+  at: number
+  note: string
+  bytes: number
+}
+
+/** Every version of the content the server has applied, newest first, each one a click from being put back. A
+ * rollback is itself a new version, so it can be undone the same way. */
+export function HistoryPanel({ onRolledBack }: { onRolledBack: () => void }) {
+  const [versions, setVersions] = useState<ContentVersion[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<number | null>(null)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    let live = true
+    void api<{ versions?: ContentVersion[]; error?: string }>('/api/content/history?limit=300').then((r) => {
+      if (!live) return
+      if (r.status === 200) {
+        setVersions(r.body.versions ?? [])
+        setError(null)
+      } else setError(r.body.error ?? `status ${r.status}`)
+    })
+    return () => {
+      live = false
+    }
+  }, [tick])
+  const rollback = async (rev: number) => {
+    if (!window.confirm(`Put version ${rev} back? It applies at once, to everyone; this version stays in the list.`)) return
+    setBusy(rev)
+    const r = await api<{ error?: string; reset?: boolean }>(`/api/content/rollback?rev=${rev}`, 'POST')
+    setBusy(null)
+    if (r.status !== 200) setError(r.body.error ?? `status ${r.status}`)
+    else {
+      setError(r.body.reset ? 'Rolled back: the world restarted (attributes or actions changed).' : null)
+      onRolledBack()
+    }
+    setTick((t) => t + 1)
+  }
+  const when = (at: number) => new Date(at * 1000).toLocaleString()
+  return (
+    <div className="py-2">
+      <p className="text-muted mb-2">
+        Every change to the game's content (from this console, the database or a rollback) is kept as a version. Putting
+        one back applies it live and adds it as the newest version.
+      </p>
+      {error && (
+        <p role="alert" className="text-accent mb-2">
+          {error}
+        </p>
+      )}
+      {versions === null ? (
+        <p className="text-muted">Loading…</p>
+      ) : versions.length === 0 ? (
+        <p className="text-muted">No versions kept: this server has no content database.</p>
+      ) : (
+        <table className="w-full text-left tabular-nums">
+          <thead>
+            <tr className="lbl">
+              <th className="py-1 pr-4 font-normal">Version</th>
+              <th className="py-1 pr-4 font-normal">When</th>
+              <th className="py-1 pr-4 font-normal">What</th>
+              <th className="py-1 font-normal" />
+            </tr>
+          </thead>
+          <tbody>
+            {versions.map((v, i) => (
+              <tr key={v.rev} className="border-t border-line">
+                <td className="py-1 pr-4">{v.rev}</td>
+                <td className="py-1 pr-4 text-muted whitespace-nowrap">{when(v.at)}</td>
+                <td className="py-1 pr-4">{v.note}</td>
+                <td className="py-1 text-right">
+                  {i === 0 ? (
+                    <span className="text-muted">current</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="border border-line rounded-sm px-2 hover:border-fg disabled:opacity-50"
+                      disabled={busy !== null}
+                      onClick={() => void rollback(v.rev)}
+                    >
+                      {busy === v.rev ? 'Putting back…' : 'Put back'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}

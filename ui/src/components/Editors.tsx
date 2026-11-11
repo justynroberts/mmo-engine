@@ -624,7 +624,7 @@ export function ItemsEditor({ game, setGame }: Edit) {
               onChange={(v) => patch(i, { block: v === '' ? undefined : v })}
             />
           </div>
-          <div className="grid grid-cols-3 gap-x-2 pt-1 items-end">
+          <div className="grid grid-cols-4 gap-x-2 pt-1 items-end">
             <SelectField
               label="Gear"
               value={it.equip?.slot ?? ''}
@@ -642,6 +642,11 @@ export function ItemsEditor({ game, setGame }: Edit) {
                   label="Toughness +"
                   value={it.equip.toughness ?? 0}
                   onCommit={(n) => patch(i, { equip: { ...it.equip!, toughness: Math.max(0, Math.min(2, n)) || undefined } })}
+                />
+                <NumField
+                  label="Level"
+                  value={it.equip.level ?? 0}
+                  onCommit={(n) => patch(i, { equip: { ...it.equip!, level: Math.max(0, Math.min(255, Math.round(n))) || undefined } })}
                 />
               </>
             )}

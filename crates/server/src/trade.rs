@@ -116,6 +116,10 @@ impl Sim {
     pub fn equip(&mut self, s: usize, i: usize) -> bool {
         let (tag, count) = self.inv[s][i];
         let Some(e) = self.items.get(tag as usize - 1).and_then(|d| d.equip.clone()) else { return false };
+        if self.ents.owner[s] < DRIVEN && self.levels.is_some() && e.level > self.ents.level[s] {
+            self.tells.push((s, format!("You must be level {} to wear the {}.", e.level, self.items[tag as usize - 1].shown())));
+            return false;
+        }
         let g = e.slot as usize;
         let was = self.gear[s][g];
         self.gear[s][g] = tag;
@@ -223,7 +227,7 @@ mod tests {
     fn buy_sell_wear_and_ride() {
         let mut g = GameFile::default_game();
         g.items.push(item("silver", 0));
-        g.items.push(ItemDef { equip: Some(EquipFile { slot: GearSlot::Weapon, might: 0.5, toughness: 0.0 }), ..item("sword", 4) });
+        g.items.push(ItemDef { equip: Some(EquipFile { slot: GearSlot::Weapon, might: 0.5, toughness: 0.0, level: 0 }), ..item("sword", 4) });
         g.items.push(ItemDef { mount: 0.8, ..item("horse", 0) });
         g.attrs.push(AttrFile { name: "speed".into(), min: 0.5, max: 3.0, default: 1.0, bits: 8, replicated: false, regen_per_sec: 0.0, on_zero: OnZeroFile::None });
         g.currency = Some("silver".into());
@@ -310,5 +314,23 @@ mod tests {
         assert_eq!(s.party_cap(b), s.rules.raid_size as usize);
         s.leave_party(a);
         assert!(s.raids.is_empty(), "the raid ends when one is left");
+    }
+
+    #[test]
+    fn gear_waits_for_its_level() {
+        let mut g = GameFile::default_game();
+        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
+        g.items.push(ItemDef { equip: Some(EquipFile { slot: GearSlot::Armour, might: 0.0, toughness: 0.3, level: 5 }), ..item("plate", 4) });
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let plate = s.items.iter().position(|i| i.name == "plate").unwrap();
+        let p = s.spawn(0).unwrap();
+        s.give(p, plate, 1);
+        let at = s.inv[p].iter().position(|b| b.0 as usize == plate + 1).unwrap();
+        assert!(!s.equip(p, at), "too young for it");
+        assert_eq!(s.gear[p][1], 0);
+        assert!(s.tells.iter().any(|(to, t)| *to == p && t.contains("level 5")));
+        s.ents.level[p] = 5;
+        assert!(s.equip(p, at));
+        assert_eq!(s.gear[p][1] as usize, plate + 1);
     }
 }

@@ -82,6 +82,8 @@ pub struct WebCfg {
     /// The other zones' web addresses (`--zone-web`): a page one of them served may connect here, since a player
     /// handed over from that zone arrives with that page still open.
     pub zone_hosts: Vec<String>,
+    /// The admin console behind a password (`admin_web.rs`), when `MMO_ADMIN_PASSWORD` is set.
+    pub admin: Option<Arc<crate::admin_web::AdminWeb>>,
 }
 
 impl Gateway {
@@ -202,8 +204,14 @@ pub fn start(cfg: WebCfg, gw: Arc<Gateway>) -> std::io::Result<SocketAddr> {
 }
 
 struct Head {
+    method: String,
     path: String,
     websocket: bool,
+    cookie: Option<String>,
+    auth: Option<String>,
+    content_type: Option<String>,
+    content_length: usize,
+    x_admin: bool,
     host: Option<String>,
     origin: Option<String>,
     forwarded: Option<String>,
@@ -225,13 +233,14 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
             let text = std::str::from_utf8(&buf[..end]).ok()?;
             let mut lines = text.split("\r\n");
             let mut first = lines.next()?.split(' ');
-            if first.next()? != "GET" {
+            let method = first.next()?.to_string();
+            if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "DELETE") {
                 return None;
             }
             let target = first.next()?;
             let (path, query) = target.split_once('?').unwrap_or((target, ""));
             let (path, query) = (path.to_string(), query.to_string());
-            let mut h = Head { path, websocket: false, host: None, origin: None, forwarded: None, query, gzip: false };
+            let mut h = Head { method, path, websocket: false, cookie: None, auth: None, content_type: None, content_length: 0, x_admin: false, host: None, origin: None, forwarded: None, query, gzip: false };
             for l in lines {
                 let Some((k, v)) = l.split_once(':') else { continue };
                 let v = v.trim();
@@ -240,6 +249,11 @@ fn peek_head(conn: &TcpStream) -> Option<(Head, usize)> {
                     "host" => h.host = Some(v.to_string()),
                     "origin" => h.origin = Some(v.to_string()),
                     "x-forwarded-for" => h.forwarded = Some(v.to_string()),
+                    "cookie" => h.cookie = Some(v.to_string()),
+                    "authorization" => h.auth = Some(v.to_string()),
+                    "content-type" => h.content_type = Some(v.to_string()),
+                    "content-length" => h.content_length = v.parse().ok()?,
+                    "x-admin" => h.x_admin = v == "1",
                     "accept-encoding" => h.gzip = v.split(',').any(|e| e.trim().split(';').next() == Some("gzip")),
                     _ => {}
                 }
@@ -313,6 +327,29 @@ fn serve(mut conn: TcpStream, cfg: &WebCfg, gw: &Gateway) -> std::io::Result<()>
         (Some(f), true) => f.rsplit(',').next().and_then(|s| s.trim().parse::<IpAddr>().ok()).map_or(key_of(peer.ip()), key_of),
         _ => key_of(peer.ip()),
     };
+    if let Some(admin) = cfg.admin.as_ref().filter(|_| crate::admin_web::AdminWeb::wants(&head.path)) {
+        let ip = match (&head.forwarded, cfg.trust_proxy) {
+            (Some(f), true) => f.rsplit(',').next().and_then(|s| s.trim().parse::<IpAddr>().ok()).unwrap_or(peer.ip()),
+            _ => peer.ip(),
+        };
+        let mut sink = vec![0u8; head_len];
+        conn.read_exact(&mut sink)?;
+        let r = crate::admin_web::Req {
+            method: &head.method,
+            path: &head.path,
+            query: &head.query,
+            cookie: head.cookie.as_deref(),
+            auth: head.auth.as_deref(),
+            content_type: head.content_type.as_deref(),
+            content_length: head.content_length,
+            x_admin: head.x_admin,
+            ip,
+        };
+        return admin.serve(&mut conn, &r, cfg.ui_dir.as_deref());
+    }
+    if head.method != "GET" {
+        return respond(&mut conn, 404, "text/plain", b"not found");
+    }
     if head.websocket && head.path == "/ws" {
         if cfg.no_browser {
             return respond(&mut conn, 404, "text/plain", b"not found");

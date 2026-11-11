@@ -243,6 +243,8 @@ func _show_picked() -> void:
 		bits.append("made by " + String(_makers[_picked]))
 	if info.has("rarity"):
 		bits.append(String(info["rarity"]))
+	if HUD.ITEM_NOTES.has(name):
+		bits.append(String(HUD.ITEM_NOTES[name]))
 	if int(info.get("value", 0)) > 0:
 		bits.append("worth %d to a merchant" % int(info["value"]))
 	_about.text = ",  ".join(bits)

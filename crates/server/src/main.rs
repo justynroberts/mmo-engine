@@ -3,11 +3,13 @@
 //! One pinned thread owns the zone: drain inputs, step the simulation at a fixed
 //! rate, build interest-filtered delta snapshots, send them in batches.
 
+mod admin_web;
 mod blocks;
 mod boats;
 mod boss;
 mod botdir;
 mod crafted;
+mod content;
 mod ctl;
 mod deeds;
 mod director;
@@ -104,6 +106,9 @@ struct Config {
     zone_lines: bool,
     zone_names: Vec<String>,
     bots_dir: Option<PathBuf>,
+    /// The content database (`content.rs`), and whether to import the game file into it as a new version.
+    content: Option<PathBuf>,
+    import_game: bool,
 }
 
 fn parse_args() -> Config {
@@ -122,6 +127,8 @@ fn parse_args() -> Config {
         timeout_secs: 5,
         workers: 1,
         game: PathBuf::from("game.json"),
+        content: None,
+        import_game: false,
         key_file: PathBuf::from("server.key"),
         admin: Some("127.0.0.1:7780".into()),
         ui_dir: None,
@@ -168,6 +175,8 @@ fn parse_args() -> Config {
             "--timeout" => c.timeout_secs = val(a).parse().unwrap_or_else(|_| usage("bad --timeout")),
             "--workers" => c.workers = val(a).parse().unwrap_or_else(|_| usage("bad --workers")),
             "--game" => c.game = PathBuf::from(val(a)),
+            "--content" => c.content = Some(PathBuf::from(val(a))),
+            "--import-game" => c.import_game = true,
             "--key-file" => c.key_file = PathBuf::from(val(a)),
             "--admin" => c.admin = Some(val(a)),
             "--no-admin" => c.admin = None,
@@ -216,7 +225,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --world FILE      a world file (worldgen): its size and solid objects make the world; served to clients at /play/world (world.json if present)\n  --worldgen FILE   the world generator the console runs (worldgen beside this binary, else on PATH)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)\n  --no-browser      the web port serves only the data clients fetch: no play page, no WebSocket relay
+        "world server\n\n  --port N          UDP port (7777)\n  --hz N            tick rate (20)\n  --world-size N    world edge in units, 64..65536 (2048)\n  --seed N          world seed (1)\n  --world FILE      a world file (worldgen): its size and solid objects make the world; served to clients at /play/world (world.json if present)\n  --worldgen FILE   the world generator the console runs (worldgen beside this binary, else on PATH)\n  --max-clients N   (8192)\n  --npcs N          server-side NPC entities (0)\n  --duration S      exit after S seconds, 0 = run forever (0)\n  --pin CORE        pin the sim thread to a CPU core\n  --timeout S       drop silent clients after S seconds (5)\n  --workers N       snapshot lanes: 1 = sim thread only, N > 1 uses N-1 more cores (1)\n  --game FILE       game definitions, created with defaults if missing (game.json)\n  --content FILE    keep the game's content in this SQLite database: edited live (a SQLite tool or the console), every version kept for rollback; filled from --game the first time\n  --import-game     put the --game file into the content database as a new version (the old ones are kept)\n  --bots-dir DIR    drop-in bot types: *.json files here become live bots, no restart (bots.d)\n  --no-bots-dir     do not watch a bots directory\n  --key-file FILE   server identity key, created if missing (server.key)\n  --admin ADDR      admin/UI http address, loopback only (127.0.0.1:7780)\n  --no-admin        do not start the admin interface\n  --ui-dir DIR      built UI to serve (ui/dist if present)\n  --db FILE         player and world database (data/world.db)\n  --fresh-world     ignore the saved bots and start from the archetype counts\n  --web ADDR        public web gateway: lets browsers play (WebSocket to UDP relay plus the play page), off by default\n  --web-max-conns N browsers connected at once (2000)\n  --web-per-ip N    browsers per address (8)\n  --web-trust-proxy read the real address from X-Forwarded-For (only behind a TLS proxy you control)\n  --no-browser      the web port serves only the data clients fetch: no play page, no WebSocket relay
   --no-db           do not remember players
   --db-expire-days N  forget players not seen for N days, checked at startup, 0 = never (90)
   --new-identities-per-hour N  new player identities one address may create per hour, 0 = unlimited (30)
@@ -268,7 +277,11 @@ fn main() {
         libc::signal(libc::SIGINT, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
         libc::signal(libc::SIGTERM, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
     }
-    let mut game_file = load_game(&cfg.game);
+    let mut game_file = match &cfg.content {
+        Some(path) => content::start_with(path, &cfg.game, cfg.import_game, |p| load_game(&p.to_path_buf())),
+        None => load_game(&cfg.game),
+    };
+    let (content_tx, content_rx) = std::sync::mpsc::channel::<content::Save>();
     let game = game_file.build().expect("validated by load_game");
     let defs_hash = game.defs.content_hash();
     // A world file, when given, decides the world's size and walls; the game file's walls are not used. Without
@@ -444,7 +457,13 @@ fn main() {
             let d = PathBuf::from("ui/dist");
             d.is_dir().then_some(d)
         });
-        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy, no_browser: cfg.no_browser, zone_hosts: cfg.zone_web.iter().map(|u| u.split("://").nth(1).unwrap_or(u).trim_end_matches('/').to_string()).collect() };
+        let wc = web::WebCfg { addr, ui_dir: ui, udp_port: cfg.port, max_conns: cfg.web_max_conns, per_ip: cfg.web_per_ip, trust_proxy: cfg.web_trust_proxy, no_browser: cfg.no_browser, zone_hosts: cfg.zone_web.iter().map(|u| u.split("://").nth(1).unwrap_or(u).trim_end_matches('/').to_string()).collect(), admin: None };
+        // The console on this port too, behind MMO_ADMIN_PASSWORD (admin_web.rs), passing its calls to the admin interface.
+        let mut wc = wc;
+        wc.admin = cfg.admin.as_ref().and_then(|a| a.parse::<std::net::SocketAddr>().ok()).and_then(|ctl| admin_web::AdminWeb::from_env(ctl, cfg.web_trust_proxy)).map(std::sync::Arc::new);
+        if wc.admin.is_some() {
+            eprintln!("admin console: on the web port at /admin/, behind MMO_ADMIN_PASSWORD");
+        }
         match web::start(wc, gw.clone()) {
             Ok(local) if cfg.no_browser => eprintln!("web gateway: http://{local}/  (client data only: no play page, no WebSocket relay{})", if cfg.web_trust_proxy { ", trusting X-Forwarded-For" } else { "" }),
             Ok(local) => eprintln!("web gateway: http://{local}/  (browsers play through WebSocket, at most {} at once, {} per address{})", cfg.web_max_conns, cfg.web_per_ip, if cfg.web_trust_proxy { ", trusting X-Forwarded-For" } else { "" }),
@@ -468,8 +487,10 @@ fn main() {
         plain_npcs: cfg.npcs,
         game_path: Some(cfg.game.clone()),
         max_clients: cfg.max_clients,
+        content: cfg.content.as_ref().map(|_| content_tx.clone()),
     };
     let mut live = ctl::LiveStats { snap_lanes: lanes_n, ..Default::default() };
+    let mut admin_tx: Option<std::sync::mpsc::Sender<ctl::Request>> = None;
     let admin_rx = cfg.admin.as_ref().map(|a| {
         let addr: std::net::SocketAddr = a.parse().unwrap_or_else(|_| usage("bad --admin address"));
         let ui = cfg.ui_dir.clone().or_else(|| {
@@ -481,7 +502,7 @@ fn main() {
             let near = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("worldgen")));
             near.filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("worldgen"))
         });
-        let gen = ctl::GenCfg { worldgen, preview: world_path.with_extension("preview.json"), world: world_path.clone(), seed: cfg.seed };
+        let gen = ctl::GenCfg { worldgen, preview: world_path.with_extension("preview.json"), world: world_path.clone(), seed: cfg.seed, content: cfg.content.clone() };
         let rx = ctl::start(addr, ui.clone(), gen, statics.clone()).unwrap_or_else(|e| {
             eprintln!("cannot start admin interface on {a}: {e}");
             std::process::exit(1);
@@ -492,6 +513,16 @@ fn main() {
         );
         rx
     });
+    let admin_rx = admin_rx.map(|(rx, tx)| {
+        admin_tx = Some(tx);
+        rx
+    });
+    // The content database's thread: keeps each version applied, and applies changes other programs make to it.
+    if let Some(path) = cfg.content.clone() {
+        let admin = admin_tx.clone();
+        std::thread::Builder::new().name("content".into()).spawn(move || content::run(path, content_rx, admin)).expect("content thread");
+    }
+    drop(content_tx);
     let mut clients = Clients::default();
     // Claimed names stay taken while their players are away.
     if let Some(st) = &hs.store {
@@ -598,7 +629,7 @@ fn main() {
                     bot_dir: None,
                     director: &mut director,
                 };
-                let (status, body) = ctl::apply_game(&text, &mut c);
+                let (status, body) = ctl::apply_game(&text, "bots directory", &mut c);
                 if status != 200 {
                     eprintln!("bots dir: not applied: {body}");
                     bd.status.error = Some(body);

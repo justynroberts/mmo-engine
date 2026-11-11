@@ -390,6 +390,8 @@ export interface EquipFile {
   slot: GearSlot
   might?: number
   toughness?: number
+  /** The level a player must have reached to wear it (0 or absent: anyone). */
+  level?: number
 }
 /** Something a bot type sells, at a price (0..65535) in the game's currency. */
 export interface ShopItem {

@@ -25,3 +25,4 @@ data.bak-*/
 
 # Claude Code local settings and worktrees
 .claude/
+/content.db*

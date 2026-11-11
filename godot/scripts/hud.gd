@@ -1029,6 +1029,8 @@ func set_bag(contents: Array) -> void:
 		var rare := String(rarity.get(item, ""))
 		var named := "%s (%s)" % [item(item), rare] if rare != "" else item(item)
 		s.tooltip_text = "%s x%d  (%d to use, Shift+%d to drop)" % [named, count, i + 1, i + 1] if item != "" else "Empty"
+		if ITEM_NOTES.has(item):
+			s.tooltip_text += "\n" + String(ITEM_NOTES[item])
 		s.queue_redraw()
 
 ## The build bar: one button per block material, a picture of it and its key.

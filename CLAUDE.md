@@ -62,6 +62,14 @@ When renaming/deleting an attribute, place, route, bot type or weather, the code
 
 **Saved state is keyed by name**, not index (attributes, archetypes, items), so editing the game file never scrambles saved characters or bags.
 
+## Content database (live editing and rollback)
+
+With `--content FILE` (the Coolify deployment passes `/data/content.db`) the game file lives in SQLite (`crates/server/src/content.rs`): each list of the game file is a table of its own (`items`, `actions`, `archetypes`, `quests`, ...; `pos`, `data` as JSON, `name` and `title` read out of it), everything else a row of `settings`, `sections` the lists in order. It is filled from `--game` the first time, or with `--import-game` (the entrypoint passes it when the seed's VERSION moves on) as a new version. Its thread applies changes another program makes to the file (a SQLite browser, a script) through the admin queue as a console edit; one that does not build is refused and said in the `changes` table. Every version applied (console, database, bots dir, rollback) is kept whole in `history` (last 2000): `/api/content/history`, `/api/content/version?rev=N`, `POST /api/content/rollback?rev=N` (a rollback is a new version), and the console's Server > History and rollback. A broken table at start falls back to the newest version that builds. The table `translations` (key, lang, text) is there for translating players' text; nothing reads it yet. `game.json` is still written beside it as an export.
+
+**Live console.** With `MMO_ADMIN_PASSWORD` (12+ characters, set in Coolify's environment variables) the web port serves the console at `/admin/` behind a login (session cookie) and passes `/api/*` to the loopback admin interface (`crates/server/src/admin_web.rs`); scripts and the MCP server send `Authorization: Bearer <password>` (`MMO_ADMIN=https://hibernian.apps.fintonlabs.com MMO_ADMIN_PASSWORD=... node ui/dist-mcp/mmo-mcp.mjs`). Wrong passwords are limited per address. To bring live edits back into the repo, fetch `/api/game` into `deploy/<seed>/game.json`; bumping VERSION otherwise imports the repo's file over them (still rollback-able).
+
+Gear can need a level (`EquipFile::level`, refused in `Sim::equip`); the Godot tooltips show each item's slot, stats and level (`HUD.ITEM_NOTES` from `/play/info` items).
+
 ## Duplicated implementations that must stay in sync
 
 The protocol is implemented twice and movement three times. A change to any of these needs the matching change and its cross-check test:

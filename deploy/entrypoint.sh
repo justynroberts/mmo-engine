@@ -52,9 +52,13 @@ if [ ! -e /data/world.json ] && [ -e "$seed/recipe.json" ]; then
     cksum < "$seed/recipe.json" | cut -d' ' -f1 > /data/.world-recipe
 fi
 echo "$name" > /data/.world-seed
-# A deployment with no reachable admin console takes its game file from the seed: when the seed's version
-# (VERSION) differs from the one last applied, the seed's game.json replaces the volume's, the old one kept beside
-# it. The world, built blocks and characters are never touched.
+# The game's content lives in /data/content.db (crates/server/src/content.rs): changed live from the console at
+# /admin/ (behind MMO_ADMIN_PASSWORD) or any SQLite tool, every version kept for rollback. It is first filled from
+# game.json. When the seed's version (VERSION) differs from the one last applied, the seed's game.json is imported
+# into it as a new version (the earlier ones stay, so it can be rolled back), the old game.json kept beside it. The
+# world, built blocks and characters are never touched.
+import=""
+
 if [ -e "$seed/VERSION" ] && [ -e "$seed/game.json" ]; then
     want=$(cat "$seed/VERSION")
     have=$(cat /data/.seed-version 2>/dev/null || true)
@@ -62,12 +66,13 @@ if [ -e "$seed/VERSION" ] && [ -e "$seed/game.json" ]; then
         [ -e /data/game.json ] && cp /data/game.json "/data/game.json.before-$want"
         cp "$seed/game.json" /data/game.json
         echo "$want" > /data/.seed-version
+        import="--import-game"
         echo "game.json from seed $want"
     fi
 fi
 rm -f /data/.fresh-world
-if [ "$1" = "server" ] && [ -n "$MMO_ARGS$fresh" ]; then
+if [ "$1" = "server" ]; then
     # shellcheck disable=SC2086
-    exec "$@" $MMO_ARGS $fresh
+    exec "$@" --content /data/content.db $import $MMO_ARGS $fresh
 fi
 exec "$@"
