@@ -13,6 +13,12 @@ pub const NONE: u32 = u32::MAX;
 pub const DRIVEN: u32 = u32::MAX - 1;
 /// A mirror of an entity that lives in a neighbouring zone: it is seen and nothing more.
 pub const GHOST: u32 = u32::MAX - 2;
+/// The squares dormancy is decided by (`Sim::system_wake`), in world units.
+pub const WAKE_CELL: f32 = 256.0;
+/// Beyond what anyone is shown, how much further bots stay awake.
+pub const WAKE_SPARE: f32 = 256.0;
+/// A resting bot decides once in this many ticks (fifteen seconds at 20 Hz): enough to go in at dusk, unseen.
+pub const DORMANT_EVERY: usize = 300;
 /// Archetype of entities that are not bots (players, plain NPCs).
 pub const NO_ARCH: u8 = u8::MAX;
 pub const SLOT_MASK: u32 = 0x00FF_FFFF;
@@ -383,6 +389,13 @@ macro_rules! timed {
 pub struct Sim {
     /// Per-system timings when `MMO_PROFILE` is set.
     pub prof: Option<Profile>,
+    /// Bots out of every player's reach rest (`system_wake`): off in a new `Sim` (tests), on in the server.
+    pub dormancy: bool,
+    /// Which `WAKE_CELL` squares have a player (or anything driven, or a zone ghost) within `wake_reach`.
+    pub(crate) awake: Vec<bool>,
+    pub(crate) awake_w: usize,
+    /// Bots resting at the last count, for `/api/state`.
+    pub dormant: usize,
     /// What `find_towns` last looked over (places and houses), so it looks again only when they change.
     pub(crate) towns_key: u64,
     /// Places by square (`homes.rs` `index_places`): the grid's width and each square's places; and which are towns.
@@ -742,6 +755,10 @@ impl Sim {
             talk,
             lit_attr: None,
             prof: std::env::var_os("MMO_PROFILE").map(|_| Profile::default()),
+            dormancy: false,
+            awake: Vec::new(),
+            awake_w: 0,
+            dormant: 0,
             towns_key: 0,
             place_cells: (0, Vec::new()),
             is_town: Vec::new(),
@@ -1524,6 +1541,7 @@ impl Sim {
         self.npc_actions.clear();
         let old = self.tick.saturating_sub(CAST_TICKS);
         self.casts.retain(|c| c.0 > old);
+        timed!(self, "system_wake", self.system_wake());
         timed!(self, "system_npc_ai", self.system_npc_ai());
         timed!(self, "system_hail", self.system_hail());
         timed!(self, "system_regen", self.system_regen());
@@ -1581,7 +1599,9 @@ impl Sim {
         }
         self.nav_goal[s] = (tx, ty, stop);
         let r = self.defs.entity_radius;
-        self.nav.steer(&self.world, r, self.tick, x, y, tx, ty, true).unwrap_or_else(|| dir_to(dx, dy, stop))
+        // A resting bot does not walk it: no field built for it (they are dear, and few are built a tick).
+        let build = !self.resting(s);
+        self.nav.steer(&self.world, r, self.tick, x, y, tx, ty, build).unwrap_or_else(|| dir_to(dx, dy, stop))
     }
 
     /// Between decisions, turn a bot walking to a static point along its (already built) flow field. Where
@@ -2030,13 +2050,65 @@ impl Sim {
     /// Bots are ordinary entities. Their "AI" writes the same direction fields
     /// a player's input would, and queues the same action requests, at a low
     /// rate (every 10th tick, staggered).
+    /// Mark the squares within `wake_reach` of every player, anything driven from the console and every ghost of
+    /// a neighbouring zone. A bot anywhere else rests (`resting`): the world beyond everyone's sight costs next to
+    /// nothing, and wakes, as it was, before anyone comes near enough to see it.
+    fn system_wake(&mut self) {
+        if !self.dormancy {
+            return;
+        }
+        let w = (self.world.size / WAKE_CELL).ceil() as usize + 1;
+        if self.awake_w != w {
+            self.awake_w = w;
+            self.awake = vec![false; w * w];
+        }
+        self.awake.iter_mut().for_each(|a| *a = false);
+        let reach = self.wake_reach();
+        let cell = |v: f32| ((v / WAKE_CELL).floor().max(0.0) as usize).min(w - 1);
+        let e = &self.ents;
+        for s in 0..e.high {
+            if !e.alive[s] || e.owner[s] == NONE {
+                continue;
+            }
+            let (x0, x1, y0, y1) = (cell(e.x[s] - reach), cell(e.x[s] + reach), cell(e.y[s] - reach), cell(e.y[s] + reach));
+            for cy in y0..=y1 {
+                self.awake[cy * w + x0..=cy * w + x1].iter_mut().for_each(|a| *a = true);
+            }
+        }
+        if self.tick % self.tick_hz.max(1) == 0 {
+            self.dormant = (0..e.high).filter(|&s| e.alive[s] && e.owner[s] == NONE && self.resting(s)).count();
+        }
+    }
+
+    /// How far round a player bots are awake: past the farthest anyone is shown (the crowd's reach), with room
+    /// to spare for a rider at a gallop.
+    pub(crate) fn wake_reach(&self) -> f32 {
+        (self.defs.interest_radius * (crate::net::CROWD_REACH as f32 + 1.0)).max(256.0) + WAKE_SPARE
+    }
+
+    /// A bot at rest: dormancy on, no player near, and not in a fight (one locked on a foe sees it through).
+    pub(crate) fn resting(&self, s: usize) -> bool {
+        if !self.dormancy || self.awake_w == 0 || self.ents.owner[s] != NONE || self.foe[s].is_some() {
+            return false;
+        }
+        let w = self.awake_w;
+        let cell = |v: f32| ((v / WAKE_CELL).floor().max(0.0) as usize).min(w - 1);
+        !self.awake[cell(self.ents.y[s]) * w + cell(self.ents.x[s])]
+    }
+
     fn system_npc_ai(&mut self) {
         let tick = self.tick;
         for s in 0..self.ents.high {
             if !self.ents.alive[s] || self.ents.owner[s] != NONE || self.ents.fallen[s] {
                 continue;
             }
-            if (tick as usize + s) % 10 != 0 {
+            // Resting, far from every player: a decision every `DORMANT_EVERY` ticks (indoors at night, its rules,
+            // its home) and no steering in between; `system_movement` leaves it where it stands.
+            if self.resting(s) {
+                if (tick as usize + s) % DORMANT_EVERY != 0 {
+                    continue;
+                }
+            } else if (tick as usize + s) % 10 != 0 {
                 if (tick as usize + s) % 2 == 0 && self.nav_goal[s].2 >= 0.0 {
                     self.follow_field(s);
                 }
@@ -2165,10 +2237,16 @@ impl Sim {
     fn system_movement(&mut self) {
         let r = self.defs.entity_radius;
         let dt = self.dt;
+        // `resting`, with the fields borrowed apart from the entities being moved.
+        let (awake, aw, foe, on) = (&self.awake, self.awake_w, &self.foe, self.dormancy && self.awake_w > 0);
+        let cell = |v: f32| ((v / WAKE_CELL).floor().max(0.0) as usize).min(aw.max(1) - 1);
         let e = &mut self.ents;
         for s in 0..e.high {
             // Standing still on the bare ground changes nothing; up on blocks it may (one broken underfoot).
             if !e.alive[s] || (e.dir_x[s] == 0 && e.dir_y[s] == 0 && e.z[s] == proto::world::GROUND) || e.held[s] != 0 || e.fallen[s] {
+                continue;
+            }
+            if on && e.owner[s] == NONE && foe[s].is_none() && !awake[cell(e.y[s]) * aw + cell(e.x[s])] {
                 continue;
             }
             let speed = e.speed[s] * self.speed_attr.map_or(1.0, |a| e.attrs[a][s]);
@@ -2974,6 +3052,38 @@ mod tests {
     fn place(s: &mut Sim, slot: usize, x: f32, y: f32) {
         s.ents.x[slot] = x;
         s.ents.y[slot] = y;
+    }
+
+    #[test]
+    fn bots_out_of_every_players_reach_rest_and_wake_when_one_comes_near() {
+        let game = proto::game::GameFile::default_game().build().unwrap();
+        let mut s = Sim::new(game, World::from_boxes(8192.0, 1, vec![]), 64, 20, 1);
+        s.dormancy = true;
+        let b = s.spawn_as(NONE, NO_ARCH, Some((7000.0, 7000.0))).unwrap();
+        let p = s.spawn(0).unwrap();
+        place(&mut s, p, 500.0, 500.0);
+        s.step(&[]);
+        assert!(s.resting(b), "nobody within reach");
+        assert!(!s.resting(p), "a player never rests");
+        (s.ents.dir_x[b], s.ents.dir_y[b]) = (127, 0);
+        for _ in 0..5 {
+            s.step(&[]);
+        }
+        assert_eq!((s.ents.x[b], s.ents.y[b]), (7000.0, 7000.0), "a resting bot stays where it stands");
+        // The player rides up: the bot wakes before it can be seen, and walks on.
+        let near = 7000.0 - s.wake_reach() + 50.0;
+        place(&mut s, p, near, 7000.0);
+        s.step(&[]);
+        assert!(!s.resting(b));
+        (s.ents.dir_x[b], s.ents.dir_y[b]) = (127, 0);
+        s.step(&[]);
+        assert!(s.ents.x[b] > 7000.0, "awake, it moves");
+        assert!(s.wake_reach() > s.defs.interest_radius * crate::net::CROWD_REACH as f32, "awake past what anyone is shown");
+        // Off (as in a new Sim): nothing rests.
+        s.dormancy = false;
+        place(&mut s, p, 500.0, 500.0);
+        s.step(&[]);
+        assert!(!s.resting(b));
     }
 
     #[test]

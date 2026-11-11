@@ -46,7 +46,8 @@ fn start_in(dir: PathBuf, extra: &[&str]) -> Srv {
     let child = Command::new(env!("CARGO_BIN_EXE_server"))
         .current_dir(&dir)
         .args(["--port", &u.to_string(), "--admin", &format!("127.0.0.1:{h}")])
-        .args(["--world-size", "512", "--quiet", "--timeout", "2"])
+        // Bots here are watched with nobody playing, so none may rest (dormancy is tested in sim.rs).
+        .args(["--world-size", "512", "--quiet", "--timeout", "2", "--no-dormancy"])
         .args(extra)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

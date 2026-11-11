@@ -371,8 +371,10 @@ impl Sim {
             if !self.ents.alive[s] || self.ents.owner[s] != NONE || self.ents.fallen[s] {
                 continue;
             }
+            // Resting (far from every player, sim.rs `resting`): no evening at the inn, no games of chase.
+            let rest = self.resting(s);
             // The inn: an evening's decision, once a day.
-            if dusk && self.folk[s].inn == Inn::Out && self.folk[s].inn_day != Some(today) && self.adult(s) {
+            if dusk && !rest && self.folk[s].inn == Inn::Out && self.folk[s].inn_day != Some(today) && self.adult(s) {
                 self.folk[s].inn_day = Some(today);
                 if self.rng.f32() * 100.0 < self.rules.inn_pct && self.home_of(s).and_then(|h| self.inn_of(h)).is_some() {
                     self.folk[s].inn = Inn::Going(tick + 120 * hz);
@@ -394,8 +396,12 @@ impl Sim {
                 }
             }
             // Children: a game of chase with another close by.
-            if day && self.is_child(s) && self.folk[s].play.is_none() && tick >= self.calm[s] && !self.ents.hidden[s] && self.rng.f32() < 0.3 {
-                let other = (0..self.ents.high)
+            if day && !rest && self.is_child(s) && self.folk[s].play.is_none() && tick >= self.calm[s] && !self.ents.hidden[s] && self.rng.f32() < 0.3 {
+                // Who is close by, from the grid (last tick's, near enough), never the whole world.
+                let mut near: Vec<usize> = Vec::new();
+                self.grid.for_within(self.ents.x[s], self.ents.y[s], 1, |o| near.push(o as usize));
+                let other = near
+                    .into_iter()
                     .filter(|&o| o != s && self.ents.alive[o] && self.is_child(o) && self.folk[o].play.is_none() && !self.ents.hidden[o] && self.d2(s, o) <= 14.0 * 14.0)
                     .min_by(|&a, &b| self.d2(s, a).total_cmp(&self.d2(s, b)));
                 if let Some(o) = other {
@@ -709,6 +715,7 @@ mod tests {
         let (mut s, [folk, child, dog]) = town();
         let a = s.spawn_as(NONE, child, Some((495.0, 495.0))).unwrap();
         let b = s.spawn_as(NONE, child, Some((498.0, 495.0))).unwrap();
+        s.grid.rebuild(&s.ents); // as each tick ends: a child looks for another through the grid
         for _ in 0..30 {
             s.system_folk();
             if s.folk[a].play.is_some() {
@@ -747,6 +754,7 @@ mod tests {
         s.find_towns();
         let kids: Vec<usize> = [(495.0, 495.0), (498.0, 495.0)].iter().map(|&at| s.spawn_as(NONE, child, Some(at)).unwrap()).collect();
         let _ = s.spawn_as(NONE, folk, Some((500.0, 500.0))).unwrap();
+        s.grid.rebuild(&s.ents);
         while s.folk[kids[0]].play.is_none() {
             s.system_folk();
         }

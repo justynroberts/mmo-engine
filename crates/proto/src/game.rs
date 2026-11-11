@@ -17,7 +17,7 @@ use crate::snapshot::{HEADER_LEN, MAX_REPL};
 
 pub const MAX_ATTRS: usize = 16;
 pub const MAX_ACTIONS: usize = 32;
-pub const MAX_ARCHETYPES: usize = 64;
+pub const MAX_ARCHETYPES: usize = 128;
 /// Snapshots must fit one datagram: header + visible * (id, x, y, attrs).
 const SNAPSHOT_BUDGET: usize = 1100;
 
@@ -1061,7 +1061,8 @@ fn d_visible() -> u32 {
 
 // ---------------------------------------------------------------- items
 
-pub const MAX_ITEMS: usize = 96;
+/// Bags and the wire carry an item as a byte (its index + 1, 0 an empty slot): at most 254, with room to spare.
+pub const MAX_ITEMS: usize = 200;
 /// Inventory slots per player, and in a player's bank. The action bar shows the first 8.
 pub const INV_SLOTS: usize = 24;
 pub const BANK_SLOTS: usize = 24;

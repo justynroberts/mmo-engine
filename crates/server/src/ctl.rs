@@ -23,7 +23,7 @@ use serde_json::json;
 use crate::net::{Clients, Handshake, NetStats};
 use crate::sim::{PendingAction, Sim, DRIVEN, NONE, NO_ARCH};
 
-const MAX_BODY: usize = 256 * 1024;
+const MAX_BODY: usize = 16 << 20;
 
 pub enum Cmd {
     Info,
@@ -1406,7 +1406,7 @@ fn state_json(c: &Ctl, limit: usize) -> String {
         "shadows": (0..s.ents.high).filter_map(|w| s.ents.resolve(s.folk[w].shadow).map(|p| json!({"watch": s.ents.id_of(w), "follows": &*s.name_of(p)}))).collect::<Vec<_>>(),
         "pleas": (0..s.plea.len()).filter_map(|p| s.plea[p].as_ref().map(|q| json!({"to": &*s.name_of(p), "from": &q.from_name, "town": place(q.town), "kind": match q.kind { crate::repute::PleaKind::Beat(_) => "beat", crate::repute::PleaKind::Fetch(_) => "fetch", crate::repute::PleaKind::Cure(_) => "cure" }}))).collect::<Vec<_>>(),
     });
-    let _ = write!(o, r#"],"shown":{shown},"names":{},"looping":{},"town":{town}}}"#, serde_json::Value::Object(players), json!(looping));
+    let _ = write!(o, r#"],"shown":{shown},"names":{},"looping":{},"resting":{},"town":{town}}}"#, serde_json::Value::Object(players), json!(looping), s.dormant);
     o
 }
 
