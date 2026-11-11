@@ -66,6 +66,8 @@ struct Config {
     build_pct: u32,
     build_hz: f32,
     world_file: Option<String>,
+    /// Never attack anything (a load test on a live world, where the townsfolk should live).
+    peaceful: bool,
 }
 
 fn usage(msg: &str) -> ! {
@@ -73,7 +75,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --build PCT     this share of the bots build a hut round themselves, take it down and build it again (0)\n  --build-hz N    blocks a builder places or breaks a second (2)\n  --world FILE    the server's world file, for the ground's heights (needed with --build on a world that has them)\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --build PCT     this share of the bots build a hut round themselves, take it down and build it again (0)\n  --build-hz N    blocks a builder places or breaks a second (2)\n  --world FILE    the server's world file, for the ground's heights (needed with --build on a world that has them)\n  --peaceful      never attack anything\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -102,6 +104,7 @@ fn parse_args() -> Config {
         build_pct: 0,
         build_hz: 2.0,
         world_file: None,
+        peaceful: false,
     };
     let ms = |v: String, n: &str| Duration::from_secs_f64(v.parse::<f64>().unwrap_or_else(|_| usage(&format!("bad {n}"))).max(0.0) / 1000.0);
     let pct = |v: String, n: &str| (v.parse::<f32>().unwrap_or_else(|_| usage(&format!("bad {n}"))) / 100.0).clamp(0.0, 1.0);
@@ -145,6 +148,7 @@ fn parse_args() -> Config {
             "--build" => c.build_pct = val(a).parse::<u32>().unwrap_or_else(|_| usage("bad --build")).min(100),
             "--build-hz" => c.build_hz = val(a).parse::<f32>().unwrap_or_else(|_| usage("bad --build-hz")).clamp(0.1, 20.0),
             "--world" => c.world_file = Some(val(a)),
+            "--peaceful" => c.peaceful = true,
             "--rally" => {
                 let v: Vec<f32> = val(a).split(',').map(|n| n.trim().parse().unwrap_or_else(|_| usage("bad --rally"))).collect();
                 c.rally = match v[..] {
@@ -213,6 +217,9 @@ struct Bot {
     step: usize,
     breaking: bool,
     build_next: u64,
+    /// Taking the hut down for good (the run is ending), and finished.
+    closing: bool,
+    done: bool,
 }
 
 impl Bot {
@@ -405,6 +412,8 @@ fn main() {
             step: 0,
             breaking: false,
             build_next: 0,
+            closing: false,
+            done: false,
         });
     }
 
@@ -699,7 +708,20 @@ fn main() {
                                 b.build_next = tick + b.rng.below(cfg.hz * 2) as u64;
                             }
                         }
-                        if b.site.is_some() && tick >= b.build_next && !b.plan.is_empty() {
+                        // Near the end, take down what stands (from the last block laid back to the first), then stop:
+                        // a run leaves nothing built behind it.
+                        let teardown = (b.plan.len() as f32 / cfg.build_hz) as u64 + 15;
+                        if !b.closing && start.elapsed().as_secs() + teardown >= cfg.duration && !b.plan.is_empty() {
+                            if !b.breaking {
+                                b.breaking = true;
+                                b.step = b.plan.len() - b.step;
+                            }
+                            b.closing = true;
+                        }
+                        if b.closing && !b.breaking {
+                            b.done = true;
+                        }
+                        if b.site.is_some() && tick >= b.build_next && !b.plan.is_empty() && !b.done && !(b.closing && b.step == b.plan.len()) {
                             b.build_next = tick + (cfg.hz as f32 / cfg.build_hz).max(1.0) as u64;
                             let (cx, cy, layer, kind) = if b.breaking { b.plan[b.plan.len() - 1 - b.step] } else { b.plan[b.step] };
                             build_act = Some(if b.breaking {
@@ -732,7 +754,7 @@ fn main() {
                     let (mut action, mut target, mut arg) = (0u8, 0u32, 0u16);
                     if let Some((a, t, g)) = build_act {
                         (action, target, arg) = (a, t, g);
-                    } else if b.builder {
+                    } else if b.builder || cfg.peaceful {
                     } else if let Some(me) = b.view.get(b.entity) {
                         let (mx, my) = (dpos(me.x), dpos(me.y));
                         let mut best = attack_range * attack_range;
