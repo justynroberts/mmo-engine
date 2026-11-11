@@ -3407,7 +3407,8 @@
    ],
    "xp": 60,
    "level": 7,
-   "lasts_secs": 1200
+   "lasts_secs": 1200,
+   "beast": "ghost"
   },
   {
    "name": "mac tire ban",
@@ -9274,7 +9275,8 @@
    ],
    "xp": 70,
    "level": 13,
-   "loot": "creach mheanach"
+   "loot": "creach mheanach",
+   "beast": "ghost_skull"
   },
   {
    "name": "an morrigan",
@@ -11216,7 +11218,8 @@
     "loch deirgeirt",
     "loch ri",
     "loch ailin"
-   ]
+   ],
+   "beast": "wyrm"
   },
   {
    "name": "caora",
@@ -16133,7 +16136,8 @@
     "binn chuilceach",
     "sliabh mis",
     "cnoc breanainn"
-   ]
+   ],
+   "beast": "troll_hill"
   },
   {
    "name": "broc",
@@ -16170,7 +16174,8 @@
    ],
    "xp": 10,
    "level": 1,
-   "skill": "fiach"
+   "skill": "fiach",
+   "beast": "fox"
   },
   {
    "name": "giorria",
@@ -16207,7 +16212,8 @@
    ],
    "xp": 10,
    "level": 1,
-   "skill": "fiach"
+   "skill": "fiach",
+   "beast": "fox"
   },
   {
    "name": "tarbh fiain",
@@ -16250,7 +16256,8 @@
    ],
    "xp": 34,
    "level": 5,
-   "skill": "fiach"
+   "skill": "fiach",
+   "beast": "cow"
   },
   {
    "name": "puca",
@@ -16287,7 +16294,8 @@
     "sliabh mis",
     "cnoc breanainn"
    ],
-   "ambush": true
+   "ambush": true,
+   "beast": "horse"
   },
   {
    "name": "bean si",
@@ -16333,7 +16341,8 @@
     "loch coirib",
     "loch measca",
     "loch deirgeirt"
-   ]
+   ],
+   "beast": "ghost"
   },
   {
    "name": "dubhlachan",
@@ -16366,7 +16375,8 @@
     "sliabh bladhma",
     "na gaibhlte"
    ],
-   "ambush": true
+   "ambush": true,
+   "beast": "ghost_skull"
   },
   {
    "name": "gruagach",
@@ -16410,7 +16420,8 @@
     "binn ghulbain",
     "na beanna beola",
     "cruach phadraig"
-   ]
+   ],
+   "beast": "troll_hill"
   },
   {
    "name": "ceithearnach",
@@ -16540,7 +16551,8 @@
     "loch gile",
     "loch lein"
    ],
-   "ambush": true
+   "ambush": true,
+   "beast": "ghost"
   },
   {
    "name": "damhan alla mor",
@@ -16583,7 +16595,8 @@
     "na cruacha dubha",
     "sliabh speirin",
     "na staighri dubha"
-   ]
+   ],
+   "beast": "shroom"
   },
   {
    "name": "fear dearg",
@@ -16727,7 +16740,8 @@
     "an tuaisceart 3",
     "an tuaisceart 4",
     "an tuaisceart 5"
-   ]
+   ],
+   "beast": "fomorian"
   }
  ],
  "places": [
