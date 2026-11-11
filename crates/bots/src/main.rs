@@ -68,6 +68,10 @@ struct Config {
     world_file: Option<String>,
     /// Never attack anything (a load test on a live world, where the townsfolk should live).
     peaceful: bool,
+    /// Play as a player does: choose a class, talk to the townsfolk and take quests, walk out to a hunting ground
+    /// and fight there with attacks and spells (never near where it came into the world, so townsfolk live), rise
+    /// when it falls.
+    play: bool,
 }
 
 fn usage(msg: &str) -> ! {
@@ -75,7 +79,7 @@ fn usage(msg: &str) -> ! {
         eprintln!("error: {msg}\n");
     }
     eprintln!(
-        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --build PCT     this share of the bots build a hut round themselves, take it down and build it again (0)\n  --build-hz N    blocks a builder places or breaks a second (2)\n  --world FILE    the server's world file, for the ground's heights (needed with --build on a world that has them)\n  --peaceful      never attack anything\n  --quiet         only print the final summary"
+        "bot load tester\n\n  --server ADDR   host:port (127.0.0.1:7777)\n  --bots N        number of bots (100)\n  --duration S    seconds to run (30)\n  --hz N          input rate, match the server (20)\n  --ramp N        bots connected per second (500)\n  --seed N        behaviour seed (1)\n  --game FILE     game definitions, must match the server's (game.json, else built-in default)\n  --server-key H  pin the server's public key (64 hex chars, printed by the server); without it the first key seen is trusted\n  --chat N        chat lines per bot per minute (0)\n  --account NAME --passphrase P   bot 0 logs in as that account: same pair on any machine is the same character\n  --recovery-code CODE            bot 0 uses the identity from a recovery code\n  --print-recovery                print bot 0's recovery code and exit\n  --persist       bots keep a stable identity (from --seed and their number) so the server restores their character\n  --latency MS    one-way delay each packet takes, both ways (0)\n  --jitter MS     plus up to this much more, at random (0)\n  --loss PCT      packets lost, each way (0)\n  --slow N        the last N bots have a worse link instead: --slow-latency (400) --slow-jitter (150) --slow-loss (10)\n  --link-hz N     how often an emulated link delivers, per second (100)\n  --teams A,B     a battle: bot i joins faction A, B, ... in turn (/faction); with a replicated `faction` attribute they spare their own side\n  --rally X,Y[,R] everyone walks to (X, Y) and fights within R of it (40)\n  --build PCT     this share of the bots build a hut round themselves, take it down and build it again (0)\n  --build-hz N    blocks a builder places or breaks a second (2)\n  --world FILE    the server's world file, for the ground's heights (needed with --build on a world that has them)\n  --peaceful      never attack anything\n  --play          play like a player: a class, quests, out of town to hunt with attacks and spells, rise after falling\n  --quiet         only print the final summary"
     );
     std::process::exit(if msg.is_empty() { 0 } else { 2 });
 }
@@ -105,6 +109,7 @@ fn parse_args() -> Config {
         build_hz: 2.0,
         world_file: None,
         peaceful: false,
+        play: false,
     };
     let ms = |v: String, n: &str| Duration::from_secs_f64(v.parse::<f64>().unwrap_or_else(|_| usage(&format!("bad {n}"))).max(0.0) / 1000.0);
     let pct = |v: String, n: &str| (v.parse::<f32>().unwrap_or_else(|_| usage(&format!("bad {n}"))) / 100.0).clamp(0.0, 1.0);
@@ -149,6 +154,7 @@ fn parse_args() -> Config {
             "--build-hz" => c.build_hz = val(a).parse::<f32>().unwrap_or_else(|_| usage("bad --build-hz")).clamp(0.1, 20.0),
             "--world" => c.world_file = Some(val(a)),
             "--peaceful" => c.peaceful = true,
+            "--play" => c.play = true,
             "--rally" => {
                 let v: Vec<f32> = val(a).split(',').map(|n| n.trim().parse().unwrap_or_else(|_| usage("bad --rally"))).collect();
                 c.rally = match v[..] {
@@ -220,6 +226,15 @@ struct Bot {
     /// Taking the hut down for good (the run is ending), and finished.
     closing: bool,
     done: bool,
+    /// `--play`: what it is doing (0 choosing a class, 1 at the quest givers, 2 walking out, 3 hunting), where it came
+    /// into the world, its hunting ground, and the input tick of its next spell, talk or rise.
+    stage: u8,
+    spawn: (f32, f32),
+    hunt: (f32, f32),
+    next_cast: u64,
+    next_talk: u64,
+    talks: u32,
+    next_rise: u64,
 }
 
 impl Bot {
@@ -306,6 +321,10 @@ struct Totals {
     zaps_sent: u64,
     builds_sent: u64,
     breaks_sent: u64,
+    rises_sent: u64,
+    talks_sent: u64,
+    accepts_sent: u64,
+    casts_sent: u64,
     send_errors: u64,
     chat_sent: u64,
     chat_rx: u64,
@@ -356,7 +375,11 @@ fn main() {
         Ok(t) => GameFile::from_json(&t).unwrap_or_else(|e| usage(&format!("{}: {e}", cfg.game))),
         Err(_) => GameFile::default_game(),
     };
+    let (n_classes, n_quests) = (game.classes.len() as u32, game.quests.len() as u32);
     let defs = game.build().unwrap_or_else(|e| usage(&format!("{}: {e}", cfg.game))).defs;
+    // `--play`: every game action but the plain attack is a spell to try (the server refuses what the class lacks).
+    let spells: Vec<u8> = defs.actions.iter().skip(1).map(|a| a.id).collect();
+    let health_k = defs.replicated.iter().position(|&a| defs.attrs[a].name == "health");
     let hash = defs.content_hash();
     let attack_action = defs.actions.first().map_or(0, |a| a.id);
     let attack_range = defs.actions.first().map_or(0.0, |a| a.range);
@@ -414,6 +437,13 @@ fn main() {
             build_next: 0,
             closing: false,
             done: false,
+            stage: 0,
+            spawn: (0.0, 0.0),
+            hunt: (0.0, 0.0),
+            next_cast: 0,
+            next_talk: 0,
+            talks: 0,
+            next_rise: 0,
         });
     }
 
@@ -695,6 +725,78 @@ fn main() {
                         b.dir = d;
                         b.dir_left = 1;
                     }
+                    // `--play`: a player's day. One special action an input at most; the plain attack below otherwise.
+                    let mut play_act: Option<(u8, u32, u16)> = None;
+                    if cfg.play && !b.builder {
+                        if let Some(me) = b.view.get(b.entity) {
+                            let (mx, my) = (dpos(me.x), dpos(me.y));
+                            let down = health_k.is_some_and(|k| me.attrs[k] == 0);
+                            let nearest = |b: &Bot, far_from: Option<(f32, f32)>| -> Option<(u32, f32)> {
+                                b.view
+                                    .entries()
+                                    .iter()
+                                    .filter(|e| e.id != b.entity)
+                                    .filter(|e| far_from.is_none_or(|(fx, fy)| (dpos(e.x) - fx).hypot(dpos(e.y) - fy) > 220.0))
+                                    .map(|e| (e.id, (dpos(e.x) - mx).hypot(dpos(e.y) - my)))
+                                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                            };
+                            if down {
+                                if tick >= b.next_rise {
+                                    b.next_rise = tick + cfg.hz as u64 * 3;
+                                    play_act = Some((proto::game::ACT_RISE, 0, 0));
+                                    tot.rises_sent += 1;
+                                }
+                            } else if b.stage == 0 {
+                                b.spawn = (mx, my);
+                                let a = b.rng.f32() * std::f32::consts::TAU;
+                                let r = 250.0 + b.rng.f32() * 200.0;
+                                b.hunt = (mx + a.cos() * r, my + a.sin() * r);
+                                if n_classes > 0 {
+                                    play_act = Some((proto::game::ACT_CLASS, 0, b.rng.below(n_classes) as u16));
+                                }
+                                b.stage = 1;
+                                b.next_talk = tick + cfg.hz as u64;
+                            } else if b.stage == 1 {
+                                // A few words with whoever is nearest, taking a quest each time.
+                                if tick >= b.next_talk {
+                                    b.next_talk = tick + cfg.hz as u64;
+                                    b.talks += 1;
+                                    if let Some((t, _)) = nearest(b, None) {
+                                        play_act = Some(if b.talks % 2 == 1 {
+                                            tot.talks_sent += 1;
+                                            (proto::game::ACT_TALK, t, 0)
+                                        } else {
+                                            tot.accepts_sent += 1;
+                                            (proto::game::ACT_ACCEPT, 0, b.rng.below(n_quests.max(1)) as u16)
+                                        });
+                                    }
+                                    if b.talks >= 6 {
+                                        b.stage = 2;
+                                    }
+                                }
+                            } else {
+                                // Out to the hunting ground (and back out again after rising in town), then about it.
+                                let (dx, dy) = (b.hunt.0 - mx, b.hunt.1 - my);
+                                let d = dx.hypot(dy);
+                                if b.stage == 2 || d > 160.0 {
+                                    b.stage = if d < 25.0 { 3 } else { 2 };
+                                    if b.stage == 2 {
+                                        b.dir = ((dx / d * 127.0) as i8, (dy / d * 127.0) as i8);
+                                        b.dir_left = cfg.hz;
+                                    }
+                                }
+                                if b.stage == 3 && tick >= b.next_cast {
+                                    if let Some((t, dist)) = nearest(b, Some(b.spawn)) {
+                                        if dist < 25.0 && !spells.is_empty() {
+                                            b.next_cast = tick + cfg.hz as u64 + b.rng.below(cfg.hz * 2) as u64;
+                                            play_act = Some((spells[b.rng.below(spells.len() as u32) as usize], t, 0));
+                                            tot.casts_sent += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // A builder stands still and builds round itself.
                     let mut build_act: Option<(u8, u32, u16)> = None;
                     if b.builder {
@@ -752,15 +854,15 @@ fn main() {
 
                     // Zap the nearest neighbour if one is in range (the server still validates).
                     let (mut action, mut target, mut arg) = (0u8, 0u32, 0u16);
-                    if let Some((a, t, g)) = build_act {
+                    if let Some((a, t, g)) = build_act.or(play_act) {
                         (action, target, arg) = (a, t, g);
-                    } else if b.builder || cfg.peaceful {
+                    } else if b.builder || (cfg.peaceful && !cfg.play) || (cfg.play && b.stage < 3) {
                     } else if let Some(me) = b.view.get(b.entity) {
                         let (mx, my) = (dpos(me.x), dpos(me.y));
                         let mut best = attack_range * attack_range;
                         let mine = faction_k.map(|k| me.attrs[k]);
                         for e in b.view.entries() {
-                            if e.id == b.entity || (b.team > 0 && mine.is_some_and(|m| m != 0 && faction_k.is_some_and(|k| e.attrs[k] == m))) {
+                            if e.id == b.entity || (cfg.play && (dpos(e.x) - b.spawn.0).hypot(dpos(e.y) - b.spawn.1) <= 220.0) || (b.team > 0 && mine.is_some_and(|m| m != 0 && faction_k.is_some_and(|k| e.attrs[k] == m))) {
                                 continue;
                             }
                             let (dx, dy) = (dpos(e.x) - mx, dpos(e.y) - my);
@@ -772,7 +874,7 @@ fn main() {
                             }
                         }
                     }
-                    if action != 0 && build_act.is_none() {
+                    if action != 0 && build_act.is_none() && play_act.is_none() {
                         tot.zaps_sent += 1;
                     }
 
@@ -872,6 +974,9 @@ fn main() {
         tot.zaps_sent,
         tot.send_errors
     );
+    if cfg.play {
+        println!("play: talks {}, quests taken {}, spells cast {}, rises {} (asked)", tot.talks_sent, tot.accepts_sent, tot.casts_sent, tot.rises_sent);
+    }
     if cfg.build_pct > 0 {
         println!("builders {}, blocks built {} and broken {} (asked; the server's rejected_actions says how many it refused)", bots.iter().filter(|b| b.builder).count(), tot.builds_sent, tot.breaks_sent);
     }

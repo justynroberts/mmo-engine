@@ -30,6 +30,7 @@ scripts/latency.sh [normal] [slow] [delay ms] [jitter ms] [loss %] [secs] [worke
 target/release/server --workers 2 [--web 0.0.0.0:7790]   # prints server key; console at http://127.0.0.1:7780/
 target/release/bots --bots 200 --server-key <key>
 target/release/bots --bots 1000 --build 10 --world world.json --game game.json --server-key <key>   # 10% build huts round themselves
+target/release/bots --bots 1000 --play --chat 2 --build 10 --world world.json --game game.json   # a class, quests, out of town to hunt, rise after falling
 MMO_PROFILE=1 target/release/server ...   # prints each sim system's time every 5 s (the slowest first)
 ```
 
