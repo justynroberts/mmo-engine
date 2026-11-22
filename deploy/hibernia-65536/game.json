@@ -2079,13 +2079,13 @@
    "name": "fia",
    "title": "Deer",
    "color": "#a0522d",
-   "count": 2600,
+   "count": 2592,
    "behaviour": "wander",
    "speed_mult": 1.0,
    "sight": 40.0,
    "attack": null,
    "attrs": {},
-   "home": null,
+   "home": "talamh seilge dublin coill",
    "rules": [
     {
      "when": {
@@ -2114,7 +2114,45 @@
    ],
    "xp": 8,
    "level": 1,
-   "skill": "fiach"
+   "skill": "fiach",
+   "homes": [
+    "talamh seilge waterford coill",
+    "talamh seilge cork coill",
+    "talamh seilge limerick coill",
+    "talamh seilge galway coill",
+    "talamh seilge wexford coill",
+    "talamh seilge armagh coill",
+    "talamh seilge derry coill",
+    "talamh seilge kilkenny coill",
+    "talamh seilge drogheda coill",
+    "talamh seilge sligo coill",
+    "talamh seilge athlone coill",
+    "talamh seilge dundalk coill",
+    "talamh seilge kells coill",
+    "talamh seilge clonmel coill",
+    "talamh seilge tralee coill",
+    "talamh seilge downpatrick coill",
+    "talamh seilge ennis coill",
+    "talamh seilge roscommon coill",
+    "talamh seilge kildare coill",
+    "talamh seilge carlow coill",
+    "talamh seilge monaghan coill",
+    "talamh seilge donegal coill",
+    "talamh seilge westport coill",
+    "talamh seilge lismore coill",
+    "talamh seilge coleraine coill",
+    "talamh seilge enniskillen coill",
+    "talamh seilge belfast coill",
+    "talamh seilge mullingar coill",
+    "talamh seilge thurles coill",
+    "talamh seilge killarney coill",
+    "talamh seilge bantry coill",
+    "talamh seilge youghal coill",
+    "talamh seilge kinsale coill",
+    "talamh seilge ardee coill",
+    "talamh seilge listowel coill"
+   ],
+   "leash": 120.0
   },
   {
    "name": "mac tire",
@@ -10242,13 +10280,13 @@
    "name": "damh",
    "title": "Stag",
    "color": "#7a4a2a",
-   "count": 480,
+   "count": 468,
    "behaviour": "wander",
    "speed_mult": 1.1,
    "sight": 40.0,
    "attack": null,
    "attrs": {},
-   "home": null,
+   "home": "talamh seilge dublin coill",
    "rules": [
     {
      "when": {
@@ -10277,13 +10315,51 @@
    ],
    "xp": 12,
    "level": 2,
-   "skill": "fiach"
+   "skill": "fiach",
+   "homes": [
+    "talamh seilge waterford coill",
+    "talamh seilge cork coill",
+    "talamh seilge limerick coill",
+    "talamh seilge galway coill",
+    "talamh seilge wexford coill",
+    "talamh seilge armagh coill",
+    "talamh seilge derry coill",
+    "talamh seilge kilkenny coill",
+    "talamh seilge drogheda coill",
+    "talamh seilge sligo coill",
+    "talamh seilge athlone coill",
+    "talamh seilge dundalk coill",
+    "talamh seilge kells coill",
+    "talamh seilge clonmel coill",
+    "talamh seilge tralee coill",
+    "talamh seilge downpatrick coill",
+    "talamh seilge ennis coill",
+    "talamh seilge roscommon coill",
+    "talamh seilge kildare coill",
+    "talamh seilge carlow coill",
+    "talamh seilge monaghan coill",
+    "talamh seilge donegal coill",
+    "talamh seilge westport coill",
+    "talamh seilge lismore coill",
+    "talamh seilge coleraine coill",
+    "talamh seilge enniskillen coill",
+    "talamh seilge belfast coill",
+    "talamh seilge mullingar coill",
+    "talamh seilge thurles coill",
+    "talamh seilge killarney coill",
+    "talamh seilge bantry coill",
+    "talamh seilge youghal coill",
+    "talamh seilge kinsale coill",
+    "talamh seilge ardee coill",
+    "talamh seilge listowel coill"
+   ],
+   "leash": 120.0
   },
   {
    "name": "sionnach",
    "title": "Fox",
    "color": "#c8642a",
-   "count": 800,
+   "count": 792,
    "behaviour": "wander",
    "speed_mult": 1.2,
    "sight": 40.0,
@@ -10312,6 +10388,7 @@
     "talamh seilge galway",
     "talamh seilge wexford",
     "talamh seilge armagh",
+    "talamh seilge derry",
     "talamh seilge kilkenny",
     "talamh seilge drogheda",
     "talamh seilge sligo",
@@ -10326,9 +10403,12 @@
     "talamh seilge kildare",
     "talamh seilge carlow",
     "talamh seilge monaghan",
+    "talamh seilge donegal",
     "talamh seilge westport",
     "talamh seilge lismore",
+    "talamh seilge coleraine",
     "talamh seilge enniskillen",
+    "talamh seilge belfast",
     "talamh seilge mullingar",
     "talamh seilge thurles",
     "talamh seilge killarney",
@@ -11760,6 +11840,7 @@
     "talamh seilge galway thiar",
     "talamh seilge wexford thiar",
     "talamh seilge armagh thiar",
+    "talamh seilge derry thiar",
     "talamh seilge kilkenny thiar",
     "talamh seilge drogheda thiar",
     "talamh seilge sligo thiar",
@@ -11774,9 +11855,12 @@
     "talamh seilge kildare thiar",
     "talamh seilge carlow thiar",
     "talamh seilge monaghan thiar",
+    "talamh seilge donegal thiar",
     "talamh seilge westport thiar",
     "talamh seilge lismore thiar",
+    "talamh seilge coleraine thiar",
     "talamh seilge enniskillen thiar",
+    "talamh seilge belfast thiar",
     "talamh seilge mullingar thiar",
     "talamh seilge thurles thiar",
     "talamh seilge killarney thiar",
@@ -16352,7 +16436,7 @@
    "name": "broc",
    "title": "Badger",
    "color": "#6a6a6a",
-   "count": 480,
+   "count": 468,
    "behaviour": "wander",
    "speed_mult": 0.8,
    "sight": 20.0,
@@ -16392,6 +16476,7 @@
     "talamh seilge galway",
     "talamh seilge wexford",
     "talamh seilge armagh",
+    "talamh seilge derry",
     "talamh seilge kilkenny",
     "talamh seilge drogheda",
     "talamh seilge sligo",
@@ -16406,9 +16491,12 @@
     "talamh seilge kildare",
     "talamh seilge carlow",
     "talamh seilge monaghan",
+    "talamh seilge donegal",
     "talamh seilge westport",
     "talamh seilge lismore",
+    "talamh seilge coleraine",
     "talamh seilge enniskillen",
+    "talamh seilge belfast",
     "talamh seilge mullingar",
     "talamh seilge thurles",
     "talamh seilge killarney",
@@ -16424,7 +16512,7 @@
    "name": "giorria",
    "title": "Hare",
    "color": "#a58a6a",
-   "count": 896,
+   "count": 864,
    "behaviour": "wander",
    "speed_mult": 1.4,
    "sight": 30.0,
@@ -16464,6 +16552,7 @@
     "talamh seilge galway",
     "talamh seilge wexford",
     "talamh seilge armagh",
+    "talamh seilge derry",
     "talamh seilge kilkenny",
     "talamh seilge drogheda",
     "talamh seilge sligo",
@@ -16478,9 +16567,12 @@
     "talamh seilge kildare",
     "talamh seilge carlow",
     "talamh seilge monaghan",
+    "talamh seilge donegal",
     "talamh seilge westport",
     "talamh seilge lismore",
+    "talamh seilge coleraine",
     "talamh seilge enniskillen",
+    "talamh seilge belfast",
     "talamh seilge mullingar",
     "talamh seilge thurles",
     "talamh seilge killarney",
@@ -16496,7 +16588,7 @@
    "name": "tarbh fiain",
    "title": "Wild Bull",
    "color": "#3a2a22",
-   "count": 192,
+   "count": 180,
    "behaviour": "wander",
    "speed_mult": 1.1,
    "sight": 20.0,
@@ -16542,6 +16634,7 @@
     "talamh seilge galway thiar",
     "talamh seilge wexford thiar",
     "talamh seilge armagh thiar",
+    "talamh seilge derry thiar",
     "talamh seilge kilkenny thiar",
     "talamh seilge drogheda thiar",
     "talamh seilge sligo thiar",
@@ -16556,9 +16649,12 @@
     "talamh seilge kildare thiar",
     "talamh seilge carlow thiar",
     "talamh seilge monaghan thiar",
+    "talamh seilge donegal thiar",
     "talamh seilge westport thiar",
     "talamh seilge lismore thiar",
+    "talamh seilge coleraine thiar",
     "talamh seilge enniskillen thiar",
+    "talamh seilge belfast thiar",
     "talamh seilge mullingar thiar",
     "talamh seilge thurles thiar",
     "talamh seilge killarney thiar",
@@ -25877,6 +25973,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge dublin coill",
+   "x": 46715.5,
+   "y": 34072.9,
+   "r": 560.0,
+   "title": "Talamh Seilge Áth Cliath (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge waterford",
    "x": 39413.0,
    "y": 48162.1,
@@ -25891,6 +25996,15 @@
    "y": 47030.5,
    "r": 380.0,
    "title": "Talamh Seilge Port Láirge Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge waterford coill",
+   "x": 42387.2,
+   "y": 48716.5,
+   "r": 560.0,
+   "title": "Talamh Seilge Port Láirge (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -25913,6 +26027,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge cork coill",
+   "x": 27019.2,
+   "y": 52906.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Corcaigh (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge limerick",
    "x": 26093.4,
    "y": 44025.7,
@@ -25927,6 +26050,15 @@
    "y": 41059.3,
    "r": 380.0,
    "title": "Talamh Seilge Luimneach Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge limerick coill",
+   "x": 25750.2,
+   "y": 41788.8,
+   "r": 560.0,
+   "title": "Talamh Seilge Luimneach (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -25949,6 +26081,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge galway coill",
+   "x": 23323.4,
+   "y": 37679.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Gaillimh (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge wexford",
    "x": 45539.3,
    "y": 46973.3,
@@ -25963,6 +26104,15 @@
    "y": 46141.7,
    "r": 380.0,
    "title": "Talamh Seilge Loch Garman Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge wexford coill",
+   "x": 42482.7,
+   "y": 47911.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Loch Garman (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -25985,6 +26135,42 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge armagh coill",
+   "x": 45567.0,
+   "y": 21156.2,
+   "r": 560.0,
+   "title": "Talamh Seilge Ard Mhacha (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge derry",
+   "x": 37931.6,
+   "y": 11176.9,
+   "r": 320.0,
+   "title": "Talamh Seilge Doire",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge derry thiar",
+   "x": 35641.2,
+   "y": 10706.8,
+   "r": 380.0,
+   "title": "Talamh Seilge Doire Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge derry coill",
+   "x": 40312.3,
+   "y": 11285.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Doire (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge kilkenny",
    "x": 39481.9,
    "y": 42252.4,
@@ -25999,6 +26185,15 @@
    "y": 42461.3,
    "r": 380.0,
    "title": "Talamh Seilge Cill Chainnigh Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kilkenny coill",
+   "x": 40706.3,
+   "y": 43214.7,
+   "r": 560.0,
+   "title": "Talamh Seilge Cill Chainnigh (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26021,6 +26216,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge drogheda coill",
+   "x": 46798.0,
+   "y": 30220.4,
+   "r": 560.0,
+   "title": "Talamh Seilge Droichead Átha (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge sligo",
    "x": 28661.4,
    "y": 21373.5,
@@ -26035,6 +26239,15 @@
    "y": 19945.5,
    "r": 380.0,
    "title": "Talamh Seilge Sligeach Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge sligo coill",
+   "x": 28802.6,
+   "y": 17943.3,
+   "r": 560.0,
+   "title": "Talamh Seilge Sligeach (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26057,6 +26270,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge athlone coill",
+   "x": 30639.6,
+   "y": 33599.3,
+   "r": 560.0,
+   "title": "Talamh Seilge Baile Átha Luain (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge dundalk",
    "x": 45186.1,
    "y": 23779.1,
@@ -26071,6 +26293,15 @@
    "y": 26242.6,
    "r": 380.0,
    "title": "Talamh Seilge Dún Dealgan Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge dundalk coill",
+   "x": 47559.2,
+   "y": 24704.1,
+   "r": 560.0,
+   "title": "Talamh Seilge Dún Dealgan (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26093,6 +26324,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge kells coill",
+   "x": 39880.6,
+   "y": 25971.4,
+   "r": 560.0,
+   "title": "Talamh Seilge Ceanannas (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge clonmel",
    "x": 35505.4,
    "y": 46838.0,
@@ -26107,6 +26347,15 @@
    "y": 48500.2,
    "r": 380.0,
    "title": "Talamh Seilge Cluain Meala Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge clonmel coill",
+   "x": 33190.1,
+   "y": 45117.4,
+   "r": 560.0,
+   "title": "Talamh Seilge Cluain Meala (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26129,6 +26378,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge tralee coill",
+   "x": 16685.6,
+   "y": 47571.4,
+   "r": 560.0,
+   "title": "Talamh Seilge Trá Lí (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge downpatrick",
    "x": 50970.4,
    "y": 20381.3,
@@ -26143,6 +26401,15 @@
    "y": 18595.6,
    "r": 380.0,
    "title": "Talamh Seilge Dún Pádraig Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge downpatrick coill",
+   "x": 51463.5,
+   "y": 17628.6,
+   "r": 560.0,
+   "title": "Talamh Seilge Dún Pádraig (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26165,6 +26432,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge ennis coill",
+   "x": 23781.3,
+   "y": 38157.2,
+   "r": 560.0,
+   "title": "Talamh Seilge Inis (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge roscommon",
    "x": 31612.8,
    "y": 28578.2,
@@ -26179,6 +26455,15 @@
    "y": 32291.5,
    "r": 380.0,
    "title": "Talamh Seilge Ros Comáin Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge roscommon coill",
+   "x": 33683.7,
+   "y": 30519.9,
+   "r": 560.0,
+   "title": "Talamh Seilge Ros Comáin (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26201,6 +26486,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge kildare coill",
+   "x": 41076.9,
+   "y": 38021.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Cill Dara (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge carlow",
    "x": 40903.8,
    "y": 39893.5,
@@ -26215,6 +26509,15 @@
    "y": 41836.2,
    "r": 380.0,
    "title": "Talamh Seilge Ceatharlach Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge carlow coill",
+   "x": 43154.9,
+   "y": 39890.6,
+   "r": 560.0,
+   "title": "Talamh Seilge Ceatharlach (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26237,6 +26540,42 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge monaghan coill",
+   "x": 43565.5,
+   "y": 21281.9,
+   "r": 560.0,
+   "title": "Talamh Seilge Muineachán (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge donegal",
+   "x": 31848.7,
+   "y": 16149.2,
+   "r": 320.0,
+   "title": "Talamh Seilge Dún na nGall",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge donegal thiar",
+   "x": 29520.0,
+   "y": 16359.4,
+   "r": 380.0,
+   "title": "Talamh Seilge Dún na nGall Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge donegal coill",
+   "x": 34159.6,
+   "y": 15566.3,
+   "r": 560.0,
+   "title": "Talamh Seilge Dún na nGall (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge westport",
    "x": 20979.7,
    "y": 26737.9,
@@ -26251,6 +26590,15 @@
    "y": 28546.8,
    "r": 380.0,
    "title": "Talamh Seilge Cathair na Mart Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge westport coill",
+   "x": 18977.9,
+   "y": 28751.9,
+   "r": 560.0,
+   "title": "Talamh Seilge Cathair na Mart (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26273,6 +26621,42 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge lismore coill",
+   "x": 36252.3,
+   "y": 51563.8,
+   "r": 560.0,
+   "title": "Talamh Seilge Lios Mór (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge coleraine",
+   "x": 43005.9,
+   "y": 9363.4,
+   "r": 320.0,
+   "title": "Talamh Seilge Cúil Raithin",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge coleraine thiar",
+   "x": 40838.6,
+   "y": 8485.9,
+   "r": 380.0,
+   "title": "Talamh Seilge Cúil Raithin Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge coleraine coill",
+   "x": 45327.6,
+   "y": 9901.3,
+   "r": 560.0,
+   "title": "Talamh Seilge Cúil Raithin (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge enniskillen",
    "x": 34411.1,
    "y": 18742.5,
@@ -26287,6 +26671,42 @@
    "y": 21394.2,
    "r": 380.0,
    "title": "Talamh Seilge Inis Ceithleann Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge enniskillen coill",
+   "x": 33364.1,
+   "y": 21852.8,
+   "r": 560.0,
+   "title": "Talamh Seilge Inis Ceithleann (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge belfast",
+   "x": 50440.3,
+   "y": 17633.2,
+   "r": 320.0,
+   "title": "Talamh Seilge Béal Feirste",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge belfast thiar",
+   "x": 46601.3,
+   "y": 18637.6,
+   "r": 380.0,
+   "title": "Talamh Seilge Béal Feirste Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge belfast coill",
+   "x": 50922.7,
+   "y": 17949.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Béal Feirste (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26309,6 +26729,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge mullingar coill",
+   "x": 39469.8,
+   "y": 31752.2,
+   "r": 560.0,
+   "title": "Talamh Seilge An Muileann gCearr (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge thurles",
    "x": 33559.7,
    "y": 42334.8,
@@ -26323,6 +26752,15 @@
    "y": 40697.3,
    "r": 380.0,
    "title": "Talamh Seilge Durlas Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge thurles coill",
+   "x": 36680.5,
+   "y": 44404.6,
+   "r": 560.0,
+   "title": "Talamh Seilge Durlas (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26345,6 +26783,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge killarney coill",
+   "x": 16263.1,
+   "y": 50564.6,
+   "r": 560.0,
+   "title": "Talamh Seilge Cill Airne (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge bantry",
    "x": 19849.8,
    "y": 55925.5,
@@ -26359,6 +26806,15 @@
    "y": 56263.7,
    "r": 380.0,
    "title": "Talamh Seilge Beanntraí Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge bantry coill",
+   "x": 21434.6,
+   "y": 58658.2,
+   "r": 560.0,
+   "title": "Talamh Seilge Beanntraí (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26381,6 +26837,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge youghal coill",
+   "x": 31678.8,
+   "y": 54190.0,
+   "r": 560.0,
+   "title": "Talamh Seilge Eochaill (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge kinsale",
    "x": 28199.7,
    "y": 55862.5,
@@ -26395,6 +26860,15 @@
    "y": 55817.0,
    "r": 380.0,
    "title": "Talamh Seilge Cionn tSáile Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kinsale coill",
+   "x": 26669.9,
+   "y": 58167.9,
+   "r": 560.0,
+   "title": "Talamh Seilge Cionn tSáile (Coill)",
    "sound": "forest",
    "music": "explore"
   },
@@ -26417,6 +26891,15 @@
    "music": "explore"
   },
   {
+   "name": "talamh seilge ardee coill",
+   "x": 42624.6,
+   "y": 23869.6,
+   "r": 560.0,
+   "title": "Talamh Seilge Baile Átha Fhirdia (Coill)",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
    "name": "talamh seilge listowel",
    "x": 20698.2,
    "y": 45396.6,
@@ -26431,6 +26914,15 @@
    "y": 47106.5,
    "r": 380.0,
    "title": "Talamh Seilge Lios Tuathail Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge listowel coill",
+   "x": 19251.4,
+   "y": 49163.7,
+   "r": 560.0,
+   "title": "Talamh Seilge Lios Tuathail (Coill)",
    "sound": "forest",
    "music": "explore"
   }
@@ -30717,7 +31209,7 @@
   {
    "name": "a new arrival",
    "title": "A New Arrival",
-   "text": "New to these parts? You'll want a trade and a roof before the nights draw in. The Seed Trader at the market in Áth Cliath sets up newcomers. Go and speak to them.",
+   "text": "New to these parts? You'll want a trade and a roof before the nights draw in. The Seed Trader at the market here sets up newcomers. Go and speak to them.",
    "done_text": "Good. Tell the Seed Trader the watch sent you.",
    "giver": "watchman",
    "turn_in": "tuathanach",
@@ -31349,7 +31841,7 @@
   {
    "name": "the shepherds errand",
    "title": "The Shepherd's Errand",
-   "text": "Go to Áth Cliath and ask a seed trader if they have any seed to spare for a shepherd.",
+   "text": "Go into the town and ask a seed trader if they have any seed to spare for a shepherd.",
    "done_text": "Seed for the spring. Thank you.",
    "giver": "aoire",
    "steps": [
@@ -31485,7 +31977,8 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ]
+   ],
+   "offered_at": "dublin"
   },
   {
    "name": "the monks of kells",
@@ -31880,7 +32373,8 @@
      "item": "pingin airgid",
      "count": 10
     }
-   ]
+   ],
+   "offered_at": "dublin"
   },
   {
    "name": "oisin in the west",
@@ -33600,8 +34094,8 @@
  },
  "levels": {
   "cap": 20,
-  "base": 790.0,
-  "exponent": 1.42,
+  "base": 500.0,
+  "exponent": 1.6,
   "might": 0.06,
   "toughness": 0.05,
   "discover_xp": 10,

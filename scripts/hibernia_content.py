@@ -19,6 +19,7 @@ Running it twice changes nothing more: anything already there by name is left as
 their targets, never past). Places are the game file's own; a name the file does not have is skipped.
 """
 import json
+import math
 import random
 import sys
 
@@ -162,8 +163,7 @@ def main():
             before = byname.get(q.get("after") or "")
             if before and before.get("level", 0) > q.get("level", 0):
                 q["level"] = before["level"]
-    # The curve fitted to the quests (the cap once came from the first wave's quests alone): those of a level and
-    # below leave a player about two levels above it, and all of them reach the cap.
+    # The curve fitted to the quests (the cap once came from the first wave's quests alone): see LEVEL_CURVE.
     if g.get("levels"):
         g["levels"].update(LEVEL_CURVE)
     # A new character comes with a blade and a tunic, not only coin and bread: the boars outside the gates are
@@ -716,20 +716,26 @@ UNSAFE = ["coill na mac tire"]
 
 # The beasts new players hunt lived anywhere at all over the 65,536 map (no home), so nothing could point to them and
 # the nearest might be a long walk off. They live in hunting grounds by each town instead: the small game in the
-# near one, the boars and bulls in one further out.
-GROUND_NEAR = ["sionnach", "giorria", "broc"]
-GROUND_FAR = ["torc", "tarbh fiain"]
+# near one, the deer and stags in a wood a little further, the boars and bulls further out.
+# (suffix, title suffix, distance from the town, radius, who lives there)
+GROUNDS = [
+    ("", "", (600, 1300), 320.0, ["sionnach", "giorria", "broc"]),
+    (" thiar", " Thiar", (1700, 3000), 380.0, ["torc", "tarbh fiain"]),
+    (" coill", " (Coill)", (1400, 3400), 560.0, ["fia", "damh"]),
+]
+GROUND_FAR = GROUNDS[1][4]
 
 
 def hunting_grounds(g, towns, titles):
-    """Two hunting grounds by each town, round a farm or village (so on dry land) about a kilometre and two and a
-    half off, inland (towards the middle of the towns, away from the sea) and in different directions; GROUND_NEAR
-    and GROUND_FAR live in them. Made the same way every run."""
+    """The GROUNDS by each town, round a farm or village (so on dry land), inland (towards the middle of the towns,
+    away from the sea) and each at least sixty degrees round from the ones before it. Where no farm or village
+    is near the distance wanted the range is widened a little, and failing that the ground is put inland at that
+    distance. Made the same way every run."""
     pos = {p["name"]: p for p in g["places"]}
     spots = [p for p in g["places"] if p["name"].startswith(("feirm ", "sraidbhaile "))]
     keep = [p for p in g["places"] if not p["name"].startswith("talamh seilge ")]
     mid = [sum(pos[t][k] for t in towns if t in pos) / max(1, sum(t in pos for t in towns)) for k in ("x", "y")]
-    near, far = [], []
+    made = [[] for _ in GROUNDS]
     for t in towns:
         if t not in pos:
             continue
@@ -737,28 +743,39 @@ def hunting_grounds(g, towns, titles):
         dist = lambda p: ((p["x"] - tx) ** 2 + (p["y"] - ty) ** 2) ** 0.5
         cos = lambda p, x, y: ((p["x"] - tx) * x + (p["y"] - ty) * y) / max(1.0, dist(p) * (x * x + y * y) ** 0.5)
         inland = lambda p: cos(p, mid[0] - tx, mid[1] - ty)
-        a = max((p for p in spots if 600 <= dist(p) <= 1300), key=inland, default=None)
-        # The far one at least sixty degrees round from the near one, so the boars are not on the hares' doorstep.
-        b = a and max((p for p in spots if 1700 <= dist(p) <= 3000 and cos(p, a["x"] - tx, a["y"] - ty) < 0.5), key=inland, default=None)
         tt = titles.get(t, t.title())
-        for which, p, r, out in (("", a, 320.0, near), (" thiar", b, 380.0, far)):
-            if p is None:
-                continue
+        taken = []
+        for k, (suffix, title, (lo, hi), r, _) in enumerate(GROUNDS):
+            pick = None
+            for widen in (1.0, 1.25, 1.5):
+                ok = [p for p in spots if lo / widen <= dist(p) <= hi * widen and all(cos(p, q["x"] - tx, q["y"] - ty) < 0.5 for q in taken)]
+                if ok:
+                    pick = max(ok, key=inland)
+                    break
+            if pick is None:
+                # No farm or village near (the far north has none for miles): inland at the distance wanted, turned
+                # round from the ones before so they do not overlap.
+                ix, iy = mid[0] - tx, mid[1] - ty
+                n = max(1.0, (ix * ix + iy * iy) ** 0.5)
+                turn = (0.0, 1.2, -1.2)[k % 3]
+                c_, s_ = math.cos(turn), math.sin(turn)
+                want = (lo + hi) / 2
+                pick = {"x": tx + (ix * c_ - iy * s_) / n * want, "y": ty + (ix * s_ + iy * c_) / n * want}
+            taken.append(pick)
             # Pushed out past the village or farm, away from the town, so its folk are at the edge of it.
-            d = max(1.0, dist(p))
-            x, y = p["x"] + (p["x"] - tx) / d * 150.0, p["y"] + (p["y"] - ty) / d * 150.0
-            name = f"talamh seilge {t}{which}"
+            d = max(1.0, dist(pick))
+            x, y = pick["x"] + (pick["x"] - tx) / d * 150.0, pick["y"] + (pick["y"] - ty) / d * 150.0
+            name = f"talamh seilge {t}{suffix}"
             keep.append({"name": name, "x": round(x, 1), "y": round(y, 1), "r": r,
-                         "title": f"Talamh Seilge {tt}" + (" Thiar" if which else ""), "sound": "forest", "music": "explore"})
-            out.append(name)
+                         "title": f"Talamh Seilge {tt}{title}", "sound": "forest", "music": "explore"})
+            made[k].append(name)
     g["places"] = keep
     arch = {a["name"]: a for a in g["archetypes"]}
-    for names, grounds in ((GROUND_NEAR, near), (GROUND_FAR, far)):
+    for (_, _, _, _, names), grounds in zip(GROUNDS, made):
         for n in names:
             if n in arch and grounds:
                 arch[n]["home"], arch[n]["homes"] = grounds[0], grounds[1:]
                 arch[n]["leash"] = 120.0
-                # A whole number to a ground, and a count changed so the server places them anew.
                 arch[n]["count"] = max(len(grounds), arch[n]["count"] // len(grounds) * len(grounds))
 
 
@@ -808,7 +825,10 @@ def town_errands(towns, places, g):
     return out
 
 
-LEVEL_CURVE = {"base": 790.0, "exponent": 1.42}
+# Fitted with the server's play-through of the quests from Áth Cliath (`hibernia_quests_play_through`, each
+# repeatable once and no grinding): every band's quests come in reach as the ones below are done, and they all
+# reach the cap. The gentler 790 x 1.42 left a questing player at level 4, short of every quest left.
+LEVEL_CURVE = {"base": 500.0, "exponent": 1.6}
 
 ARCH_FIXES = {
     # Level 12 at Brú na Bóinne, a few minutes from Áth Cliath, where the level-five restless-dead quests send players.
@@ -827,6 +847,13 @@ QUEST_FIXES = {
                              "steps": [{"kind": "collect", "item": "craiceann sionnaigh", "count": 4}]},
     "pelts for coin": {"text": "Fox pelts keep a shepherd warm. Three more, whenever you have them.",
                        "steps": [{"kind": "collect", "item": "craiceann sionnaigh", "count": 3}]},
+    # Given by the watch in every town, so not "the market in Áth Cliath".
+    "a new arrival": {"text": "New to these parts? You'll want a trade and a roof before the nights draw in. The Seed Trader at the market here sets up newcomers. Go and speak to them."},
+    # Shepherds keep farms all over the country.
+    "the shepherds errand": {"text": "Go into the town and ask a seed trader if they have any seed to spare for a shepherd."},
+    # Journeys from Áth Cliath: Teamhair is a short walk from it and half the country from elsewhere.
+    "the stone cries out": {"offered_at": "dublin"},
+    "the hill of allen": {"offered_at": "dublin"},
     # The fisher lives in Loch Garman; Loch nEathach is the far end of the country from there.
     "the fishers worry": {"level": 6, "xp": 500},
     # Journeys: for when a player has a horse under them and the legs for it.

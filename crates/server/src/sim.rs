@@ -1035,6 +1035,7 @@ impl Sim {
             name: if self.ents.name_claimed[slot] { self.ents.name[slot].as_deref().unwrap_or("").to_string() } else { String::new() },
             zone: None,
             xp: self.ents.xp[slot],
+            level: if self.levels.is_some() { self.ents.level[slot] } else { 0 },
             found: self.ents.found[slot].clone(),
             quests: self.ents.quests[slot].iter().map(|r| (r.name.clone(), r.step, r.count, r.state)).collect(),
             gear: self.gear_names(slot),
@@ -1127,8 +1128,9 @@ impl Sim {
             self.set_name(slot, &n, true);
         }
         self.rs.faction[slot] = self.factions.iter().position(|f| f.name == rec.faction).map_or(0, |f| f as u8 + 1);
-        self.ents.xp[slot] = rec.xp;
-        self.ents.level[slot] = self.levels.as_ref().map_or(1, |l| l.level_of(rec.xp));
+        // A curve changed to ask more never takes a level away: what the saved level needs, at least.
+        self.ents.xp[slot] = self.levels.as_ref().map_or(rec.xp, |l| if rec.level > 1 { rec.xp.max(l.xp_for(rec.level.min(l.cap))) } else { rec.xp });
+        self.ents.level[slot] = self.levels.as_ref().map_or(1, |l| l.level_of(self.ents.xp[slot]));
         self.ents.found[slot] = rec.found.clone();
         self.progress_ver[slot] = self.progress_ver[slot].wrapping_add(1);
         // Quests the game still has, by name (a step past a shortened quest's end makes it ready to hand in).
@@ -2549,7 +2551,14 @@ impl Sim {
     /// Whether an entity stands in a place marked safe (no harm between players there).
     pub(crate) fn in_safe(&self, s: usize) -> bool {
         let (x, y) = (self.ents.x[s], self.ents.y[s]);
-        self.places.iter().any(|p| p.safe && (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r)
+        let safe_here = |p: &proto::game::Place| p.safe && (p.x - x).powi(2) + (p.y - y).powi(2) <= p.r * p.r;
+        // The place index's square, not every place (over 1,200 on Hibernia, for each blow and each spell).
+        let (gw, cells) = &self.place_cells;
+        if cells.is_empty() || self.is_town.len() != self.places.len() {
+            return self.places.iter().any(safe_here);
+        }
+        let c = |v: f32| ((v / crate::homes::PLACE_CELL).floor().max(0.0) as usize).min(gw - 1);
+        cells[c(y) * gw + c(x)].iter().any(|&h| self.places.get(h as usize).is_some_and(safe_here))
     }
 
     /// A blow's or a heal's health change between two levels: the user's might, and for harm the target's toughness.
@@ -3264,7 +3273,11 @@ mod tests {
         assert_eq!(s.ents.level[p], 2);
         assert!((s.scaled(p, wolf, h, -10.0) + 15.0).abs() < 1e-4);
         let rec = s.record_of(p);
-        assert_eq!((rec.xp, rec.found.clone()), (110, vec!["ford".to_string()]));
+        assert_eq!((rec.xp, rec.found.clone(), rec.level), (110, vec!["ford".to_string()], 2));
+        // The curve made steeper: signing in again keeps the level, with the experience it now needs.
+        s.levels.as_mut().unwrap().base = 1000.0;
+        s.restore(p, &rec);
+        assert_eq!((s.ents.level[p], s.ents.xp[p]), (2, 1000));
     }
 
     #[test]

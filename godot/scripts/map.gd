@@ -16,6 +16,8 @@ var marks: Array = []
 ## Fog of war (explored.gd): laid over the picture, and places and marks in it left unnamed.
 var explored: RefCounted
 
+## Places of a smaller radius than this (world units) are not named on the map.
+const MIN_NAMED_R := 10.0
 const DUNGEON := Color("e07a5f")
 const GOAL := Color("ffe08a")
 const YOU := Color("3ff0ff")    # nothing else on the map is this colour, so you are found at a glance
@@ -290,7 +292,9 @@ func _draw() -> void:
 			# Crowded out with its level, try the name alone, smaller.
 			if not _label(title_font, icon_at.call(m), 32.0, dl, 14, DUNGEON.lightened(0.25), taken, 18.0):
 				_label(font, icon_at.call(m), 30.0, String(m[2]).get_slice("  (", 0), 12, DUNGEON.lightened(0.25), taken, 16.0)
-	var named := places.filter(func(l): return String(l.get("title", "")) != "" and float(l.get("r", 0.0)) * zoom >= 30.0)
+	# Not the waymarks and the like (a few units across): eleven of them stand in Áth Cliath's square, and their
+	# names crowded round the city's at full zoom.
+	var named := places.filter(func(l): return String(l.get("title", "")) != "" and float(l.get("r", 0.0)) >= MIN_NAMED_R and float(l.get("r", 0.0)) * zoom >= 30.0)
 	named.sort_custom(func(a, b): return float(a.get("r", 0.0)) > float(b.get("r", 0.0)))
 	var seen := {}
 	for l in named:

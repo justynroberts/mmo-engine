@@ -263,7 +263,7 @@ fn hs_classes(sim: &Sim) -> serde_json::Value {
 
 /// What clients are told about a quest: its words, who gives and takes it (as their bots are named), and each
 /// step in words with how many it needs.
-fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: &[proto::game::ArchRt], items: &[proto::game::ItemRt]) -> serde_json::Value {
+fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: &[proto::game::ArchRt], items: &[proto::game::ItemRt], dungeons: &[proto::realm::DungeonRt]) -> serde_json::Value {
     use proto::game::QuestStep;
     let bot = |a: &str| proto::game::shown_kind(archs, a);
     let steps: Vec<serde_json::Value> = q
@@ -291,10 +291,22 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: 
             if !kinds.is_empty() {
                 v["kinds"] = json!(kinds.iter().map(|&a| archs[a].shown()).collect::<Vec<_>>());
             }
-            let at = match st {
+            let mut at = match st {
                 QuestStep::Visit { place } => places.iter().find(|p| &p.name == place),
                 _ => kinds.iter().find_map(|&a| archs[a].home).and_then(|h| places.get(h)),
             };
+            // Nobody in the open world for it: the dungeon whose foes are to be beaten, or drop it, by its door.
+            if at.is_none() {
+                let wanted = |a: usize| match st {
+                    QuestStep::Kill { archetype, .. } => &archs[a].name == archetype,
+                    QuestStep::Collect { item, .. } => items.iter().position(|i| &i.name == item).is_some_and(|it| archs[a].drops.iter().any(|d| d.item == it)),
+                    _ => false,
+                };
+                if let Some(d) = dungeons.iter().find(|d| d.bots.iter().any(|&(a, _)| a < archs.len() && wanted(a))) {
+                    at = places.get(d.place);
+                    v["dungeon"] = json!(d.name);
+                }
+            }
             if let Some(p) = at {
                 v["at"] = json!([p.x, p.y, p.r]);
             }
@@ -445,7 +457,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // first (up to its max), so a client draws bars against the level it sees.
         "grow": sim.levels.as_ref().map(|l| l.grow.clone()).unwrap_or_default(),
         // Quests, for a client to show: who gives them (by the name its bots go by), what to do, what they give.
-        "quests": sim.quests.iter().map(|q| quest_info(q, &sim.places, &sim.archs, &sim.items)).collect::<Vec<_>>(),
+        "quests": sim.quests.iter().map(|q| quest_info(q, &sim.places, &sim.archs, &sim.items, &sim.realm.dungeons)).collect::<Vec<_>>(),
         // Tuning numbers a client needs too (talk and pickup reach, the pause after an action), all of them.
         "rules": sim.rules,
         "emotes": sim.emotes.iter().map(|e| (e.cmd.as_str(), e.anim.as_str())).collect::<Vec<_>>(),

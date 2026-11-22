@@ -42,6 +42,10 @@ pub struct Record {
     /// Experience earned (the level follows from it and the game's curve).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub xp: u32,
+    /// The level they had when saved: if the game's curve is changed to ask more, they get the experience for it
+    /// back on signing in rather than losing levels (`Sim::restore`).
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
     /// The named places found so far, by place name (each gives experience once).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub found: Vec<String>,
@@ -91,6 +95,10 @@ pub struct Record {
 }
 
 fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
+fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
 

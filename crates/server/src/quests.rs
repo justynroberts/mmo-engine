@@ -156,7 +156,11 @@ impl Sim {
         if !moved {
             // A quest tied to a place is offered only by its givers who live there (`QuestFile::offered_at`).
             let home = self.home_of(t).and_then(|h| self.places.get(h)).map(|p| p.name.as_str());
-            let offer = self.quests.iter().position(|q| q.giver == arch && q.offered_at.as_deref().is_none_or(|p| home == Some(p)) && self.can_take(s, q));
+            // One never done before one done before (a repeatable or daily quest early in the list would otherwise
+            // be all a giver ever offered, once done).
+            let can = |q: &proto::game::QuestFile| q.giver == arch && q.offered_at.as_deref().is_none_or(|p| home == Some(p)) && self.can_take(s, q);
+            let new = |q: &proto::game::QuestFile| !self.ents.quests[s].iter().any(|r| r.name == q.name);
+            let offer = self.quests.iter().position(|q| can(q) && new(q)).or_else(|| self.quests.iter().position(can));
             if let Some(k) = offer {
                 self.ents.offer[s] = k as u16;
             } else {
@@ -430,6 +434,26 @@ mod tests {
     }
 
     #[test]
+    fn a_giver_offers_a_quest_not_done_before_one_to_repeat() {
+        let mut g = GameFile::default_game();
+        for (name, repeatable) in [("again", true), ("once", false)] {
+            g.quests.push(QuestFile { name: name.into(), title: name.into(), giver: "merchant".into(), steps: vec![QuestStep::Visit { place: "plaza".into() }], repeatable, ..Default::default() });
+        }
+        let merchant = g.archetypes.iter().position(|a| a.name == "merchant").unwrap() as u8;
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        let m = s.spawn_as(NONE, merchant, Some((100.0, 104.0))).unwrap();
+        (s.ents.x[me], s.ents.y[me], s.ents.x[m], s.ents.y[m]) = (100.0, 100.0, 100.0, 104.0);
+        s.ents.quests[me].push(QuestRun { name: "again".into(), step: 1, count: 0, state: QUEST_DONE });
+        let id = s.ents.id_of(m);
+        s.talk(me, id);
+        assert_eq!(s.ents.offer[me], 1, "the one not done yet");
+        s.ents.quests[me].push(QuestRun { name: "once".into(), step: 1, count: 0, state: QUEST_DONE });
+        s.talk(me, id);
+        assert_eq!(s.ents.offer[me], 0, "then the repeatable again");
+    }
+
+    #[test]
     fn a_story_quest_opens_with_a_scene() {
         let mut g = GameFile::default_game();
         g.quests.push(QuestFile { name: "tale".into(), title: "A Tale".into(), giver: "merchant".into(), steps: vec![QuestStep::Talk { archetype: "drifter".into() }], opening: "Once upon a time".into(), ..Default::default() });
@@ -499,5 +523,208 @@ mod tests {
         // Indices past 255 reach the wire.
         s.ents.quests[me][0].name = "q400".into();
         assert!(s.quest_states(me).iter().any(|q| q.quest == 400));
+    }
+
+    /// Plays Hibernia's quests from Áth Cliath as one new character would: talk to every kind of giver in the city,
+    /// take what is offered, do each step (beating what is asked or what drops what is asked, at the nearest place
+    /// it lives; going to places; speaking to folk), hand in, and again until nothing more is offered. Prints each
+    /// quest with the level it was taken at and how far it sends the player, and fails on a quest that cannot be
+    /// finished or a character left short of the levels. Slow (the whole game file):
+    /// `cargo test -p server --release --bin server hibernia_quests_play_through -- --ignored --nocapture`
+    /// (`GAME=path` for another game file).
+    #[test]
+    #[ignore]
+    fn hibernia_quests_play_through() {
+        let path = std::env::var("GAME").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/hibernia-65536/game.json").to_string());
+        let g: GameFile = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(65536.0, 1, vec![]), 4096, 20, 1);
+        let start = s.start_place.expect("a start place");
+        let (sx, sy) = (s.places[start].x, s.places[start].y);
+        let me = s.spawn(0).unwrap();
+        s.give_starter(me);
+        let arch_of = |s: &Sim, n: &str| s.archs.iter().position(|a| a.name == n);
+        let dist = |s: &Sim, h: usize| (s.places[h].x - sx).hypot(s.places[h].y - sy);
+        // How far from the start the nearest of a kind lives (or its dungeon's door); None for nowhere in particular.
+        let lair = |s: &Sim, a: usize| -> Option<f32> {
+            let d = s.archs[a].homes.iter().map(|&h| dist(s, h)).fold(None, |m: Option<f32>, d| Some(m.map_or(d, |m| m.min(d))));
+            d.or_else(|| s.realm.dungeons.iter().find(|dg| dg.bots.iter().any(|&(b, _)| b == a)).map(|dg| dist(s, dg.place)))
+        };
+        // One of each kind, kept beside the player in the start place (and living there, for town-only quests).
+        let mut folk: std::collections::HashMap<usize, usize> = Default::default();
+        let mut beside = |s: &mut Sim, a: usize| -> u32 {
+            let t = *folk.entry(a).or_insert_with(|| s.spawn_as(NONE, a as u8, Some((sx + 2.0, sy))).unwrap());
+            s.home_over[t] = Some(start);
+            s.ents.x[me] = sx;
+            s.ents.y[me] = sy;
+            s.ents.x[t] = sx + 2.0;
+            s.ents.y[t] = sy;
+            s.ents.id_of(t)
+        };
+        let givers: Vec<usize> = {
+            let mut v: Vec<usize> = s.quests.iter().filter_map(|q| arch_of(&s, &q.giver)).collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        let mut log: Vec<String> = Vec::new();
+        let mut stuck: Vec<String> = Vec::new();
+        let mut taken_at: std::collections::HashMap<String, (u8, f32, u32)> = Default::default();
+        for _round in 0..400 {
+            let mut moved = false;
+            // Take everything offered.
+            for &a in &givers {
+                for _ in 0..8 {
+                    let id = beside(&mut s, a);
+                    s.ents.offer[me] = NO_OFFER;
+                    s.talk(me, id);
+                    let k = s.ents.offer[me];
+                    // A repeatable or daily quest once only: the play-through is of everything there is to do.
+                    if k == NO_OFFER || taken_at.contains_key(&s.quests[k as usize].name) || !s.accept(me, k) {
+                        break;
+                    }
+                    taken_at.insert(s.quests[k as usize].name.clone(), (s.ents.level[me], 0.0, 0));
+                    moved = true;
+                }
+            }
+            // Do each step of what is in hand.
+            for i in 0..s.ents.quests[me].len() {
+                for _ in 0..12 {
+                    let run = s.ents.quests[me][i].clone();
+                    if run.state != QUEST_ACTIVE {
+                        break;
+                    }
+                    let q = s.quests.iter().find(|q| q.name == run.name).unwrap().clone();
+                    let Some(step) = q.steps.get(run.step as usize).cloned() else { break };
+                    let far = |_: &Sim, d: Option<f32>| d.unwrap_or(0.0);
+                    let mut walk = 0.0f32;
+                    let mut kills = 0u32;
+                    match &step {
+                        QuestStep::Kill { archetype, count } => {
+                            let Some(a) = arch_of(&s, archetype) else { stuck.push(format!("{}: no {archetype}", q.name)); break };
+                            walk = far(&s, lair(&s, a));
+                            for _ in run.count..*count {
+                                s.quest_kill(archetype, sx, sy, &[me]);
+                                let xp = s.archs[a].xp;
+                                s.award(me, xp, None);
+                                kills += 1;
+                            }
+                        }
+                        QuestStep::Visit { place } => {
+                            let Some(h) = s.places.iter().position(|p| &p.name == place) else { stuck.push(format!("{}: no place {place}", q.name)); break };
+                            walk = dist(&s, h);
+                            s.ents.x[me] = s.places[h].x;
+                            s.ents.y[me] = s.places[h].y;
+                            s.system_quests();
+                            s.ents.x[me] = sx;
+                            s.ents.y[me] = sy;
+                        }
+                        QuestStep::Talk { archetype } => {
+                            let Some(a) = arch_of(&s, archetype) else { stuck.push(format!("{}: no {archetype}", q.name)); break };
+                            walk = far(&s, lair(&s, a));
+                            let id = beside(&mut s, a);
+                            s.talk(me, id);
+                        }
+                        QuestStep::Build { count, material } => {
+                            let k = material.as_deref().and_then(|m| proto::game::BLOCK_NAMES.iter().position(|&n| n == m)).unwrap_or(0) as u8;
+                            for _ in run.count..*count {
+                                s.quest_build(me, k);
+                            }
+                        }
+                        QuestStep::Collect { item, count } => {
+                            let Some(it) = s.items.iter().position(|i| &i.name == item) else { stuck.push(format!("{}: no item {item}", q.name)); break };
+                            // Beaten for (the nearest that drops it), bought in the start place, grown, made, or a
+                            // quest's reward.
+                            let dropper = (0..s.archs.len())
+                                .filter_map(|a| s.archs[a].drops.iter().find(|d| d.item == it).map(|d| (a, d.chance_pct / 100.0 * (d.min as f32 + d.max as f32) / 2.0)))
+                                .filter_map(|(a, per)| lair(&s, a).map(|d| (a, per, d)))
+                                .min_by(|x, y| x.2.total_cmp(&y.2));
+                            let sold = s.archs.iter().any(|a| a.shop.iter().any(|&(k, _)| k == it) && a.homes.contains(&start));
+                            let grown = s.realm.crops.iter().any(|c| c.yields == it) || s.realm.recipes.iter().any(|r| r.makes == it);
+                            let from_quest = s.quests.iter().any(|o| o.name != q.name && o.reward.iter().any(|r| &r.item == item));
+                            match dropper {
+                                Some((a, per, d)) if !sold && !grown => {
+                                    walk = d;
+                                    kills = ((*count as f32) / per.max(0.01)).ceil() as u32;
+                                    let xp = s.archs[a].xp;
+                                    for _ in 0..kills {
+                                        s.award(me, xp, None);
+                                    }
+                                }
+                                None if !sold && !grown && !from_quest => {
+                                    stuck.push(format!("{}: nowhere to get {item}", q.name));
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            // Sold or banked: what the quests in hand do not ask for (rewards fill a bag).
+                            let wanted: Vec<u8> = s.ents.quests[me].iter().filter(|r| r.state != QUEST_DONE).filter_map(|r| s.quests.iter().find(|q| q.name == r.name)).flat_map(|q| q.steps.iter()).filter_map(|st| match st {
+                                QuestStep::Collect { item, .. } => s.items.iter().position(|i| &i.name == item).map(|k| k as u8 + 1),
+                                _ => None,
+                            }).collect();
+                            for b in s.inv[me].iter_mut() {
+                                if !wanted.contains(&b.0) {
+                                    *b = (0, 0);
+                                }
+                            }
+                            s.give_or_drop(me, it, *count as u32);
+                            s.system_quests();
+                        }
+                    }
+                    if let Some(t) = taken_at.get_mut(&q.name) {
+                        t.1 = t.1.max(walk);
+                        t.2 += kills;
+                    }
+                    if s.ents.quests[me][i].step == run.step && s.ents.quests[me][i].state == run.state {
+                        stuck.push(format!("{}: step {} did not move ({step:?})", q.name, run.step));
+                        break;
+                    }
+                    moved = true;
+                }
+            }
+            // Hand in what is ready.
+            for i in 0..s.ents.quests[me].len() {
+                let run = s.ents.quests[me][i].clone();
+                if run.state != QUEST_READY {
+                    continue;
+                }
+                let q = s.quests.iter().find(|q| q.name == run.name).unwrap().clone();
+                let Some(a) = arch_of(&s, q.turn_in.as_ref().unwrap_or(&q.giver)) else { continue };
+                let id = beside(&mut s, a);
+                s.talk(me, id);
+                if s.ents.quests[me][i].state != QUEST_DONE {
+                    // What it asks for went to another quest that wanted the same: fetched again.
+                    for st in &q.steps {
+                        if let QuestStep::Collect { item, count } = st {
+                            if let Some(it) = s.items.iter().position(|x| &x.name == item) {
+                                s.give_or_drop(me, it, *count as u32);
+                            }
+                        }
+                    }
+                    let id = beside(&mut s, a);
+                    s.talk(me, id);
+                }
+                if s.ents.quests[me][i].state == QUEST_DONE {
+                    let (lvl, walk, kills) = taken_at.get(&q.name).copied().unwrap_or_default();
+                    log.push(format!("{:>3} {:>3} {:>6.1} km {:>4} kills  {:34} -> level {}", q.level, lvl, walk / 1000.0, kills, q.name, s.ents.level[me]));
+                    moved = true;
+                } else {
+                    stuck.push(format!("{}: could not hand in", q.name));
+                }
+            }
+            stuck.sort();
+            stuck.dedup();
+            if !moved {
+                break;
+            }
+        }
+        println!("lvl took  farthest  kills  quest -> level after");
+        for l in &log {
+            println!("{l}");
+        }
+        let done: std::collections::HashSet<&str> = s.ents.quests[me].iter().filter(|r| r.state == QUEST_DONE).map(|r| r.name.as_str()).collect();
+        let left: Vec<String> = s.quests.iter().filter(|q| !done.contains(q.name.as_str()) && q.offered_at.as_deref().is_none_or(|p| s.places[start].name == p)).map(|q| format!("{} (level {}, from {})", q.name, q.level, q.giver)).collect();
+        println!("{} done, level {} ({} xp); not done from here: {}", log.len(), s.ents.level[me], s.ents.xp[me], left.join(", "));
+        assert!(stuck.is_empty(), "stuck: {stuck:#?}");
+        assert!(s.ents.level[me] >= 15, "only level {} from the quests", s.ents.level[me]);
     }
 }

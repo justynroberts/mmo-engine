@@ -11,49 +11,47 @@ first.
 ## Open
 
 ### Play-testing reach
-1. **Drive a real session end to end.** Talking to a giver, taking and handing in quests, and a fight are covered
-   only by unit and e2e tests; the Godot `--shot` flags can't talk or fight. Either teach `bots --play` to report
-   quests finished and deaths per bot against the live content (it already talks, accepts and casts), or add a
-   Godot `--autoplay` that walks the starter chain and logs each step. Start: `crates/bots/src/main.rs` `--play`.
-2. **Starter experience outside Áth Cliath.** The early quests were checked from Áth Cliath only. Survey each town
-   for what a level 1-3 player is offered there (givers that live in only one town, like the Wexford fisher, give
-   nothing elsewhere). Start: `scripts/hibernia_content.py`, the audit approach (quests by giver home and distance).
+1. **Drive a real client session.** The quest content is now played through by the server test
+   `hibernia_quests_play_through` (talk, take, beat or fetch, hand in), but not through the network and a client:
+   nobody has scripted a fight, falling and rising, or the Godot windows. A Godot `--autoplay`, or `bots --play`
+   reporting quests finished and deaths from the QUESTS and PROGRESS packets it now skips.
+2. **The play-through skips walking and fighting.** It counts how far each quest sends a player and how many kills
+   it takes, but does not ask whether a level-N character wins those fights. Add each foe's level against the
+   player's when it is beaten, and flag fights more than a few levels up.
 
 ### Content
-3. **Deer have no home.** 2,600 deer roam the whole map, so "Deer for the Pot" and "A Hunter's Living" get no
-   marker. Give them woodland homes (forest places, or the hunting grounds' edges).
-4. **Hunting grounds are placed by farms and villages, not terrain.** `hunting_grounds` picks a spot inland of each
-   town; check against the world file's sea, lakes and slopes (or have worldgen place them), and give the 4 towns
-   that got fewer than two grounds theirs.
-5. **Dungeon-only quest items have no marker, and some need weeks.** "The Crows of the Morrígan" wants 6 raven
-   feathers, which come from Uaimh Chruachan's wraiths (30%) and the Morrígan (2-4, boss spoils once a week);
-   Crom Dubh's heart (two level 18-19 quests) is weekly too. Point such steps at the dungeon's door (`step_kinds`
-   skips bots with count 0), and give the feathers a steadier source.
-6. **Travel on a 65 km map.** Long journeys start at level 6-12 and a pony comes at level 2, but crossing the
+3. **Two Hibernia quests want the one weekly heart.** "The Stone that Roars" and "The Answerer" both take Crom
+   Dubh's heart (boss spoils, once a week), so the second waits a week more; two quests take troll hides as well.
+   Give one of each pair a different trophy.
+4. **Hunting grounds are placed by farms and villages, or inland where there are none, not by terrain.** Check
+   them against the world file's sea, lakes and slopes, or have worldgen place them.
+5. **Travel on a 65 km map.** Long journeys start at level 6-12 and a pony comes at level 2, but crossing the
    country still takes the better part of an hour. Carters as paid travel between towns (like `/sail` fares), or
-   roads that are faster still for a rider.
-7. **Existing characters under the new level curve.** Characters made before the refit may show a lower level for
-   the same experience. A one-off migration that keeps each saved level, or a note to players.
+   roads faster still for a rider.
+6. **Characters saved before 2026-11-22 under older curves** were not given their level back (saves only now keep
+   the level). Only test characters are affected.
 
 ### Client
-8. **Milestone labels overlap town names on the world map.** The waymarks (`land.gd` `milestones`) are drawn without
-   the collision step the other labels use (`map.gd` `_label`).
-9. **Windows client is unsigned**, so Windows warns before running it.
+7. **Windows client is unsigned**, so Windows warns before running it.
 
 ### Server and performance
-10. **`/play/info` grew to 332 KB** with `homes_all` (from 189 KB). Gzip it on the web gateway, or send homes once
-    by kind and refer to them by index.
-11. **`in_safe` scans every place** (1,229 on Hibernia) each call; use the place index (`homes.rs` `places_at`).
-12. **A console save that re-homes bots holds the sim about 0.7 s** (placing ~3,000 bots). Spread respawns over a
-    few ticks, or prepare them off the sim thread as reloaded worlds are.
-13. **Load test from a cloud machine.** The home link loses snapshots past ~1,000 bots; the live server's real
-    ceiling with 4 lanes is unmeasured past 2,000.
-
-### Tests
-14. **Console UI tests time out under CPU load** (`Editors.test.tsx`, `Builder.test.tsx` fail while Docker builds,
-    pass alone). Raise their timeouts or make the slow renders lighter.
+8. **A console save that re-homes bots holds the sim about 0.7 s** (placing ~3,000 bots). Spread respawns over a
+   few ticks, or prepare them off the sim thread as reloaded worlds are.
+9. **Load test from a cloud machine.** The home link loses snapshots past ~1,000 bots; the live server's ceiling
+   with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
 ## Done
+
+- 2026-11-22 — A play-through of every quest offered in Áth Cliath as a server test
+  (`hibernia_quests_play_through`); it found a giver offering only a repeatable quest once done (now a quest never
+  done comes first) and a level curve that left a questing player stuck at 4 (refitted to 500 x 1.6: all 61 quests,
+  level 20).
+- 2026-11-22 — Deer and stags in a wood by each town; hunting grounds for every town, inland where no farm or
+  village is near (Derry, Coleraine); quest steps for dungeon foes point at the dungeon's door; the starter quests'
+  words no longer name Áth Cliath in other towns, and its Teamhair journeys are offered only there.
+- 2026-11-22 — A save keeps the character's level, so a steeper curve gives back the experience instead of taking
+  levels; the world map leaves out waymarks' names (eleven crowded Áth Cliath's); `in_safe` uses the place index;
+  console UI tests given time on a busy machine. `/play/info` was already gzipped by the proxy (69 KB sent).
 
 - 2026-11-22 — Quest steps name every kind that serves them and `/play/info` gives all their homes, so markers point
   to the nearest (`kinds`, `homes_all`); collect steps get markers from the bots that drop the item.
