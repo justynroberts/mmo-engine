@@ -578,9 +578,6 @@ fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land:
     for (x, y) in roads.centres() {
         mark([x, y, x, y], cell);
     }
-    for b in kept {
-        mark(*b, cell);
-    }
     for r in rv {
         for w in r.pts.windows(2) {
             let (a, b) = (w[0], w[1]);
@@ -592,8 +589,60 @@ fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land:
             }
         }
     }
-    // Distance from the nearest kept sample, in cells (two-pass chamfer).
-    let mut dist: Vec<f32> = keep.iter().map(|&k| if k { 0.0 } else { 1e9 }).collect();
+    let dist = chamfer(&keep, n);
+    // The bold relief also leaves alone the ground where players have built (`kept` boxes), which keeps the lesser
+    // relief it already had: only the bold relief is held back there.
+    let dist_bold = if kept.is_empty() {
+        dist.clone()
+    } else {
+        let mut hold = keep.clone();
+        for b in kept {
+            let i0 = (((b[0] - cell - x0) / cell).ceil().max(0.0)) as usize;
+            let j0 = (((b[1] - cell - x0) / cell).ceil().max(0.0)) as usize;
+            let i1 = (((b[2] + cell - x0) / cell).floor().max(-1.0) as i64).min(n as i64 - 1);
+            let j1 = (((b[3] + cell - x0) / cell).floor().max(-1.0) as i64).min(n as i64 - 1);
+            for j in j0 as i64..=j1 {
+                for i in i0 as i64..=i1 {
+                    hold[j as usize * n + i as usize] = true;
+                }
+            }
+        }
+        chamfer(&hold, n)
+    };
+    for j in 0..n {
+        for i in 0..n {
+            let k = j * n + i;
+            let mut m = smooth(1.5, 5.0, dist[k]);
+            // The bold relief fades in further out, so a village or a road sits in its own level ground.
+            let mut md = smooth(2.0, 7.0, dist_bold[k]);
+            if m <= 0.0 {
+                continue;
+            }
+            let (x, y) = (x0 + i as f32 * cell, x0 + j as f32 * cell); // the grid starts at (x0, x0)
+            if let Some(c) = &land.coast {
+                let sh = smooth(60.0, 320.0, c.d(x, y));
+                m *= sh;
+                md *= smooth(120.0, 600.0, c.d(x, y));
+                if m <= 0.0 {
+                    continue;
+                }
+            }
+            if fields.at(x, y) {
+                m *= 0.5;
+                md *= 0.6;
+            }
+            // Never down into the sea: low country stays above the tide whatever the relief says.
+            let was = hs[k];
+            let floor = if land.coast.is_some() { was.min(SHORE + 1.5) } else { f32::MIN };
+            let bold = if drama > 0.0 && md > 0.0 { md * drama * big_relief(x, y, was, seed) } else { 0.0 };
+            hs[k] = (was + m * amount * lesser_relief(x, y, seed) + bold).max(floor);
+        }
+    }
+}
+
+/// Distance of each sample from the nearest marked one, in cells (two-pass chamfer).
+fn chamfer(marked: &[bool], n: usize) -> Vec<f32> {
+    let mut dist: Vec<f32> = marked.iter().map(|&k| if k { 0.0 } else { 1e9 }).collect();
     let d2 = std::f32::consts::SQRT_2;
     for j in 0..n {
         for i in 0..n {
@@ -621,35 +670,7 @@ fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land:
             dist[k] = v;
         }
     }
-    for j in 0..n {
-        for i in 0..n {
-            let k = j * n + i;
-            let mut m = smooth(1.5, 5.0, dist[k]);
-            // The bold relief fades in further out, so a village or a road sits in its own level ground.
-            let mut md = smooth(2.0, 7.0, dist[k]);
-            if m <= 0.0 {
-                continue;
-            }
-            let (x, y) = (x0 + i as f32 * cell, x0 + j as f32 * cell); // the grid starts at (x0, x0)
-            if let Some(c) = &land.coast {
-                let sh = smooth(60.0, 320.0, c.d(x, y));
-                m *= sh;
-                md *= smooth(120.0, 600.0, c.d(x, y));
-                if m <= 0.0 {
-                    continue;
-                }
-            }
-            if fields.at(x, y) {
-                m *= 0.5;
-                md *= 0.6;
-            }
-            // Never down into the sea: low country stays above the tide whatever the relief says.
-            let was = hs[k];
-            let floor = if land.coast.is_some() { was.min(SHORE + 1.5) } else { f32::MIN };
-            let bold = if drama > 0.0 && md > 0.0 { md * drama * big_relief(x, y, was, seed) } else { 0.0 };
-            hs[k] = (was + m * amount * lesser_relief(x, y, seed) + bold).max(floor);
-        }
-    }
+    dist
 }
 
 /// The bold relief at a point over ground at height `was`, in units up or down: what stands above the foothills
@@ -2011,14 +2032,12 @@ mod tests {
         let base = Params { size: 20000.0, seed: 7, detail: 1.0, coast: vec![vec![(2000.0, 2000.0), (18000.0, 2000.0), (18000.0, 18000.0), (2000.0, 18000.0)]], ..Params::default() };
         let plain = generate(&base);
         let kept = [9000.0, 9000.0, 9400.0, 9400.0];
-        let flat = generate(&Params { detail: 0.0, ..base.clone() });
         let bold = generate(&Params { drama: 1.0, keep: vec![kept], ..base });
         let things = |w: &Value| w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == "house" || o["t"] == "square").cloned().collect::<Vec<_>>();
         assert_eq!(things(&plain), things(&bold), "houses and squares stay where they were, at their heights");
         assert_eq!(plain["roads"], bold["roads"]);
         let (x0, cell, n, a) = heights_of(&plain);
         let (_, _, _, b) = heights_of(&bold);
-        let (_, _, _, raw) = heights_of(&flat);
         let land: Vec<usize> = (0..a.len()).filter(|&k| a[k] > 3.0).collect();
         let moved = land.iter().filter(|&&k| (b[k] - a[k]).abs() > 5.0).count() as f32 / land.len() as f32;
         let hi = |h: &[f32]| land.iter().map(|&k| h[k]).fold(0.0f32, f32::max);
@@ -2029,12 +2048,11 @@ mod tests {
             for i in 0..n {
                 let (x, y) = (x0 + i as f32 * cell, x0 + j as f32 * cell);
                 if x >= kept[0] && x <= kept[2] && y >= kept[1] && y <= kept[3] {
-                    most = most.max((raw[j * n + i] - b[j * n + i]).abs()); // no relief at all there
+                    most = most.max((a[j * n + i] - b[j * n + i]).abs()); // as it was, lesser relief and all
                 }
             }
         }
         assert!(most < 0.05, "the kept ground moved {most}");
-        let _ = &plain;
     }
 
     #[test]

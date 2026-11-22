@@ -22,3 +22,5 @@ deploy entrypoint never replaces an existing `world.json`, so it needs a fresh v
 Its relief is bold (`"drama": 2`: mountains to about 260, upland hills, valleys, hollows), laid over the open
 country only; `"keep"` holds the ground under what players had built when it was turned on (boxes round the live
 blocks, 2026-11-22), so no built column is buried or left in the air.
+`relief_rev` is read by nothing: bumping it changes the recipe's checksum, which is what makes the deploy entrypoint
+make the world again after a worldgen change alone.
