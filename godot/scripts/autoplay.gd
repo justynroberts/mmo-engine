@@ -2,7 +2,9 @@ extends RefCounted
 ## --autoplay SECONDS: the client plays as a new player would, through the same calls the keys and windows make,
 ## and says what happened. It chooses a class, walks to whoever has work for it (the "!" over them, or on the map),
 ## talks and takes what it is offered, follows the tracker to each step's goal, strikes what the step names there
-## (and whatever is fighting it), rises after falling, and hands in at the "?". Every change of quest, level and
+## (and whatever is fighting it), rises after falling, and hands in at the "?". With nothing it can do near (no goal
+## within HUNT_IF_FAR), it hunts beasts about its level in sight or out on the nearest hunting ground; hurt and out
+## of a fight it sits until whole; it leaves alone what is three levels over it unless that comes for it. Every change of quest, level and
 ## fall is printed as an AUTO line, and a summary at the end (AUTO DONE), then the client quits. For finding where a
 ## player gets stuck: a goal not reached, a beast that cannot be caught, a fight lost.
 ##   godot --path godot -- --guest --host H --udp U --web H:W --autoplay 900
@@ -31,9 +33,17 @@ var _buy_tries := {}           # step text -> purchases tried
 var _was_at := Vector2.INF     # where we were a moment ago
 var _look_at := Vector2.ZERO   # where we are looking about a town for someone
 var _look_at_t := -99.0
+var _resting := false
+var _xp_said := 0.0
+var _hunt_at := Vector2.INF     # the hunting ground we are roaming
+var _xp_was := -1
+var _xp_moved := 0.0           # when our experience last went up
+var _hunt_until := 0.0         # stuck for experience: hunting till then
 
 const GOAL_SECS := 600.0       # this long on the way to one goal and it is given up
 const TALK_AGAIN := 20.0       # seconds before talking to the same one again
+const HUNT_IF_FAR := 1200.0    # the nearest goal further than this: hunt instead, nearer home
+const REST_BELOW := 0.45       # out of a fight below this share of health: sit until whole
 
 func now() -> float:
 	return Time.get_ticks_msec() / 1000.0 - started
@@ -76,6 +86,11 @@ func run(main: Node, secs: float) -> void:
 		if _was_at != Vector2.INF and m.me_pos.distance_to(_was_at) > 150.0:
 			say("carried %d m in a moment (a stone, or rising), now at %d, %d" % [int(m.me_pos.distance_to(_was_at)), int(m.me_pos.x), int(m.me_pos.y)])
 		_was_at = m.me_pos
+		if now() - _xp_said > 60.0:
+			_xp_said = now()
+			say("%d xp, %d beaten so far" % [int(m._progress.get("xp", 0)), kills])
+		if _rest():
+			continue
 		if _buy():
 			continue
 		if _fight():
@@ -153,12 +168,17 @@ func _fight() -> bool:
 		var want := _step_kinds()
 		var best := 60.0
 		for n in near:
-			if want.has(n[1]) and m.me_pos.distance_to(n[2]) < best:
+			if want.has(n[1]) and not _deadly(n[0]) and m.me_pos.distance_to(n[2]) < best:
 				best = m.me_pos.distance_to(n[2])
 				foe = n[0]
 	if foe == 0:
 		_struck = 0
 		return false
+	return _strike(foe)
+
+## Go for `foe`: up to it, then blows (and now and then the first two spells of the bar).
+func _strike(foe: int) -> bool:
+	var near := _near()
 	var at: Vector2 = Vector2.INF
 	for n in near:
 		if n[0] == foe:
@@ -176,6 +196,67 @@ func _fight() -> bool:
 			_cast_at = now()
 			m._cast(randi() % 2)
 	return true
+
+## A level of an entity in sight (0 for none: townsfolk, players).
+func _level_of(id: int) -> int:
+	for e in m.net.entities():
+		if e["id"] == id:
+			return int(round(float(e.get("level", 0.0))))
+	return 0
+
+## Three or more levels over us: a fight to leave alone.
+func _deadly(id: int) -> bool:
+	return _level_of(id) >= m.my_level + 3
+
+## Hurt and nobody fighting us: sit until whole (resting comes back faster sitting).
+func _rest() -> bool:
+	if m._nearest_foe_in(60.0) != 0:
+		_resting = false
+		return false
+	var hp := _hp()
+	if not _resting and hp < REST_BELOW:
+		_resting = true
+		m.net.set_move(Vector2.ZERO)
+		m.net.say("/sit", false)
+		say("resting at %d%% health" % int(hp * 100.0))
+	if _resting and hp >= 0.95:
+		_resting = false
+		say("whole again")
+	if _resting:
+		m.net.set_move(Vector2.ZERO)
+	return _resting
+
+## Nothing near to do: a beast about our level in sight (not a trader, not three over us, not townsfolk), else out
+## to the nearest hunting ground and round it.
+func _hunt() -> void:
+	var shops: Dictionary = m.info.get("shops", {}) if m.info.get("shops") is Dictionary else {}
+	var best := 90.0
+	var foe := 0
+	for n in _near():
+		var lv := _level_of(n[0])
+		if lv < 1 or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
+			continue
+		if m.me_pos.distance_to(n[2]) < best:
+			best = m.me_pos.distance_to(n[2])
+			foe = n[0]
+	if foe != 0:
+		_strike(foe)
+		return
+	if _hunt_at == Vector2.INF or m.me_pos.distance_to(_hunt_at) > 3000.0:
+		var near_d := INF
+		for l in m.locations:
+			if String(l.get("title", "")).begins_with("Talamh Seilge"):
+				var p := Vector2(float(l["x"]), float(l["y"]))
+				if m.me_pos.distance_to(p) < near_d:
+					near_d = m.me_pos.distance_to(p)
+					_hunt_at = p
+		if _hunt_at != Vector2.INF:
+			say("off hunting at %d, %d, %d m off" % [int(_hunt_at.x), int(_hunt_at.y), int(near_d)])
+	if _hunt_at == Vector2.INF:
+		m.net.set_move(Vector2.ZERO)
+		return
+	var a := now() * 0.1
+	_steer(_hunt_at + Vector2(cos(a), sin(a)) * 60.0)
 
 ## A "bring N" step for something a trader in reach sells: buy one (a second later the next).
 func _buy() -> bool:
@@ -265,6 +346,18 @@ func _talk_to_giver() -> bool:
 
 ## On to the goal of the quest in hand (the tracker's), or failing one, to the nearest "!" on the map.
 func _follow_goal() -> void:
+	# Earning next to nothing (a point a minute for being about) for three minutes: hunt a while.
+	var xp := int(m._progress.get("xp", 0))
+	if _xp_was < 0 or xp - _xp_was >= 60:
+		_xp_was = xp
+		_xp_moved = now()
+	if now() - _xp_moved > 180.0 and now() > _hunt_until:
+		_hunt_until = now() + 150.0
+		_xp_moved = now()
+		say("nothing earned in three minutes: hunting a while")
+	if now() < _hunt_until:
+		_hunt()
+		return
 	var homes: Dictionary = m.info.get("homes", {}) if m.info.get("homes") is Dictionary else {}
 	var to := Vector2.INF
 	var key := ""
@@ -283,8 +376,9 @@ func _follow_goal() -> void:
 		to = g[0]
 		r = float(g[2])
 		key = k
-	if to == Vector2.INF:
+	if to == Vector2.INF or best_g > HUNT_IF_FAR:
 		var best := INF
+		to = Vector2.INF
 		for mk in m._map_marks():
 			if String(mk[1]) in ["!", "?"] and m.me_pos.distance_to(mk[0]) < best:
 				var k := "giver@%d,%d" % [int(mk[0].x), int(mk[0].y)]
@@ -292,13 +386,19 @@ func _follow_goal() -> void:
 					best = m.me_pos.distance_to(mk[0])
 					to = mk[0]
 					key = k
-	if to == Vector2.INF:
-		m.net.set_move(Vector2.ZERO)
+	if to == Vector2.INF or m.me_pos.distance_to(to) > HUNT_IF_FAR:
+		_hunt()
 		return
 	if key != _goal_key:
 		_goal_key = key
 		_goal_since = now()
 		say("setting out for %s, %d m off" % [key, int(m.me_pos.distance_to(to))])
+	# Looking for someone with work for us gets a minute and a half; then on with something else a while.
+	if key.begins_with("giver@") and now() - _goal_since > 90.0:
+		say("no giver found at %s: hunting a while" % key)
+		_given_up[key] = true
+		_hunt_until = now() + 240.0
+		return
 	if now() - _goal_since > GOAL_SECS:
 		say("gave up on %s, still %d m off" % [key, int(m.me_pos.distance_to(to))])
 		_given_up[key] = true

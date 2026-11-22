@@ -186,6 +186,7 @@ def main():
     for name, fix in ARCH_FIXES.items():
         if name in arch:
             arch[name].update(fix)
+    economy(g)
     clear_towns(g, towns)
     move_stones(g, terrain)
 
@@ -950,10 +951,50 @@ def town_errands(towns, places, g):
 # reach the cap. The gentler 790 x 1.42 left a questing player at level 4, short of every quest left.
 LEVEL_CURVE = {"base": 500.0, "exponent": 1.6}
 
+# A new character's purse: enough for the first errands' goods (one alone was 12 pennies; it held 10).
+STARTER_COIN = 40
+# What an errand to bring goods a trader sells pays, at least, as a share of what they cost there.
+ERRAND_MARGIN = 1.5
+
+
+def kill_xp(level):
+    """Experience for beating a beast of this level: a hunt is a way to grow, beside quests (a level-four boar paid 22,
+    and level ten is 16,800)."""
+    return round(10 * max(level, 1) ** 1.5)
+
+
+def economy(g):
+    """The purse, the errands' pay and the hunt's: run every time, so they follow the content."""
+    coin = g.get("currency")
+    for s_ in g.get("starter", []):
+        if s_["item"] == coin:
+            s_["count"] = max(s_["count"], STARTER_COIN)
+    price = {}
+    for a in g["archetypes"]:
+        for e in a.get("shop") or []:
+            price[e["item"]] = min(price.get(e["item"], 10**9), e.get("price", 0))
+    for q in g["quests"]:
+        cost = sum(st.get("count", 1) * price[st["item"]] for st in q["steps"] if st.get("kind") == "collect" and st.get("item") in price)
+        if not cost or not coin:
+            continue
+        want = int(cost * ERRAND_MARGIN + 0.999) + 2
+        reward = q.setdefault("reward", [])
+        have = next((r for r in reward if r["item"] == coin), None)
+        if have is None:
+            reward.append({"item": coin, "count": want})
+        elif have["count"] < want:
+            have["count"] = want
+    for a in g["archetypes"]:
+        if a.get("xp", 0) > 0 and a.get("level", 0) >= 1 and not a.get("boss"):
+            a["xp"] = max(a["xp"], kill_xp(a["level"]))
+
 ARCH_FIXES = {
     # Level 12 at Brú na Bóinne, a few minutes from Áth Cliath, where the level-five restless-dead quests send players.
     # All on one road out of Áth Cliath, they marched it in a line through the square new players come into.
     "maor bothair": {"count": 10},
+    # The seed trader keeps a stall on the square (a newcomer's first errand is to speak to them), not out in the
+    # fields where nobody could find them.
+    "tuathanach": {"work": "square"},
     "bean si": {"home": "rathcroghan", "homes": ["dun ailinne", "loch neathach", "loch coirib", "loch measca", "loch deirgeirt"]},
 }
 

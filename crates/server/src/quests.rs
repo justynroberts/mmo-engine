@@ -228,6 +228,23 @@ impl Sim {
     /// Steps that may already be met when they start (carrying the items, standing in the place).
     fn check_now(&mut self, s: usize, i: usize) {
         let Some(run) = self.ents.quests[s].get(i).cloned() else { return };
+        if run.state == QUEST_READY {
+            // Ready, but what it asks to bring has gone from the bag (another quest handed in took it, it was sold
+            // or dropped): back to that step, so the tracker says what is missing rather than "hand in".
+            let Some((_, q)) = self.quest(&run.name) else { return };
+            let short = q.steps.iter().enumerate().find_map(|(k, st)| match st {
+                QuestStep::Collect { item, count } if self.carried(s, item) < *count as u32 => Some((k, self.carried(s, item) as u16)),
+                _ => None,
+            });
+            if let Some((k, have)) = short {
+                let title = q.title.clone();
+                let r = &mut self.ents.quests[s][i];
+                (r.state, r.step, r.count) = (QUEST_ACTIVE, k as u8, have);
+                self.bump_quests(s);
+                self.tells.push((s, format!("{title}: you no longer carry enough to hand it in.")));
+            }
+            return;
+        }
         if run.state != QUEST_ACTIVE {
             return;
         }
@@ -343,6 +360,42 @@ mod tests {
     use super::QuestRun;
     use proto::wire::{NO_OFFER, QUEST_ACTIVE, QUEST_DONE, QUEST_READY};
     use proto::world::World;
+
+    #[test]
+    fn a_ready_quest_whose_goods_another_took_goes_back_to_bringing_them() {
+        let mut g = GameFile::default_game();
+        for name in ["first", "second"] {
+            g.quests.push(QuestFile {
+                name: name.into(),
+                title: name.into(),
+                giver: "merchant".into(),
+                steps: vec![QuestStep::Collect { item: "medkit".into(), count: 2 }],
+                ..Default::default()
+            });
+        }
+        let merchant = g.archetypes.iter().position(|a| a.name == "merchant").unwrap() as u8;
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        let m = s.spawn_as(NONE, merchant, Some((100.0, 104.0))).unwrap();
+        (s.ents.x[me], s.ents.y[me]) = (100.0, 100.0);
+        (s.ents.x[m], s.ents.y[m]) = (100.0, 104.0);
+        let mid = s.ents.id_of(m);
+        let act = |s: &mut Sim, action: u8, target: u32| s.step(&[PendingAction { slot: me, action, target, arg: 0 }]);
+        for name in ["first", "second"] {
+            s.ents.quests[me].push(QuestRun { name: name.into(), step: 0, count: 0, state: QUEST_ACTIVE });
+        }
+        let kit = s.items.iter().position(|i| i.name == "medkit").unwrap();
+        s.give(me, kit, 2);
+        s.system_quests();
+        assert!(s.ents.quests[me].iter().all(|r| r.state == QUEST_READY), "both counted the same two");
+        (s.ents.x[m], s.ents.y[m]) = (100.0, 104.0);
+        act(&mut s, ACT_TALK, mid); // hands in the first: the two are gone
+        assert_eq!(s.ents.quests[me].iter().filter(|r| r.state == QUEST_DONE).count(), 1);
+        s.system_quests();
+        let other = s.ents.quests[me].iter().find(|r| r.state != QUEST_DONE).unwrap();
+        assert_eq!((other.state, other.step, other.count), (QUEST_ACTIVE, 0, 0), "back to bringing them");
+        assert!(s.tells.iter().any(|t| t.1.contains("no longer carry enough")), "{:?}", s.tells);
+    }
 
     #[test]
     fn a_quest_is_offered_taken_shared_done_and_handed_in() {
