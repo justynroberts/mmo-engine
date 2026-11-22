@@ -905,6 +905,9 @@ export interface Rules {
   exit_dwell_secs: number
   assist_reach: number
   calm_levels: number
+  rest_after_secs: number
+  rest_pct: number
+  rest_sit_x: number
 }
 
 export const RULE_DEFAULTS: Rules = {
@@ -960,4 +963,7 @@ export const RULE_DEFAULTS: Rules = {
   exit_dwell_secs: 0,
   assist_reach: 0,
   calm_levels: 0,
+  rest_after_secs: 6,
+  rest_pct: 0,
+  rest_sit_x: 2,
 }

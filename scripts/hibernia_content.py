@@ -176,6 +176,9 @@ def main():
     # Fights: a beast calls its kind within a few strides, and leaves be a player five levels over it.
     g["rules"]["assist_reach"] = 25.0
     g["rules"]["calm_levels"] = 5
+    # Out of a fight a player (and a beast) gets health and mana back: whole in about 40 s, 20 s sitting.
+    g["rules"]["rest_pct"] = 2.5
+    g["rules"]["rest_after_secs"] = 6.0
     # A new character comes with a blade and a tunic, not only coin and bread: the boars outside the gates are
     # level four.
     have = {s_["item"] for s_ in g.get("starter", [])}

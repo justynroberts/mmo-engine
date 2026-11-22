@@ -115,6 +115,13 @@ pub struct Rules {
     /// A player this many levels or more over a fighter is not set upon by it on sight (it fights back when
     /// struck); 0: every fighter goes for whoever it is hostile to.
     pub calm_levels: u8,
+    /// Seconds after the last blow taken (and with nobody fighting them) before a player or a beast starts to rest.
+    pub rest_after_secs: f32,
+    /// Resting, the share of health and of every pool that refills (mana, energy) regained each second, in
+    /// percent of the most it can hold; 0: no resting.
+    pub rest_pct: f32,
+    /// How many times faster a player rests sitting (any held emote).
+    pub rest_sit_x: f32,
 }
 
 impl Default for Rules {
@@ -172,6 +179,9 @@ impl Default for Rules {
             exit_dwell_secs: 0.0,
             assist_reach: 0.0,
             calm_levels: 0,
+            rest_after_secs: 6.0,
+            rest_pct: 0.0,
+            rest_sit_x: 2.0,
         }
     }
 }
@@ -222,13 +232,17 @@ impl Rules {
             ("remark_pause_secs", self.remark_pause_secs),
             ("newcomer_secs", self.newcomer_secs),
             ("exit_dwell_secs", self.exit_dwell_secs),
+            ("rest_after_secs", self.rest_after_secs),
         ];
         for (name, v) in secs {
             if !(v.is_finite() && (0.0..=86_400.0).contains(&v)) {
                 return Err(format!("rules: {name} is 0..86400"));
             }
         }
-        for (name, v) in [("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct), ("brawl_pct", self.brawl_pct), ("lift_pct", self.lift_pct), ("inn_pct", self.inn_pct), ("plea_pct", self.plea_pct)] {
+        if !(self.rest_sit_x.is_finite() && (1.0..=10.0).contains(&self.rest_sit_x)) {
+            return Err("rules: rest_sit_x is 1..10".into());
+        }
+        for (name, v) in [("rest_pct", self.rest_pct), ("fall_xp_loss_pct", self.fall_xp_loss_pct), ("fall_coin_loss_pct", self.fall_coin_loss_pct), ("fall_drop_pct", self.fall_drop_pct), ("night_ambush_pct", self.night_ambush_pct), ("brawl_pct", self.brawl_pct), ("lift_pct", self.lift_pct), ("inn_pct", self.inn_pct), ("plea_pct", self.plea_pct)] {
             if !(v.is_finite() && (0.0..=100.0).contains(&v)) {
                 return Err(format!("rules: {name} is 0..100"));
             }

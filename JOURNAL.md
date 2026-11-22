@@ -46,6 +46,9 @@ first.
 
 ## Done
 
+- 2026-11-22 — Resting: out of a fight, health and mana come back (2.5% a second on Hibernia, from 6 s after the
+  last blow, twice as fast sitting); health never came back at all before, but by potion or a fall.
+
 - 2026-11-22 — Fights as a group game: every bot keeps a hate list (damage, half of heals, taunts; it turns on
   whoever passes the one it is on by a tenth and goes for the next when they fall or get away, so a tank holds it
   and a healer draws it); a beast that starts a fight calls its kind within a few strides (`rules.assist_reach`,

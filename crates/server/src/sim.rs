@@ -595,6 +595,8 @@ pub struct Sim {
     pub foe: Vec<Option<u32>>,
     /// Who last struck each slot (an id), bot or player: what the news says killed it.
     pub last_hit: Vec<Option<u32>>,
+    /// The tick each slot last lost health to someone (`system_rest` waits `rules.rest_after_secs` from it).
+    pub hurt_at: Vec<u32>,
     /// A home given to one bot over its type's (a roaming fair's traders live in the town it came to).
     pub home_over: Vec<Option<usize>>,
     /// The sickness (`plague.rs`): when each slot's case runs its course (0: well), who has had it and is over it,
@@ -857,6 +859,7 @@ impl Sim {
             gear_ver: vec![0; cap],
             foe: vec![None; cap],
             last_hit: vec![None; cap],
+            hurt_at: vec![0; cap],
             home_over: vec![None; cap],
             sick: vec![0; cap],
             immune: vec![false; cap],
@@ -981,6 +984,7 @@ impl Sim {
         self.gear_ver[slot] = self.gear_ver[slot].wrapping_add(1);
         self.foe[slot] = None;
         self.last_hit[slot] = None;
+        self.hurt_at[slot] = 0;
         self.home_over[slot] = None;
         (self.sick[slot], self.immune[slot], self.plague_sent[slot]) = (0, false, 0);
         self.standing[slot].clear();
@@ -1595,6 +1599,7 @@ impl Sim {
             timed!(self, "system_discover", self.system_discover());
             timed!(self, "system_quests", self.system_quests());
             timed!(self, "system_encounters", self.system_encounters());
+            timed!(self, "system_rest", self.system_rest());
             timed!(self, "system_night", self.system_night());
             timed!(self, "find_towns", self.find_towns());
             timed!(self, "system_town", self.system_town());
@@ -2278,6 +2283,43 @@ impl Sim {
         }
     }
 
+    /// Once a second: a player, or a beast that fights, with nobody fighting it and no blow taken for
+    /// `rules.rest_after_secs` gets back `rules.rest_pct` of its health and of each pool that refills (those with
+    /// a `regen_per_sec`), up to its ceiling; a player sitting `rules.rest_sit_x` times that.
+    fn system_rest(&mut self) {
+        let pct = self.rules.rest_pct;
+        if pct <= 0.0 {
+            return;
+        }
+        let wait = proto::rules::Rules::ticks(self.rules.rest_after_secs, self.tick_hz);
+        let pools: Vec<usize> = self.defs.attrs.iter().enumerate().filter(|(i, a)| *i == proto::defs::ATTR_HEALTH as usize || a.regen_per_sec > 0.0).map(|(i, _)| i).collect();
+        for s in 0..self.ents.high {
+            let e = &self.ents;
+            if !e.alive[s] || e.fallen[s] || e.owner[s] == GHOST {
+                continue;
+            }
+            let player = e.owner[s] < DRIVEN;
+            if !player && !(e.owner[s] == NONE && self.archs.get(e.arch[s] as usize).is_some_and(|a| a.attack.is_some())) {
+                continue; // townsfolk and the like keep what they have (the sickness, a brawl's bruises)
+            }
+            if self.foe[s].is_some() || !self.pursuers[s].is_empty() || !self.rivals[s].is_empty() || (self.hurt_at[s] != 0 && self.tick.saturating_sub(self.hurt_at[s]) < wait) {
+                continue;
+            }
+            let x = if player && self.pose[s] != 0 { self.rules.rest_sit_x } else { 1.0 };
+            for &i in &pools {
+                let top = if player {
+                    self.ceiling(s, i).unwrap_or(self.defs.attrs[i].max)
+                } else {
+                    self.archs[self.ents.arch[s] as usize].start.get(i).copied().unwrap_or(0.0) // a beast: as it was made
+                };
+                let v = self.ents.attrs[i][s];
+                if v < top {
+                    self.ents.attrs[i][s] = (v + top * pct / 100.0 * x).min(top);
+                }
+            }
+        }
+    }
+
     fn system_regen(&mut self) {
         for (a, def) in self.defs.attrs.iter().enumerate() {
             if def.regen_per_sec == 0.0 {
@@ -2651,6 +2693,7 @@ impl Sim {
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s) {
                 self.engage(s, by);
                 self.last_hit[s] = Some(src);
+                self.hurt_at[s] = self.tick;
                 self.add_threat(s, by, -delta, false);
             }
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s && self.ents.owner[b] < DRIVEN) {
@@ -3355,6 +3398,28 @@ mod tests {
         assert!(refused(&mut s, 3));
         assert!(!refused(&mut s, ACTION_ZAP));
         assert_eq!(s.record_of(p).class, "druid");
+    }
+
+    #[test]
+    fn out_of_a_fight_a_player_rests_faster_sitting_and_not_while_struck() {
+        let mut s = Sim::new(GameFile::default_game().build().unwrap(), World::from_boxes(1024.0, 1, vec![]), 64, 20, 1);
+        s.rules.rest_pct = 5.0;
+        s.rules.rest_after_secs = 2.0;
+        let me = s.spawn(0).unwrap();
+        let top = s.defs.attrs[0].max;
+        s.ents.attrs[0][me] = top * 0.5;
+        s.hurt_at[me] = s.tick.max(1);
+        s.system_rest();
+        assert_eq!(s.ents.attrs[0][me], top * 0.5, "just struck: no rest yet");
+        s.tick += 3 * s.tick_hz;
+        s.system_rest();
+        assert!((s.ents.attrs[0][me] - top * 0.55).abs() < 0.01, "5% back: {}", s.ents.attrs[0][me]);
+        s.pose[me] = 1;
+        s.system_rest();
+        assert!((s.ents.attrs[0][me] - top * 0.65).abs() < 0.01, "twice that sitting: {}", s.ents.attrs[0][me]);
+        s.pursuers[me].push(12345);
+        s.system_rest();
+        assert!((s.ents.attrs[0][me] - top * 0.65).abs() < 0.01, "nothing while something fights them");
     }
 
     #[test]
