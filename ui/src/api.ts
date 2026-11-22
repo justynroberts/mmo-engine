@@ -903,6 +903,8 @@ export interface Rules {
   season_shift: number
   /** Seconds on a travel stone (a place with an exit) before it carries you; 0 at once. */
   exit_dwell_secs: number
+  assist_reach: number
+  calm_levels: number
 }
 
 export const RULE_DEFAULTS: Rules = {
@@ -956,4 +958,6 @@ export const RULE_DEFAULTS: Rules = {
   season_days: 0,
   season_shift: 0,
   exit_dwell_secs: 0,
+  assist_reach: 0,
+  calm_levels: 0,
 }

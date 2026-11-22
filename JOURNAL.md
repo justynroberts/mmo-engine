@@ -46,6 +46,13 @@ first.
 
 ## Done
 
+- 2026-11-22 — Fights as a group game: every bot keeps a hate list (damage, half of heals, taunts; it turns on
+  whoever passes the one it is on by a tenth and goes for the next when they fall or get away, so a tank holds it
+  and a healer draws it); a beast that starts a fight calls its kind within a few strides (`rules.assist_reach`,
+  25 on Hibernia: pull one wolf and its pack comes); a fighter five levels under a player leaves them be
+  (`rules.calm_levels`); names and the target frame coloured by level against yours, with a word for the fight
+  ("A deadly fight" to "No threat to you").
+
 - 2026-11-22 — Travel stones carry only a player who stands on one (`rules.exit_dwell_secs`, 2 s on Hibernia) and
   say where they go: walking Áth Cliath's square carried the autoplay to Droichead Átha and back four times in ten
   seconds; and Áth Cliath's stones moved from round the castle walls (where the market folk stand, so a player

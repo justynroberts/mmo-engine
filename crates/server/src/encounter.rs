@@ -4,6 +4,13 @@
 //! falls, when the player gets further away than the bot's `leash`, reaches a safe place, or when no blow has
 //! passed between them for `Rules::chase_give_up_secs`: the bot gives up and goes back to its rules.
 //!
+//! Every bot keeps a hate list (`Sim::hate`, a boss its threat in `boss.rs`): the first blow or sight of a foe puts
+//! them on it, damage done to it adds the damage, healing someone on it adds half the heal to the healer, and a
+//! taunt puts its user on top. It turns on whoever passes the one it is on by a tenth, so a tank can hold it; when
+//! the one it is on falls, gets away or reaches a safe place, it goes for the next on its list instead of giving up.
+//! A bot that starts a fight calls others of its faction (else its own type) within `Rules::assist_reach` into it,
+//! the nearest `HELPERS` of them, once: they join without calling more.
+//!
 //! Two players who come to blows (pvp) are in a fight with each other until one of them falls or neither has
 //! landed a blow on the other for `Rules::pvp_quiet_secs`. Nobody chases anybody there: it only says who is fighting.
 //!
@@ -12,6 +19,12 @@
 
 use crate::sim::{Sim, DRIVEN, NONE};
 use proto::wire::MAX_PURSUERS;
+
+/// Hate a newcomer must have over the one a bot is on, as a share of theirs, before it turns (as a boss does).
+const TURN: f32 = 1.1;
+/// Most that answer one bot's call for help (the nearest): a camp of brigands stood shoulder to shoulder sends a
+/// few, not all of them.
+const HELPERS: usize = 3;
 
 
 impl Sim {
@@ -44,6 +57,8 @@ impl Sim {
         }
         self.boss_engaged(bot, player);
         let pid = self.ents.id_of(player);
+        let fresh = self.foe[bot].is_none() && self.hate.get(&self.ents.id_of(bot)).map_or(true, |h| h.is_empty());
+        self.note_hate(bot, player);
         match self.foe[bot] {
             Some(f) if f == pid => {
                 self.foe_at[bot] = self.tick;
@@ -52,13 +67,132 @@ impl Sim {
             Some(f) if self.ents.resolve(f).is_some() => return,
             _ => {}
         }
-        if self.pursuers[player].len() >= MAX_PURSUERS {
-            return;
+        if self.lock(bot, player) && fresh {
+            self.call_for_help(bot, player);
         }
-        self.foe[bot] = Some(pid);
+    }
+
+    /// A bot locks on a player (unless too many are on them already).
+    fn lock(&mut self, bot: usize, player: usize) -> bool {
+        if self.pursuers[player].len() >= MAX_PURSUERS {
+            return false;
+        }
+        self.foe[bot] = Some(self.ents.id_of(player));
         self.foe_at[bot] = self.tick;
         self.pursuers[player].push(self.ents.id_of(bot));
         self.pursuer_ver[player] = self.pursuer_ver[player].wrapping_add(1);
+        true
+    }
+
+    fn is_boss(&self, s: usize) -> bool {
+        self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.boss.is_some())
+    }
+
+    /// A player on a bot's hate list (a boss keeps its own threat).
+    fn note_hate(&mut self, bot: usize, player: usize) {
+        if self.is_boss(bot) {
+            return;
+        }
+        let pid = self.ents.id_of(player);
+        let list = self.hate.entry(self.ents.id_of(bot)).or_default();
+        if !list.iter().any(|t| t.0 == pid) {
+            list.push((pid, 1.0));
+        }
+    }
+
+    /// Hate on a bot from a player: `amount` more, or (taunting) straight to the top; it turns on them if due.
+    pub(crate) fn add_hate(&mut self, bot: usize, player: usize, amount: f32, taunt: bool) {
+        if !self.is_ai_bot(bot) || !self.is_player(player) || self.ents.god[player] || !self.ents.alive[bot] || self.is_boss(bot) {
+            return;
+        }
+        self.note_hate(bot, player);
+        let pid = self.ents.id_of(player);
+        let Some(list) = self.hate.get_mut(&self.ents.id_of(bot)) else { return };
+        let top = list.iter().map(|t| t.1).fold(0.0f32, f32::max);
+        if let Some(t) = list.iter_mut().find(|t| t.0 == pid) {
+            t.1 += amount.max(0.0);
+            if taunt {
+                t.1 = t.1.max(top * TURN + 1.0);
+            }
+        }
+        self.turn_if_due(bot);
+    }
+
+    /// A bot goes for the top of its hate list when that passes the one it is on by a tenth (or it is on nobody).
+    fn turn_if_due(&mut self, bot: usize) {
+        let Some(list) = self.hate.get(&self.ents.id_of(bot)) else { return };
+        let Some(top) = list.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1)) else { return };
+        let cur = self.foe[bot].filter(|&f| self.ents.resolve(f).is_some()).and_then(|c| list.iter().find(|t| t.0 == c).copied());
+        if let Some(c) = cur {
+            if c.0 == top.0 || top.1 <= c.1 * TURN {
+                return;
+            }
+        }
+        let Some(t) = self.ents.resolve(top.0).filter(|&t| self.ents.alive[t] && !self.ents.fallen[t]) else { return };
+        let was = self.foe[bot].is_some();
+        self.release(bot);
+        if self.lock(bot, t) && was {
+            if let Some(arch) = self.archs.get(self.ents.arch[bot] as usize) {
+                self.tells.push((t, format!("The {} turns on you!", arch.shown())));
+            }
+        }
+    }
+
+    /// A bot starting a fight calls others of its side near it into it: those of its faction, or of its own type
+    /// when it has none, that can fight and are in no fight.
+    fn call_for_help(&mut self, bot: usize, player: usize) {
+        let reach = self.rules.assist_reach;
+        if reach <= 0.0 || self.is_boss(bot) {
+            return;
+        }
+        let Some(me) = self.archs.get(self.ents.arch[bot] as usize) else { return };
+        if me.attack.is_none() {
+            return;
+        }
+        let (faction, kind) = (me.faction, self.ents.arch[bot]);
+        let (x, y) = (self.ents.x[bot], self.ents.y[bot]);
+        let cells = (reach / self.grid.cell).ceil().max(1.0) as usize;
+        let mut helpers = Vec::new();
+        {
+            let (e, archs, foe, phase) = (&self.ents, &self.archs, &self.foe, &self.rs.phase);
+            self.grid.for_within(x, y, cells, |t| {
+                let t = t as usize;
+                if t == bot || foe[t].is_some() || !e.alive[t] || e.fallen[t] || e.hidden[t] || e.owner[t] != NONE || phase[t] != phase[bot] {
+                    return;
+                }
+                let Some(a) = archs.get(e.arch[t] as usize) else { return };
+                let side = match faction {
+                    Some(f) => a.faction == Some(f),
+                    None => e.arch[t] == kind,
+                };
+                let d2 = (e.x[t] - x).powi(2) + (e.y[t] - y).powi(2);
+                if side && a.attack.is_some() && a.boss.is_none() && d2 <= reach * reach {
+                    helpers.push((d2, t));
+                }
+            });
+        }
+        helpers.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let helpers: Vec<usize> = helpers.into_iter().take(HELPERS).map(|h| h.1).collect();
+        let mut joined = Vec::new();
+        for h in helpers {
+            self.note_hate(h, player);
+            if self.lock(h, player) {
+                joined.push(h);
+            }
+        }
+        let shown = |s: &Sim, b: usize| s.archs.get(s.ents.arch[b] as usize).map_or("foe".to_string(), |a| a.shown().to_string());
+        match joined.len() {
+            0 => {}
+            1 => {
+                let line = format!("A {} joins the fight!", shown(self, joined[0]));
+                self.tells.push((player, line));
+            }
+            n => {
+                let same = joined.iter().all(|&j| self.ents.arch[j] == self.ents.arch[joined[0]]);
+                let line = if same { format!("{n} more {} join the fight!", shown(self, joined[0])) } else { format!("{n} more join the fight!") };
+                self.tells.push((player, line));
+            }
+        }
     }
 
     /// `p` is in a fight with the player `o`: noted, or the last blow between them brought up to now.
@@ -99,6 +233,14 @@ impl Sim {
     /// fighting them).
     pub(crate) fn end_encounters(&mut self, s: usize) {
         self.release(s);
+        if !self.hate.is_empty() {
+            let id = self.ents.id_of(s);
+            self.hate.remove(&id);
+            // Off every list it was on; those it was the one on go for the next (below, once the locks are let go).
+            for list in self.hate.values_mut() {
+                list.retain(|t| t.0 != id);
+            }
+        }
         if !self.rivals[s].is_empty() {
             let id = self.ents.id_of(s);
             for (o, _) in std::mem::take(&mut self.rivals[s]) {
@@ -112,12 +254,49 @@ impl Sim {
         if self.pursuers[s].is_empty() {
             return;
         }
-        for b in std::mem::take(&mut self.pursuers[s]) {
+        let bots = std::mem::take(&mut self.pursuers[s]);
+        for &b in &bots {
             if let Some(b) = self.ents.resolve(b) {
                 self.foe[b] = None;
             }
         }
         self.pursuer_ver[s] = self.pursuer_ver[s].wrapping_add(1);
+        for b in bots {
+            if let Some(b) = self.ents.resolve(b) {
+                self.turn_if_due(b);
+            }
+        }
+    }
+
+    /// Once a second: hate lists lose the bots that are gone or down and the players that are gone, down, past the
+    /// bot's leash or in a safe place; a bot on nobody goes for the next on its list; an empty list is dropped.
+    fn tidy_hate(&mut self) {
+        if self.hate.is_empty() {
+            return;
+        }
+        let mut lists = std::mem::take(&mut self.hate);
+        let mut idle = Vec::new();
+        lists.retain(|&bid, list| {
+            let Some(b) = self.ents.resolve(bid).filter(|&b| self.ents.alive[b] && !self.ents.fallen[b] && self.is_ai_bot(b)) else { return false };
+            let leash = self.archs.get(self.ents.arch[b] as usize).map_or(proto::game::MIN_LEASH, |a| a.leash);
+            list.retain(|t| {
+                self.ents.resolve(t.0).is_some_and(|p| {
+                    self.ents.alive[p]
+                        && !self.ents.fallen[p]
+                        && !self.ents.god[p]
+                        && (self.ents.x[p] - self.ents.x[b]).powi(2) + (self.ents.y[p] - self.ents.y[b]).powi(2) <= leash * leash
+                        && !self.in_safe(p)
+                })
+            });
+            if self.foe[b].is_none() && !list.is_empty() {
+                idle.push(b);
+            }
+            !list.is_empty() || self.foe[b].is_some()
+        });
+        self.hate = lists;
+        for b in idle {
+            self.turn_if_due(b);
+        }
     }
 
     /// Once a second: bots give up a chase that has got away from them, or gone quiet, or reached a safe place;
@@ -172,8 +351,16 @@ impl Sim {
                     self.tells.push((p, format!("The {} {why}.", arch.shown())));
                 }
                 self.release(b);
+                let bid = self.ents.id_of(b);
+                if why == "loses interest" {
+                    self.hate.remove(&bid); // nobody has struck it a while
+                } else if let Some(list) = self.hate.get_mut(&bid) {
+                    list.retain(|t| t.0 != f);
+                }
+                self.turn_if_due(b); // the next on its list, if any
             }
         }
+        self.tidy_hate();
         // Bots that went without letting go (removed, handed to another zone).
         for p in 0..self.ents.high {
             if self.pursuers[p].is_empty() {
@@ -314,5 +501,122 @@ mod tests {
         s.system_encounters();
         assert!(s.pursuers[me].is_empty());
         assert_ne!(s.pursuer_ver[me], v);
+    }
+
+    /// A second player beside the first, both by the drone.
+    fn two() -> (Sim, usize, usize, usize) {
+        let (mut s, me, d) = fight();
+        let you = s.spawn(1).unwrap();
+        (s.ents.x[you], s.ents.y[you]) = (296.0, 300.0);
+        (s, me, you, d)
+    }
+
+    #[test]
+    fn a_bot_turns_on_whoever_hurts_it_most_and_a_taunt_takes_it_back() {
+        let (mut s, me, you, d) = two();
+        let (mid, yid) = (s.ents.id_of(me), s.ents.id_of(you));
+        s.add_to(d, 0, -2.0, mid);
+        assert_eq!(s.foe[d], Some(mid), "the first blow locks it");
+        s.add_to(d, 0, -2.0, yid);
+        assert_eq!(s.foe[d], Some(mid), "level with the one it is on: it stays");
+        s.add_to(d, 0, -3.0, yid);
+        assert_eq!(s.foe[d], Some(yid), "past them by a tenth: it turns");
+        assert_eq!((s.pursuers[me].len(), s.pursuers[you].len()), (0, 1));
+        assert!(s.tells.iter().any(|t| t.0 == you && t.1.contains("turns on you")), "{:?}", s.tells);
+        s.add_threat(d, me, 0.0, true);
+        assert_eq!(s.foe[d], Some(mid), "a taunt puts them on top");
+    }
+
+    #[test]
+    fn healing_the_one_it_fights_draws_its_hate() {
+        let (mut s, me, you, d) = two();
+        let (mid, yid) = (s.ents.id_of(me), s.ents.id_of(you));
+        s.add_to(d, 0, -4.0, mid);
+        s.ents.attrs[0][me] = 10.0;
+        s.add_to(me, 0, 20.0, yid); // you mend me
+        let list = &s.hate[&s.ents.id_of(d)];
+        assert!(list.iter().any(|t| t.0 == yid && t.1 > 1.0), "half of what was mended: {list:?}");
+        assert_eq!(s.foe[d], Some(yid), "more than I did to it");
+    }
+
+    #[test]
+    fn when_the_one_it_is_on_falls_it_goes_for_the_next_on_its_list() {
+        let (mut s, me, you, d) = two();
+        let (mid, yid) = (s.ents.id_of(me), s.ents.id_of(you));
+        s.add_to(d, 0, -4.0, mid);
+        s.add_to(d, 0, -1.0, yid);
+        assert_eq!(s.foe[d], Some(mid));
+        s.ents.attrs[0][me] = 0.0;
+        s.step(&[]);
+        assert_eq!(s.foe[d], Some(yid), "on to the next");
+        assert!(!s.hate[&s.ents.id_of(d)].iter().any(|t| t.0 == mid), "the fallen are off its list");
+        // Running out of its leash: off the list, and with nobody left the list goes.
+        (s.ents.x[you], s.ents.y[you]) = (900.0, 900.0);
+        s.system_encounters();
+        assert_eq!(s.foe[d], None);
+        assert!(!s.hate.contains_key(&s.ents.id_of(d)));
+    }
+
+    #[test]
+    fn a_bot_that_starts_a_fight_calls_its_kind_near_it_once() {
+        let (mut s, me, d) = fight();
+        let mid = s.ents.id_of(me);
+        s.rules.assist_reach = 30.0;
+        let drone = s.ents.arch[d];
+        let near = s.spawn_as(NONE, drone, Some((320.0, 300.0))).unwrap();
+        let far = s.spawn_as(NONE, drone, Some((380.0, 300.0))).unwrap();
+        (s.ents.x[near], s.ents.y[near]) = (320.0, 300.0);
+        (s.ents.x[far], s.ents.y[far]) = (380.0, 300.0);
+        (s.ents.x[me], s.ents.y[me]) = (900.0, 900.0); // out of their sight while the grid is built
+        s.step(&[]);
+        (s.ents.x[me], s.ents.y[me]) = (304.0, 300.0);
+        s.add_to(d, 0, -2.0, mid);
+        assert_eq!(s.foe[near], Some(mid), "the one beside it joins");
+        assert_eq!(s.foe[far], None, "out of reach: it does not");
+        assert!(s.tells.iter().any(|t| t.0 == me && t.1.contains("joins the fight")), "{:?}", s.tells);
+        // However many stand by, the nearest three come.
+        let (mut s2, me2, d2) = fight();
+        s2.rules.assist_reach = 30.0;
+        let crowd: Vec<usize> = (0..6).map(|i| s2.spawn_as(NONE, drone, Some((302.0 + i as f32 * 3.0, 302.0))).unwrap()).collect();
+        for (i, &c) in crowd.iter().enumerate() {
+            (s2.ents.x[c], s2.ents.y[c]) = (302.0 + i as f32 * 3.0, 302.0);
+        }
+        (s2.ents.x[me2], s2.ents.y[me2]) = (900.0, 900.0);
+        s2.step(&[]);
+        (s2.ents.x[me2], s2.ents.y[me2]) = (304.0, 300.0);
+        s2.add_to(d2, 0, -2.0, s2.ents.id_of(me2));
+        let came: Vec<usize> = crowd.iter().copied().filter(|&c| s2.foe[c].is_some()).collect();
+        assert_eq!(came, crowd[..3].to_vec(), "the nearest three");
+        // A blow on one already fighting calls nobody more.
+        s.add_to(near, 0, -2.0, mid);
+        assert_eq!(s.foe[far], None);
+        // Off, every bot fights alone.
+        let (mut s, me, d) = fight();
+        let other = s.spawn_as(NONE, drone, Some((310.0, 300.0))).unwrap();
+        (s.ents.x[other], s.ents.y[other]) = (310.0, 300.0);
+        (s.ents.x[me], s.ents.y[me]) = (900.0, 900.0);
+        s.step(&[]);
+        (s.ents.x[me], s.ents.y[me]) = (304.0, 300.0);
+        s.add_to(d, 0, -2.0, s.ents.id_of(me));
+        assert_eq!(s.foe[other], None);
+    }
+
+    #[test]
+    fn a_fighter_lets_a_player_far_over_its_level_be_until_struck() {
+        let (mut s, me, d) = fight();
+        s.rules.calm_levels = 4;
+        s.ents.level[d] = 2;
+        s.ents.level[me] = 6;
+        let hp = s.ents.attrs[0][me];
+        for _ in 0..30 {
+            s.step(&[]);
+        }
+        assert_eq!(s.foe[d], None, "it pays them no mind");
+        assert!(s.ents.attrs[0][me] >= hp, "nor strikes them");
+        s.ents.level[me] = 5; // three over: still fair game
+        for _ in 0..30 {
+            s.step(&[]);
+        }
+        assert!(s.foe[d].is_some() || s.ents.attrs[0][me] < s.defs.attrs[0].max, "it comes for them");
     }
 }

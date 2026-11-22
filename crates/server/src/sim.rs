@@ -221,7 +221,7 @@ pub(crate) fn dir_to(dx: f32, dy: f32, stop: f32) -> (i8, i8) {
 /// Uniform grid rebuilt every tick with a counting sort: no allocation, no
 /// hashing, and a neighbour query is a 3x3 walk over contiguous slices.
 pub struct Grid {
-    cell: f32,
+    pub(crate) cell: f32,
     gw: usize,
     start: Vec<u32>,
     cursor: Vec<u32>,
@@ -605,6 +605,8 @@ pub struct Sim {
     pub plague_ver: u64,
     /// Bosses in a fight (`boss.rs`), by entity id; the marks on the ground waiting to land, and the last mark id.
     pub bosses: std::collections::BTreeMap<u32, crate::boss::Fight>,
+    /// Every other fighting bot's hate list (`encounter.rs`), by its entity id: (player id, hate).
+    pub hate: std::collections::HashMap<u32, Vec<(u32, f32)>>,
     pub marks: Vec<crate::boss::Mark>,
     pub mark_seq: u32,
     pub plague_sent: Vec<u64>,
@@ -861,6 +863,7 @@ impl Sim {
             plagues: Vec::new(),
             plague_ver: 0,
             bosses: std::collections::BTreeMap::new(),
+            hate: std::collections::HashMap::new(),
             marks: Vec::new(),
             mark_seq: 0,
             plague_sent: vec![0; cap],
@@ -1834,6 +1837,16 @@ impl Sim {
         }
     }
 
+    /// The level from which a player is too far over this fighter for it to go for them on sight
+    /// (`Rules::calm_levels`); u8::MAX when it goes for anyone (not a fighter, a guard, or the rule off).
+    fn calm_above(&self, s: usize, fighter: bool) -> u8 {
+        let n = self.rules.calm_levels;
+        if n == 0 || !fighter || self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.guards || a.boss.is_some()) {
+            return u8::MAX;
+        }
+        self.ents.level[s].max(1).saturating_add(n)
+    }
+
     /// Evaluate an archetype's rule stack for one bot. Returns false when no
     /// movement rule matched, so the plain `behaviour` still applies.
     fn run_rules(&mut self, s: usize, a: usize) -> bool {
@@ -1857,10 +1870,11 @@ impl Sim {
             let sneak = self.sneak();
             let dim = self.rules.sneak_sight;
             let sheltered = &self.sheltered;
+            let calm = self.calm_above(s, attack.is_some());
             self.grid.for_neighbours(x, y, |t| {
                 let t = t as usize;
-                if t == s {
-                    return;
+                if t == s || e.owner[t] < DRIVEN && e.level[t] >= calm {
+                    return; // far over a fighter's level: it lets them be
                 }
                 let (dx, dy) = (e.x[t] - x, e.y[t] - y);
                 let d2 = dx * dx + dy * dy;
@@ -2197,9 +2211,13 @@ impl Sim {
                 let dim = self.rules.sneak_sight;
                 let phase = &self.rs.phase;
                 let sheltered = &self.sheltered;
+                let calm = self.calm_above(s, attack.is_some() || hunter);
                 self.grid.for_neighbours(x, y, |t| {
                     let t = t as usize;
-                    if t == s || e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] || e.hidden[t] || e.god[t] {
+                    if t == s || e.owner[t] < DRIVEN && e.level[t] >= calm {
+                        return; // far over a fighter's level: it lets them be
+                    }
+                    if e.arch[t] == a && a != NO_ARCH || phase[t] != phase[s] || sheltered[t] || e.hidden[t] || e.god[t] {
                         return; // its own kind, in another phase (a dungeon's copy) it cannot meet, under a roof, indoors, or a god
                     }
                     if hunter && e.owner[t] >= DRIVEN {
@@ -2609,7 +2627,7 @@ impl Sim {
         let v = &mut self.ents.attrs[attr][s];
         let was = *v;
         *v = (*v + delta).clamp(a.min, a.max);
-        if attr == proto::defs::ATTR_HEALTH as usize && delta > 0.0 && !self.bosses.is_empty() {
+        if attr == proto::defs::ATTR_HEALTH as usize && delta > 0.0 && (!self.bosses.is_empty() || !self.hate.is_empty()) {
             // Mending someone in a boss fight draws its eye (what the heal really mended, not what it could have).
             let mended = self.ents.attrs[attr][s] - was;
             if let Some(by) = self.ents.resolve(src).filter(|_| mended > 0.0) {
@@ -2633,9 +2651,7 @@ impl Sim {
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s) {
                 self.engage(s, by);
                 self.last_hit[s] = Some(src);
-                if !self.bosses.is_empty() {
-                    self.add_threat(s, by, -delta, false);
-                }
+                self.add_threat(s, by, -delta, false);
             }
             if let Some(by) = self.ents.resolve(src).filter(|&b| b != s && self.ents.owner[b] < DRIVEN) {
                 if self.ents.owner[s] == NONE && self.ents.attrs[attr][s] > self.defs.attrs[attr].min {

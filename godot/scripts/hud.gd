@@ -36,6 +36,22 @@ static var ITEM_NOTES := {}
 
 ## Text from anyone else (chat, names, a plot's name in a server line) made safe for the BBCode chat log, so
 ## nobody can restyle, resize or fake lines on another player's screen.
+## How a foe of level `theirs` looks to a player of level `mine` (a "con"): its colour and a word. Grey when the
+## game's `calm_levels` say it will leave them be; red three levels up and more.
+static func con(mine: int, theirs: int, calm: int) -> Array:
+	var gap := theirs - mine
+	if calm > 0 and -gap >= calm:
+		return [Color("a09c94"), "No threat to you"]
+	if gap >= 3:
+		return [Color("ff6450"), "A deadly fight"]
+	if gap >= 1:
+		return [Color("ffd24a"), "A hard fight"]
+	if gap == 0:
+		return [Color("f3ead2"), "An even fight"]
+	if gap >= -2:
+		return [Color("78b4ff"), "Should be no trouble"]
+	return [Color("74d27a"), "An easy fight"]
+
 static func esc(text: String) -> String:
 	return text.replace("[", "[lb]")
 
@@ -820,10 +836,11 @@ func _show_potions() -> void:
 		chip.modulate.a = 0.55 + 0.45 * absf(sin(now * 4.0)) if left <= 5 else 1.0
 
 ## Your target's frame; an empty title hides it.
-func set_target(title: String, sub: String, bars: Array) -> void:
+func set_target(title: String, sub: String, bars: Array, col := TEXT, badges: Array = []) -> void:
 	target_frame.visible = title != ""
 	if target_frame.visible:
-		target_frame.set_data(title, sub, "?", bars, [])
+		target_frame.title_col = col
+		target_frame.set_data(title, sub, "?", bars, badges)
 
 ## The picture under the minimap: the theme's map of the whole world.
 func set_map(img: Image, world_size: float) -> void:
@@ -1144,6 +1161,7 @@ class Frame extends Control:
 	var bars: Array = []
 	var badges: Array = []
 	var hostile := false
+	var title_col := TEXT  # the name's colour: a foe's con
 
 	func _init() -> void:
 		custom_minimum_size = Vector2(W, 64)
@@ -1177,7 +1195,7 @@ class Frame extends Control:
 		draw_string(tf, pr.position + Vector2((pr.size.x - iw) / 2.0, pr.size.y / 2.0 + 9), initial, HORIZONTAL_ALIGNMENT_LEFT, -1, isz, Color("ff9a80") if hostile else ACCENT)
 		var x := h
 		var bw := W - x - 8
-		draw_string(tf, Vector2(x, 20), title, HORIZONTAL_ALIGNMENT_LEFT, bw - 60, 15, TEXT)
+		draw_string(tf, Vector2(x, 20), title, HORIZONTAL_ALIGNMENT_LEFT, bw - 60, 15, title_col)
 		draw_string(font, Vector2(x, 20), sub, HORIZONTAL_ALIGNMENT_RIGHT, bw, 12, MUTED)
 		var y := 27.0
 		for i in bars.size():

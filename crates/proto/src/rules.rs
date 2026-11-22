@@ -109,6 +109,12 @@ pub struct Rules {
     /// Seconds a player stands in a place with an exit (a travel stone) before it carries them; 0: at once. More
     /// than 0, they are told where it goes as they step on, and walking across one takes nobody anywhere.
     pub exit_dwell_secs: f32,
+    /// How near a bot that comes to blows with a player others of its kind (its faction, else its type) join the
+    /// fight, all at once; 0: each fights alone.
+    pub assist_reach: f32,
+    /// A player this many levels or more over a fighter is not set upon by it on sight (it fights back when
+    /// struck); 0: every fighter goes for whoever it is hostile to.
+    pub calm_levels: u8,
 }
 
 impl Default for Rules {
@@ -164,6 +170,8 @@ impl Default for Rules {
             season_days: 0.0,
             season_shift: 0.0,
             exit_dwell_secs: 0.0,
+            assist_reach: 0.0,
+            calm_levels: 0,
         }
     }
 }
@@ -188,6 +196,7 @@ impl Rules {
             ("market_reach", self.market_reach),
             ("hail_reach", self.hail_reach),
             ("wander_range", self.wander_range),
+            ("assist_reach", self.assist_reach),
         ];
         for (name, v) in reaches {
             if !(v.is_finite() && (0.0..=10_000.0).contains(&v)) {

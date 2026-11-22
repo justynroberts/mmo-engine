@@ -71,7 +71,9 @@ impl Sim {
             return;
         }
         let pid = self.ents.id_of(player);
-        let Some(f) = self.bosses.get_mut(&self.ents.id_of(boss)) else { return };
+        let Some(f) = self.bosses.get_mut(&self.ents.id_of(boss)) else {
+            return self.add_hate(boss, player, amount, taunt); // not a boss in a fight: its hate list
+        };
         let top = f.threat.iter().map(|t| t.1).fold(0.0f32, f32::max);
         let at = match f.threat.iter().position(|t| t.0 == pid) {
             Some(i) => i,
@@ -96,6 +98,12 @@ impl Sim {
         for b in bosses {
             if let Some(bs) = self.ents.resolve(b) {
                 self.add_threat(bs, healer, amount * 0.5, false);
+            }
+        }
+        let haters: Vec<u32> = self.hate.iter().filter(|(_, h)| h.iter().any(|t| t.0 == hid)).map(|(&k, _)| k).collect();
+        for b in haters {
+            if let Some(bs) = self.ents.resolve(b) {
+                self.add_hate(bs, healer, amount * 0.5, false);
             }
         }
     }

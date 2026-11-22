@@ -130,7 +130,7 @@ export function SettingsEditor({ game, setGame }: Edit) {
 const RULE_FIELDS: [string, [keyof Rules, string][]][] = [
   ['Reach', [['talk_reach', 'Talk'], ['pickup_reach', 'Pick up'], ['say_reach', 'Say'], ['shout_reach', 'Shout (0 all)'], ['remark_reach', 'Bot remark'], ['market_reach', 'Market']]],
   ['Pace', [['global_cooldown_secs', 'Global cd s'], ['item_cooldown_secs', 'Item cd s'], ['potion_cooldown_secs', 'Potion cd s'], ['ground_item_secs', 'Ground items s'], ['bot_say_secs', 'Bot talks every s'], ['dungeon_idle_secs', 'Empty dungeon s'], ['finder_wait_secs', 'Finder waits s']]],
-  ['Fights', [['sneak_sight', 'Sneak sight ×'], ['chase_give_up_secs', 'Chase gives up s'], ['pvp_quiet_secs', 'PvP calm s'], ['kill_credit_secs', 'Kill credit s']]],
+  ['Fights', [['sneak_sight', 'Sneak sight ×'], ['chase_give_up_secs', 'Chase gives up s'], ['pvp_quiet_secs', 'PvP calm s'], ['kill_credit_secs', 'Kill credit s'], ['assist_reach', 'Kin join within (0 alone)'], ['calm_levels', 'Ignores players levels over (0 never)']]],
   ['Falling', [['fall_xp_loss_pct', 'XP lost %'], ['fall_coin_loss_pct', 'Coin lost %'], ['fall_drop_pct', 'Bag dropped %'], ['rise_delay_secs', 'Rise after s']]],
   ['Hailing', [['hail_reach', 'Hail reach'], ['hail_secs', 'Stands for s']]],
   ['Travel', [['exit_dwell_secs', 'Stand on a stone s (0 at once)']]],

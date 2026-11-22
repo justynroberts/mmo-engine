@@ -173,6 +173,9 @@ def main():
     # The travel stones stand in the middle of Áth Cliath's square: crossing it carried newcomers across the country.
     # They carry a player who stands on one for two seconds (and say where they go), not one walking past.
     g.setdefault("rules", {})["exit_dwell_secs"] = 2.0
+    # Fights: a beast calls its kind within a few strides, and leaves be a player five levels over it.
+    g["rules"]["assist_reach"] = 25.0
+    g["rules"]["calm_levels"] = 5
     # A new character comes with a blade and a tunic, not only coin and bread: the boars outside the gates are
     # level four.
     have = {s_["item"] for s_ in g.get("starter", [])}

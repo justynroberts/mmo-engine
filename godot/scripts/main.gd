@@ -1008,6 +1008,8 @@ func _process(delta: float) -> void:
 				nm = "%s  %d" % [nm, int(round(float(e["level"])))] # their level beside their name
 			if label.text != nm:
 				label.text = nm
+			var con := _con_of(e)
+			label.modulate = con[0] if not con.is_empty() else Color.WHITE
 		var unlit := has_lit and float(e.get("lit", 1.0)) < 0.5
 		lit_of[id] = not unlit
 		if not mine and node.has_node("tag"):
@@ -1128,7 +1130,9 @@ func _process(delta: float) -> void:
 		elif e["id"] == target_id:
 			tgt_e = e
 	if target_id != 0 and ents.has(target_id) and not tgt_e.is_empty():
-		hud.set_target(_name(target_id), "%s away" % QuestsScript.far(_dist_to(target_id)), _bars(tgt_e, false))
+		var con := _con_of(tgt_e)
+		hud.set_target(_name(target_id), "%s away" % QuestsScript.far(_dist_to(target_id)), _bars(tgt_e, false),
+			con[0] if not con.is_empty() else HudScript.TEXT, [con[1]] if not con.is_empty() else [])
 		var party = net.party()
 		var mate := false
 		for id in party:
@@ -4207,6 +4211,13 @@ func _on_ability(name: String) -> void:
 		"social":
 			socialui.target_name = _name(target_id) if target_id != 0 and _players.has(target_id) else ""
 			socialui.toggle()
+
+## A bot's con against us (`HUD.con`: colour, word), or [] for players, those of no level, or a game without levels.
+func _con_of(e: Dictionary) -> Array:
+	var id := int(e.get("id", 0))
+	if my_level <= 0 or _players.has(id) or not e.has("level") or float(e["level"]) < 1.0:
+		return []
+	return HudScript.con(my_level, int(round(float(e["level"]))), int(_rule("calm_levels", 0.0)))
 
 ## The frame bars for an entity: every replicated attribute except the bookkeeping ones (airborne, lit).
 ## How full a bar of attribute `a` can be for entity `e`: a player's level ceiling when the pool grows with level
