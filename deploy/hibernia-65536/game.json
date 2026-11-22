@@ -2493,6 +2493,43 @@
     "Roche",
     "Scanlon",
     "Tully"
+   ],
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone",
+    "dundalk",
+    "kells",
+    "clonmel",
+    "tralee",
+    "downpatrick",
+    "ennis",
+    "roscommon",
+    "kildare",
+    "carlow",
+    "monaghan",
+    "donegal",
+    "westport",
+    "lismore",
+    "coleraine",
+    "enniskillen",
+    "belfast",
+    "mullingar",
+    "thurles",
+    "killarney",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "ardee",
+    "listowel"
    ]
   },
   {
@@ -2635,6 +2672,43 @@
     "Roche",
     "Scanlon",
     "Tully"
+   ],
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone",
+    "dundalk",
+    "kells",
+    "clonmel",
+    "tralee",
+    "downpatrick",
+    "ennis",
+    "roscommon",
+    "kildare",
+    "carlow",
+    "monaghan",
+    "donegal",
+    "westport",
+    "lismore",
+    "coleraine",
+    "enniskillen",
+    "belfast",
+    "mullingar",
+    "thurles",
+    "killarney",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "ardee",
+    "listowel"
    ]
   },
   {
@@ -2760,6 +2834,43 @@
     "Roche",
     "Scanlon",
     "Tully"
+   ],
+   "homes": [
+    "waterford",
+    "cork",
+    "limerick",
+    "galway",
+    "wexford",
+    "armagh",
+    "derry",
+    "kilkenny",
+    "drogheda",
+    "sligo",
+    "athlone",
+    "dundalk",
+    "kells",
+    "clonmel",
+    "tralee",
+    "downpatrick",
+    "ennis",
+    "roscommon",
+    "kildare",
+    "carlow",
+    "monaghan",
+    "donegal",
+    "westport",
+    "lismore",
+    "coleraine",
+    "enniskillen",
+    "belfast",
+    "mullingar",
+    "thurles",
+    "killarney",
+    "bantry",
+    "youghal",
+    "kinsale",
+    "ardee",
+    "listowel"
    ]
   },
   {
@@ -2879,7 +2990,7 @@
    "name": "maor bothair",
    "title": "Road Warden",
    "color": "#5b7aa0",
-   "count": 30,
+   "count": 10,
    "behaviour": "wander",
    "speed_mult": 0.7,
    "sight": 30.0,
@@ -10178,7 +10289,7 @@
    "sight": 40.0,
    "attack": null,
    "attrs": {},
-   "home": null,
+   "home": "talamh seilge dublin",
    "rules": [
     {
      "when": {
@@ -10193,7 +10304,49 @@
    ],
    "xp": 5,
    "level": 1,
-   "skill": "fiach"
+   "skill": "fiach",
+   "homes": [
+    "talamh seilge waterford",
+    "talamh seilge cork",
+    "talamh seilge limerick",
+    "talamh seilge galway",
+    "talamh seilge wexford",
+    "talamh seilge armagh",
+    "talamh seilge kilkenny",
+    "talamh seilge drogheda",
+    "talamh seilge sligo",
+    "talamh seilge athlone",
+    "talamh seilge dundalk",
+    "talamh seilge kells",
+    "talamh seilge clonmel",
+    "talamh seilge tralee",
+    "talamh seilge downpatrick",
+    "talamh seilge ennis",
+    "talamh seilge roscommon",
+    "talamh seilge kildare",
+    "talamh seilge carlow",
+    "talamh seilge monaghan",
+    "talamh seilge westport",
+    "talamh seilge lismore",
+    "talamh seilge enniskillen",
+    "talamh seilge mullingar",
+    "talamh seilge thurles",
+    "talamh seilge killarney",
+    "talamh seilge bantry",
+    "talamh seilge youghal",
+    "talamh seilge kinsale",
+    "talamh seilge ardee",
+    "talamh seilge listowel"
+   ],
+   "leash": 120.0,
+   "drops": [
+    {
+     "item": "craiceann sionnaigh",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 1
+    }
+   ]
   },
   {
    "name": "capall fiain",
@@ -11567,7 +11720,7 @@
    "name": "torc",
    "title": "Wild Boar",
    "color": "#5a3d2e",
-   "count": 600,
+   "count": 576,
    "behaviour": "wander",
    "speed_mult": 1.05,
    "sight": 30.0,
@@ -11575,7 +11728,7 @@
    "attrs": {
     "health": 110.0
    },
-   "home": null,
+   "home": "talamh seilge dublin thiar",
    "rules": [
     {
      "when": {
@@ -11599,7 +11752,41 @@
    "xp": 22,
    "level": 4,
    "loot": "creach iseal",
-   "skill": "fiach"
+   "skill": "fiach",
+   "homes": [
+    "talamh seilge waterford thiar",
+    "talamh seilge cork thiar",
+    "talamh seilge limerick thiar",
+    "talamh seilge galway thiar",
+    "talamh seilge wexford thiar",
+    "talamh seilge armagh thiar",
+    "talamh seilge kilkenny thiar",
+    "talamh seilge drogheda thiar",
+    "talamh seilge sligo thiar",
+    "talamh seilge athlone thiar",
+    "talamh seilge dundalk thiar",
+    "talamh seilge kells thiar",
+    "talamh seilge clonmel thiar",
+    "talamh seilge tralee thiar",
+    "talamh seilge downpatrick thiar",
+    "talamh seilge ennis thiar",
+    "talamh seilge roscommon thiar",
+    "talamh seilge kildare thiar",
+    "talamh seilge carlow thiar",
+    "talamh seilge monaghan thiar",
+    "talamh seilge westport thiar",
+    "talamh seilge lismore thiar",
+    "talamh seilge enniskillen thiar",
+    "talamh seilge mullingar thiar",
+    "talamh seilge thurles thiar",
+    "talamh seilge killarney thiar",
+    "talamh seilge bantry thiar",
+    "talamh seilge youghal thiar",
+    "talamh seilge kinsale thiar",
+    "talamh seilge ardee thiar",
+    "talamh seilge listowel thiar"
+   ],
+   "leash": 120.0
   },
   {
    "name": "gabha",
@@ -16165,7 +16352,7 @@
    "name": "broc",
    "title": "Badger",
    "color": "#6a6a6a",
-   "count": 500,
+   "count": 480,
    "behaviour": "wander",
    "speed_mult": 0.8,
    "sight": 20.0,
@@ -16173,7 +16360,7 @@
    "attrs": {
     "health": 30.0
    },
-   "home": null,
+   "home": "talamh seilge dublin",
    "rules": [
     {
      "when": {
@@ -16197,13 +16384,47 @@
    "xp": 10,
    "level": 1,
    "skill": "fiach",
-   "beast": "fox"
+   "beast": "fox",
+   "homes": [
+    "talamh seilge waterford",
+    "talamh seilge cork",
+    "talamh seilge limerick",
+    "talamh seilge galway",
+    "talamh seilge wexford",
+    "talamh seilge armagh",
+    "talamh seilge kilkenny",
+    "talamh seilge drogheda",
+    "talamh seilge sligo",
+    "talamh seilge athlone",
+    "talamh seilge dundalk",
+    "talamh seilge kells",
+    "talamh seilge clonmel",
+    "talamh seilge tralee",
+    "talamh seilge downpatrick",
+    "talamh seilge ennis",
+    "talamh seilge roscommon",
+    "talamh seilge kildare",
+    "talamh seilge carlow",
+    "talamh seilge monaghan",
+    "talamh seilge westport",
+    "talamh seilge lismore",
+    "talamh seilge enniskillen",
+    "talamh seilge mullingar",
+    "talamh seilge thurles",
+    "talamh seilge killarney",
+    "talamh seilge bantry",
+    "talamh seilge youghal",
+    "talamh seilge kinsale",
+    "talamh seilge ardee",
+    "talamh seilge listowel"
+   ],
+   "leash": 120.0
   },
   {
    "name": "giorria",
    "title": "Hare",
    "color": "#a58a6a",
-   "count": 900,
+   "count": 896,
    "behaviour": "wander",
    "speed_mult": 1.4,
    "sight": 30.0,
@@ -16211,7 +16432,7 @@
    "attrs": {
     "health": 15.0
    },
-   "home": null,
+   "home": "talamh seilge dublin",
    "rules": [
     {
      "when": {
@@ -16235,13 +16456,47 @@
    "xp": 10,
    "level": 1,
    "skill": "fiach",
-   "beast": "fox"
+   "beast": "fox",
+   "homes": [
+    "talamh seilge waterford",
+    "talamh seilge cork",
+    "talamh seilge limerick",
+    "talamh seilge galway",
+    "talamh seilge wexford",
+    "talamh seilge armagh",
+    "talamh seilge kilkenny",
+    "talamh seilge drogheda",
+    "talamh seilge sligo",
+    "talamh seilge athlone",
+    "talamh seilge dundalk",
+    "talamh seilge kells",
+    "talamh seilge clonmel",
+    "talamh seilge tralee",
+    "talamh seilge downpatrick",
+    "talamh seilge ennis",
+    "talamh seilge roscommon",
+    "talamh seilge kildare",
+    "talamh seilge carlow",
+    "talamh seilge monaghan",
+    "talamh seilge westport",
+    "talamh seilge lismore",
+    "talamh seilge enniskillen",
+    "talamh seilge mullingar",
+    "talamh seilge thurles",
+    "talamh seilge killarney",
+    "talamh seilge bantry",
+    "talamh seilge youghal",
+    "talamh seilge kinsale",
+    "talamh seilge ardee",
+    "talamh seilge listowel"
+   ],
+   "leash": 120.0
   },
   {
    "name": "tarbh fiain",
    "title": "Wild Bull",
    "color": "#3a2a22",
-   "count": 200,
+   "count": 192,
    "behaviour": "wander",
    "speed_mult": 1.1,
    "sight": 20.0,
@@ -16249,7 +16504,7 @@
    "attrs": {
     "health": 200.0
    },
-   "home": null,
+   "home": "talamh seilge dublin thiar",
    "rules": [
     {
      "when": {
@@ -16279,7 +16534,41 @@
    "xp": 34,
    "level": 5,
    "skill": "fiach",
-   "beast": "cow"
+   "beast": "cow",
+   "homes": [
+    "talamh seilge waterford thiar",
+    "talamh seilge cork thiar",
+    "talamh seilge limerick thiar",
+    "talamh seilge galway thiar",
+    "talamh seilge wexford thiar",
+    "talamh seilge armagh thiar",
+    "talamh seilge kilkenny thiar",
+    "talamh seilge drogheda thiar",
+    "talamh seilge sligo thiar",
+    "talamh seilge athlone thiar",
+    "talamh seilge dundalk thiar",
+    "talamh seilge kells thiar",
+    "talamh seilge clonmel thiar",
+    "talamh seilge tralee thiar",
+    "talamh seilge downpatrick thiar",
+    "talamh seilge ennis thiar",
+    "talamh seilge roscommon thiar",
+    "talamh seilge kildare thiar",
+    "talamh seilge carlow thiar",
+    "talamh seilge monaghan thiar",
+    "talamh seilge westport thiar",
+    "talamh seilge lismore thiar",
+    "talamh seilge enniskillen thiar",
+    "talamh seilge mullingar thiar",
+    "talamh seilge thurles thiar",
+    "talamh seilge killarney thiar",
+    "talamh seilge bantry thiar",
+    "talamh seilge youghal thiar",
+    "talamh seilge kinsale thiar",
+    "talamh seilge ardee thiar",
+    "talamh seilge listowel thiar"
+   ],
+   "leash": 120.0
   },
   {
    "name": "puca",
@@ -16901,7 +17190,8 @@
    "r": 70.0,
    "title": "Dún Dealgan",
    "sound": "sea",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "kells",
@@ -16910,7 +17200,8 @@
    "r": 70.0,
    "title": "Ceanannas",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "clonmel",
@@ -16919,7 +17210,8 @@
    "r": 70.0,
    "title": "Cluain Meala",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "tralee",
@@ -16929,7 +17221,8 @@
    "title": "Trá Lí",
    "sound": "sea",
    "music": "explore",
-   "dock": true
+   "dock": true,
+   "safe": true
   },
   {
    "name": "downpatrick",
@@ -16938,7 +17231,8 @@
    "r": 70.0,
    "title": "Dún Pádraig",
    "sound": "sea",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "ennis",
@@ -16947,7 +17241,8 @@
    "r": 70.0,
    "title": "Inis",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "roscommon",
@@ -16956,7 +17251,8 @@
    "r": 70.0,
    "title": "Ros Comáin",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "kildare",
@@ -16965,7 +17261,8 @@
    "r": 70.0,
    "title": "Cill Dara",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "carlow",
@@ -16974,7 +17271,8 @@
    "r": 70.0,
    "title": "Ceatharlach",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "monaghan",
@@ -16983,7 +17281,8 @@
    "r": 70.0,
    "title": "Muineachán",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "donegal",
@@ -16992,7 +17291,8 @@
    "r": 70.0,
    "title": "Dún na nGall",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "westport",
@@ -17002,7 +17302,8 @@
    "title": "Cathair na Mart",
    "sound": "sea",
    "music": "explore",
-   "dock": true
+   "dock": true,
+   "safe": true
   },
   {
    "name": "lismore",
@@ -17011,7 +17312,8 @@
    "r": 70.0,
    "title": "Lios Mór",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "coleraine",
@@ -17020,7 +17322,8 @@
    "r": 70.0,
    "title": "Cúil Raithin",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "enniskillen",
@@ -17029,7 +17332,8 @@
    "r": 70.0,
    "title": "Inis Ceithleann",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "belfast",
@@ -17039,7 +17343,8 @@
    "title": "Béal Feirste",
    "sound": "sea",
    "music": "explore",
-   "dock": true
+   "dock": true,
+   "safe": true
   },
   {
    "name": "mullingar",
@@ -17048,7 +17353,8 @@
    "r": 70.0,
    "title": "An Muileann gCearr",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "thurles",
@@ -17057,7 +17363,8 @@
    "r": 70.0,
    "title": "Durlas",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "killarney",
@@ -17066,7 +17373,8 @@
    "r": 70.0,
    "title": "Cill Airne",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "bantry",
@@ -17075,7 +17383,8 @@
    "r": 70.0,
    "title": "Beanntraí",
    "sound": "sea",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "youghal",
@@ -17084,7 +17393,8 @@
    "r": 70.0,
    "title": "Eochaill",
    "sound": "sea",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "kinsale",
@@ -17094,7 +17404,8 @@
    "title": "Ceann tSáile",
    "sound": "sea",
    "music": "explore",
-   "dock": true
+   "dock": true,
+   "safe": true
   },
   {
    "name": "ardee",
@@ -17103,7 +17414,8 @@
    "r": 70.0,
    "title": "Baile Átha Fhirdhia",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "listowel",
@@ -17112,7 +17424,8 @@
    "r": 70.0,
    "title": "Lios Tuathail",
    "sound": "town",
-   "music": "explore"
+   "music": "explore",
+   "safe": true
   },
   {
    "name": "dublin the black pool",
@@ -17217,7 +17530,7 @@
    "title": "Coill na Mac Tíre",
    "sound": "forest",
    "music": "night",
-   "safe": true
+   "safe": false
   },
   {
    "name": "dibheirgigh",
@@ -25544,6 +25857,582 @@
    "y": 48950.1,
    "r": 70.0,
    "title": "Cill na Coille"
+  },
+  {
+   "name": "talamh seilge dublin",
+   "x": 45083.1,
+   "y": 31821.4,
+   "r": 320.0,
+   "title": "Talamh Seilge Áth Cliath",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge dublin thiar",
+   "x": 44779.7,
+   "y": 29261.6,
+   "r": 380.0,
+   "title": "Talamh Seilge Áth Cliath Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge waterford",
+   "x": 39413.0,
+   "y": 48162.1,
+   "r": 320.0,
+   "title": "Talamh Seilge Port Láirge",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge waterford thiar",
+   "x": 41084.0,
+   "y": 47030.5,
+   "r": 380.0,
+   "title": "Talamh Seilge Port Láirge Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge cork",
+   "x": 28610.1,
+   "y": 53256.7,
+   "r": 320.0,
+   "title": "Talamh Seilge Corcaigh",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge cork thiar",
+   "x": 31230.9,
+   "y": 53506.2,
+   "r": 380.0,
+   "title": "Talamh Seilge Corcaigh Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge limerick",
+   "x": 26093.4,
+   "y": 44025.7,
+   "r": 320.0,
+   "title": "Talamh Seilge Luimneach",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge limerick thiar",
+   "x": 29250.1,
+   "y": 41059.3,
+   "r": 380.0,
+   "title": "Talamh Seilge Luimneach Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge galway",
+   "x": 24636.6,
+   "y": 35033.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Gaillimh",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge galway thiar",
+   "x": 25674.2,
+   "y": 33129.1,
+   "r": 380.0,
+   "title": "Talamh Seilge Gaillimh Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge wexford",
+   "x": 45539.3,
+   "y": 46973.3,
+   "r": 320.0,
+   "title": "Talamh Seilge Loch Garman",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge wexford thiar",
+   "x": 47434.1,
+   "y": 46141.7,
+   "r": 380.0,
+   "title": "Talamh Seilge Loch Garman Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge armagh",
+   "x": 43218.4,
+   "y": 20324.3,
+   "r": 320.0,
+   "title": "Talamh Seilge Ard Mhacha",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge armagh thiar",
+   "x": 40746.9,
+   "y": 19284.8,
+   "r": 380.0,
+   "title": "Talamh Seilge Ard Mhacha Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kilkenny",
+   "x": 39481.9,
+   "y": 42252.4,
+   "r": 320.0,
+   "title": "Talamh Seilge Cill Chainnigh",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kilkenny thiar",
+   "x": 36753.2,
+   "y": 42461.3,
+   "r": 380.0,
+   "title": "Talamh Seilge Cill Chainnigh Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge drogheda",
+   "x": 45451.3,
+   "y": 29051.9,
+   "r": 320.0,
+   "title": "Talamh Seilge Droichead Átha",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge drogheda thiar",
+   "x": 44019.6,
+   "y": 26437.8,
+   "r": 380.0,
+   "title": "Talamh Seilge Droichead Átha Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge sligo",
+   "x": 28661.4,
+   "y": 21373.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Sligeach",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge sligo thiar",
+   "x": 31428.4,
+   "y": 19945.5,
+   "r": 380.0,
+   "title": "Talamh Seilge Sligeach Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge athlone",
+   "x": 33789.9,
+   "y": 32458.6,
+   "r": 320.0,
+   "title": "Talamh Seilge Baile Átha Luain",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge athlone thiar",
+   "x": 33892.1,
+   "y": 34121.1,
+   "r": 380.0,
+   "title": "Talamh Seilge Baile Átha Luain Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge dundalk",
+   "x": 45186.1,
+   "y": 23779.1,
+   "r": 320.0,
+   "title": "Talamh Seilge Dún Dealgan",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge dundalk thiar",
+   "x": 43637.4,
+   "y": 26242.6,
+   "r": 380.0,
+   "title": "Talamh Seilge Dún Dealgan Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kells",
+   "x": 40964.5,
+   "y": 28767.3,
+   "r": 320.0,
+   "title": "Talamh Seilge Ceanannas",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kells thiar",
+   "x": 42179.0,
+   "y": 30971.4,
+   "r": 380.0,
+   "title": "Talamh Seilge Ceanannas Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge clonmel",
+   "x": 35505.4,
+   "y": 46838.0,
+   "r": 320.0,
+   "title": "Talamh Seilge Cluain Meala",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge clonmel thiar",
+   "x": 33271.0,
+   "y": 48500.2,
+   "r": 380.0,
+   "title": "Talamh Seilge Cluain Meala Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge tralee",
+   "x": 18141.4,
+   "y": 47815.9,
+   "r": 320.0,
+   "title": "Talamh Seilge Trá Lí",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge tralee thiar",
+   "x": 20156.5,
+   "y": 50753.7,
+   "r": 380.0,
+   "title": "Talamh Seilge Trá Lí Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge downpatrick",
+   "x": 50970.4,
+   "y": 20381.3,
+   "r": 320.0,
+   "title": "Talamh Seilge Dún Pádraig",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge downpatrick thiar",
+   "x": 48504.9,
+   "y": 18595.6,
+   "r": 380.0,
+   "title": "Talamh Seilge Dún Pádraig Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge ennis",
+   "x": 25166.3,
+   "y": 39988.9,
+   "r": 320.0,
+   "title": "Talamh Seilge Inis",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge ennis thiar",
+   "x": 25974.7,
+   "y": 41985.2,
+   "r": 380.0,
+   "title": "Talamh Seilge Inis Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge roscommon",
+   "x": 31612.8,
+   "y": 28578.2,
+   "r": 320.0,
+   "title": "Talamh Seilge Ros Comáin",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge roscommon thiar",
+   "x": 31346.9,
+   "y": 32291.5,
+   "r": 380.0,
+   "title": "Talamh Seilge Ros Comáin Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kildare",
+   "x": 40866.3,
+   "y": 36022.7,
+   "r": 320.0,
+   "title": "Talamh Seilge Cill Dara",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kildare thiar",
+   "x": 40969.7,
+   "y": 33594.5,
+   "r": 380.0,
+   "title": "Talamh Seilge Cill Dara Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge carlow",
+   "x": 40903.8,
+   "y": 39893.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Ceatharlach",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge carlow thiar",
+   "x": 38906.1,
+   "y": 41836.2,
+   "r": 380.0,
+   "title": "Talamh Seilge Ceatharlach Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge monaghan",
+   "x": 41494.0,
+   "y": 21993.7,
+   "r": 320.0,
+   "title": "Talamh Seilge Muineachán",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge monaghan thiar",
+   "x": 38079.6,
+   "y": 21482.8,
+   "r": 380.0,
+   "title": "Talamh Seilge Muineachán Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge westport",
+   "x": 20979.7,
+   "y": 26737.9,
+   "r": 320.0,
+   "title": "Talamh Seilge Cathair na Mart",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge westport thiar",
+   "x": 20967.8,
+   "y": 28546.8,
+   "r": 380.0,
+   "title": "Talamh Seilge Cathair na Mart Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge lismore",
+   "x": 32446.9,
+   "y": 50141.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Lios Mór",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge lismore thiar",
+   "x": 34007.9,
+   "y": 48805.7,
+   "r": 380.0,
+   "title": "Talamh Seilge Lios Mór Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge enniskillen",
+   "x": 34411.1,
+   "y": 18742.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Inis Ceithleann",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge enniskillen thiar",
+   "x": 36236.4,
+   "y": 21394.2,
+   "r": 380.0,
+   "title": "Talamh Seilge Inis Ceithleann Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge mullingar",
+   "x": 37165.8,
+   "y": 30820.6,
+   "r": 320.0,
+   "title": "Talamh Seilge An Muileann gCearr",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge mullingar thiar",
+   "x": 36830.0,
+   "y": 33713.9,
+   "r": 380.0,
+   "title": "Talamh Seilge An Muileann gCearr Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge thurles",
+   "x": 33559.7,
+   "y": 42334.8,
+   "r": 320.0,
+   "title": "Talamh Seilge Durlas",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge thurles thiar",
+   "x": 36038.7,
+   "y": 40697.3,
+   "r": 380.0,
+   "title": "Talamh Seilge Durlas Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge killarney",
+   "x": 20120.5,
+   "y": 50530.4,
+   "r": 320.0,
+   "title": "Talamh Seilge Cill Airne",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge killarney thiar",
+   "x": 21595.0,
+   "y": 52488.3,
+   "r": 380.0,
+   "title": "Talamh Seilge Cill Airne Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge bantry",
+   "x": 19849.8,
+   "y": 55925.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Beanntraí",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge bantry thiar",
+   "x": 22453.6,
+   "y": 56263.7,
+   "r": 380.0,
+   "title": "Talamh Seilge Beanntraí Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge youghal",
+   "x": 34339.3,
+   "y": 51939.2,
+   "r": 320.0,
+   "title": "Talamh Seilge Eochaill",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge youghal thiar",
+   "x": 31797.8,
+   "y": 51091.8,
+   "r": 380.0,
+   "title": "Talamh Seilge Eochaill Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kinsale",
+   "x": 28199.7,
+   "y": 55862.5,
+   "r": 320.0,
+   "title": "Talamh Seilge Cionn tSáile",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge kinsale thiar",
+   "x": 25513.7,
+   "y": 55817.0,
+   "r": 380.0,
+   "title": "Talamh Seilge Cionn tSáile Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge ardee",
+   "x": 44000.9,
+   "y": 26587.2,
+   "r": 320.0,
+   "title": "Talamh Seilge Baile Átha Fhirdia",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge ardee thiar",
+   "x": 44745.1,
+   "y": 29359.1,
+   "r": 380.0,
+   "title": "Talamh Seilge Baile Átha Fhirdia Thiar",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge listowel",
+   "x": 20698.2,
+   "y": 45396.6,
+   "r": 320.0,
+   "title": "Talamh Seilge Lios Tuathail",
+   "sound": "forest",
+   "music": "explore"
+  },
+  {
+   "name": "talamh seilge listowel thiar",
+   "x": 21513.4,
+   "y": 47106.5,
+   "r": 380.0,
+   "title": "Talamh Seilge Lios Tuathail Thiar",
+   "sound": "forest",
+   "music": "explore"
   }
  ],
  "routes": [
@@ -28971,6 +29860,15 @@
    "value": 20,
    "rarity": "rare",
    "dye": "#5b2a6e"
+  },
+  {
+   "name": "craiceann sionnaigh",
+   "title": "Fox Pelt",
+   "color": "#b5622d",
+   "stack_max": 10,
+   "uses": [],
+   "consume": false,
+   "value": 2
   }
  ],
  "weather": [
@@ -29940,14 +30838,14 @@
   {
    "name": "pelts for the winter",
    "title": "Pelts for the Winter",
-   "text": "Winter is coming hard. Bring me four wolf pelts and the children will sleep warm.",
+   "text": "Winter is coming hard. Bring me four fox pelts and the children will sleep warm.",
    "done_text": "Fine pelts. The little ones will thank you.",
    "giver": "aoire",
    "after": "wolves at the fold",
    "steps": [
     {
      "kind": "collect",
-     "item": "craiceann mic tire",
+     "item": "craiceann sionnaigh",
      "count": 4
     }
    ],
@@ -30065,7 +30963,8 @@
      "item": "pingin airgid",
      "count": 3
     }
-   ]
+   ],
+   "level": 5
   },
   {
    "name": "the fishers worry",
@@ -30079,7 +30978,8 @@
      "place": "loch neathach"
     }
    ],
-   "xp": 90
+   "xp": 500,
+   "level": 6
   },
   {
    "name": "the restless dead",
@@ -30249,14 +31149,14 @@
   {
    "name": "pelts for coin",
    "title": "Pelts for Coin",
-   "text": "Wolf pelts keep a shepherd warm. Three more, whenever you have them.",
+   "text": "Fox pelts keep a shepherd warm. Three more, whenever you have them.",
    "done_text": "Warm nights ahead.",
    "giver": "aoire",
    "after": "pelts for the winter",
    "steps": [
     {
      "kind": "collect",
-     "item": "craiceann mic tire",
+     "item": "craiceann sionnaigh",
      "count": 3
     }
    ],
@@ -30611,7 +31511,7 @@
    "done_text": "Graves opened at both? Then it is as the book says.",
    "opening": "Words in the Book\n\"When Crom Dubh walks, the stone will sleep.\"",
    "giver": "manach",
-   "level": 3,
+   "level": 6,
    "after": "the monks of kells",
    "steps": [
     {
@@ -30637,7 +31537,7 @@
    "text": "The dead walk out of Brú na Bóinne at night, the sluagh, his host. Thin them, before they reach the towns.",
    "done_text": "The host is thinner. But he is still in his mound.",
    "giver": "manach",
-   "level": 5,
+   "level": 6,
    "after": "words in the book",
    "steps": [
     {
@@ -30705,7 +31605,8 @@
      "item": "fainne oir",
      "count": 1
     }
-   ]
+   ],
+   "level": 8
   },
   {
    "name": "ore for the forge",
@@ -31726,8 +32627,6 @@
    "text": "Port Láirge is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "clonmel",
-   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -31745,7 +32644,9 @@
      "item": "pingin airgid",
      "count": 9
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "clonmel"
   },
   {
    "name": "the road to cork",
@@ -31753,12 +32654,10 @@
    "text": "Travellers to Corcaigh keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "cork",
-   "level": 5,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "bear",
+     "archetype": "torc",
      "count": 8
     },
     {
@@ -31766,17 +32665,19 @@
      "place": "cork"
     }
    ],
-   "xp": 440,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 14
+     "count": 12
     },
     {
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "cork"
   },
   {
    "name": "word to ennis from limerick",
@@ -31784,8 +32685,6 @@
    "text": "There's news for Inis that won't keep. Walk there and tell them what you've seen on the road from Luimneach.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "limerick",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -31798,7 +32697,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "limerick"
   },
   {
    "name": "word to ennis from galway",
@@ -31806,8 +32707,6 @@
    "text": "There's news for Inis that won't keep. Walk there and tell them what you've seen on the road from Gaillimh.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "galway",
-   "level": 3,
    "steps": [
     {
      "kind": "visit",
@@ -31820,7 +32719,9 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "galway"
   },
   {
    "name": "supplies for wexford",
@@ -31828,8 +32729,6 @@
    "text": "Loch Garman is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "waterford",
-   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -31847,7 +32746,9 @@
      "item": "pingin airgid",
      "count": 9
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "waterford"
   },
   {
    "name": "the road to armagh",
@@ -31855,8 +32756,6 @@
    "text": "Travellers to Ard Mhacha keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "armagh",
-   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -31878,7 +32777,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "armagh"
   },
   {
    "name": "word to coleraine from derry",
@@ -31886,8 +32787,6 @@
    "text": "There's news for Cúil Raithin that won't keep. Walk there and tell them what you've seen on the road from Doire.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "derry",
-   "level": 3,
    "steps": [
     {
      "kind": "visit",
@@ -31900,7 +32799,9 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "derry"
   },
   {
    "name": "word to carlow from kilkenny",
@@ -31908,8 +32809,6 @@
    "text": "There's news for Ceatharlach that won't keep. Walk there and tell them what you've seen on the road from Cill Chainnigh.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "kilkenny",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -31922,7 +32821,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "kilkenny"
   },
   {
    "name": "supplies for drogheda",
@@ -31930,8 +32831,6 @@
    "text": "Droichead Átha is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "ardee",
-   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -31949,7 +32848,9 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ]
+   ],
+   "level": 1,
+   "offered_at": "ardee"
   },
   {
    "name": "the road to sligo",
@@ -31957,8 +32858,6 @@
    "text": "Travellers to Sligeach keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "sligo",
-   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -31980,7 +32879,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "sligo"
   },
   {
    "name": "word to roscommon from athlone",
@@ -31988,8 +32889,6 @@
    "text": "There's news for Ros Comáin that won't keep. Walk there and tell them what you've seen on the road from Baile Átha Luain.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "athlone",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32002,7 +32901,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "athlone"
   },
   {
    "name": "word to ardee from dundalk",
@@ -32010,8 +32911,6 @@
    "text": "There's news for Baile Átha Fhirdia that won't keep. Walk there and tell them what you've seen on the road from Dún Dealgan.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "dundalk",
-   "level": 1,
    "steps": [
     {
      "kind": "visit",
@@ -32024,7 +32923,9 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ]
+   ],
+   "level": 1,
+   "offered_at": "dundalk"
   },
   {
    "name": "supplies for kells",
@@ -32032,8 +32933,6 @@
    "text": "Ceanannas is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "ardee",
-   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -32051,7 +32950,9 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "ardee"
   },
   {
    "name": "the road to clonmel",
@@ -32059,8 +32960,6 @@
    "text": "Travellers to Cluain Meala keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "clonmel",
-   "level": 5,
    "steps": [
     {
      "kind": "kill",
@@ -32082,7 +32981,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 5,
+   "offered_at": "clonmel"
   },
   {
    "name": "word to listowel from tralee",
@@ -32090,8 +32991,6 @@
    "text": "There's news for Lios Tuathail that won't keep. Walk there and tell them what you've seen on the road from Trá Lí.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "tralee",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32104,7 +33003,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "tralee"
   },
   {
    "name": "word to belfast from downpatrick",
@@ -32112,8 +33013,6 @@
    "text": "There's news for Béal Feirste that won't keep. Walk there and tell them what you've seen on the road from Dún Pádraig.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "downpatrick",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32126,7 +33025,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "downpatrick"
   },
   {
    "name": "supplies for ennis",
@@ -32134,8 +33035,6 @@
    "text": "Inis is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "limerick",
-   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -32153,7 +33052,9 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "limerick"
   },
   {
    "name": "the road to roscommon",
@@ -32161,8 +33062,6 @@
    "text": "Travellers to Ros Comáin keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "roscommon",
-   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -32184,7 +33083,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "roscommon"
   },
   {
    "name": "word to carlow from kildare",
@@ -32192,8 +33093,6 @@
    "text": "There's news for Ceatharlach that won't keep. Walk there and tell them what you've seen on the road from Cill Dara.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "kildare",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32206,7 +33105,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "kildare"
   },
   {
    "name": "word to kilkenny from carlow",
@@ -32214,8 +33115,6 @@
    "text": "There's news for Cill Chainnigh that won't keep. Walk there and tell them what you've seen on the road from Ceatharlach.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "carlow",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32228,7 +33127,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "carlow"
   },
   {
    "name": "supplies for monaghan",
@@ -32236,8 +33137,6 @@
    "text": "Muineachán is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "armagh",
-   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -32255,7 +33154,9 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ]
+   ],
+   "level": 1,
+   "offered_at": "armagh"
   },
   {
    "name": "the road to donegal",
@@ -32263,8 +33164,6 @@
    "text": "Travellers to Dún na nGall keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "donegal",
-   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -32286,7 +33185,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "donegal"
   },
   {
    "name": "word to galway from westport",
@@ -32294,8 +33195,6 @@
    "text": "There's news for Gaillimh that won't keep. Walk there and tell them what you've seen on the road from Cathair na Mart.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "westport",
-   "level": 4,
    "steps": [
     {
      "kind": "visit",
@@ -32308,7 +33207,9 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ]
+   ],
+   "level": 4,
+   "offered_at": "westport"
   },
   {
    "name": "word to youghal from lismore",
@@ -32316,8 +33217,6 @@
    "text": "There's news for Eochaill that won't keep. Walk there and tell them what you've seen on the road from Lios Mór.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "lismore",
-   "level": 1,
    "steps": [
     {
      "kind": "visit",
@@ -32330,7 +33229,9 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ]
+   ],
+   "level": 1,
+   "offered_at": "lismore"
   },
   {
    "name": "supplies for coleraine",
@@ -32338,8 +33239,6 @@
    "text": "Cúil Raithin is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "derry",
-   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -32357,7 +33256,9 @@
      "item": "pingin airgid",
      "count": 9
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "derry"
   },
   {
    "name": "the road to enniskillen",
@@ -32365,8 +33266,6 @@
    "text": "Travellers to Inis Ceithleann keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "enniskillen",
-   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -32388,7 +33287,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "enniskillen"
   },
   {
    "name": "word to downpatrick from belfast",
@@ -32396,8 +33297,6 @@
    "text": "There's news for Dún Pádraig that won't keep. Walk there and tell them what you've seen on the road from Béal Feirste.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "belfast",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32410,7 +33309,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "belfast"
   },
   {
    "name": "word to kells from mullingar",
@@ -32418,8 +33319,6 @@
    "text": "There's news for Ceanannas that won't keep. Walk there and tell them what you've seen on the road from An Muileann gCearr.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "mullingar",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32432,7 +33331,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "mullingar"
   },
   {
    "name": "supplies for thurles",
@@ -32440,8 +33341,6 @@
    "text": "Durlas is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "kilkenny",
-   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -32459,7 +33358,9 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "kilkenny"
   },
   {
    "name": "the road to killarney",
@@ -32467,8 +33368,6 @@
    "text": "Travellers to Cill Airne keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "killarney",
-   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -32490,7 +33389,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "killarney"
   },
   {
    "name": "word to killarney from bantry",
@@ -32498,8 +33399,6 @@
    "text": "There's news for Cill Airne that won't keep. Walk there and tell them what you've seen on the road from Beanntraí.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "bantry",
-   "level": 3,
    "steps": [
     {
      "kind": "visit",
@@ -32512,7 +33411,9 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ]
+   ],
+   "level": 3,
+   "offered_at": "bantry"
   },
   {
    "name": "word to lismore from youghal",
@@ -32520,8 +33421,6 @@
    "text": "There's news for Lios Mór that won't keep. Walk there and tell them what you've seen on the road from Eochaill.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "offered_at": "youghal",
-   "level": 1,
    "steps": [
     {
      "kind": "visit",
@@ -32534,7 +33433,9 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ]
+   ],
+   "level": 1,
+   "offered_at": "youghal"
   },
   {
    "name": "supplies for kinsale",
@@ -32542,8 +33443,6 @@
    "text": "Cionn tSáile is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "offered_at": "cork",
-   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -32561,7 +33460,9 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ]
+   ],
+   "level": 1,
+   "offered_at": "cork"
   },
   {
    "name": "the road to ardee",
@@ -32569,8 +33470,6 @@
    "text": "Travellers to Baile Átha Fhirdia keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "offered_at": "ardee",
-   "level": 5,
    "steps": [
     {
      "kind": "kill",
@@ -32592,7 +33491,9 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ]
+   ],
+   "level": 5,
+   "offered_at": "ardee"
   },
   {
    "name": "word to tralee from listowel",
@@ -32600,8 +33501,6 @@
    "text": "There's news for Trá Lí that won't keep. Walk there and tell them what you've seen on the road from Lios Tuathail.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "offered_at": "listowel",
-   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -32614,7 +33513,9 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ]
+   ],
+   "level": 2,
+   "offered_at": "listowel"
   },
   {
    "name": "a horse for the road",

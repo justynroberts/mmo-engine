@@ -103,6 +103,15 @@ def main():
             have = set(a.get("homes") or []) | {a.get("home")}
             a["homes"] = (a.get("homes") or []) + [n for n in pool if n not in have]
 
+    # ---- hunting grounds by every town, for the beasts new players are sent after
+    hunting_grounds(g, towns, TOWN_TITLES)
+    for p_ in g["places"]:
+        if p_["name"] in towns:
+            p_["safe"] = True  # a player who falls rises in the nearest safe place: their own town's, not a far one
+        elif p_["name"] in UNSAFE:
+            p_["safe"] = False
+    places = {p_["name"] for p_ in g["places"]}
+
     # ---- shops for the new folk and the old traders
     for who, stock in SHOPS.items():
         a = arch.get(who)
@@ -145,6 +154,14 @@ def main():
     # Áth Cliath, and the long journeys held back until a player can make them.
     for q in g["quests"]:
         q.update(QUEST_FIXES.get(q["name"], {}))
+    # A quest that follows another is offered no sooner than that one: "level 0" behind a level-8 quest only
+    # misled the quest log and the curve.
+    byname = {q["name"]: q for q in g["quests"]}
+    for _ in range(8):
+        for q in g["quests"]:
+            before = byname.get(q.get("after") or "")
+            if before and before.get("level", 0) > q.get("level", 0):
+                q["level"] = before["level"]
     # The curve fitted to the quests (the cap once came from the first wave's quests alone): those of a level and
     # below leave a player about two levels above it, and all of them reach the cap.
     if g.get("levels"):
@@ -450,6 +467,7 @@ ITEMS = [
     stuff("cuileann", "Holly Branch", "#3f6a3a", 2, 10),
     stuff("olann", "Wool", "#efe8d8", 1),
     stuff("craiceann broic", "Badger Pelt", "#7a7a7a", 2, 10),
+    stuff("craiceann sionnaigh", "Fox Pelt", "#b5622d", 2, 10),
     stuff("craiceann beir", "Bear Pelt", "#4a3628", 6, 10, "uncommon"),
     stuff("craiceann trolla", "Troll Hide", "#9a8466", 10, 10, "uncommon"),
     stuff("lann peiste", "Wyrm Scale", "#4a7a6a", 15, 10, "rare"),
@@ -596,6 +614,8 @@ TROPHIES = {
     "troll cnoic": [{"item": "craiceann trolla", "chance_pct": 45.0, "min": 1, "max": 1}],
     "troll sneachta": [{"item": "craiceann trolla", "chance_pct": 60.0, "min": 1, "max": 2}],
     "fomhorach": [{"item": "cnamh fomhorach", "chance_pct": 20.0, "min": 1, "max": 1}],
+    # Foxes gave nothing, and the shepherd wanted pelts from the wolves a day's walk away.
+    "sionnach": [{"item": "craiceann sionnaigh", "chance_pct": 60.0, "min": 1, "max": 1}],
     "fia": [{"item": "feoil", "chance_pct": 60.0, "min": 1, "max": 2}],
     "damh": [{"item": "feoil", "chance_pct": 80.0, "min": 1, "max": 3}],
     "cearc": [{"item": "ubh", "chance_pct": 50.0, "min": 1, "max": 2}],
@@ -691,6 +711,57 @@ QUESTS = [
 ]
 
 
+# Places marked safe by mistake: a player who falls rises in the nearest safe place, which was among the wolves.
+UNSAFE = ["coill na mac tire"]
+
+# The beasts new players hunt lived anywhere at all over the 65,536 map (no home), so nothing could point to them and
+# the nearest might be a long walk off. They live in hunting grounds by each town instead: the small game in the
+# near one, the boars and bulls in one further out.
+GROUND_NEAR = ["sionnach", "giorria", "broc"]
+GROUND_FAR = ["torc", "tarbh fiain"]
+
+
+def hunting_grounds(g, towns, titles):
+    """Two hunting grounds by each town, round a farm or village (so on dry land) about a kilometre and two and a
+    half off, inland (towards the middle of the towns, away from the sea) and in different directions; GROUND_NEAR
+    and GROUND_FAR live in them. Made the same way every run."""
+    pos = {p["name"]: p for p in g["places"]}
+    spots = [p for p in g["places"] if p["name"].startswith(("feirm ", "sraidbhaile "))]
+    keep = [p for p in g["places"] if not p["name"].startswith("talamh seilge ")]
+    mid = [sum(pos[t][k] for t in towns if t in pos) / max(1, sum(t in pos for t in towns)) for k in ("x", "y")]
+    near, far = [], []
+    for t in towns:
+        if t not in pos:
+            continue
+        tx, ty = pos[t]["x"], pos[t]["y"]
+        dist = lambda p: ((p["x"] - tx) ** 2 + (p["y"] - ty) ** 2) ** 0.5
+        cos = lambda p, x, y: ((p["x"] - tx) * x + (p["y"] - ty) * y) / max(1.0, dist(p) * (x * x + y * y) ** 0.5)
+        inland = lambda p: cos(p, mid[0] - tx, mid[1] - ty)
+        a = max((p for p in spots if 600 <= dist(p) <= 1300), key=inland, default=None)
+        # The far one at least sixty degrees round from the near one, so the boars are not on the hares' doorstep.
+        b = a and max((p for p in spots if 1700 <= dist(p) <= 3000 and cos(p, a["x"] - tx, a["y"] - ty) < 0.5), key=inland, default=None)
+        tt = titles.get(t, t.title())
+        for which, p, r, out in (("", a, 320.0, near), (" thiar", b, 380.0, far)):
+            if p is None:
+                continue
+            # Pushed out past the village or farm, away from the town, so its folk are at the edge of it.
+            d = max(1.0, dist(p))
+            x, y = p["x"] + (p["x"] - tx) / d * 150.0, p["y"] + (p["y"] - ty) / d * 150.0
+            name = f"talamh seilge {t}{which}"
+            keep.append({"name": name, "x": round(x, 1), "y": round(y, 1), "r": r,
+                         "title": f"Talamh Seilge {tt}" + (" Thiar" if which else ""), "sound": "forest", "music": "explore"})
+            out.append(name)
+    g["places"] = keep
+    arch = {a["name"]: a for a in g["archetypes"]}
+    for names, grounds in ((GROUND_NEAR, near), (GROUND_FAR, far)):
+        for n in names:
+            if n in arch and grounds:
+                arch[n]["home"], arch[n]["homes"] = grounds[0], grounds[1:]
+                arch[n]["leash"] = 120.0
+                # A whole number to a ground, and a count changed so the server places them anew.
+                arch[n]["count"] = max(len(grounds), arch[n]["count"] // len(grounds) * len(grounds))
+
+
 def town_errands(towns, places, g):
     """An errand for every big town, given there by its own folk: word carried to its nearest neighbour, supplies
     for it brought from that neighbour, or the road cleared of whatever hostile lives nearest it."""
@@ -727,7 +798,10 @@ def town_errands(towns, places, g):
                          f"{tt} is short this season. Carry five of {food_} there and see the market stocked.",
                          "Stocked, and the price come down. Well done.", [get(food_, 5), visit(t)], 120 + 25 * lvl, [(P, 6 + lvl)], level=lvl, offered_at=nb))
         else:
-            th, tl, _ = min(lairs, key=lambda l: d2(l[2], pos[t])) if lairs else (threats[0], 2, None)
+            # The boars live by every town now: the nearest of anything else, unless that is a long way off.
+            ranked = sorted(lairs, key=lambda l: d2(l[2], pos[t]))
+            other = [l for l in ranked if l[0] not in GROUND_FAR and d2(l[2], pos[t]) < 6000.0 ** 2]
+            th, tl, _ = (other or ranked)[0] if ranked else (threats[0], 2, None)
             out.append(q(f"the road to {t}", f"The Road to {tt}", giver,
                          f"Travellers to {tt} keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
                          "The road's open. The carters will thank you.", [kill(th, 8), visit(t)], 200 + 40 * tl, [(P, 8 + tl), ("deoch leighis", 2)], level=max(1, tl - 1), offered_at=t))
@@ -749,6 +823,12 @@ QUEST_FIXES = {
                            "steps": [{"kind": "kill", "archetype": "sionnach", "count": 5}]},
     "the watchs bounty": {"text": "The watch pays a bounty on the boars tearing up the roads and the fields round the city. Four of them, and the coin is yours. Come back tomorrow and there'll be more.",
                           "steps": [{"kind": "kill", "archetype": "torc", "count": 4}], "level": 3, "xp": 160},
+    "pelts for the winter": {"text": "Winter is coming hard. Bring me four fox pelts and the children will sleep warm.",
+                             "steps": [{"kind": "collect", "item": "craiceann sionnaigh", "count": 4}]},
+    "pelts for coin": {"text": "Fox pelts keep a shepherd warm. Three more, whenever you have them.",
+                       "steps": [{"kind": "collect", "item": "craiceann sionnaigh", "count": 3}]},
+    # The fisher lives in Loch Garman; Loch nEathach is the far end of the country from there.
+    "the fishers worry": {"level": 6, "xp": 500},
     # Journeys: for when a player has a horse under them and the legs for it.
     "the road to glendalough": {"level": 3, "xp": 180},
     "the holy well": {"level": 6, "xp": 420},

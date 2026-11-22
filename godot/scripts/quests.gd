@@ -21,6 +21,8 @@ var _quests: Array = []                 # /play/info quests
 var _mine: Array = []                   # [{quest, step, count, state}]
 var _offer := -1
 var _step_labels: Array = []            # the tracker's "what next" line per quest in _mine order (null for none)
+var homes_all: Dictionary = {}          # /play/info "homes_all": every home of the kinds quests send players to
+var here := Vector2.INF                 # where we are, for the nearest of those
 
 func _ready() -> void:
 	layer = 6
@@ -171,9 +173,10 @@ func next_step(m: Dictionary) -> String:
 	var need := int(steps[i].get("need", 1))
 	return String(steps[i]["text"]) + ("  %d/%d" % [int(m["count"]), need] if need > 1 else "")
 
-## Where each of our quests wants us next: [[Vector2, quest title, radius], ...] in _mine order: the current step's
-## place (/play/info steps' "at": the place, or where the bots to beat or speak to live), or the one to hand it in
-## to, from `homes` (/play/info "homes"). A step with nowhere to show (bring N of something) is left out.
+## Where each of our quests wants us next: [[Vector2, quest title, radius], ...] in _mine order. For a step, the
+## nearest home of the kinds it names (/play/info steps' "kinds": those to beat or speak to, or that drop what is to
+## be brought), else its "at" (a place to go); for a quest done, the nearest home of the one to hand it in to. A
+## step with nowhere to show is left out.
 func goals(homes: Dictionary) -> Array:
 	var out := []
 	for m in _mine:
@@ -187,17 +190,37 @@ func _goal(m: Dictionary, homes: Dictionary) -> Array:
 	var q: Dictionary = _quests[qi]
 	var at = null
 	if int(m["state"]) == 1:
-		at = homes.get(String(q.get("turn_in", "")))
+		at = nearest_home([String(q.get("turn_in", ""))], homes)
 	else:
 		var steps: Array = q.get("steps", [])
 		if int(m["step"]) < steps.size():
-			at = steps[int(m["step"])].get("at")
+			var st: Dictionary = steps[int(m["step"])]
+			at = nearest_home(st["kinds"], homes) if st.get("kinds") is Array else st.get("at")
+			if at == null:
+				at = st.get("at")
 	if not (at is Array) or at.size() < 2:
 		return []
 	return [Vector2(float(at[0]), float(at[1])), String(q["title"]), float(at[2]) if at.size() > 2 else 0.0]
 
+## The home nearest `here` of any of the bot kinds `kinds` (/play/info "homes_all", else the one in `homes`), as
+## [x, y, r], or null when none of them lives anywhere.
+func nearest_home(kinds: Array, homes: Dictionary):
+	var best = null
+	var best_d := INF
+	for k in kinds:
+		var list: Array = homes_all[k] if homes_all.get(k) is Array else ([homes[k]] if homes.get(k) is Array else [])
+		for h in list:
+			if not (h is Array) or h.size() < 2:
+				continue
+			var d := 0.0 if here == Vector2.INF else here.distance_squared_to(Vector2(float(h[0]), float(h[1])))
+			if d < best_d:
+				best_d = d
+				best = h
+	return best
+
 ## The tracker's lines with how far and which way each goal is from `me` (called a couple of times a second).
 func update_distances(me: Vector2, homes: Dictionary) -> void:
+	here = me
 	for i in mini(_mine.size(), _step_labels.size()):
 		var l = _step_labels[i]
 		if l == null or not is_instance_valid(l):
@@ -316,12 +339,12 @@ const OFFERED_REACH := 400.0
 
 ## Whether a quest could be offered to us now (for the ! over a giver): not held, or done and repeatable (or daily
 ## and handed in on another day, the day kept in its count); our level high enough; the quest before it done; and,
-## for a town's own errand, our being in or near that town (`here`, world units; INF: anywhere).
-func available(index: int, my_level: int, here := Vector2.INF) -> bool:
+## for a town's own errand, our being in or near that town (`pos`, world units; INF: anywhere).
+func available(index: int, my_level: int, pos := Vector2.INF) -> bool:
 	var q: Dictionary = _quests[index]
 	var at = q.get("offered_at")
-	if at is Array and at.size() >= 3 and here != Vector2.INF:
-		if here.distance_to(Vector2(float(at[0]), float(at[1]))) > float(at[2]) + OFFERED_REACH:
+	if at is Array and at.size() >= 3 and pos != Vector2.INF:
+		if pos.distance_to(Vector2(float(at[0]), float(at[1]))) > float(at[2]) + OFFERED_REACH:
 			return false
 	for m in _mine:
 		var again: bool = bool(q.get("repeatable", false)) or (bool(q.get("daily", false)) and int(m["count"]) != int(Time.get_unix_time_from_system() / 86400.0))
@@ -340,10 +363,12 @@ func available(index: int, my_level: int, here := Vector2.INF) -> bool:
 	return true
 
 ## For markers: by giver name, "!" (a quest to take) or "?" (one to hand in, which wins).
-func marks(my_level: int, here := Vector2.INF) -> Dictionary:
+func marks(my_level: int, at := Vector2.INF) -> Dictionary:
+	if at != Vector2.INF:
+		here = at
 	var out := {}
 	for i in _quests.size():
-		if available(i, my_level, here):
+		if available(i, my_level, at):
 			out[String(_quests[i]["giver"])] = "!"
 	for m in _mine:
 		if int(m["quest"]) >= _quests.size():

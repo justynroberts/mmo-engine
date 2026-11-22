@@ -3280,3 +3280,47 @@ fn a_new_player_comes_into_the_world_at_the_start_place() {
         assert!((x - px).hypot(y - py) <= pr + 1.0, "came in at {x},{y}, not in the start place at {px},{py} (r {pr})");
     }
 }
+
+/// A console edit that moves a bot type to other homes (its count unchanged) puts its bots there, and /play/info
+/// names every home of the kinds quests send players to, with each step's kinds: those to beat, or that drop what
+/// is to be brought.
+#[test]
+fn a_bot_type_given_new_homes_moves_into_them_and_quests_point_to_every_home() {
+    let (srv, web) = start_web(&[]);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    let item = game["items"][0]["name"].as_str().unwrap().to_string();
+    let (arch, giver) = (game["archetypes"][0]["name"].as_str().unwrap().to_string(), game["archetypes"][1]["name"].as_str().unwrap().to_string());
+    let a = &mut game["archetypes"][0];
+    a["count"] = 4.into();
+    a["behaviour"] = "idle".into();
+    a["rules"] = serde_json::json!([]);
+    a["home"] = "plaza".into();
+    a["homes"] = serde_json::json!([]);
+    a["drops"] = serde_json::json!([{"item": item, "chance_pct": 50.0, "min": 1, "max": 1}]);
+    game["quests"] = serde_json::json!([{"name": "q", "title": "Q", "text": "t", "done_text": "d", "giver": giver, "xp": 1,
+        "steps": [{"kind": "kill", "archetype": arch, "count": 1}, {"kind": "collect", "item": item, "count": 1}]}]);
+    let (s, body) = http(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{body}");
+    let near = |x: f64, y: f64, r: f64| {
+        state(&srv)["e"].as_array().unwrap().iter().filter(|e| e[3] == 0).all(|e| (e[1].as_f64().unwrap() - x).hypot(e[2].as_f64().unwrap() - y) <= r + 40.0)
+    };
+    let place = |n: &str| game["places"].as_array().unwrap().iter().find(|p| p["name"] == n).unwrap().clone();
+    let (p, m) = (place("plaza"), place("market"));
+    wait_until("the bots at the plaza", || bots_of(&srv, 0) == 4 && near(p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap(), p["r"].as_f64().unwrap()));
+
+    game["archetypes"][0]["home"] = "market".into();
+    let (s, body) = http(&srv, "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{body}");
+    wait_until("the bots at the market", || bots_of(&srv, 0) == 4 && near(m["x"].as_f64().unwrap(), m["y"].as_f64().unwrap(), m["r"].as_f64().unwrap()));
+
+    game["archetypes"][0]["homes"] = serde_json::json!(["plaza"]);
+    assert_eq!(http(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    let info: serde_json::Value = serde_json::from_str(&play_info(web)).unwrap();
+    let steps = &info["quests"][0]["steps"];
+    let shown = steps[0]["kinds"][0].as_str().unwrap().to_string();
+    assert_eq!(steps[1]["kinds"][0], shown.as_str(), "what drops the item: {steps}");
+    assert_eq!(steps[1]["at"][0], m["x"], "the first home, for older clients");
+    let homes = info["homes_all"][&shown].as_array().unwrap();
+    assert_eq!(homes.len(), 2, "{homes:?}");
+    assert_eq!((homes[0][0].clone(), homes[1][0].clone()), (m["x"].clone(), p["x"].clone()));
+}

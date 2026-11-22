@@ -572,6 +572,7 @@ func _start() -> void:
 	for a in info.get("actions", []):
 		actions_by_id[int(a["id"])] = a
 	questui.set_quests(info.get("quests", []) if info.get("quests") is Array else [])
+	questui.homes_all = info.get("homes_all", {}) if info.get("homes_all") is Dictionary else {}
 	classes = info.get("classes", []) if info.get("classes") is Array else []
 	shopui.set_items(info.get("items", []), String(info.get("currency", "")) if info.get("currency") is String else "")
 	for ui in [bagui, tradeui, auctionui]:
@@ -2115,6 +2116,9 @@ func _weather(delta: float) -> void:
 		if fresh.get("quests") is Array and fresh["quests"] != info.get("quests"):
 			info["quests"] = fresh["quests"]
 			questui.set_quests(fresh["quests"])
+		if fresh.get("homes_all") is Dictionary:
+			info["homes_all"] = fresh["homes_all"]
+			questui.homes_all = fresh["homes_all"]
 
 func _apply_weather(w: Dictionary) -> void:
 	if w == weather:
@@ -3797,8 +3801,9 @@ func _map_marks() -> Array:
 	var out := []
 	var quest_marks: Dictionary = questui.marks(my_level, me_pos)
 	for who in quest_marks:
-		if homes.has(who):
-			var h: Array = homes[who]
+		# The nearest of their homes: a watchman with work for us is the one in our town, not the first town's.
+		var h = questui.nearest_home([who], homes)
+		if h is Array:
 			out.append([Vector2(float(h[0]), float(h[1])), quest_marks[who]])
 	var shops: Dictionary = info.get("shops", {}) if info.get("shops") is Dictionary else {}
 	for who in shops:

@@ -284,12 +284,16 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: 
             if let QuestStep::Talk { archetype } = st {
                 v["who"] = json!(bot(archetype)); // a client marks them
             }
-            // Where to go for it, for a client's map: the place, or where the bots to beat or speak to live.
-            let home = |a: &str| archs.iter().find(|r| r.name == a).and_then(|r| r.home).and_then(|h| places.get(h));
+            // Where to go for it, for a client's map: the place, or where the bots to beat or speak to live, or
+            // those that drop what is to be brought. `kinds` names them all (their homes are in /play/info
+            // "homes_all", so a client takes the nearest); `at` is the first one's home, for older clients.
+            let kinds = step_kinds(st, archs, items);
+            if !kinds.is_empty() {
+                v["kinds"] = json!(kinds.iter().map(|&a| archs[a].shown()).collect::<Vec<_>>());
+            }
             let at = match st {
                 QuestStep::Visit { place } => places.iter().find(|p| &p.name == place),
-                QuestStep::Kill { archetype, .. } | QuestStep::Talk { archetype } => home(archetype),
-                QuestStep::Collect { .. } | QuestStep::Build { .. } => None,
+                _ => kinds.iter().find_map(|&a| archs[a].home).and_then(|h| places.get(h)),
             };
             if let Some(p) = at {
                 v["at"] = json!([p.x, p.y, p.r]);
@@ -301,6 +305,53 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: 
         "turn_in": bot(q.turn_in.as_ref().unwrap_or(&q.giver)), "level": q.level, "after": q.after, "steps": steps,
         "xp": q.xp, "reward": q.reward.iter().map(|r| json!({"item": r.item, "count": r.count})).collect::<Vec<_>>(),
         "repeatable": q.repeatable, "daily": q.daily, "offered_at": q.offered_at.as_ref().and_then(|n| places.iter().find(|p| &p.name == n)).map(|p| json!([p.x, p.y, p.r]))})
+}
+
+/// The bot types (indices into `archs`) a quest step is done at: those to beat or speak to, or for something to
+/// bring, those living somewhere that drop it.
+fn step_kinds(st: &proto::game::QuestStep, archs: &[proto::game::ArchRt], items: &[proto::game::ItemRt]) -> Vec<usize> {
+    use proto::game::QuestStep;
+    match st {
+        QuestStep::Kill { archetype, .. } | QuestStep::Talk { archetype } => archs.iter().position(|a| &a.name == archetype).into_iter().collect(),
+        QuestStep::Collect { item, .. } => match items.iter().position(|i| &i.name == item) {
+            Some(it) => (0..archs.len()).filter(|&a| archs[a].count > 0 && !archs[a].homes.is_empty() && archs[a].drops.iter().any(|d| d.item == it)).collect(),
+            None => Vec::new(),
+        },
+        QuestStep::Visit { .. } | QuestStep::Build { .. } => Vec::new(),
+    }
+}
+
+/// Every home of the bot types quests send players to (givers, those to hand in to, to beat, to speak to, and
+/// those that drop what is to be brought), by the name their bots go by, so a client points to the nearest.
+fn quest_homes(sim: &Sim) -> serde_json::Map<String, serde_json::Value> {
+    let mut want = vec![false; sim.archs.len()];
+    let by_name = |n: &str| sim.archs.iter().position(|a| a.name == n);
+    for q in &sim.quests {
+        for n in std::iter::once(&q.giver).chain(q.turn_in.as_ref()) {
+            if let Some(a) = by_name(n) {
+                want[a] = true;
+            }
+        }
+        for st in &q.steps {
+            for a in step_kinds(st, &sim.archs, &sim.items) {
+                want[a] = true;
+            }
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for (_, r) in sim.archs.iter().enumerate().filter(|(a, _)| want[*a]) {
+        let homes: Vec<serde_json::Value> = r.homes.iter().filter_map(|&h| sim.places.get(h)).map(|p| json!([p.x, p.y, p.r])).collect();
+        if homes.is_empty() {
+            continue;
+        }
+        match out.get_mut(&r.shown()) {
+            Some(serde_json::Value::Array(have)) => have.extend(homes),
+            _ => {
+                out.insert(r.shown(), serde_json::Value::Array(homes));
+            }
+        }
+    }
+    out
 }
 
 /// What clients are told about an action: enough to draw it (fx, bolt, area), aim it, and show its cost and cooldown.
@@ -378,7 +429,7 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         }
         v
     }).collect();
-    json!({
+    let mut info = json!({
         "server_key": to_hex(&hs.keys.public),
         // A string: a u64 does not fit a JavaScript number.
         "content_hash": format!("{:016x}", hs.defs_hash),
@@ -476,8 +527,11 @@ pub fn play_info(sim: &Sim, hs: &Handshake) -> String {
         // Zone lines: each zone is a map of its own, so a client arriving in one loads its world afresh.
         "zone_lines": hs.zone.as_ref().is_some_and(|z| z.lines),
         "zone_names": hs.zone.as_ref().map(|z| z.names.clone()),
-    })
-    .to_string()
+    });
+    // Every home of the kinds quests send players to, for a client to point to the nearest (`homes` has only the
+    // first). Added here: one more entry is past what `json!` can take in one go.
+    info["homes_all"] = json!(quest_homes(sim));
+    info.to_string()
 }
 
 /// Everything the sim thread lets a command touch.
@@ -1198,10 +1252,12 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
     let mut t = t0;
     // The bots carry over any edit, matched by archetype and attribute name like a save and restore: spawned
     // bots are not thrown away, removed archetypes are dropped and every archetype is topped up to its count.
-    // An archetype whose count the edit changes starts again at its new count, so lowering a count removes bots.
+    // An archetype whose count the edit changes starts again at its new count, so lowering a count removes bots;
+    // so does one whose homes change (by place name), so its bots go to live in the new ones.
     let mut bots = c.sim.bot_records();
-    let old_count = |name: &str| c.sim.archs.iter().find(|a| a.name == name).map(|a| a.count);
-    let recount: Vec<String> = game.archs.iter().filter(|a| old_count(&a.name) != Some(a.count)).map(|a| a.name.clone()).collect();
+    let homes_of = |homes: &[usize], places: &[proto::game::Place]| homes.iter().filter_map(|&h| places.get(h).map(|p| p.name.clone())).collect::<Vec<_>>();
+    let was = |name: &str| c.sim.archs.iter().find(|a| a.name == name).map(|a| (a.count, homes_of(&a.homes, &c.sim.places)));
+    let recount: Vec<String> = game.archs.iter().filter(|a| was(&a.name) != Some((a.count, homes_of(&a.homes, &game.places)))).map(|a| a.name.clone()).collect();
     bots.bots.retain(|b| !recount.contains(&b.arch));
     lap("records", &mut t);
     let mut dropped = 0;
