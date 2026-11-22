@@ -130,13 +130,32 @@ def main():
 
     # ---- quests
     have = {q["name"] for q in g["quests"]}
-    for q in QUESTS + town_errands(towns, places, g):
+    errands = town_errands(towns, places, g)
+    for q in QUESTS + errands:
         if q["name"] in have:
             continue
         if any(st.get("place") and st["place"] not in places for st in q["steps"]):
             continue
         g["quests"].append(q)
         have.add(q["name"])
+    # The town errands are made here, so they are made again each run (as they are now: given in their own town).
+    fresh = {q["name"]: q for q in errands if q.get("offered_at", "dublin") in places}
+    g["quests"] = [fresh.get(q["name"], q) for q in g["quests"]]
+    # Quests from before the world was 65,536 units across, sized to it: what a new player is sent to do near
+    # Áth Cliath, and the long journeys held back until a player can make them.
+    for q in g["quests"]:
+        q.update(QUEST_FIXES.get(q["name"], {}))
+    # The curve fitted to the quests (the cap once came from the first wave's quests alone): those of a level and
+    # below leave a player about two levels above it, and all of them reach the cap.
+    if g.get("levels"):
+        g["levels"].update(LEVEL_CURVE)
+    # A new character comes with a blade and a tunic, not only coin and bread: the boars outside the gates are
+    # level four.
+    have = {s_["item"] for s_ in g.get("starter", [])}
+    g["starter"] = g.get("starter", []) + [{"item": i, "count": 1} for i in ("claiomh cre-umha", "ionar olla") if i in items and i not in have]
+    for name, fix in ARCH_FIXES.items():
+        if name in arch:
+            arch[name].update(fix)
 
     # ---- achievements
     have = {a["name"] for a in g.get("achievements", [])}
@@ -530,13 +549,13 @@ RECIPES = [
 SHOPS = {
     "laoch": [("claiomh cre-umha", 8), ("tua bheag", 8), ("claiomh iarainn", 45), ("tua iarainn", 40), ("ionar olla", 6), ("seaicead leathair", 18)],
     "gabha": [("claiomh iarainn", 42), ("tua iarainn", 36), ("claiomh mor", 70), ("scian chnamh", 18), ("miodog", 60), ("seaicead leathair", 16),
-              ("luireach", 40), ("cota fionnaidh", 55), ("barra iarainn", 6), ("mein iarainn", 2), ("gual", 2), ("crosbhogha", 40)],
-    "baicear": [("aran", 2), ("cais", 4), ("caca meala", 7), ("im", 2), ("ubh", 1), ("beoir", 3)],
+              ("luireach", 40), ("cota fionnaidh", 55), ("barra iarainn", 6), ("mein iarainn", 2), ("gual", 2), ("adhmad", 2), ("crosbhogha", 40)],
+    "baicear": [("aran", 2), ("cais", 4), ("caca meala", 7), ("im", 2), ("ubh", 1), ("bainne", 1), ("beoir", 3)],
     "bean feasa": [("deoch leighis", 6), ("deoch leighis mhor", 16), ("luibheanna", 2), ("deoch athnuachana", 8), ("smeara", 1)],
     "drui": [("lorg", 30), ("slat chuill", 18), ("lorg dharach", 50), ("slat iubhair", 75), ("deoch draiochta", 9), ("cno", 2)],
     "figheadoir": [("ionar olla", 6), ("olann", 2), ("glaisin", 8), ("madar", 8), ("croch", 8), ("dath dubh", 10), ("corcra", 40)],
     "tinceir": [("scian", 15), ("dealg chre-umha", 8), ("torc cre-umha", 20), ("coinnle", 4), ("bairille", 6), ("capaillin", 30)],
-    "muilleoir": [("cruithneacht", 2), ("coirce", 2), ("siol cruithneachta", 1)],
+    "muilleoir": [("cruithneacht", 2), ("coirce", 2), ("siol cruithneachta", 1), ("adhmad", 2), ("bainne", 1)],
     "sealgaire": [("crosbhogha", 38), ("feoil rosta", 4), ("craiceann broic", 4), ("scian chnamh", 16)],
     "ceannai": [("dealg chre-umha", 8), ("torc cre-umha", 20), ("torc oir", 95), ("mil", 5), ("bradan", 5)],
     "ostoir": [("stobhach", 6), ("beoir", 3), ("feoil rosta", 4), ("capaillin", 30)],
@@ -582,7 +601,8 @@ TROPHIES = {
     "cearc": [{"item": "ubh", "chance_pct": 50.0, "min": 1, "max": 2}],
     "caora": [{"item": "olann", "chance_pct": 70.0, "min": 1, "max": 2}],
     "loscann": [{"item": "luibheanna", "chance_pct": 25.0, "min": 1, "max": 1}],
-    "beacanan": [{"item": "luibheanna", "chance_pct": 60.0, "min": 1, "max": 2}],
+    # Holly too, for Holly for a Staff and the holly staffs: shroomlings guard the best of it.
+    "beacanan": [{"item": "luibheanna", "chance_pct": 60.0, "min": 1, "max": 2}, {"item": "cuileann", "chance_pct": 35.0, "min": 1, "max": 1}],
     "taibhse uaimhe": [{"item": "cleite fiaigh", "chance_pct": 30.0, "min": 1, "max": 2}],
     "iascaire": [{"item": "bradan", "chance_pct": 40.0, "min": 1, "max": 1}],
 }
@@ -616,6 +636,9 @@ def talk(bot):
 
 P = "pingin airgid"
 QUESTS = [
+    q("a horse for the road", "A Horse for the Road", "fear cairte",
+      "It's a long country, and you'll wear out your boots before you see the half of it. Bring me six measures of oats for the stable, grown or bought, and I'll find you a pony that's eating its head off.",
+      "There. She's sound, if lazy. Keep her fed and she'll carry you to Corcaigh and back.", [get("coirce", 6)], 150, [("capaillin", 1)], level=2, offered_at="dublin"),
     # The smith's chain: from ore to steel.
     q("ore for the forge", "Ore for the Forge", "gabha", "The forge eats iron faster than the carters bring it. The kern up in the hills carry ore they've robbed off the miners. Bring me six lumps, from them or anywhere.", "Good ore. You'll make a smith yet.", [get("mein iarainn", 6)], 120, [(P, 6), ("tua bheag", 1)]),
     q("the smiths apprentice", "The Smith's Apprentice", "gabha", "Smelt it yourself this time: two ore and a lump of charcoal make a bar. Charcoal is two of timber. Bring me three bars and I'll show you a sword.", "Clean bars. Here, make yourself a blade.", [get("barra iarainn", 3)], 200, [("claiomh iarainn", 1)], after="ore for the forge", level=3),
@@ -669,38 +692,75 @@ QUESTS = [
 
 
 def town_errands(towns, places, g):
-    """An errand for every big town: word carried to a neighbour, a threat near it, supplies for it."""
+    """An errand for every big town, given there by its own folk: word carried to its nearest neighbour, supplies
+    for it brought from that neighbour, or the road cleared of whatever hostile lives nearest it."""
     pos = {p["name"]: (p["x"], p["y"]) for p in g["places"]}
     out = []
     kinds = [
         ("word", "watchman"), ("supplies", "ceannai"), ("hunt", "watchman"), ("word", "tuathanach"),
     ]
     threats = ["mac tire", "torc", "dibheirgeach", "ceithearnach", "bear", "puca", "solas si", "creachadoir"]
+    lairs = []
+    for a in g["archetypes"]:
+        if a["name"] in threats:
+            lvl_ = a.get("level", 1)
+            for h in [a.get("home")] + (a.get("homes") or []):
+                if h in pos:
+                    lairs.append((a["name"], lvl_, pos[h]))
+    d2 = lambda a, b: (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
     for i, t in enumerate(towns[1:], 1):
         if t not in pos:
             continue
-        x, y = pos[t]
-        near = sorted((n for n in towns if n != t and n in pos), key=lambda n: (pos[n][0] - x) ** 2 + (pos[n][1] - y) ** 2)
+        near = sorted((n for n in towns if n != t and n in pos), key=lambda n: d2(pos[n], pos[t]))
         nb = near[0] if near else "dublin"
         tt, nt = TOWN_TITLES.get(t, t.title()), TOWN_TITLES.get(nb, nb.title())
         kind, giver = kinds[i % len(kinds)]
-        lvl = 1 + i % 12
+        km = d2(pos[nb], pos[t]) ** 0.5 / 1000
+        lvl = max(1, min(12, round(km / 2)))
         if kind == "word":
             out.append(q(f"word to {nb} from {t}", f"Word to {nt}", giver,
-                         f"There's news for {nt} that won't keep. Walk to {tt}, then on to {nt}, and tell them what you've seen on the road.",
-                         "That's the word carried. They'll be glad of it.", [visit(t), visit(nb)], 150 + 30 * lvl, [(P, 4 + lvl)], level=lvl))
+                         f"There's news for {nt} that won't keep. Walk there and tell them what you've seen on the road from {tt}.",
+                         "That's the word carried. They'll be glad of it.", [visit(nb)], 150 + 30 * lvl, [(P, 4 + lvl)], level=lvl, offered_at=t))
         elif kind == "supplies":
             food_ = ["aran", "cais", "feoil rosta", "bradan", "meacan", "cabaiste"][i % 6]
             out.append(q(f"supplies for {t}", f"Supplies for {tt}", giver,
                          f"{tt} is short this season. Carry five of {food_} there and see the market stocked.",
-                         "Stocked, and the price come down. Well done.", [get(food_, 5), visit(t)], 120 + 25 * lvl, [(P, 6 + lvl)], level=lvl))
+                         "Stocked, and the price come down. Well done.", [get(food_, 5), visit(t)], 120 + 25 * lvl, [(P, 6 + lvl)], level=lvl, offered_at=nb))
         else:
-            th = threats[i % len(threats)]
+            th, tl, _ = min(lairs, key=lambda l: d2(l[2], pos[t])) if lairs else (threats[0], 2, None)
             out.append(q(f"the road to {t}", f"The Road to {tt}", giver,
-                         f"Travellers to {tt} keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
-                         "The road's open. The carters will thank you.", [kill(th, 8), visit(t)], 200 + 40 * lvl, [(P, 8 + lvl), ("deoch leighis", 2)], level=lvl))
+                         f"Travellers to {tt} keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
+                         "The road's open. The carters will thank you.", [kill(th, 8), visit(t)], 200 + 40 * tl, [(P, 8 + tl), ("deoch leighis", 2)], level=max(1, tl - 1), offered_at=t))
     return out
 
+
+LEVEL_CURVE = {"base": 790.0, "exponent": 1.42}
+
+ARCH_FIXES = {
+    # Level 12 at Brú na Bóinne, a few minutes from Áth Cliath, where the level-five restless-dead quests send players.
+    "bean si": {"home": "rathcroghan", "homes": ["dun ailinne", "loch neathach", "loch coirib", "loch measca", "loch deirgeirt"]},
+}
+
+QUEST_FIXES = {
+    # The wolves are a day's walk from Áth Cliath: the fold is troubled by foxes, and the watch by boars on the roads.
+    "wolves at the fold": {"title": "Foxes at the Fold", "text": "The foxes have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
+                           "steps": [{"kind": "kill", "archetype": "sionnach", "count": 5}]},
+    "the watchs bounty": {"text": "The watch pays a bounty on the boars tearing up the roads and the fields round the city. Four of them, and the coin is yours. Come back tomorrow and there'll be more.",
+                          "steps": [{"kind": "kill", "archetype": "torc", "count": 4}], "level": 3, "xp": 160},
+    # Journeys: for when a player has a horse under them and the legs for it.
+    "the road to glendalough": {"level": 3, "xp": 180},
+    "the holy well": {"level": 6, "xp": 420},
+    "the monks of kells": {"level": 6, "xp": 360},
+    "brigands on the road": {"level": 5}, "the brigand king": {"level": 6}, "the brigand toll": {"level": 5}, "the robbers pass": {"level": 5},
+    "the wisps of the bog": {"level": 6},
+    "the wolves of winter": {"level": 8},
+    "a pilgrims way": {"level": 8, "xp": 1400},
+    "news from the coast": {"level": 8, "xp": 1200},
+    "white wolves of the north": {"level": 8, "xp": 900},
+    "oisin in the west": {"level": 9, "xp": 1300},
+    "the four provinces": {"level": 10, "xp": 2200},
+    "the long road": {"level": 12, "xp": 3000},
+}
 
 ACHIEVEMENTS = [
     {"name": "bearbane", "title": "Bearbane", "text": "Ten bears.", "deed": "kill:bear", "count": 10, "grants": "Bearbane", "xp": 150},

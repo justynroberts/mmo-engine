@@ -1155,6 +1155,9 @@ pub struct QuestFile {
     /// The bot type it is handed in to (absent: the giver).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_in: Option<String>,
+    /// Offered only by givers who live in this place (a town's own errands); absent, by every giver of its type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offered_at: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     pub level: u8,
     /// A quest that must be done first.
@@ -3146,6 +3149,9 @@ impl GameFile {
             }
             if !arch(&q.giver) || q.turn_in.as_deref().is_some_and(|t| !arch(t)) {
                 return Err(format!("{ctx}: giver and turn_in must be bot types"));
+            }
+            if q.offered_at.as_deref().is_some_and(|p| !self.places.iter().any(|o| o.name == p)) {
+                return Err(format!("{ctx}: offered_at must be a place"));
             }
             if q.after.as_deref().is_some_and(|a| a == q.name || !self.quests.iter().any(|o| o.name == a)) {
                 return Err(format!("{ctx}: after must be another quest"));

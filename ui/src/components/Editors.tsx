@@ -762,8 +762,14 @@ export function QuestsEditor({ game, setGame }: Edit) {
                 <Trash2 size={16} strokeWidth={1.5} aria-hidden />
               </IconButton>
             </div>
-            <div className="grid grid-cols-4 gap-x-2 pt-2">
+            <div className="grid grid-cols-5 gap-x-2 pt-2">
               <SelectField label="Given by" value={q.giver} options={withValue(bots, q.giver)} onChange={(v) => patch(i, { giver: v })} />
+              <SelectField
+                label="Offered in"
+                value={q.offered_at ?? ''}
+                options={[{ value: '', label: 'anywhere' }, ...withValue(places, q.offered_at ?? '')]}
+                onChange={(v) => patch(i, { offered_at: v || undefined })}
+              />
               <SelectField
                 label="Handed in to"
                 value={q.turn_in ?? ''}

@@ -386,10 +386,12 @@ fn on_connect(
     if open.defs_hash != hs.defs_hash {
         return reject_to(tx, stats, addr, reject::CONTENT_MISMATCH, scratch);
     }
-    let Some(slot) = sim.spawn(crate::sim::NONE) else {
+    // Spawned as the player it will be (its owner is the session's index), so a new character comes into the world
+    // at the game's start place; a returning one is moved to where they left when their save is restored (`prove`).
+    let sid = clients.next_index();
+    let Some(slot) = sim.spawn(sid) else {
         return reject_to(tx, stats, addr, reject::SERVER_FULL, scratch);
     };
-    let sid = clients.next_index();
     wire::encode_welcome(
         scratch,
         &Welcome {

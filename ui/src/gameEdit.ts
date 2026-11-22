@@ -613,6 +613,7 @@ export function cleanQuest(q: QuestFile): QuestFile {
   const out: QuestFile = { ...q }
   if (!out.done_text) delete out.done_text
   if (!out.turn_in || out.turn_in === out.giver) delete out.turn_in
+  if (!out.offered_at) delete out.offered_at
   if (!out.level || out.level <= 1) delete out.level
   if (!out.after) delete out.after
   if (!out.xp || out.xp <= 0) delete out.xp
@@ -681,6 +682,10 @@ export function rewriteQuestRefs(quests: QuestFile[], kind: RefKind, from: strin
         else out.turn_in = t
       }
     }
+    if (kind === 'place' && q.offered_at === from) {
+      if (to === null) delete out.offered_at
+      else out.offered_at = to
+    }
     if (kind === 'item' && q.reward) out.reward = q.reward.flatMap((r) => (r.item !== from ? [r] : to === null ? [] : [{ ...r, item: to }]))
     kept.push(cleanQuest(out))
   }
@@ -706,6 +711,7 @@ export function questProblems(g: GameFile): string[] {
     if ([...(q.text ?? '')].length > 600 || [...(q.done_text ?? '')].length > 600) out.push(`${at}: texts of at most 600 characters`)
     if (!arch.has(q.giver)) out.push(`${at}: no bot type called “${q.giver}” to give it`)
     if (q.turn_in && !arch.has(q.turn_in)) out.push(`${at}: no bot type called “${q.turn_in}” to hand it in to`)
+    if (q.offered_at && !place.has(q.offered_at)) out.push(`${at}: offered at “${q.offered_at}”, which is not a place`)
     if (q.after && (q.after === q.name || !quests.some((o) => o.name === q.after))) out.push(`${at}: comes after “${q.after}”, which is not another quest`)
     if (q.steps.length === 0 || q.steps.length > MAX_QUEST_STEPS) out.push(`${at}: needs 1 to ${MAX_QUEST_STEPS} steps`)
     q.steps.forEach((s, i) => {

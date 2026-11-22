@@ -235,6 +235,16 @@ describe('quests', () => {
     expect(g.quests?.[0]?.reward).toEqual([{ item: 'hide', count: 1 }])
     expect(questProblems(g)).toEqual([])
   })
+  it('a quest offered at a place follows the place when it is renamed, and is offered anywhere when it goes', () => {
+    const base = withQuests()
+    const g0: GameFile = { ...base, quests: [{ ...base.quests![1]!, after: undefined, offered_at: 'den' }] }
+    const g1 = renamePlace(g0, 0, 'lair')
+    expect(g1.quests?.[0]?.offered_at).toBe('lair')
+    expect(questProblems(g1)).toEqual([])
+    const g2 = removePlace(g1, 0)
+    expect(g2.quests?.[0] && 'offered_at' in g2.quests[0]).toBe(false)
+    expect(questProblems({ ...g0, quests: [{ ...g0.quests![0]!, offered_at: 'nowhere' }] })).toEqual(['quest after: offered at “nowhere”, which is not a place'])
+  })
   it('removing things drops the steps and rewards that needed them', () => {
     let g = removePlace(withQuests(), 0)
     expect(g.quests?.[0]?.steps.map((s) => s.kind)).toEqual(['kill', 'collect'])

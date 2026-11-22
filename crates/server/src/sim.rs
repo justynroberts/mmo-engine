@@ -501,6 +501,9 @@ pub struct Sim {
     pub towns: Vec<(f32, f32, f32)>,
     /// Each named bot's own name, unique in the world (`give_name`).
     pub given: Vec<Option<std::sync::Arc<str>>>,
+    /// Which slots hold each given name (kept by `give_name`; a slot that has died stays listed till it is named
+    /// again, so check `alive`): whether a name is free is one lookup, not a scan of every bot.
+    pub name_holders: std::collections::HashMap<std::sync::Arc<str>, Vec<u32>>,
     /// Town life (`town.rs`): who each townsperson is brawling with and till when, a cutpurse's takings, the tick it
     /// is wanted till, where it runs from and till when, the thief one of the watch is after, and when a cutpurse may
     /// try again, and the tick a townsperson who has just fought will not again before.
@@ -794,6 +797,7 @@ impl Sim {
             wander_stay: vec![1.0; cap],
             towns: Vec::new(),
             given: vec![None; cap],
+            name_holders: std::collections::HashMap::new(),
             brawl: vec![None; cap],
             purse: vec![0; cap],
             wanted: vec![0; cap],
@@ -1738,7 +1742,14 @@ impl Sim {
     /// Name the bot in `slot` from its type's `names` and `surnames`: a pairing no other bot in the world has while
     /// one is left, kept while it holds the slot (one that falls and comes back is still itself).
     pub(crate) fn give_name(&mut self, s: usize) {
-        self.given[s] = None;
+        if let Some(old) = self.given[s].take() {
+            if let Some(v) = self.name_holders.get_mut(&old) {
+                v.retain(|&h| h as usize != s);
+                if v.is_empty() {
+                    self.name_holders.remove(&old);
+                }
+            }
+        }
         let Some(a) = self.archs.get(self.ents.arch[s] as usize).filter(|_| self.ents.owner[s] == NONE) else { return };
         if a.names.is_empty() {
             return;
@@ -1751,12 +1762,13 @@ impl Sim {
                 _ => first.clone(),
             }
         };
-        let taken: std::collections::HashSet<&str> =
-            (0..self.ents.high).filter(|&t| t != s && self.ents.alive[t]).filter_map(|t| self.given[t].as_deref()).collect();
+        let (holders, alive) = (&self.name_holders, &self.ents.alive);
+        let taken = |t: &str| holders.get(t).is_some_and(|v| v.iter().any(|&h| h as usize != s && alive[h as usize]));
         // From a random start through every pairing, so the first free one is as likely as any.
         let start = self.rng.below((n * m) as u32) as usize;
-        let name = (0..n * m).map(|k| make((start + k) % (n * m))).find(|t| !taken.contains(t.as_str())).unwrap_or_else(|| make(start));
-        self.given[s] = Some(name.into());
+        let name: std::sync::Arc<str> = (0..n * m).map(|k| make((start + k) % (n * m))).find(|t| !taken(t)).unwrap_or_else(|| make(start)).into();
+        self.name_holders.entry(name.clone()).or_default().push(s as u32);
+        self.given[s] = Some(name);
     }
 
     /// The game file changed: a bot whose name its type no longer gives is named again.

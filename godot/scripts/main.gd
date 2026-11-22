@@ -3133,7 +3133,7 @@ func _quests_frame(list: Array, self_id: int) -> void:
 	_social_frame(list, self_id)
 	var q: Dictionary = net.quests()
 	questui.update(q.get("list", []), int(q.get("offer", -1)))
-	var marks: Dictionary = questui.marks(my_level)
+	var marks: Dictionary = questui.marks(my_level, me_pos)
 	for e in list:
 		var id := int(e["id"])
 		if id == self_id or not ents.has(id):
@@ -3799,7 +3799,7 @@ func _dungeon_line(text: String) -> void:
 func _map_marks() -> Array:
 	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
 	var out := []
-	var quest_marks: Dictionary = questui.marks(my_level)
+	var quest_marks: Dictionary = questui.marks(my_level, me_pos)
 	for who in quest_marks:
 		if homes.has(who):
 			var h: Array = homes[who]

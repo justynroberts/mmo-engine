@@ -154,7 +154,9 @@ impl Sim {
         }
         // Otherwise, a quest of theirs to put to the player.
         if !moved {
-            let offer = self.quests.iter().position(|q| q.giver == arch && self.can_take(s, q));
+            // A quest tied to a place is offered only by its givers who live there (`QuestFile::offered_at`).
+            let home = self.home_of(t).and_then(|h| self.places.get(h)).map(|p| p.name.as_str());
+            let offer = self.quests.iter().position(|q| q.giver == arch && q.offered_at.as_deref().is_none_or(|p| home == Some(p)) && self.can_take(s, q));
             if let Some(k) = offer {
                 self.ents.offer[s] = k as u16;
             } else {
@@ -436,6 +438,22 @@ mod tests {
         s.ents.offer[me] = 0;
         assert!(s.accept(me, 0));
         assert!(s.notes.iter().any(|n| n.0 == me && n.2 == proto::chat::channel::BANNER && n.3 == "Once upon a time"), "{:?}", s.notes);
+    }
+
+    #[test]
+    fn a_quest_offered_at_a_place_comes_only_from_givers_who_live_there() {
+        let mut g = GameFile::default_game();
+        let other = g.places.iter().find(|p| p.name != "market").unwrap().name.clone();
+        g.quests.push(QuestFile { name: "away".into(), title: "Away".into(), giver: "merchant".into(), offered_at: Some(other.clone()), steps: vec![QuestStep::Visit { place: other }], ..Default::default() });
+        g.quests.push(QuestFile { name: "here".into(), title: "Here".into(), giver: "merchant".into(), offered_at: Some("market".into()), steps: vec![QuestStep::Talk { archetype: "drifter".into() }], ..Default::default() });
+        let merchant = g.archetypes.iter().position(|a| a.name == "merchant").unwrap() as u8;
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let me = s.spawn(0).unwrap();
+        let m = s.spawn_as(NONE, merchant, Some((100.0, 104.0))).unwrap();
+        (s.ents.x[me], s.ents.y[me]) = (100.0, 100.0);
+        assert_eq!(s.places[s.home_of(m).unwrap()].name, "market");
+        assert!(s.talk(me, s.ents.id_of(m)));
+        assert_eq!(s.ents.offer[me], 1, "the market's merchant offers the market's errand, not the other place's");
     }
 
     #[test]

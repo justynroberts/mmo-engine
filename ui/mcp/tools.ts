@@ -315,7 +315,7 @@ export const SPELLS_NOTE = [
 export const QUESTS_NOTE = [
   'Quests (section "quests", at most 512) apply live: adding, changing or removing one never restarts the world or disconnects anyone.',
   'A quest: { name (unique id, at most 48 bytes), title (at most 64 characters, shown to players), text (what the giver says offering it, at most 600), done_text (optional, said on hand-in, at most 600),',
-  'giver (a bot type name: players talk to a bot of that type to take it), turn_in (optional bot type to hand it in to; absent = the giver), level (optional minimum player level), after (optional name of another quest that must be done first),',
+  'giver (a bot type name: players talk to a bot of that type to take it), turn_in (optional bot type to hand it in to; absent = the giver), offered_at (optional place name: only givers who live there offer it, for town errands), level (optional minimum player level), after (optional name of another quest that must be done first),',
   'steps (1 to 8, done in order), xp (optional experience on hand-in), reward (optional [{ item, count 1..255 }]), repeatable (optional, true = may be taken again once done), daily (optional, true = may be taken again each UTC day once handed in) }.',
   'A player holds at most 25 quests at once (taken, not handed in); done quests do not count.',
   'Steps: { kind: "kill", archetype, count 1..65535 } beat bots of a type (counts for everyone who hurt the one that fell); { kind: "visit", place } walk into a place; { kind: "collect", item, count 1..255 } carry items (taken on hand-in); { kind: "talk", archetype } talk to a bot of a type.',

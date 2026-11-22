@@ -146,6 +146,8 @@ export interface QuestFile {
   giver: string
   /** The bot type it is handed in to (absent: the giver). */
   turn_in?: string
+  /** Offered only by givers who live in this place, a town's own errands (absent: by every giver of its type). */
+  offered_at?: string
   /** The level a player must be to take it (absent: any). */
   level?: number
   /** A quest that must be done first. */

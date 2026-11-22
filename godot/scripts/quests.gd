@@ -311,10 +311,18 @@ func escape() -> bool:
 		return true
 	return false
 
+## How near a town's own errand (`offered_at`, its place) we must be for its givers there to be marked.
+const OFFERED_REACH := 400.0
+
 ## Whether a quest could be offered to us now (for the ! over a giver): not held, or done and repeatable (or daily
-## and handed in on another day, the day kept in its count); our level high enough; the quest before it done.
-func available(index: int, my_level: int) -> bool:
+## and handed in on another day, the day kept in its count); our level high enough; the quest before it done; and,
+## for a town's own errand, our being in or near that town (`here`, world units; INF: anywhere).
+func available(index: int, my_level: int, here := Vector2.INF) -> bool:
 	var q: Dictionary = _quests[index]
+	var at = q.get("offered_at")
+	if at is Array and at.size() >= 3 and here != Vector2.INF:
+		if here.distance_to(Vector2(float(at[0]), float(at[1]))) > float(at[2]) + OFFERED_REACH:
+			return false
 	for m in _mine:
 		var again: bool = bool(q.get("repeatable", false)) or (bool(q.get("daily", false)) and int(m["count"]) != int(Time.get_unix_time_from_system() / 86400.0))
 		if int(m["quest"]) == index and not (int(m["state"]) == 2 and again):
@@ -332,10 +340,10 @@ func available(index: int, my_level: int) -> bool:
 	return true
 
 ## For markers: by giver name, "!" (a quest to take) or "?" (one to hand in, which wins).
-func marks(my_level: int) -> Dictionary:
+func marks(my_level: int, here := Vector2.INF) -> Dictionary:
 	var out := {}
 	for i in _quests.size():
-		if available(i, my_level):
+		if available(i, my_level, here):
 			out[String(_quests[i]["giver"])] = "!"
 	for m in _mine:
 		if int(m["quest"]) >= _quests.size():

@@ -3259,3 +3259,24 @@ fn of_an_evening_the_townsfolk_go_to_the_inn_and_come_out_singing_and_fighting()
         me.pump(500);
     }
 }
+
+/// A brand new character comes into the world at the game's start place, not at a random spot anywhere on the map
+/// (the server once made the body before it knew it was a player's, so only the unit test saw the start place).
+#[test]
+fn a_new_player_comes_into_the_world_at_the_start_place() {
+    let dir = std::env::temp_dir().join(format!("mmo-e2e-start-{}-{}", std::process::id(), free_udp()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut g = GameFile::default_game();
+    g.walls = Some(vec![]);
+    g.start_place = Some(g.places[0].name.clone());
+    let (px, py, pr) = (g.places[0].x, g.places[0].y, g.places[0].r);
+    std::fs::write(dir.join("game.json"), g.to_json()).unwrap();
+    let srv = start_in(dir, &[]);
+    for _ in 0..4 {
+        let mut c = connect_as(&srv, proto::secure::new_identity());
+        c.send_input(0, 0);
+        c.pump(150);
+        let (x, y) = c.pos();
+        assert!((x - px).hypot(y - py) <= pr + 1.0, "came in at {x},{y}, not in the start place at {px},{py} (r {pr})");
+    }
+}
