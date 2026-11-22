@@ -4439,4 +4439,32 @@ mod tests {
         run("houses + trees + 2000 block columns", houses.iter().chain(&trees).copied().collect(), 2000);
         run("houses + trees + 50000 block columns", houses.iter().chain(&trees).copied().collect(), 50_000);
     }
+
+    /// What respawning the whole bot population costs (a live edit that changes a bot type's count), at two sizes:
+    /// it should grow with the bots, not their square. Run with:
+    /// cargo test -p server --release respawn_scaling -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn respawn_scaling() {
+        for n in [2_000u32, 19_000] {
+            let mut g = proto::game::GameFile::default_game();
+            for a in g.archetypes.iter_mut() {
+                a.count = 0;
+            }
+            let m = g.archetypes.iter_mut().find(|a| a.name == "merchant").unwrap();
+            m.count = n;
+            m.names = (0..200).map(|k| format!("N{k}")).collect();
+            m.surnames = (0..200).map(|k| format!("S{k}")).collect();
+            let game = g.build().unwrap();
+            let mut s = Sim::new(game, World::from_boxes(65536.0, 1, vec![]), n as usize + 64, 20, 1);
+            s.populate_bots();
+            let saved = s.bot_records();
+            let t = std::time::Instant::now();
+            s.populate_from(&saved);
+            let kept = t.elapsed();
+            let t = std::time::Instant::now();
+            s.populate_bots();
+            println!("{n} bots: back where they were {kept:?}, all fresh {:?}", t.elapsed());
+        }
+    }
 }

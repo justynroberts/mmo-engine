@@ -3095,9 +3095,10 @@ func _load_bar() -> Array:
 		names.append(a["name"])
 	# A null default counts as none to Godot (it reports an error), so look first.
 	var saved = cfg.get_value("bars", String(args["web"])) if cfg.has_section_key("bars", String(args["web"])) else null
-	if saved is Array:
-		return saved.filter(func(n): return names.has(n)).slice(0, SPELL_KEYS.size())
 	var mine := _class_spells()
+	if saved is Array:
+		# Only what our class may cast: a bar saved under another class (or none) keeps the rest out.
+		return saved.filter(func(n): return names.has(n) and (mine.is_empty() or mine.has(n))).slice(0, SPELL_KEYS.size())
 	if not mine.is_empty():
 		return names.filter(func(n): return mine.has(n)).slice(0, SPELL_KEYS.size())
 	return names.slice(0, SPELL_KEYS.size())
@@ -3107,11 +3108,6 @@ func _class_spells() -> Array:
 	if my_class > 0 and my_class <= classes.size():
 		return classes[my_class - 1].get("spells", [])
 	return []
-
-func _has_saved_bar() -> bool:
-	var cfg := ConfigFile.new()
-	cfg.load("user://spellbar.cfg")
-	return cfg.has_section_key("bars", String(args["web"])) and cfg.get_value("bars", String(args["web"])) is Array
 
 func _save_bar() -> void:
 	var cfg := ConfigFile.new()
@@ -3175,8 +3171,7 @@ func _social_frame(list: Array, self_id: int) -> void:
 	var c := int(round(float(me_now.get("class", 0.0))))
 	if c != my_class:
 		my_class = c
-		if not _has_saved_bar():
-			bar_order = _load_bar()
+		bar_order = _load_bar() # a saved bar too, as it is kept to what the class may cast
 		_apply_bar()
 	if my_class > 0 and classui.is_open():
 		classui.panel.visible = false # chosen (here or elsewhere): nothing left to ask

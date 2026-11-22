@@ -344,7 +344,7 @@ POPULATION = {
     "torc": (600, None), "damh": (480, None), "capall fiain": (420, None), "mac tire": (300, None), "loscann": (220, None),
     "beacanan": (180, None), "troll cnoic": (90, None), "fomhorach": (150, None), "troll sneachta": (100, None),
     "mac tire ban": (100, None), "mac tire ban thiar": (80, None), "dibheirgeach": (60, None), "meirleach": (36, None),
-    "maor bothair": (30, None), "ceannai taistil": (36, None), "fear cairte": (36, None), "oilithreach": (36, None),
+    "maor bothair": (10, None), "ceannai taistil": (36, "towns"), "fear cairte": (36, "towns"), "oilithreach": (36, "towns"),
     "tuathanach": (40, "towns"), "ceannai": (20, "towns"), "laoch": (12, "towns"), "iascaire": (16, None), "manach": (16, None),
     "garda": (24, None), "peist locha": (12, None),
 }
@@ -738,6 +738,8 @@ LEVEL_CURVE = {"base": 790.0, "exponent": 1.42}
 
 ARCH_FIXES = {
     # Level 12 at Brú na Bóinne, a few minutes from Áth Cliath, where the level-five restless-dead quests send players.
+    # All on one road out of Áth Cliath, they marched it in a line through the square new players come into.
+    "maor bothair": {"count": 10},
     "bean si": {"home": "rathcroghan", "homes": ["dun ailinne", "loch neathach", "loch coirib", "loch measca", "loch deirgeirt"]},
 }
 

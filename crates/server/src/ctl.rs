@@ -1188,6 +1188,14 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
         },
     };
     let hash = game.defs.content_hash();
+    // How long each part took, in the answer: a save holds the sim thread, so the game waits on it.
+    let t0 = std::time::Instant::now();
+    let mut took = serde_json::Map::new();
+    let mut lap = |what: &str, t: &mut std::time::Instant| {
+        took.insert(what.into(), json!(t.elapsed().as_millis() as u64));
+        *t = std::time::Instant::now();
+    };
+    let mut t = t0;
     // The bots carry over any edit, matched by archetype and attribute name like a save and restore: spawned
     // bots are not thrown away, removed archetypes are dropped and every archetype is topped up to its count.
     // An archetype whose count the edit changes starts again at its new count, so lowering a count removes bots.
@@ -1195,6 +1203,7 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
     let old_count = |name: &str| c.sim.archs.iter().find(|a| a.name == name).map(|a| a.count);
     let recount: Vec<String> = game.archs.iter().filter(|a| old_count(&a.name) != Some(a.count)).map(|a| a.name.clone()).collect();
     bots.bots.retain(|b| !recount.contains(&b.arch));
+    lap("records", &mut t);
     let mut dropped = 0;
     let mut moved = 0;
     let reset = hash != c.hs.defs_hash;
@@ -1267,16 +1276,21 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
             moved = c.sim.replace_world(world, terrain);
         }
     }
+    lap("game", &mut t);
     c.sim.populate_from(&bots);
+    lap("bots", &mut t);
     *c.game = file;
     c.director.sync(c.game, c.sim.tick, c.params.hz);
     if let Some(g) = &c.hs.gateway {
         g.set_info(play_info(c.sim, c.hs));
     }
+    lap("info", &mut t);
     let saved = save_game(c, note);
+    lap("save", &mut t);
+    took.insert("total".into(), json!(t0.elapsed().as_millis() as u64));
     (
         200,
-        json!({ "ok": true, "reset": reset, "dropped_clients": dropped, "moved_entities": moved, "content_hash": format!("{hash:016x}"), "saved": saved })
+        json!({ "ok": true, "reset": reset, "dropped_clients": dropped, "moved_entities": moved, "content_hash": format!("{hash:016x}"), "saved": saved, "took_ms": took })
             .to_string(),
     )
 }

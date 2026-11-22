@@ -10943,6 +10943,12 @@
      "chance_pct": 60.0,
      "min": 1,
      "max": 2
+    },
+    {
+     "item": "cuileann",
+     "chance_pct": 35.0,
+     "min": 1,
+     "max": 1
     }
    ],
    "xp": 14,
@@ -11793,6 +11799,10 @@
     {
      "item": "crosbhogha",
      "price": 40
+    },
+    {
+     "item": "adhmad",
+     "price": 2
     }
    ],
    "names": [
@@ -12301,6 +12311,10 @@
     {
      "item": "beoir",
      "price": 3
+    },
+    {
+     "item": "bainne",
+     "price": 1
     }
    ],
    "names": [
@@ -14897,6 +14911,14 @@
     {
      "item": "siol cruithneachta",
      "price": 1
+    },
+    {
+     "item": "adhmad",
+     "price": 2
+    },
+    {
+     "item": "bainne",
+     "price": 1
     }
    ],
    "names": [
@@ -16309,7 +16331,7 @@
    "attrs": {
     "health": 280.0
    },
-   "home": "bru na boinne",
+   "home": "rathcroghan",
    "rules": [
     {
      "when": {
@@ -16335,7 +16357,6 @@
    "leash": 40.0,
    "loot": "creach ard",
    "homes": [
-    "rathcroghan",
     "dun ailinne",
     "loch neathach",
     "loch coirib",
@@ -29874,7 +29895,7 @@
    "text": "The brigands south of Kildare have crowned themselves a king. Their camp gives every company that walks in a fight of its own. Don't go alone: gather a party (the Invite button over a player, or /invite Name) and bring him down.",
    "done_text": "The roads will be safer for it. Take this blade; you've earned it.",
    "giver": "watchman",
-   "level": 3,
+   "level": 6,
    "after": "a roof over your head",
    "steps": [
     {
@@ -29897,14 +29918,14 @@
   },
   {
    "name": "wolves at the fold",
-   "title": "Wolves at the Fold",
-   "text": "The wolves have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
+   "title": "Foxes at the Fold",
+   "text": "The foxes have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
    "done_text": "The flock is quiet tonight. Take this, and my thanks.",
    "giver": "aoire",
    "steps": [
     {
      "kind": "kill",
-     "archetype": "mac tire",
+     "archetype": "sionnach",
      "count": 5
     }
    ],
@@ -29966,13 +29987,14 @@
    "text": "Brother Ciarán has not written from Gleann Dá Loch in a month. Walk there, see that all is well, and come back to me.",
    "done_text": "He is well? God be thanked. You have a good heart.",
    "giver": "manach",
+   "level": 3,
    "steps": [
     {
      "kind": "visit",
      "place": "glendalough"
     }
    ],
-   "xp": 100
+   "xp": 180
   },
   {
    "name": "relics of the saints",
@@ -30003,7 +30025,7 @@
    "text": "Brigands rob anyone on the road south. Find their camp and put four of them in the ground.",
    "done_text": "The road is safer for it. You fight like one of the Fianna.",
    "giver": "laoch",
-   "level": 3,
+   "level": 5,
    "steps": [
     {
      "kind": "visit",
@@ -30253,7 +30275,7 @@
    "text": "Robbers hold the pass at Bealach na gCreach. Go there and drive three of them off.",
    "done_text": "The road is safer for it.",
    "giver": "maor bothair",
-   "level": 3,
+   "level": 5,
    "steps": [
     {
      "kind": "visit",
@@ -30279,7 +30301,7 @@
    "text": "White wolves are coming down out of the snowy north. Go up there and thin them out: five will do.",
    "done_text": "You have the north in your bones now.",
    "giver": "laoch",
-   "level": 4,
+   "level": 8,
    "steps": [
     {
      "kind": "visit",
@@ -30291,7 +30313,7 @@
      "count": 5
     }
    ],
-   "xp": 320,
+   "xp": 900,
    "reward": [
     {
      "item": "pingin airgid",
@@ -30309,6 +30331,7 @@
    "text": "Walk the holy road with me in spirit: Gleann Dá Loch, Cluain Mhic Nóis and the Rock of Caiseal.",
    "done_text": "You have walked where the saints walked.",
    "giver": "oilithreach",
+   "level": 8,
    "steps": [
     {
      "kind": "visit",
@@ -30323,7 +30346,7 @@
      "place": "cashel"
     }
    ],
-   "xp": 300,
+   "xp": 1400,
    "reward": [
     {
      "item": "pingin airgid",
@@ -30341,6 +30364,7 @@
    "text": "Drink at Tobar Bríde, then tell a monk you have been.",
    "done_text": "The well remembers you.",
    "giver": "oilithreach",
+   "level": 6,
    "steps": [
     {
      "kind": "visit",
@@ -30351,7 +30375,7 @@
      "archetype": "manach"
     }
    ],
-   "xp": 150,
+   "xp": 420,
    "reward": [
     {
      "item": "deoch leighis",
@@ -30365,6 +30389,7 @@
    "text": "Go down the coast to Port Láirge and Corcaigh, see how the boats fare, and bring the news to a trader in Áth Cliath.",
    "done_text": "So the boats are safe. Good.",
    "giver": "iascaire",
+   "level": 8,
    "after": "the fishers worry",
    "steps": [
     {
@@ -30380,7 +30405,7 @@
      "archetype": "ceannai"
     }
    ],
-   "xp": 200,
+   "xp": 1200,
    "reward": [
     {
      "item": "pingin airgid",
@@ -30394,7 +30419,7 @@
    "text": "A merchant should know the country. See Gaillimh, Luimneach, Doire and Ard Mhacha, and you will know it too.",
    "done_text": "Now you know Ireland.",
    "giver": "ceannai taistil",
-   "level": 2,
+   "level": 10,
    "steps": [
     {
      "kind": "visit",
@@ -30413,7 +30438,7 @@
      "place": "armagh"
     }
    ],
-   "xp": 400,
+   "xp": 2200,
    "reward": [
     {
      "item": "pingin airgid",
@@ -30471,17 +30496,18 @@
   {
    "name": "the watchs bounty",
    "title": "The Watch's Bounty",
-   "text": "The watch pays a bounty on wolves taken near the roads. Six pelts' worth of trouble, and the coin is yours. Come back tomorrow and there'll be more.",
+   "text": "The watch pays a bounty on the boars tearing up the roads and the fields round the city. Four of them, and the coin is yours. Come back tomorrow and there'll be more.",
    "done_text": "Six fewer wolves. Here's your bounty.",
    "giver": "watchman",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "mac tire",
-     "count": 6
+     "archetype": "torc",
+     "count": 4
     }
    ],
-   "xp": 80,
+   "xp": 160,
    "reward": [
     {
      "item": "pingin airgid",
@@ -30522,7 +30548,7 @@
    "text": "The brigands take a toll off every cart on the road. Take one off them: five of their number, and the roads are ours for the day.",
    "done_text": "That'll quiet them till morning.",
    "giver": "laoch",
-   "level": 3,
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
@@ -30568,6 +30594,7 @@
    "done_text": "The stone? Yes. We have feared this. Sit, and I will tell you.",
    "giver": "laoch",
    "turn_in": "manach",
+   "level": 6,
    "after": "the stone cries out",
    "steps": [
     {
@@ -30575,7 +30602,7 @@
      "archetype": "manach"
     }
    ],
-   "xp": 100
+   "xp": 360
   },
   {
    "name": "words in the book",
@@ -30960,7 +30987,7 @@
    "text": "Oisín went west to Tír na nÓg, they say, from the cliffs past Gaillimh. Go and look out to sea from there, and tell me if you see it.",
    "done_text": "You saw nothing? Then you looked right. It isn't for seeing.",
    "giver": "seanchai",
-   "level": 4,
+   "level": 9,
    "after": "the hill of allen",
    "steps": [
     {
@@ -30972,7 +30999,7 @@
      "place": "westport"
     }
    ],
-   "xp": 350,
+   "xp": 1300,
    "reward": [
     {
      "item": "pingin airgid",
@@ -31076,7 +31103,7 @@
    "text": "Lights over the loch at night, leading folk into the water. Put out six of them.",
    "done_text": "No more drownings, please God.",
    "giver": "bean feasa",
-   "level": 4,
+   "level": 6,
    "after": "herbs for the sick",
    "steps": [
     {
@@ -31471,7 +31498,7 @@
    "text": "I'll tell you where I've been: Doire, Béal Feirste, Corcaigh, Trá Lí. You go and see if I'm lying.",
    "done_text": "Told you. Have this, it's a fine pony.",
    "giver": "tinceir",
-   "level": 5,
+   "level": 12,
    "steps": [
     {
      "kind": "visit",
@@ -31490,7 +31517,7 @@
      "place": "tralee"
     }
    ],
-   "xp": 900,
+   "xp": 3000,
    "reward": [
     {
      "item": "capaillin",
@@ -31653,7 +31680,7 @@
    "text": "White wolves out of the north, bolder every week. Twenty of them.",
    "done_text": "That'll keep them back a season.",
    "giver": "watchman",
-   "level": 4,
+   "level": 8,
    "steps": [
     {
      "kind": "kill",
@@ -31699,7 +31726,8 @@
    "text": "Port Láirge is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 2,
+   "offered_at": "clonmel",
+   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -31711,25 +31739,26 @@
      "place": "waterford"
     }
    ],
-   "xp": 170,
+   "xp": 195,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 8
+     "count": 9
     }
    ]
   },
   {
    "name": "the road to cork",
    "title": "The Road to Corcaigh",
-   "text": "Travellers to Corcaigh keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Corcaigh keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 3,
+   "offered_at": "cork",
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "dibheirgeach",
+     "archetype": "bear",
      "count": 8
     },
     {
@@ -31737,11 +31766,11 @@
      "place": "cork"
     }
    ],
-   "xp": 320,
+   "xp": 440,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 11
+     "count": 14
     },
     {
      "item": "deoch leighis",
@@ -31752,50 +31781,44 @@
   {
    "name": "word to ennis from limerick",
    "title": "Word to Inis",
-   "text": "There's news for Inis that won't keep. Walk to Luimneach, then on to Inis, and tell them what you've seen on the road.",
+   "text": "There's news for Inis that won't keep. Walk there and tell them what you've seen on the road from Luimneach.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 4,
+   "offered_at": "limerick",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "limerick"
-    },
     {
      "kind": "visit",
      "place": "ennis"
     }
    ],
-   "xp": 270,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 8
+     "count": 6
     }
    ]
   },
   {
    "name": "word to ennis from galway",
    "title": "Word to Inis",
-   "text": "There's news for Inis that won't keep. Walk to Gaillimh, then on to Inis, and tell them what you've seen on the road.",
+   "text": "There's news for Inis that won't keep. Walk there and tell them what you've seen on the road from Gaillimh.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "level": 5,
+   "offered_at": "galway",
+   "level": 3,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "galway"
-    },
     {
      "kind": "visit",
      "place": "ennis"
     }
    ],
-   "xp": 300,
+   "xp": 240,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 9
+     "count": 7
     }
    ]
   },
@@ -31805,7 +31828,8 @@
    "text": "Loch Garman is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 6,
+   "offered_at": "waterford",
+   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -31817,21 +31841,22 @@
      "place": "wexford"
     }
    ],
-   "xp": 270,
+   "xp": 195,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 9
     }
    ]
   },
   {
    "name": "the road to armagh",
    "title": "The Road to Ard Mhacha",
-   "text": "Travellers to Ard Mhacha keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Ard Mhacha keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 7,
+   "offered_at": "armagh",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -31843,11 +31868,11 @@
      "place": "armagh"
     }
    ],
-   "xp": 480,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 15
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -31858,50 +31883,44 @@
   {
    "name": "word to coleraine from derry",
    "title": "Word to Cúil Raithin",
-   "text": "There's news for Cúil Raithin that won't keep. Walk to Doire, then on to Cúil Raithin, and tell them what you've seen on the road.",
+   "text": "There's news for Cúil Raithin that won't keep. Walk there and tell them what you've seen on the road from Doire.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 8,
+   "offered_at": "derry",
+   "level": 3,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "derry"
-    },
     {
      "kind": "visit",
      "place": "coleraine"
     }
    ],
-   "xp": 390,
+   "xp": 240,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 7
     }
    ]
   },
   {
    "name": "word to carlow from kilkenny",
    "title": "Word to Ceatharlach",
-   "text": "There's news for Ceatharlach that won't keep. Walk to Cill Chainnigh, then on to Ceatharlach, and tell them what you've seen on the road.",
+   "text": "There's news for Ceatharlach that won't keep. Walk there and tell them what you've seen on the road from Cill Chainnigh.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "level": 9,
+   "offered_at": "kilkenny",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "kilkenny"
-    },
     {
      "kind": "visit",
      "place": "carlow"
     }
    ],
-   "xp": 420,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 13
+     "count": 6
     }
    ]
   },
@@ -31911,7 +31930,8 @@
    "text": "Droichead Átha is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 10,
+   "offered_at": "ardee",
+   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -31923,25 +31943,26 @@
      "place": "drogheda"
     }
    ],
-   "xp": 370,
+   "xp": 145,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 16
+     "count": 7
     }
    ]
   },
   {
    "name": "the road to sligo",
    "title": "The Road to Sligeach",
-   "text": "Travellers to Sligeach keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Sligeach keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 11,
+   "offered_at": "sligo",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "dibheirgeach",
+     "archetype": "solas si",
      "count": 8
     },
     {
@@ -31949,11 +31970,11 @@
      "place": "sligo"
     }
    ],
-   "xp": 640,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 19
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -31964,40 +31985,34 @@
   {
    "name": "word to roscommon from athlone",
    "title": "Word to Ros Comáin",
-   "text": "There's news for Ros Comáin that won't keep. Walk to Baile Átha Luain, then on to Ros Comáin, and tell them what you've seen on the road.",
+   "text": "There's news for Ros Comáin that won't keep. Walk there and tell them what you've seen on the road from Baile Átha Luain.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 12,
+   "offered_at": "athlone",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "athlone"
-    },
     {
      "kind": "visit",
      "place": "roscommon"
     }
    ],
-   "xp": 510,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 16
+     "count": 6
     }
    ]
   },
   {
    "name": "word to ardee from dundalk",
    "title": "Word to Baile Átha Fhirdia",
-   "text": "There's news for Baile Átha Fhirdia that won't keep. Walk to Dún Dealgan, then on to Baile Átha Fhirdia, and tell them what you've seen on the road.",
+   "text": "There's news for Baile Átha Fhirdia that won't keep. Walk there and tell them what you've seen on the road from Dún Dealgan.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "dundalk",
    "level": 1,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "dundalk"
-    },
     {
      "kind": "visit",
      "place": "ardee"
@@ -32017,6 +32032,7 @@
    "text": "Ceanannas is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "ardee",
    "level": 2,
    "steps": [
     {
@@ -32040,14 +32056,15 @@
   {
    "name": "the road to clonmel",
    "title": "The Road to Cluain Meala",
-   "text": "Travellers to Cluain Meala keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Cluain Meala keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 3,
+   "offered_at": "clonmel",
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "solas si",
+     "archetype": "bear",
      "count": 8
     },
     {
@@ -32055,11 +32072,11 @@
      "place": "clonmel"
     }
    ],
-   "xp": 320,
+   "xp": 440,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 11
+     "count": 14
     },
     {
      "item": "deoch leighis",
@@ -32070,50 +32087,44 @@
   {
    "name": "word to listowel from tralee",
    "title": "Word to Lios Tuathail",
-   "text": "There's news for Lios Tuathail that won't keep. Walk to Trá Lí, then on to Lios Tuathail, and tell them what you've seen on the road.",
+   "text": "There's news for Lios Tuathail that won't keep. Walk there and tell them what you've seen on the road from Trá Lí.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 4,
+   "offered_at": "tralee",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "tralee"
-    },
     {
      "kind": "visit",
      "place": "listowel"
     }
    ],
-   "xp": 270,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 8
+     "count": 6
     }
    ]
   },
   {
    "name": "word to belfast from downpatrick",
    "title": "Word to Béal Feirste",
-   "text": "There's news for Béal Feirste that won't keep. Walk to Dún Pádraig, then on to Béal Feirste, and tell them what you've seen on the road.",
+   "text": "There's news for Béal Feirste that won't keep. Walk there and tell them what you've seen on the road from Dún Pádraig.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "level": 5,
+   "offered_at": "downpatrick",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "downpatrick"
-    },
     {
      "kind": "visit",
      "place": "belfast"
     }
    ],
-   "xp": 300,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 9
+     "count": 6
     }
    ]
   },
@@ -32123,7 +32134,8 @@
    "text": "Inis is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 6,
+   "offered_at": "limerick",
+   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -32135,25 +32147,26 @@
      "place": "ennis"
     }
    ],
-   "xp": 270,
+   "xp": 170,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 8
     }
    ]
   },
   {
    "name": "the road to roscommon",
    "title": "The Road to Ros Comáin",
-   "text": "Travellers to Ros Comáin keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Ros Comáin keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 7,
+   "offered_at": "roscommon",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "dibheirgeach",
+     "archetype": "solas si",
      "count": 8
     },
     {
@@ -32161,11 +32174,11 @@
      "place": "roscommon"
     }
    ],
-   "xp": 480,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 15
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -32176,50 +32189,44 @@
   {
    "name": "word to carlow from kildare",
    "title": "Word to Ceatharlach",
-   "text": "There's news for Ceatharlach that won't keep. Walk to Cill Dara, then on to Ceatharlach, and tell them what you've seen on the road.",
+   "text": "There's news for Ceatharlach that won't keep. Walk there and tell them what you've seen on the road from Cill Dara.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 8,
+   "offered_at": "kildare",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "kildare"
-    },
     {
      "kind": "visit",
      "place": "carlow"
     }
    ],
-   "xp": 390,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 6
     }
    ]
   },
   {
    "name": "word to kilkenny from carlow",
    "title": "Word to Cill Chainnigh",
-   "text": "There's news for Cill Chainnigh that won't keep. Walk to Ceatharlach, then on to Cill Chainnigh, and tell them what you've seen on the road.",
+   "text": "There's news for Cill Chainnigh that won't keep. Walk there and tell them what you've seen on the road from Ceatharlach.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "level": 9,
+   "offered_at": "carlow",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "carlow"
-    },
     {
      "kind": "visit",
      "place": "kilkenny"
     }
    ],
-   "xp": 420,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 13
+     "count": 6
     }
    ]
   },
@@ -32229,7 +32236,8 @@
    "text": "Muineachán is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 10,
+   "offered_at": "armagh",
+   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -32241,21 +32249,22 @@
      "place": "monaghan"
     }
    ],
-   "xp": 370,
+   "xp": 145,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 16
+     "count": 7
     }
    ]
   },
   {
    "name": "the road to donegal",
    "title": "The Road to Dún na nGall",
-   "text": "Travellers to Dún na nGall keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Dún na nGall keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 11,
+   "offered_at": "donegal",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -32267,11 +32276,11 @@
      "place": "donegal"
     }
    ],
-   "xp": 640,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 19
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -32282,40 +32291,34 @@
   {
    "name": "word to galway from westport",
    "title": "Word to Gaillimh",
-   "text": "There's news for Gaillimh that won't keep. Walk to Cathair na Mart, then on to Gaillimh, and tell them what you've seen on the road.",
+   "text": "There's news for Gaillimh that won't keep. Walk there and tell them what you've seen on the road from Cathair na Mart.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 12,
+   "offered_at": "westport",
+   "level": 4,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "westport"
-    },
     {
      "kind": "visit",
      "place": "galway"
     }
    ],
-   "xp": 510,
+   "xp": 270,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 16
+     "count": 8
     }
    ]
   },
   {
    "name": "word to youghal from lismore",
    "title": "Word to Eochaill",
-   "text": "There's news for Eochaill that won't keep. Walk to Lios Mór, then on to Eochaill, and tell them what you've seen on the road.",
+   "text": "There's news for Eochaill that won't keep. Walk there and tell them what you've seen on the road from Lios Mór.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "lismore",
    "level": 1,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "lismore"
-    },
     {
      "kind": "visit",
      "place": "youghal"
@@ -32335,7 +32338,8 @@
    "text": "Cúil Raithin is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 2,
+   "offered_at": "derry",
+   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -32347,25 +32351,26 @@
      "place": "coleraine"
     }
    ],
-   "xp": 170,
+   "xp": 195,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 8
+     "count": 9
     }
    ]
   },
   {
    "name": "the road to enniskillen",
    "title": "The Road to Inis Ceithleann",
-   "text": "Travellers to Inis Ceithleann keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Inis Ceithleann keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "enniskillen",
    "level": 3,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "dibheirgeach",
+     "archetype": "solas si",
      "count": 8
     },
     {
@@ -32373,11 +32378,11 @@
      "place": "enniskillen"
     }
    ],
-   "xp": 320,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 11
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -32388,50 +32393,44 @@
   {
    "name": "word to downpatrick from belfast",
    "title": "Word to Dún Pádraig",
-   "text": "There's news for Dún Pádraig that won't keep. Walk to Béal Feirste, then on to Dún Pádraig, and tell them what you've seen on the road.",
+   "text": "There's news for Dún Pádraig that won't keep. Walk there and tell them what you've seen on the road from Béal Feirste.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 4,
+   "offered_at": "belfast",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "belfast"
-    },
     {
      "kind": "visit",
      "place": "downpatrick"
     }
    ],
-   "xp": 270,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 8
+     "count": 6
     }
    ]
   },
   {
    "name": "word to kells from mullingar",
    "title": "Word to Ceanannas",
-   "text": "There's news for Ceanannas that won't keep. Walk to An Muileann gCearr, then on to Ceanannas, and tell them what you've seen on the road.",
+   "text": "There's news for Ceanannas that won't keep. Walk there and tell them what you've seen on the road from An Muileann gCearr.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "level": 5,
+   "offered_at": "mullingar",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "mullingar"
-    },
     {
      "kind": "visit",
      "place": "kells"
     }
    ],
-   "xp": 300,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 9
+     "count": 6
     }
    ]
   },
@@ -32441,7 +32440,8 @@
    "text": "Durlas is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 6,
+   "offered_at": "kilkenny",
+   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -32453,21 +32453,22 @@
      "place": "thurles"
     }
    ],
-   "xp": 270,
+   "xp": 170,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 8
     }
    ]
   },
   {
    "name": "the road to killarney",
    "title": "The Road to Cill Airne",
-   "text": "Travellers to Cill Airne keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Cill Airne keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 7,
+   "offered_at": "killarney",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -32479,11 +32480,11 @@
      "place": "killarney"
     }
    ],
-   "xp": 480,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 15
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -32494,50 +32495,44 @@
   {
    "name": "word to killarney from bantry",
    "title": "Word to Cill Airne",
-   "text": "There's news for Cill Airne that won't keep. Walk to Beanntraí, then on to Cill Airne, and tell them what you've seen on the road.",
+   "text": "There's news for Cill Airne that won't keep. Walk there and tell them what you've seen on the road from Beanntraí.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 8,
+   "offered_at": "bantry",
+   "level": 3,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "bantry"
-    },
     {
      "kind": "visit",
      "place": "killarney"
     }
    ],
-   "xp": 390,
+   "xp": 240,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 7
     }
    ]
   },
   {
    "name": "word to lismore from youghal",
    "title": "Word to Lios Mór",
-   "text": "There's news for Lios Mór that won't keep. Walk to Eochaill, then on to Lios Mór, and tell them what you've seen on the road.",
+   "text": "There's news for Lios Mór that won't keep. Walk there and tell them what you've seen on the road from Eochaill.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
-   "level": 9,
+   "offered_at": "youghal",
+   "level": 1,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "youghal"
-    },
     {
      "kind": "visit",
      "place": "lismore"
     }
    ],
-   "xp": 420,
+   "xp": 180,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 13
+     "count": 5
     }
    ]
   },
@@ -32547,7 +32542,8 @@
    "text": "Cionn tSáile is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
-   "level": 10,
+   "offered_at": "cork",
+   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -32559,25 +32555,26 @@
      "place": "kinsale"
     }
    ],
-   "xp": 370,
+   "xp": 145,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 16
+     "count": 7
     }
    ]
   },
   {
    "name": "the road to ardee",
    "title": "The Road to Baile Átha Fhirdia",
-   "text": "Travellers to Baile Átha Fhirdia keep coming back hurt, or not at all. Clear the road: eight of what's out there, and go and see the town safe.",
+   "text": "Travellers to Baile Átha Fhirdia keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
-   "level": 11,
+   "offered_at": "ardee",
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "dibheirgeach",
+     "archetype": "bear",
      "count": 8
     },
     {
@@ -32585,11 +32582,11 @@
      "place": "ardee"
     }
    ],
-   "xp": 640,
+   "xp": 440,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 19
+     "count": 14
     },
     {
      "item": "deoch leighis",
@@ -32600,25 +32597,45 @@
   {
    "name": "word to tralee from listowel",
    "title": "Word to Trá Lí",
-   "text": "There's news for Trá Lí that won't keep. Walk to Lios Tuathail, then on to Trá Lí, and tell them what you've seen on the road.",
+   "text": "There's news for Trá Lí that won't keep. Walk there and tell them what you've seen on the road from Lios Tuathail.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
-   "level": 12,
+   "offered_at": "listowel",
+   "level": 2,
    "steps": [
-    {
-     "kind": "visit",
-     "place": "listowel"
-    },
     {
      "kind": "visit",
      "place": "tralee"
     }
    ],
-   "xp": 510,
+   "xp": 210,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 16
+     "count": 6
+    }
+   ]
+  },
+  {
+   "name": "a horse for the road",
+   "title": "A Horse for the Road",
+   "text": "It's a long country, and you'll wear out your boots before you see the half of it. Bring me six measures of oats for the stable, grown or bought, and I'll find you a pony that's eating its head off.",
+   "done_text": "There. She's sound, if lazy. Keep her fed and she'll carry you to Corcaigh and back.",
+   "giver": "fear cairte",
+   "offered_at": "dublin",
+   "level": 2,
+   "steps": [
+    {
+     "kind": "collect",
+     "item": "coirce",
+     "count": 6
+    }
+   ],
+   "xp": 150,
+   "reward": [
+    {
+     "item": "capaillin",
+     "count": 1
     }
    ]
   }
@@ -32682,8 +32699,8 @@
  },
  "levels": {
   "cap": 20,
-  "base": 100.0,
-  "exponent": 1.6,
+  "base": 790.0,
+  "exponent": 1.42,
   "might": 0.06,
   "toughness": 0.05,
   "discover_xp": 10,
@@ -34432,6 +34449,14 @@
   {
    "item": "siol coirce",
    "count": 4
+  },
+  {
+   "item": "claiomh cre-umha",
+   "count": 1
+  },
+  {
+   "item": "ionar olla",
+   "count": 1
   }
  ],
  "start_place": "dublin",
