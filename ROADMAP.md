@@ -2,7 +2,8 @@
 
 What the long-lived MMOs have that this one does not yet, in the order it is being built. Each phase is data in the
 game file (nothing hard-coded per world), works through the console and the MCP, and ships with tests. A phase is
-done when the server, the Godot client and the console all handle it.
+done when the server, the Godot client and the console all handle it. Fixes and polish found by playing are kept
+in `JOURNAL.md`.
 
 ## Now: make it a game, not a set of slash commands
 

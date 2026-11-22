@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Genre-neutral authoritative world server (Rust), a bot load tester that speaks the real encrypted UDP protocol, a browser admin console and a browser game client. `README.md` is the long-form design doc (security model, measured numbers, zones, items); `PROTOCOL.md` is the wire spec.
+Genre-neutral authoritative world server (Rust), a bot load tester that speaks the real encrypted UDP protocol, a browser admin console and a browser game client. `README.md` is the long-form design doc (security model, measured numbers, zones, items); `PROTOCOL.md` is the wire spec. `ROADMAP.md` is the feature plan and `JOURNAL.md` the running list of improvements found by playing and measuring: add to it whenever something worth fixing turns up, and "continue the roadmap" means take its top open item (moving it to Done with the date).
 
 ## Platform gotcha
 
