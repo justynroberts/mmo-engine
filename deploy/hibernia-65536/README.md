@@ -18,3 +18,7 @@ Measured (debug server in Docker): starts in about 35 s, 526 MB resident with it
 
 Moving the live server to it is a new world: built blocks, plots and saved positions belong to the old map. The
 deploy entrypoint never replaces an existing `world.json`, so it needs a fresh volume (or the old world moved aside).
+
+Its relief is bold (`"drama": 2`: mountains to about 260, upland hills, valleys, hollows), laid over the open
+country only; `"keep"` holds the ground under what players had built when it was turned on (boxes round the live
+blocks, 2026-11-22), so no built column is buried or left in the air.

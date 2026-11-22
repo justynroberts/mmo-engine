@@ -667,7 +667,7 @@ fn big_relief(x: f32, y: f32, was: f32, seed: u64) -> f32 {
 }
 
 /// Hollows: about one square in three of a 1,100-unit grid has a round pit, 100 to 280 across and 12 to 30 deep,
-/// with a low lip round it.
+/// with a lip round it a quarter as high.
 fn hollow(x: f32, y: f32, seed: u64) -> f32 {
     const G: f32 = 1100.0;
     let (gx, gy) = ((x / G).floor() as i64, (y / G).floor() as i64);
@@ -686,7 +686,7 @@ fn hollow(x: f32, y: f32, seed: u64) -> f32 {
             if d < 1.0 {
                 h -= depth * (1.0 - d * d).powi(2);
             } else if d < 1.5 {
-                h += 2.5 * (1.0 - ((d - 1.25) / 0.25).powi(2)).max(0.0);
+                h += 0.25 * depth * (1.0 - ((d - 1.25) / 0.25).powi(2)).max(0.0); // the lip, a quarter as high as it is deep
             }
         }
     }

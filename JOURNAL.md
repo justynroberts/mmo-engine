@@ -46,6 +46,11 @@ first.
 
 ## Done
 
+- 2026-11-22 — A bolder land: worldgen's `drama` (Hibernia 2) lifts the mountains to about 260 with ridged crests
+  and lays upland hills, long valleys and hollows over the open country, fading out round towns, roads, rivers,
+  fields and the shore so nothing laid out moves; the ground under players' builds is held (`keep`). The hunting
+  grounds stay gentle (steepest 0.19 of the 0.2 allowed).
+
 - 2026-11-22 — Resting: out of a fight, health and mana come back (2.5% a second on Hibernia, from 6 s after the
   last blow, twice as fast sitting); health never came back at all before, but by potion or a fall.
 
