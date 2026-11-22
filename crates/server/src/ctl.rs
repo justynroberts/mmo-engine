@@ -54,6 +54,8 @@ pub enum Cmd {
     /// Clear down: built blocks (all, or only some account's, or only in an area).
     BlocksClear(ClearReq),
     BlocksPut(String),
+    /// Everything built, replaced by an export (`GET /api/blocks`): owners, and layers where they were.
+    BlocksRestore(String),
     /// Clear down: items lying on the ground (all, or only in an area).
     GroundClear(ClearReq),
 }
@@ -804,6 +806,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
         ("POST", "/api/blocks/clear") => clear_req(&req.body).map(Cmd::BlocksClear),
         ("POST", "/api/ground/clear") => clear_req(&req.body).map(Cmd::GroundClear),
         ("POST", "/api/blocks") => Some(Cmd::BlocksPut(body_str())),
+        ("POST", "/api/blocks/restore") => Some(Cmd::BlocksRestore(body_str())),
         ("GET", "/api/game") => Some(Cmd::GetGame),
         ("PUT", "/api/game") => Some(Cmd::PutGame(body_str(), query_get(&req.query, "note").filter(|n| !n.is_empty()).unwrap_or_else(|| "edited in the console".into()))),
         ("GET", "/api/state") => {
@@ -858,7 +861,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear" | "/api/ground/clear" | "/api/daylight" | "/api/zone" | "/api/events/fire" | "/api/events/stop"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear" | "/api/blocks/restore" | "/api/ground/clear" | "/api/daylight" | "/api/zone" | "/api/events/fire" | "/api/events/stop"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -1018,6 +1021,14 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
                 (200, json!({ "ok": true, "set": set, "refused": refused, "total": c.sim.blocks.total }).to_string())
             }
             Err(e) => err(400, format!("expected {{\"cols\": [[cx, cy, \"layers\"], ...]}} (materials from the ground up, . for an empty layer): {e}")),
+        },
+        Cmd::BlocksRestore(text) => match crate::blocks::Blocks::parse(&text) {
+            Ok(cols) => {
+                let given = cols.len();
+                let dropped = c.sim.set_blocks(cols);
+                (200, json!({ "ok": true, "given": given, "dropped": dropped, "total": c.sim.blocks.total }).to_string())
+            }
+            Err(e) => err(400, format!("expected an export of GET /api/blocks: {e}")),
         },
         Cmd::PutGame(text, note) => apply_game(&text, &note, c),
         Cmd::State { limit } => (200, state_json(c, limit)),

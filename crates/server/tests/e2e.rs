@@ -2455,8 +2455,19 @@ fn players_build_and_break_blocks_which_are_fed_to_clients_and_kept() {
     assert_eq!((s, r["set"].clone(), r["total"].clone()), (200, 3.into(), 4.into()), "{r}");
     assert_eq!(json(&srv, "POST", "/api/blocks", r#"{"cols":[[4,3,""]]}"#).1["total"], 3);
     assert_eq!(json(&srv, "POST", "/api/blocks", "nope").0, 400);
+    // An export put back after the land changed under it: owners and layers as they were.
+    let before = json(&srv, "GET", "/api/blocks", "").1;
     assert_eq!(json(&srv, "POST", "/api/blocks/clear", "").1["removed"], 3);
     assert_eq!(total(&srv), 0);
+    let (s, r) = json(&srv, "POST", "/api/blocks/restore", &before.to_string());
+    assert_eq!((s, r["dropped"].clone(), r["total"].clone()), (200, 0.into(), 3.into()), "{r}");
+    let after = json(&srv, "GET", "/api/blocks", "").1;
+    let mut a = after["cols"].as_array().unwrap().clone();
+    let mut b = before["cols"].as_array().unwrap().clone();
+    a.sort_by_key(|c| c.to_string());
+    b.sort_by_key(|c| c.to_string());
+    assert_eq!(a, b, "the same columns back");
+    assert_eq!(json(&srv, "POST", "/api/blocks/restore", "nope").0, 400);
 }
 
 /// The day's schedule rides along in /play/info (with a sample moment for clients to check their sums against);
