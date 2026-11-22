@@ -53,7 +53,7 @@ var home := Rect2()
 var view := Rect2()
 var _map_rect := Rect2()             # where the picture is on screen, from the last draw
 var _dragging := false
-const MAX_ZOOM := 12.0
+const MAX_ZOOM := 12.0 # on a small world; a big one goes in further (_max_zoom), to a street or two across
 ## Close up (from DETAIL_ZOOM), the part in view is drawn again sharply by `detail_source` (the theme's map_area:
 ## area, pixels, spread), a moment after the view stops moving, and laid over the picture.
 const DETAIL_ZOOM := 2.0
@@ -99,9 +99,13 @@ func _gui_input(ev: InputEvent) -> void:
 		_pan(ev.delta * 8.0 / _map_rect.size.x * view.size.x)
 		accept_event()
 
+## How far in the map goes: about 1,400 world units across at most, so a town's streets show on a big world.
+func _max_zoom() -> float:
+	return maxf(MAX_ZOOM, home.size.x / 1400.0)
+
 ## Zoom by `factor` (over 1 is closer), keeping the world point under `screen` where it is.
 func _zoom(factor: float, screen: Vector2) -> void:
-	var side := clampf(view.size.x / factor, home.size.x / MAX_ZOOM, home.size.x)
+	var side := clampf(view.size.x / factor, home.size.x / _max_zoom(), home.size.x)
 	var f := ((screen - _map_rect.position) / _map_rect.size).clamp(Vector2.ZERO, Vector2.ONE)
 	var under := view.position + f * view.size.x
 	view = Rect2(under - f * side, Vector2(side, side))
@@ -109,7 +113,7 @@ func _zoom(factor: float, screen: Vector2) -> void:
 
 ## Zoom `times` in on the world point `at`.
 func zoom_on(at: Vector2, times: float) -> void:
-	var side := clampf(home.size.x / times, home.size.x / MAX_ZOOM, home.size.x)
+	var side := clampf(home.size.x / times, home.size.x / _max_zoom(), home.size.x)
 	view = Rect2(at - Vector2(side, side) * 0.5, Vector2(side, side))
 	_pan(Vector2.ZERO)
 

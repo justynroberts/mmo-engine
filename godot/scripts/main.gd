@@ -777,6 +777,7 @@ func _start() -> void:
 	explored.setup(world.size, "%s_%s" % [HudScript.game_host(String(args.get("web", ""))), my_tag])
 	hud.minimap.fog = explored.tex
 	hud.minimap.explored = explored
+	hud.minimap.span = maxf(hud.minimap.span, explored.sight * 1.45) # its rim past what is cleared, so the fog shows
 	world_map.explored = explored
 	if args.has("name") and args["name"] is String:
 		net.set_display_name(String(args["name"]))

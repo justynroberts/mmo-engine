@@ -5,11 +5,13 @@ extends RefCounted
 ## character in user://explored, so the map fills in over a character's life.
 
 const GRID := 1024
-const SIGHT := 350.0           # world units cleared round you: less than the minimap's reach, so its rim shows the fog
+const SIGHT := 350.0           # world units cleared round you on a small world: less than the minimap's reach, so its rim shows the fog
 const FOG := Color(0.03, 0.035, 0.03)   # the world map's own background, so no coast shows through
 const FOG_ALPHA := 1.0         # unexplored is hidden outright; only the edge of what you have seen fades
 
 var world := 1024.0
+## What is cleared round you: more on a big world (a 65,536 one clears about 680), where 350 left the map a pinprick.
+var sight := SIGHT
 var img: Image                 # LA8: grey and alpha, the alpha is the fog
 var tex: ImageTexture
 var _path := ""
@@ -21,6 +23,7 @@ var _tex_in := 0.0
 
 func setup(world_size: float, key: String) -> void:
 	world = world_size
+	sight = clampf(world_size / 96.0, SIGHT, 720.0)
 	_path = "user://explored/%s_v2.png" % key.validate_filename()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://explored"))
 	var saved: Image = Image.load_from_file(ProjectSettings.globalize_path(_path)) if FileAccess.file_exists(_path) else null
@@ -59,16 +62,16 @@ func visit(p: Vector2) -> void:
 		return
 	_last = p
 	var cell := world / GRID
-	var reach := int(ceil(SIGHT / cell))
+	var reach := int(ceil(sight / cell))
 	var cx := int(p.x / cell)
 	var cy := int(p.y / cell)
 	for y in range(maxi(0, cy - reach), mini(GRID, cy + reach + 1)):
 		for x in range(maxi(0, cx - reach), mini(GRID, cx + reach + 1)):
 			var d := Vector2((x + 0.5) * cell, (y + 0.5) * cell).distance_to(p)
-			if d > SIGHT:
+			if d > sight:
 				continue
 			# Clear in the middle, thinning to the edge of sight.
-			var a := FOG_ALPHA * smoothstep(SIGHT * 0.7, SIGHT, d)
+			var a := FOG_ALPHA * smoothstep(sight * 0.7, sight, d)
 			var was := img.get_pixel(x, y).a
 			if a < was - 0.01:
 				img.set_pixel(x, y, Color(FOG.r, FOG.g, FOG.b, a))
