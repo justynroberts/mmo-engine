@@ -2114,6 +2114,7 @@
    ],
    "xp": 8,
    "level": 1,
+   "leash": 120.0,
    "skill": "fiach",
    "homes": [
     "talamh seilge waterford coill",
@@ -2151,8 +2152,7 @@
     "talamh seilge kinsale coill",
     "talamh seilge ardee coill",
     "talamh seilge listowel coill"
-   ],
-   "leash": 120.0
+   ]
   },
   {
    "name": "mac tire",
@@ -10315,6 +10315,7 @@
    ],
    "xp": 12,
    "level": 2,
+   "leash": 120.0,
    "skill": "fiach",
    "homes": [
     "talamh seilge waterford coill",
@@ -10352,8 +10353,7 @@
     "talamh seilge kinsale coill",
     "talamh seilge ardee coill",
     "talamh seilge listowel coill"
-   ],
-   "leash": 120.0
+   ]
   },
   {
    "name": "sionnach",
@@ -10378,8 +10378,17 @@
      }
     }
    ],
+   "drops": [
+    {
+     "item": "craiceann sionnaigh",
+     "chance_pct": 60.0,
+     "min": 1,
+     "max": 1
+    }
+   ],
    "xp": 5,
    "level": 1,
+   "leash": 120.0,
    "skill": "fiach",
    "homes": [
     "talamh seilge waterford",
@@ -10417,15 +10426,6 @@
     "talamh seilge kinsale",
     "talamh seilge ardee",
     "talamh seilge listowel"
-   ],
-   "leash": 120.0,
-   "drops": [
-    {
-     "item": "craiceann sionnaigh",
-     "chance_pct": 60.0,
-     "min": 1,
-     "max": 1
-    }
    ]
   },
   {
@@ -11831,6 +11831,7 @@
    ],
    "xp": 22,
    "level": 4,
+   "leash": 120.0,
    "loot": "creach iseal",
    "skill": "fiach",
    "homes": [
@@ -11869,8 +11870,7 @@
     "talamh seilge kinsale thiar",
     "talamh seilge ardee thiar",
     "talamh seilge listowel thiar"
-   ],
-   "leash": 120.0
+   ]
   },
   {
    "name": "gabha",
@@ -16464,8 +16464,8 @@
    ],
    "xp": 10,
    "level": 1,
+   "leash": 120.0,
    "skill": "fiach",
-   "beast": "fox",
    "homes": [
     "talamh seilge waterford",
     "talamh seilge cork",
@@ -16503,7 +16503,7 @@
     "talamh seilge ardee",
     "talamh seilge listowel"
    ],
-   "leash": 120.0
+   "beast": "fox"
   },
   {
    "name": "giorria",
@@ -16540,8 +16540,8 @@
    ],
    "xp": 10,
    "level": 1,
+   "leash": 120.0,
    "skill": "fiach",
-   "beast": "fox",
    "homes": [
     "talamh seilge waterford",
     "talamh seilge cork",
@@ -16579,7 +16579,7 @@
     "talamh seilge ardee",
     "talamh seilge listowel"
    ],
-   "leash": 120.0
+   "beast": "fox"
   },
   {
    "name": "tarbh fiain",
@@ -16622,8 +16622,8 @@
    ],
    "xp": 34,
    "level": 5,
+   "leash": 120.0,
    "skill": "fiach",
-   "beast": "cow",
    "homes": [
     "talamh seilge waterford thiar",
     "talamh seilge cork thiar",
@@ -16661,7 +16661,7 @@
     "talamh seilge ardee thiar",
     "talamh seilge listowel thiar"
    ],
-   "leash": 120.0
+   "beast": "cow"
   },
   {
    "name": "puca",
@@ -17306,8 +17306,8 @@
    "title": "Trá Lí",
    "sound": "sea",
    "music": "explore",
-   "dock": true,
-   "safe": true
+   "safe": true,
+   "dock": true
   },
   {
    "name": "downpatrick",
@@ -17387,8 +17387,8 @@
    "title": "Cathair na Mart",
    "sound": "sea",
    "music": "explore",
-   "dock": true,
-   "safe": true
+   "safe": true,
+   "dock": true
   },
   {
    "name": "lismore",
@@ -17428,8 +17428,8 @@
    "title": "Béal Feirste",
    "sound": "sea",
    "music": "explore",
-   "dock": true,
-   "safe": true
+   "safe": true,
+   "dock": true
   },
   {
    "name": "mullingar",
@@ -17489,8 +17489,8 @@
    "title": "Ceann tSáile",
    "sound": "sea",
    "music": "explore",
-   "dock": true,
-   "safe": true
+   "safe": true,
+   "dock": true
   },
   {
    "name": "ardee",
@@ -17614,8 +17614,7 @@
    "r": 1280.0,
    "title": "Coill na Mac Tíre",
    "sound": "forest",
-   "music": "night",
-   "safe": false
+   "music": "night"
   },
   {
    "name": "dibheirgigh",
@@ -31431,6 +31430,7 @@
    "done_text": "Good news travels fast with you.",
    "giver": "laoch",
    "turn_in": "ceannai",
+   "level": 5,
    "after": "brigands on the road",
    "steps": [
     {
@@ -31444,8 +31444,7 @@
      "item": "pingin airgid",
      "count": 3
     }
-   ],
-   "level": 5
+   ]
   },
   {
    "name": "the fishers worry",
@@ -31453,14 +31452,14 @@
    "text": "Strange lights on Loch nEathach at night. Go and look, and come back and tell me what you saw.",
    "done_text": "Only marsh-fire? Well, I'll sleep easier.",
    "giver": "iascaire",
+   "level": 6,
    "steps": [
     {
      "kind": "visit",
      "place": "loch neathach"
     }
    ],
-   "xp": 500,
-   "level": 6
+   "xp": 500
   },
   {
    "name": "the restless dead",
@@ -31953,6 +31952,7 @@
    "done_text": "Silent, you say? Then something is badly wrong in Ireland.",
    "opening": "The Stone of Destiny\nOn the Hill of Tara, the Lia Fáil has fallen silent.",
    "giver": "laoch",
+   "offered_at": "dublin",
    "level": 2,
    "steps": [
     {
@@ -31966,8 +31966,7 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ],
-   "offered_at": "dublin"
+   ]
   },
   {
    "name": "the monks of kells",
@@ -32074,6 +32073,7 @@
    "closing": "The Stone of Destiny\nThe stone has spoken. Ireland will remember your name.",
    "giver": "manach",
    "turn_in": "laoch",
+   "level": 8,
    "after": "the dark god",
    "steps": [
     {
@@ -32087,8 +32087,7 @@
      "item": "fainne oir",
      "count": 1
     }
-   ],
-   "level": 8
+   ]
   },
   {
    "name": "ore for the forge",
@@ -32345,6 +32344,7 @@
    "text": "The Fianna gathered at Almhain. Walk to Teamhair, then to Dún Ailinne, and you'll have walked where they walked.",
    "done_text": "You've the feet of a fénnid, I'll say that.",
    "giver": "seanchai",
+   "offered_at": "dublin",
    "level": 3,
    "steps": [
     {
@@ -32362,8 +32362,7 @@
      "item": "pingin airgid",
      "count": 10
     }
-   ],
-   "offered_at": "dublin"
+   ]
   },
   {
    "name": "oisin in the west",
@@ -33110,6 +33109,8 @@
    "text": "Port Láirge is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "clonmel",
+   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -33127,9 +33128,7 @@
      "item": "pingin airgid",
      "count": 9
     }
-   ],
-   "level": 3,
-   "offered_at": "clonmel"
+   ]
   },
   {
    "name": "the road to cork",
@@ -33137,6 +33136,8 @@
    "text": "Travellers to Corcaigh keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "cork",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33158,9 +33159,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "cork"
+   ]
   },
   {
    "name": "word to ennis from limerick",
@@ -33168,6 +33167,8 @@
    "text": "There's news for Inis that won't keep. Walk there and tell them what you've seen on the road from Luimneach.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "limerick",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33180,9 +33181,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "limerick"
+   ]
   },
   {
    "name": "word to ennis from galway",
@@ -33190,6 +33189,8 @@
    "text": "There's news for Inis that won't keep. Walk there and tell them what you've seen on the road from Gaillimh.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "galway",
+   "level": 3,
    "steps": [
     {
      "kind": "visit",
@@ -33202,9 +33203,7 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ],
-   "level": 3,
-   "offered_at": "galway"
+   ]
   },
   {
    "name": "supplies for wexford",
@@ -33212,6 +33211,8 @@
    "text": "Loch Garman is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "waterford",
+   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -33229,9 +33230,7 @@
      "item": "pingin airgid",
      "count": 9
     }
-   ],
-   "level": 3,
-   "offered_at": "waterford"
+   ]
   },
   {
    "name": "the road to armagh",
@@ -33239,6 +33238,8 @@
    "text": "Travellers to Ard Mhacha keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "armagh",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33260,9 +33261,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "armagh"
+   ]
   },
   {
    "name": "word to coleraine from derry",
@@ -33270,6 +33269,8 @@
    "text": "There's news for Cúil Raithin that won't keep. Walk there and tell them what you've seen on the road from Doire.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "derry",
+   "level": 3,
    "steps": [
     {
      "kind": "visit",
@@ -33282,9 +33283,7 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ],
-   "level": 3,
-   "offered_at": "derry"
+   ]
   },
   {
    "name": "word to carlow from kilkenny",
@@ -33292,6 +33291,8 @@
    "text": "There's news for Ceatharlach that won't keep. Walk there and tell them what you've seen on the road from Cill Chainnigh.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "kilkenny",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33304,9 +33305,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "kilkenny"
+   ]
   },
   {
    "name": "supplies for drogheda",
@@ -33314,6 +33313,8 @@
    "text": "Droichead Átha is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "ardee",
+   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -33331,9 +33332,7 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ],
-   "level": 1,
-   "offered_at": "ardee"
+   ]
   },
   {
    "name": "the road to sligo",
@@ -33341,6 +33340,8 @@
    "text": "Travellers to Sligeach keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "sligo",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33362,9 +33363,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "sligo"
+   ]
   },
   {
    "name": "word to roscommon from athlone",
@@ -33372,6 +33371,8 @@
    "text": "There's news for Ros Comáin that won't keep. Walk there and tell them what you've seen on the road from Baile Átha Luain.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "athlone",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33384,9 +33385,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "athlone"
+   ]
   },
   {
    "name": "word to ardee from dundalk",
@@ -33394,6 +33393,8 @@
    "text": "There's news for Baile Átha Fhirdia that won't keep. Walk there and tell them what you've seen on the road from Dún Dealgan.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "dundalk",
+   "level": 1,
    "steps": [
     {
      "kind": "visit",
@@ -33406,9 +33407,7 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ],
-   "level": 1,
-   "offered_at": "dundalk"
+   ]
   },
   {
    "name": "supplies for kells",
@@ -33416,6 +33415,8 @@
    "text": "Ceanannas is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "ardee",
+   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -33433,9 +33434,7 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ],
-   "level": 2,
-   "offered_at": "ardee"
+   ]
   },
   {
    "name": "the road to clonmel",
@@ -33443,6 +33442,8 @@
    "text": "Travellers to Cluain Meala keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "clonmel",
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
@@ -33464,9 +33465,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 5,
-   "offered_at": "clonmel"
+   ]
   },
   {
    "name": "word to listowel from tralee",
@@ -33474,6 +33473,8 @@
    "text": "There's news for Lios Tuathail that won't keep. Walk there and tell them what you've seen on the road from Trá Lí.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "tralee",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33486,9 +33487,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "tralee"
+   ]
   },
   {
    "name": "word to belfast from downpatrick",
@@ -33496,6 +33495,8 @@
    "text": "There's news for Béal Feirste that won't keep. Walk there and tell them what you've seen on the road from Dún Pádraig.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "downpatrick",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33508,9 +33509,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "downpatrick"
+   ]
   },
   {
    "name": "supplies for ennis",
@@ -33518,6 +33517,8 @@
    "text": "Inis is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "limerick",
+   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -33535,9 +33536,7 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ],
-   "level": 2,
-   "offered_at": "limerick"
+   ]
   },
   {
    "name": "the road to roscommon",
@@ -33545,6 +33544,8 @@
    "text": "Travellers to Ros Comáin keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "roscommon",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33566,9 +33567,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "roscommon"
+   ]
   },
   {
    "name": "word to carlow from kildare",
@@ -33576,6 +33575,8 @@
    "text": "There's news for Ceatharlach that won't keep. Walk there and tell them what you've seen on the road from Cill Dara.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "kildare",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33588,9 +33589,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "kildare"
+   ]
   },
   {
    "name": "word to kilkenny from carlow",
@@ -33598,6 +33597,8 @@
    "text": "There's news for Cill Chainnigh that won't keep. Walk there and tell them what you've seen on the road from Ceatharlach.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "carlow",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33610,9 +33611,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "carlow"
+   ]
   },
   {
    "name": "supplies for monaghan",
@@ -33620,6 +33619,8 @@
    "text": "Muineachán is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "armagh",
+   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -33637,9 +33638,7 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ],
-   "level": 1,
-   "offered_at": "armagh"
+   ]
   },
   {
    "name": "the road to donegal",
@@ -33647,6 +33646,8 @@
    "text": "Travellers to Dún na nGall keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "donegal",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33668,9 +33669,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "donegal"
+   ]
   },
   {
    "name": "word to galway from westport",
@@ -33678,6 +33677,8 @@
    "text": "There's news for Gaillimh that won't keep. Walk there and tell them what you've seen on the road from Cathair na Mart.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "westport",
+   "level": 4,
    "steps": [
     {
      "kind": "visit",
@@ -33690,9 +33691,7 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ],
-   "level": 4,
-   "offered_at": "westport"
+   ]
   },
   {
    "name": "word to youghal from lismore",
@@ -33700,6 +33699,8 @@
    "text": "There's news for Eochaill that won't keep. Walk there and tell them what you've seen on the road from Lios Mór.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "lismore",
+   "level": 1,
    "steps": [
     {
      "kind": "visit",
@@ -33712,9 +33713,7 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ],
-   "level": 1,
-   "offered_at": "lismore"
+   ]
   },
   {
    "name": "supplies for coleraine",
@@ -33722,6 +33721,8 @@
    "text": "Cúil Raithin is short this season. Carry five of cais there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "derry",
+   "level": 3,
    "steps": [
     {
      "kind": "collect",
@@ -33739,9 +33740,7 @@
      "item": "pingin airgid",
      "count": 9
     }
-   ],
-   "level": 3,
-   "offered_at": "derry"
+   ]
   },
   {
    "name": "the road to enniskillen",
@@ -33749,6 +33748,8 @@
    "text": "Travellers to Inis Ceithleann keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "enniskillen",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33770,9 +33771,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "enniskillen"
+   ]
   },
   {
    "name": "word to downpatrick from belfast",
@@ -33780,6 +33779,8 @@
    "text": "There's news for Dún Pádraig that won't keep. Walk there and tell them what you've seen on the road from Béal Feirste.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "belfast",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33792,9 +33793,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "belfast"
+   ]
   },
   {
    "name": "word to kells from mullingar",
@@ -33802,6 +33801,8 @@
    "text": "There's news for Ceanannas that won't keep. Walk there and tell them what you've seen on the road from An Muileann gCearr.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "mullingar",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33814,9 +33815,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "mullingar"
+   ]
   },
   {
    "name": "supplies for thurles",
@@ -33824,6 +33823,8 @@
    "text": "Durlas is short this season. Carry five of cabaiste there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "kilkenny",
+   "level": 2,
    "steps": [
     {
      "kind": "collect",
@@ -33841,9 +33842,7 @@
      "item": "pingin airgid",
      "count": 8
     }
-   ],
-   "level": 2,
-   "offered_at": "kilkenny"
+   ]
   },
   {
    "name": "the road to killarney",
@@ -33851,6 +33850,8 @@
    "text": "Travellers to Cill Airne keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "killarney",
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
@@ -33872,9 +33873,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 3,
-   "offered_at": "killarney"
+   ]
   },
   {
    "name": "word to killarney from bantry",
@@ -33882,6 +33881,8 @@
    "text": "There's news for Cill Airne that won't keep. Walk there and tell them what you've seen on the road from Beanntraí.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "bantry",
+   "level": 3,
    "steps": [
     {
      "kind": "visit",
@@ -33894,9 +33895,7 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ],
-   "level": 3,
-   "offered_at": "bantry"
+   ]
   },
   {
    "name": "word to lismore from youghal",
@@ -33904,6 +33903,8 @@
    "text": "There's news for Lios Mór that won't keep. Walk there and tell them what you've seen on the road from Eochaill.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "watchman",
+   "offered_at": "youghal",
+   "level": 1,
    "steps": [
     {
      "kind": "visit",
@@ -33916,9 +33917,7 @@
      "item": "pingin airgid",
      "count": 5
     }
-   ],
-   "level": 1,
-   "offered_at": "youghal"
+   ]
   },
   {
    "name": "supplies for kinsale",
@@ -33926,6 +33925,8 @@
    "text": "Cionn tSáile is short this season. Carry five of bradan there and see the market stocked.",
    "done_text": "Stocked, and the price come down. Well done.",
    "giver": "ceannai",
+   "offered_at": "cork",
+   "level": 1,
    "steps": [
     {
      "kind": "collect",
@@ -33943,9 +33944,7 @@
      "item": "pingin airgid",
      "count": 7
     }
-   ],
-   "level": 1,
-   "offered_at": "cork"
+   ]
   },
   {
    "name": "the road to ardee",
@@ -33953,6 +33952,8 @@
    "text": "Travellers to Baile Átha Fhirdia keep coming back hurt, or not at all. Clear the road: eight of what's out there, and come back to the town.",
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
+   "offered_at": "ardee",
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
@@ -33974,9 +33975,7 @@
      "item": "deoch leighis",
      "count": 2
     }
-   ],
-   "level": 5,
-   "offered_at": "ardee"
+   ]
   },
   {
    "name": "word to tralee from listowel",
@@ -33984,6 +33983,8 @@
    "text": "There's news for Trá Lí that won't keep. Walk there and tell them what you've seen on the road from Lios Tuathail.",
    "done_text": "That's the word carried. They'll be glad of it.",
    "giver": "tuathanach",
+   "offered_at": "listowel",
+   "level": 2,
    "steps": [
     {
      "kind": "visit",
@@ -33996,9 +33997,7 @@
      "item": "pingin airgid",
      "count": 6
     }
-   ],
-   "level": 2,
-   "offered_at": "listowel"
+   ]
   },
   {
    "name": "a horse for the road",
@@ -35816,7 +35815,9 @@
   "plea_pct": 40.0,
   "season_days": 3.0,
   "season_shift": 0.0,
-  "exit_dwell_secs": 2.0
+  "exit_dwell_secs": 2.0,
+  "assist_reach": 25.0,
+  "calm_levels": 5
  },
  "starter": [
   {
