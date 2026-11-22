@@ -555,7 +555,7 @@ fn tarns(l: &mut Layout, land: &Land, rv: &[River], ri: &RiverIndex, roads: &roa
 /// fades to nothing near anything laid out, roads, rivers and the shore (the samples round them keep their heights
 /// exactly) and is gentle over fields.
 #[allow(clippy::too_many_arguments)]
-fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land: &Land, rv: &[River], roads: &roads::Cells, fields: &fields::FieldIndex, seed: u64, amount: f32) {
+fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land: &Land, rv: &[River], roads: &roads::Cells, fields: &fields::FieldIndex, seed: u64, amount: f32, drama: f32, kept: &[Box4]) {
     // Samples that must keep their height: within a cell of something laid out (crags aside: they are mountains),
     // a road or a river.
     let mut keep = vec![false; n * n];
@@ -577,6 +577,9 @@ fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land:
     }
     for (x, y) in roads.centres() {
         mark([x, y, x, y], cell);
+    }
+    for b in kept {
+        mark(*b, cell);
     }
     for r in rv {
         for w in r.pts.windows(2) {
@@ -622,25 +625,72 @@ fn relief_detail(hs: &mut [f32], n: usize, x0: f32, cell: f32, l: &Layout, land:
         for i in 0..n {
             let k = j * n + i;
             let mut m = smooth(1.5, 5.0, dist[k]);
+            // The bold relief fades in further out, so a village or a road sits in its own level ground.
+            let mut md = smooth(2.0, 7.0, dist[k]);
             if m <= 0.0 {
                 continue;
             }
             let (x, y) = (x0 + i as f32 * cell, x0 + j as f32 * cell); // the grid starts at (x0, x0)
             if let Some(c) = &land.coast {
-                m *= smooth(60.0, 320.0, c.d(x, y));
+                let sh = smooth(60.0, 320.0, c.d(x, y));
+                m *= sh;
+                md *= smooth(120.0, 600.0, c.d(x, y));
                 if m <= 0.0 {
                     continue;
                 }
             }
             if fields.at(x, y) {
                 m *= 0.5;
+                md *= 0.6;
             }
             // Never down into the sea: low country stays above the tide whatever the relief says.
             let was = hs[k];
             let floor = if land.coast.is_some() { was.min(SHORE + 1.5) } else { f32::MIN };
-            hs[k] = (was + m * amount * lesser_relief(x, y, seed)).max(floor);
+            let bold = if drama > 0.0 && md > 0.0 { md * drama * big_relief(x, y, was, seed) } else { 0.0 };
+            hs[k] = (was + m * amount * lesser_relief(x, y, seed) + bold).max(floor);
         }
     }
+}
+
+/// The bold relief at a point over ground at height `was`, in units up or down: what stands above the foothills
+/// lifted again with ridged crests, broad hills in upland country, long valleys, and here and there a hollow.
+fn big_relief(x: f32, y: f32, was: f32, seed: u64) -> f32 {
+    let high = (was - 14.0).max(0.0);
+    let ridge = 1.0 - (noise(x / 520.0, y / 520.0, seed + 301) * 2.0 - 1.0).abs();
+    let mountains = high * 1.2 + smooth(8.0, 45.0, high) * ridge * ridge * 45.0;
+    // (fbm keeps near its middle: these bands are where it wanders above it.)
+    let upland = smooth(0.4, 0.55, fbm(x / 8000.0, y / 8000.0, seed + 303, 2));
+    let hills = smooth(0.4, 0.6, fbm(x / 1400.0, y / 1400.0, seed + 305, 3)) * 40.0 * (0.4 + upland);
+    let v = (noise(x / 3200.0, y / 3200.0, seed + 307) * 2.0 - 1.0).abs();
+    let valley = -(1.0 - smooth(0.0, 0.16, v)) * 24.0;
+    mountains + hills + valley + hollow(x, y, seed + 309)
+}
+
+/// Hollows: about one square in three of a 1,100-unit grid has a round pit, 100 to 280 across and 12 to 30 deep,
+/// with a low lip round it.
+fn hollow(x: f32, y: f32, seed: u64) -> f32 {
+    const G: f32 = 1100.0;
+    let (gx, gy) = ((x / G).floor() as i64, (y / G).floor() as i64);
+    let mut h = 0.0;
+    for dj in -1..=1 {
+        for di in -1..=1 {
+            let (cx, cy) = (gx + di, gy + dj);
+            if hash(cx, cy, seed) > 0.3 {
+                continue;
+            }
+            let px = (cx as f32 + 0.25 + 0.5 * hash(cx, cy, seed + 1)) * G;
+            let py = (cy as f32 + 0.25 + 0.5 * hash(cx, cy, seed + 2)) * G;
+            let r = 50.0 + 90.0 * hash(cx, cy, seed + 3);
+            let depth = 12.0 + 18.0 * hash(cx, cy, seed + 4);
+            let d = (x - px).hypot(y - py) / r;
+            if d < 1.0 {
+                h -= depth * (1.0 - d * d).powi(2);
+            } else if d < 1.5 {
+                h += 2.5 * (1.0 - ((d - 1.25) / 0.25).powi(2)).max(0.0);
+            }
+        }
+    }
+    h
 }
 
 /// The lesser relief at a point, in units up or down.
@@ -949,6 +999,11 @@ pub struct Params {
     /// scattered in it, as a multiple of the usual number (0 for none). Both leave what is laid out where it was.
     pub detail: f32,
     pub tarns: f32,
+    /// Bold relief over the open country (`big_relief`: taller mountains with ridged tops, upland hills, long
+    /// valleys, deep hollows), 0 for none; it too leaves what is laid out where it was, fading out further round it.
+    pub drama: f32,
+    /// Boxes [x0, y0, x1, y1] whose ground keeps its height whatever the relief (where players have built).
+    pub keep: Vec<Box4>,
     /// Roads between the places, high streets and avenues.
     pub roads: bool,
     /// The land's outlines, if it has a coast (sea outside them); none is land to the edge, with mountains past it.
@@ -988,7 +1043,7 @@ const ADDABLE: [(&str, bool); 9] =
 
 impl Default for Params {
     fn default() -> Self {
-        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, detail: 0.0, tarns: 0.0, roads: true, coast: Vec::new(), courses: Vec::new(), settlements: Vec::new(), edits: Vec::new() }
+        Params { size: 2048.0, seed: 1, city: true, villages: 1.0, forts: 1.0, crags: 1.0, lakes: 1.0, rivers: None, forest: 1.0, hills: 1.0, detail: 0.0, tarns: 0.0, drama: 0.0, keep: Vec::new(), roads: true, coast: Vec::new(), courses: Vec::new(), settlements: Vec::new(), edits: Vec::new() }
     }
 }
 
@@ -1015,7 +1070,7 @@ impl Params {
         if let Some(b) = v.get("roads") {
             p.roads = b.as_bool().ok_or("roads must be true or false")?;
         }
-        for (k, f) in [("villages", &mut p.villages), ("forts", &mut p.forts), ("crags", &mut p.crags), ("lakes", &mut p.lakes), ("forest", &mut p.forest), ("hills", &mut p.hills), ("detail", &mut p.detail), ("tarns", &mut p.tarns)] {
+        for (k, f) in [("villages", &mut p.villages), ("forts", &mut p.forts), ("crags", &mut p.crags), ("lakes", &mut p.lakes), ("forest", &mut p.forest), ("hills", &mut p.hills), ("detail", &mut p.detail), ("tarns", &mut p.tarns), ("drama", &mut p.drama)] {
             if let Some(n) = num(k, 0.0, 5.0)? {
                 *f = n as f32;
             }
@@ -1030,6 +1085,11 @@ impl Params {
         }
         for (i, r) in v.get("river_courses").and_then(|c| c.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
             p.courses.push(line(r, format!("river course {i}"), 2)?);
+        }
+        for (i, b) in v.get("keep").and_then(|c| c.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
+            let q: Option<Vec<f32>> = b.as_array().filter(|a| a.len() == 4).map(|a| a.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect());
+            let q = q.filter(|q| q.len() == 4 && q.iter().all(|v| v.is_finite())).ok_or(format!("keep {i}: [x0, y0, x1, y1]"))?;
+            p.keep.push([q[0].min(q[2]), q[1].min(q[3]), q[0].max(q[2]), q[1].max(q[3])]);
         }
         for (i, s) in v.get("settlements").and_then(|c| c.as_array()).map_or(&[][..], |a| a.as_slice()).iter().enumerate() {
             let t = s.get("t").and_then(|t| t.as_str()).unwrap_or("");
@@ -1076,7 +1136,8 @@ impl Params {
             .collect();
         json!({
             "size": self.size, "seed": self.seed, "city": self.city, "villages": self.villages, "forts": self.forts, "crags": self.crags,
-            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "detail": self.detail, "tarns": self.tarns, "roads": self.roads, "edits": edits,
+            "lakes": self.lakes, "rivers": self.rivers, "forest": self.forest, "hills": self.hills, "detail": self.detail, "tarns": self.tarns, "drama": self.drama, "roads": self.roads, "edits": edits,
+            "keep": self.keep.iter().map(|b| json!([r1(b[0]), r1(b[1]), r1(b[2]), r1(b[3])])).collect::<Vec<_>>(),
             "coast": self.coast.iter().map(|o| o.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "river_courses": self.courses.iter().map(|o| o.iter().map(|&(x, y)| json!([r1(x), r1(y)])).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "settlements": self.settlements.iter().map(|s| {
@@ -1404,8 +1465,8 @@ pub fn build(p: &Params) -> Generated {
             hs.push(h_at(-margin + i as f32 * cell, -margin + j as f32 * cell));
         }
     }
-    if p.detail > 0.0 {
-        relief_detail(&mut hs, n, -margin, cell, &l, &land, &rv, &road_cells, &in_field, p.seed, p.detail);
+    if p.detail > 0.0 || p.drama > 0.0 {
+        relief_detail(&mut hs, n, -margin, cell, &l, &land, &rv, &road_cells, &in_field, p.seed, p.detail, p.drama, &p.keep);
     }
     let (lo, hi) = hs.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
     let span = (hi - lo).max(1e-3);
@@ -1927,6 +1988,53 @@ mod tests {
         assert_eq!(things(&plain), things(&rich), "houses and squares stay where they were, at their heights");
         assert_eq!(plain["roads"], rich["roads"]);
         assert_ne!(plain["heights"]["u16le"], rich["heights"]["u16le"], "the open country changes");
+    }
+
+    /// The heights a world file keeps, decoded: (x0, cell, w, samples).
+    fn heights_of(w: &Value) -> (f32, f32, usize, Vec<f32>) {
+        let h = &w["heights"];
+        let (lo, hi) = (h["lo"].as_f64().unwrap() as f32, h["hi"].as_f64().unwrap() as f32);
+        let txt = h["u16le"].as_str().unwrap().as_bytes();
+        let val = |c: u8| match c { b'A'..=b'Z' => c - b'A', b'a'..=b'z' => c - b'a' + 26, b'0'..=b'9' => c - b'0' + 52, b'+' => 62, _ => 63 } as u32;
+        let mut bytes = Vec::new();
+        for q in txt.chunks(4) {
+            let n = q.iter().take_while(|&&c| c != b'=').count();
+            let v = q.iter().take(n).enumerate().fold(0u32, |a, (i, &c)| a | val(c) << (18 - 6 * i));
+            bytes.extend_from_slice(&[(v >> 16) as u8, (v >> 8) as u8, v as u8][..n.saturating_sub(1)]);
+        }
+        let hs = bytes.chunks_exact(2).map(|b| lo + (hi - lo) * u16::from_le_bytes([b[0], b[1]]) as f32 / 65535.0).collect();
+        (h["x0"].as_f64().unwrap() as f32, h["cell"].as_f64().unwrap() as f32, h["w"].as_u64().unwrap() as usize, hs)
+    }
+
+    #[test]
+    fn bold_relief_raises_the_country_and_leaves_what_is_laid_out_and_kept_where_it_was() {
+        let base = Params { size: 20000.0, seed: 7, detail: 1.0, coast: vec![vec![(2000.0, 2000.0), (18000.0, 2000.0), (18000.0, 18000.0), (2000.0, 18000.0)]], ..Params::default() };
+        let plain = generate(&base);
+        let kept = [9000.0, 9000.0, 9400.0, 9400.0];
+        let flat = generate(&Params { detail: 0.0, ..base.clone() });
+        let bold = generate(&Params { drama: 1.0, keep: vec![kept], ..base });
+        let things = |w: &Value| w["objects"].as_array().unwrap().iter().filter(|o| o["t"] == "house" || o["t"] == "square").cloned().collect::<Vec<_>>();
+        assert_eq!(things(&plain), things(&bold), "houses and squares stay where they were, at their heights");
+        assert_eq!(plain["roads"], bold["roads"]);
+        let (x0, cell, n, a) = heights_of(&plain);
+        let (_, _, _, b) = heights_of(&bold);
+        let (_, _, _, raw) = heights_of(&flat);
+        let land: Vec<usize> = (0..a.len()).filter(|&k| a[k] > 3.0).collect();
+        let moved = land.iter().filter(|&&k| (b[k] - a[k]).abs() > 5.0).count() as f32 / land.len() as f32;
+        let hi = |h: &[f32]| land.iter().map(|&k| h[k]).fold(0.0f32, f32::max);
+        assert!(moved > 0.3, "a third of the land changes by more than 5: {moved}");
+        assert!(hi(&b) > hi(&a) * 1.4, "taller tops: {} against {}", hi(&b), hi(&a));
+        let mut most = 0.0f32;
+        for j in 0..n {
+            for i in 0..n {
+                let (x, y) = (x0 + i as f32 * cell, x0 + j as f32 * cell);
+                if x >= kept[0] && x <= kept[2] && y >= kept[1] && y <= kept[3] {
+                    most = most.max((raw[j * n + i] - b[j * n + i]).abs()); // no relief at all there
+                }
+            }
+        }
+        assert!(most < 0.05, "the kept ground moved {most}");
+        let _ = &plain;
     }
 
     #[test]

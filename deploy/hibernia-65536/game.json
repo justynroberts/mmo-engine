@@ -35817,7 +35817,10 @@
   "season_shift": 0.0,
   "exit_dwell_secs": 2.0,
   "assist_reach": 25.0,
-  "calm_levels": 5
+  "calm_levels": 5,
+  "rest_after_secs": 6.0,
+  "rest_pct": 2.5,
+  "rest_sit_x": 2.0
  },
  "starter": [
   {
