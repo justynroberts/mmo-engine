@@ -46,6 +46,16 @@ first.
 
 ## Done
 
+- 2026-11-22 — A play test to level 10 (autoplay, live content and land). Found and fixed: a quest ready to hand in
+  stayed "ready" after another quest's hand-in took its goods (the giver refused it for good; it goes back to the
+  collect step now); a newcomer's purse (10 pennies) could not pay for one errand's goods, and errands paid less
+  than their goods cost (40 pennies, and pay half again over cost); beasts paid 10-34 experience against 16,800 for
+  level 10 (now by level, 10 x level^1.5: a boar 80, a bull 112); night ambushes sent any of six kinds up to
+  level 14 in packs of three at a level-2 player (now their match, one at a time early); the seed trader worked the
+  fields where nobody could find them (now the square); the curve's first levels were slow (250 x 1.9: level 3 by
+  the fourth quest). The autoplay hunts quest beasts when it has nothing near to do, rests when hurt, and leaves
+  deadly foes be.
+
 - 2026-11-22 — A bolder land: worldgen's `drama` (Hibernia 2) lifts the mountains to about 260 with ridged crests
   and lays upland hills, long valleys and hollows over the open country, fading out round towns, roads, rivers,
   fields and the shore so nothing laid out moves; the ground under players' builds is held (`keep`). The hunting

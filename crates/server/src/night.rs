@@ -101,8 +101,13 @@ impl Sim {
             if self.rng.f32() * 100.0 >= pct / 60.0 || self.ambushers.len() >= 8 * self.ents.live.max(1) as usize {
                 continue;
             }
-            let kind = kinds[self.rng.below(kinds.len() as u32) as usize];
-            let n = 1 + self.rng.below(pack);
+            // What comes is about their match: kinds no more than a level over them (else the least of them), and
+            // a newcomer meets one, not a pack (two from level 3, the full pack from level 6).
+            let lv = self.ents.level[p].max(1);
+            let fit: Vec<u8> = kinds.iter().copied().filter(|&k| self.archs[k as usize].level <= lv.saturating_add(1)).collect();
+            let fit = if fit.is_empty() { kinds.iter().copied().min_by_key(|&k| self.archs[k as usize].level).into_iter().collect() } else { fit };
+            let kind = fit[self.rng.below(fit.len() as u32) as usize];
+            let n = 1 + self.rng.below(pack.min(1 + lv as u32 / 3));
             // Out at the edge of what it sees in the dark, so it comes at them out of it.
             let d = (self.archs[kind as usize].sight * self.rules.night_sight * 0.7).clamp(18.0, 50.0);
             let (px, py) = (self.ents.x[p], self.ents.y[p]);
@@ -168,7 +173,12 @@ mod tests {
     fn at_night_hunters_come_for_a_player_in_the_open_and_go_at_daybreak() {
         let (mut s, me) = night_world(6000.0); // a hundred a second: every time
         s.night = true;
-        s.system_night();
+        for _ in 0..5000 {
+            s.system_night();
+            if !s.ambushers.is_empty() {
+                break;
+            }
+        }
         assert!(!s.ambushers.is_empty(), "set on");
         assert!(!s.pursuers[me].is_empty(), "and already after them");
         assert!(s.tells.iter().any(|(p, t)| *p == me && t.contains("in the dark")));
@@ -208,5 +218,32 @@ mod tests {
         let (cx, cy) = ((s.ents.x[me] / 2.0).floor() as u32, (s.ents.y[me] / 2.0).floor() as u32);
         s.world.set_column(cx, cy - 2, proto::world::Column { base: 0, mask: 0 });
         assert!(!s.shelter_at(me));
+    }
+
+    #[test]
+    fn a_newcomer_is_set_on_by_one_beast_their_match_not_a_pack_of_horrors() {
+        let mut g = GameFile::default_game();
+        (g.rules.night_pack, g.rules.night_sight) = (3, 1.5);
+        for (name, level) in [("night wolf", 1u8), ("night horror", 14), ("night terror", 14)] {
+            let mut b = g.archetypes[0].clone();
+            (b.name, b.behaviour, b.attack, b.count, b.home, b.rules, b.ambush, b.level) =
+                (name.into(), Behaviour::Chase, Some(g.actions[0].name.clone()), 0, None, vec![], true, level);
+            g.archetypes.push(b);
+        }
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(1024.0, 1, vec![]), 64, 20, 1);
+        s.rules.night_ambush_pct = 6000.0;
+        let me = s.spawn(0).unwrap();
+        (s.ents.x[me], s.ents.y[me]) = (500.0, 500.0);
+        s.ents.level[me] = 1;
+        s.night = true;
+        for _ in 0..5000 {
+            s.system_night();
+            if !s.ambushers.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(s.ambushers.len(), 1, "one, not a pack");
+        let b = s.ents.resolve(s.ambushers[0]).unwrap();
+        assert_eq!(s.archs[s.ents.arch[b] as usize].name, "night wolf", "their match");
     }
 }

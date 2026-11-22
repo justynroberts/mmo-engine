@@ -72,6 +72,9 @@ func run(main: Node, secs: float) -> void:
 		if m.my_level != level_was:
 			say("reached level %d" % m.my_level)
 			level_was = m.my_level
+			for k in _given_up.keys():
+				if String(k).begins_with("giver@"):
+					_given_up.erase(k) # new work is offered at a new level
 		_report_quests()
 		if m.fallen.down:
 			m.net.set_move(Vector2.ZERO)
@@ -230,11 +233,12 @@ func _rest() -> bool:
 ## to the nearest hunting ground and round it.
 func _hunt() -> void:
 	var shops: Dictionary = m.info.get("shops", {}) if m.info.get("shops") is Dictionary else {}
+	var game := _game_kinds()
 	var best := 90.0
 	var foe := 0
 	for n in _near():
 		var lv := _level_of(n[0])
-		if lv < 1 or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
+		if lv < 1 or not game.has(n[1]) or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
 			continue
 		if m.me_pos.distance_to(n[2]) < best:
 			best = m.me_pos.distance_to(n[2])
@@ -257,6 +261,18 @@ func _hunt() -> void:
 		return
 	var a := now() * 0.1
 	_steer(_hunt_at + Vector2(cos(a), sin(a)) * 60.0)
+
+## Game: the kinds some quest asks a player to beat (beasts, brigands, the restless dead), never the townsfolk,
+## their flocks or their hens.
+var _game_cache := {}
+func _game_kinds() -> Dictionary:
+	if _game_cache.is_empty():
+		for q in m.questui._quests:
+			for st in q.get("steps", []):
+				if String(st.get("text", "")).begins_with("Beat ") and st.get("kinds") is Array:
+					for k in st["kinds"]:
+						_game_cache[String(k)] = true
+	return _game_cache
 
 ## A "bring N" step for something a trader in reach sells: buy one (a second later the next).
 func _buy() -> bool:

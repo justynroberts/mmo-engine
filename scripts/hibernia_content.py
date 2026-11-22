@@ -949,7 +949,7 @@ def town_errands(towns, places, g):
 # Fitted with the server's play-through of the quests from Áth Cliath (`hibernia_quests_play_through`, each
 # repeatable once and no grinding): every band's quests come in reach as the ones below are done, and they all
 # reach the cap. The gentler 790 x 1.42 left a questing player at level 4, short of every quest left.
-LEVEL_CURVE = {"base": 500.0, "exponent": 1.6}
+LEVEL_CURVE = {"base": 250.0, "exponent": 1.9}  # early levels quick (3 by the fourth quest), level 10 by about the thirtieth
 
 # A new character's purse: enough for the first errands' goods (one alone was 12 pennies; it held 10).
 STARTER_COIN = 40
