@@ -32,6 +32,10 @@ first.
    the level). Only test characters are affected.
 
 ### Client
+- **Windows: an install only an administrator can read fails as "not designed to run on Windows".** A player's copy
+  ran only as admin (the folder extracted or updated elevated, or under Program Files), and the self-update copies
+  into the folder the game runs from. On start, check the folder can be written and its files read, and if not say
+  to move it to the user's own folder (`%LOCALAPPDATA%`) or reset its permissions (`icacls <dir> /reset /T`).
 6. **Windows client is unsigned**, so Windows warns before running it.
 
 ### Server and performance
