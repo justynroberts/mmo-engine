@@ -320,13 +320,15 @@ fn quest_info(q: &proto::game::QuestFile, places: &[proto::game::Place], archs: 
 }
 
 /// The bot types (indices into `archs`) a quest step is done at: those to beat or speak to, or for something to
-/// bring, those living somewhere that drop it.
+/// bring, those living somewhere that drop it or sell it (the town's smith sells the ore a 5 km walk would win).
 fn step_kinds(st: &proto::game::QuestStep, archs: &[proto::game::ArchRt], items: &[proto::game::ItemRt]) -> Vec<usize> {
     use proto::game::QuestStep;
     match st {
         QuestStep::Kill { archetype, .. } | QuestStep::Talk { archetype } => archs.iter().position(|a| &a.name == archetype).into_iter().collect(),
         QuestStep::Collect { item, .. } => match items.iter().position(|i| &i.name == item) {
-            Some(it) => (0..archs.len()).filter(|&a| archs[a].count > 0 && !archs[a].homes.is_empty() && archs[a].drops.iter().any(|d| d.item == it)).collect(),
+            Some(it) => (0..archs.len())
+                .filter(|&a| archs[a].count > 0 && !archs[a].homes.is_empty() && (archs[a].drops.iter().any(|d| d.item == it) || archs[a].shop.iter().any(|&(k, _)| k == it)))
+                .collect(),
             None => Vec::new(),
         },
         QuestStep::Visit { .. } | QuestStep::Build { .. } => Vec::new(),
@@ -1266,15 +1268,19 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
     // bots are not thrown away, removed archetypes are dropped and every archetype is topped up to its count.
     // An archetype whose count the edit changes starts again at its new count, so lowering a count removes bots;
     // so does one whose homes change (by place name), so its bots go to live in the new ones.
-    let mut bots = c.sim.bot_records();
     let homes_of = |homes: &[usize], places: &[proto::game::Place]| homes.iter().filter_map(|&h| places.get(h).map(|p| p.name.clone())).collect::<Vec<_>>();
     let was = |name: &str| c.sim.archs.iter().find(|a| a.name == name).map(|a| (a.count, homes_of(&a.homes, &c.sim.places)));
     let recount: Vec<String> = game.archs.iter().filter(|a| was(&a.name) != Some((a.count, homes_of(&a.homes, &game.places)))).map(|a| a.name.clone()).collect();
+    let reset = hash != c.hs.defs_hash;
+    // The same bot types in the same order (most edits): the bots stay as they are in the entity table and only
+    // the types whose count or homes changed are placed again. Saving all 19,000 of Hibernia's bots as records and
+    // spawning them back held the game half a second on every save, whatever it changed.
+    let same_kinds = !reset && game.archs.len() == c.sim.archs.len() && game.archs.iter().zip(&c.sim.archs).all(|(a, b)| a.name == b.name);
+    let mut bots = if same_kinds { crate::store::WorldSave::default() } else { c.sim.bot_records() };
     bots.bots.retain(|b| !recount.contains(&b.arch));
     lap("records", &mut t);
     let mut dropped = 0;
     let mut moved = 0;
-    let reset = hash != c.hs.defs_hash;
     if reset {
         // Different wire schema: every connected client would misparse. Start a
         // fresh world under the new definitions; clients see a content mismatch
@@ -1345,7 +1351,12 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
         }
     }
     lap("game", &mut t);
-    c.sim.populate_from(&bots);
+    if same_kinds {
+        let kinds: Vec<u8> = recount.iter().filter_map(|n| c.sim.archs.iter().position(|a| &a.name == n)).map(|a| a as u8).collect();
+        c.sim.repopulate(&kinds);
+    } else {
+        c.sim.populate_from(&bots);
+    }
     lap("bots", &mut t);
     *c.game = file;
     c.director.sync(c.game, c.sim.tick, c.params.hz);

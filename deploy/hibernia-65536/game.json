@@ -16418,14 +16418,11 @@
     "na gaibhlte",
     "sleibhte an chomaraigh",
     "na beanna beola",
-    "cruach phadraig",
-    "binn ghulbain",
     "earagail",
     "sliabh speirin",
     "sliabh bladhma",
     "na staighri dubha",
     "cnoc mhaoldomhnaigh",
-    "sliabh gcuillinn",
     "binn chuilceach",
     "sliabh mis",
     "cnoc breanainn"
@@ -16678,7 +16675,7 @@
    "attrs": {
     "health": 150.0
    },
-   "home": "binn ghulbain",
+   "home": "sliabh speirin",
    "rules": [],
    "drops": [
     {
@@ -16693,10 +16690,8 @@
    "leash": 80.0,
    "loot": "creach mheanach",
    "homes": [
-    "sliabh speirin",
     "sliabh bladhma",
     "cnoc mhaoldomhnaigh",
-    "sliabh gcuillinn",
     "binn chuilceach",
     "sliabh mis",
     "cnoc breanainn"
@@ -16762,7 +16757,7 @@
    "attrs": {
     "health": 300.0
    },
-   "home": "bealach na gcreach",
+   "home": "na staighri dubha",
    "rules": [],
    "drops": [
     {
@@ -16777,7 +16772,6 @@
    "leash": 120.0,
    "loot": "creach ard",
    "homes": [
-    "na staighri dubha",
     "sliabh bladhma",
     "na gaibhlte"
    ],
@@ -16823,9 +16817,7 @@
    "loot": "creach ard",
    "homes": [
     "earagail",
-    "binn ghulbain",
-    "na beanna beola",
-    "cruach phadraig"
+    "na beanna beola"
    ],
    "beast": "troll_hill"
   },
@@ -16878,8 +16870,7 @@
    "homes": [
     "na gaibhlte",
     "sliabh bladhma",
-    "sleibhte an chomaraigh",
-    "sliabh gcuillinn"
+    "sleibhte an chomaraigh"
    ]
   },
   {
@@ -16953,9 +16944,7 @@
     "loch deirgeirt",
     "loch ri",
     "loch ailin",
-    "loch eirne",
-    "loch gile",
-    "loch lein"
+    "loch eirne"
    ],
    "ambush": true,
    "beast": "ghost"
@@ -17916,8 +17905,8 @@
   },
   {
    "name": "cloch waterford",
-   "x": 46434.0,
-   "y": 31492.8,
+   "x": 46395.5,
+   "y": 31551.3,
    "r": 2.5,
    "title": "Cloch go Port Láirge",
    "exit": {
@@ -17938,8 +17927,8 @@
   },
   {
    "name": "cloch cork",
-   "x": 46431.1,
-   "y": 31502.5,
+   "x": 46375.0,
+   "y": 31539.3,
    "r": 2.5,
    "title": "Cloch go Corcaigh",
    "exit": {
@@ -17960,8 +17949,8 @@
   },
   {
    "name": "cloch limerick",
-   "x": 46423.5,
-   "y": 31509.2,
+   "x": 46363.1,
+   "y": 31525.2,
    "r": 2.5,
    "title": "Cloch go Luimneach",
    "exit": {
@@ -17982,8 +17971,8 @@
   },
   {
    "name": "cloch galway",
-   "x": 46413.4,
-   "y": 31510.6,
+   "x": 46354.5,
+   "y": 31500.8,
    "r": 2.5,
    "title": "Cloch go Gaillimh",
    "exit": {
@@ -18004,8 +17993,8 @@
   },
   {
    "name": "cloch wexford",
-   "x": 46404.2,
-   "y": 31506.4,
+   "x": 46414.1,
+   "y": 31554.8,
    "r": 2.5,
    "title": "Cloch go Loch Garman",
    "exit": {
@@ -18026,8 +18015,8 @@
   },
   {
    "name": "cloch armagh",
-   "x": 46398.7,
-   "y": 31497.9,
+   "x": 46402.7,
+   "y": 31432.2,
    "r": 2.5,
    "title": "Cloch go Ard Mhacha",
    "exit": {
@@ -18048,8 +18037,8 @@
   },
   {
    "name": "cloch derry",
-   "x": 46398.7,
-   "y": 31487.7,
+   "x": 46393.5,
+   "y": 31435.0,
    "r": 2.5,
    "title": "Cloch go Doire",
    "exit": {
@@ -18070,8 +18059,8 @@
   },
   {
    "name": "cloch kilkenny",
-   "x": 46404.2,
-   "y": 31479.2,
+   "x": 46383.1,
+   "y": 31545.4,
    "r": 2.5,
    "title": "Cloch go Cill Chainnigh",
    "exit": {
@@ -18092,8 +18081,8 @@
   },
   {
    "name": "cloch drogheda",
-   "x": 46413.4,
-   "y": 31475.0,
+   "x": 46416.7,
+   "y": 31430.8,
    "r": 2.5,
    "title": "Cloch go Droichead Átha",
    "exit": {
@@ -18114,8 +18103,8 @@
   },
   {
    "name": "cloch sligo",
-   "x": 46423.5,
-   "y": 31476.4,
+   "x": 46363.4,
+   "y": 31460.0,
    "r": 2.5,
    "title": "Cloch go Sligeach",
    "exit": {
@@ -18136,8 +18125,8 @@
   },
   {
    "name": "cloch athlone",
-   "x": 46431.1,
-   "y": 31483.1,
+   "x": 46354.0,
+   "y": 31491.1,
    "r": 2.5,
    "title": "Cloch go Áth Luain",
    "exit": {
@@ -25965,8 +25954,8 @@
   },
   {
    "name": "talamh seilge dublin thiar",
-   "x": 44779.7,
-   "y": 29261.6,
+   "x": 44079.5,
+   "y": 28747.2,
    "r": 380.0,
    "title": "Talamh Seilge Áth Cliath Thiar",
    "sound": "forest",
@@ -25983,8 +25972,8 @@
   },
   {
    "name": "talamh seilge waterford",
-   "x": 39413.0,
-   "y": 48162.1,
+   "x": 39447.7,
+   "y": 47198.2,
    "r": 320.0,
    "title": "Talamh Seilge Port Láirge",
    "sound": "forest",
@@ -25992,8 +25981,8 @@
   },
   {
    "name": "talamh seilge waterford thiar",
-   "x": 41084.0,
-   "y": 47030.5,
+   "x": 41565.0,
+   "y": 47348.4,
    "r": 380.0,
    "title": "Talamh Seilge Port Láirge Thiar",
    "sound": "forest",
@@ -26001,8 +25990,8 @@
   },
   {
    "name": "talamh seilge waterford coill",
-   "x": 42387.2,
-   "y": 48716.5,
+   "x": 35415.9,
+   "y": 48811.5,
    "r": 560.0,
    "title": "Talamh Seilge Port Láirge (Coill)",
    "sound": "forest",
@@ -26037,8 +26026,8 @@
   },
   {
    "name": "talamh seilge limerick",
-   "x": 26093.4,
-   "y": 44025.7,
+   "x": 28314.6,
+   "y": 42010.2,
    "r": 320.0,
    "title": "Talamh Seilge Luimneach",
    "sound": "forest",
@@ -26046,8 +26035,8 @@
   },
   {
    "name": "talamh seilge limerick thiar",
-   "x": 29250.1,
-   "y": 41059.3,
+   "x": 24961.3,
+   "y": 39948.9,
    "r": 380.0,
    "title": "Talamh Seilge Luimneach Thiar",
    "sound": "forest",
@@ -26055,8 +26044,8 @@
   },
   {
    "name": "talamh seilge limerick coill",
-   "x": 25750.2,
-   "y": 41788.8,
+   "x": 31871.2,
+   "y": 45521.5,
    "r": 560.0,
    "title": "Talamh Seilge Luimneach (Coill)",
    "sound": "forest",
@@ -26064,8 +26053,8 @@
   },
   {
    "name": "talamh seilge galway",
-   "x": 24636.6,
-   "y": 35033.5,
+   "x": 24428.0,
+   "y": 34478.2,
    "r": 320.0,
    "title": "Talamh Seilge Gaillimh",
    "sound": "forest",
@@ -26073,8 +26062,8 @@
   },
   {
    "name": "talamh seilge galway thiar",
-   "x": 25674.2,
-   "y": 33129.1,
+   "x": 24832.5,
+   "y": 36676.4,
    "r": 380.0,
    "title": "Talamh Seilge Gaillimh Thiar",
    "sound": "forest",
@@ -26082,8 +26071,8 @@
   },
   {
    "name": "talamh seilge galway coill",
-   "x": 23323.4,
-   "y": 37679.0,
+   "x": 25356.1,
+   "y": 31289.0,
    "r": 560.0,
    "title": "Talamh Seilge Gaillimh (Coill)",
    "sound": "forest",
@@ -26091,8 +26080,8 @@
   },
   {
    "name": "talamh seilge wexford",
-   "x": 45539.3,
-   "y": 46973.3,
+   "x": 44991.5,
+   "y": 46496.1,
    "r": 320.0,
    "title": "Talamh Seilge Loch Garman",
    "sound": "forest",
@@ -26100,8 +26089,8 @@
   },
   {
    "name": "talamh seilge wexford thiar",
-   "x": 47434.1,
-   "y": 46141.7,
+   "x": 42092.7,
+   "y": 48768.3,
    "r": 380.0,
    "title": "Talamh Seilge Loch Garman Thiar",
    "sound": "forest",
@@ -26109,8 +26098,8 @@
   },
   {
    "name": "talamh seilge wexford coill",
-   "x": 42482.7,
-   "y": 47911.0,
+   "x": 47044.5,
+   "y": 45358.3,
    "r": 560.0,
    "title": "Talamh Seilge Loch Garman (Coill)",
    "sound": "forest",
@@ -26136,8 +26125,8 @@
   },
   {
    "name": "talamh seilge armagh coill",
-   "x": 45567.0,
-   "y": 21156.2,
+   "x": 46605.4,
+   "y": 23046.4,
    "r": 560.0,
    "title": "Talamh Seilge Ard Mhacha (Coill)",
    "sound": "forest",
@@ -26145,8 +26134,8 @@
   },
   {
    "name": "talamh seilge derry",
-   "x": 37931.6,
-   "y": 11176.9,
+   "x": 37854.1,
+   "y": 11266.5,
    "r": 320.0,
    "title": "Talamh Seilge Doire",
    "sound": "forest",
@@ -26154,8 +26143,8 @@
   },
   {
    "name": "talamh seilge derry thiar",
-   "x": 35641.2,
-   "y": 10706.8,
+   "x": 36183.1,
+   "y": 10768.7,
    "r": 380.0,
    "title": "Talamh Seilge Doire Thiar",
    "sound": "forest",
@@ -26163,8 +26152,8 @@
   },
   {
    "name": "talamh seilge derry coill",
-   "x": 40312.3,
-   "y": 11285.0,
+   "x": 39274.9,
+   "y": 10784.7,
    "r": 560.0,
    "title": "Talamh Seilge Doire (Coill)",
    "sound": "forest",
@@ -26172,8 +26161,8 @@
   },
   {
    "name": "talamh seilge kilkenny",
-   "x": 39481.9,
-   "y": 42252.4,
+   "x": 39051.2,
+   "y": 41628.6,
    "r": 320.0,
    "title": "Talamh Seilge Cill Chainnigh",
    "sound": "forest",
@@ -26190,8 +26179,8 @@
   },
   {
    "name": "talamh seilge kilkenny coill",
-   "x": 40706.3,
-   "y": 43214.7,
+   "x": 40897.5,
+   "y": 42455.0,
    "r": 560.0,
    "title": "Talamh Seilge Cill Chainnigh (Coill)",
    "sound": "forest",
@@ -26199,8 +26188,8 @@
   },
   {
    "name": "talamh seilge drogheda",
-   "x": 45451.3,
-   "y": 29051.9,
+   "x": 44615.8,
+   "y": 29281.4,
    "r": 320.0,
    "title": "Talamh Seilge Droichead Átha",
    "sound": "forest",
@@ -26217,8 +26206,8 @@
   },
   {
    "name": "talamh seilge drogheda coill",
-   "x": 46798.0,
-   "y": 30220.4,
+   "x": 47070.8,
+   "y": 32731.0,
    "r": 560.0,
    "title": "Talamh Seilge Droichead Átha (Coill)",
    "sound": "forest",
@@ -26226,8 +26215,8 @@
   },
   {
    "name": "talamh seilge sligo",
-   "x": 28661.4,
-   "y": 21373.5,
+   "x": 29446.2,
+   "y": 22301.6,
    "r": 320.0,
    "title": "Talamh Seilge Sligeach",
    "sound": "forest",
@@ -26235,8 +26224,8 @@
   },
   {
    "name": "talamh seilge sligo thiar",
-   "x": 31428.4,
-   "y": 19945.5,
+   "x": 33116.1,
+   "y": 20783.9,
    "r": 380.0,
    "title": "Talamh Seilge Sligeach Thiar",
    "sound": "forest",
@@ -26244,8 +26233,8 @@
   },
   {
    "name": "talamh seilge sligo coill",
-   "x": 28802.6,
-   "y": 17943.3,
+   "x": 25235.4,
+   "y": 23603.2,
    "r": 560.0,
    "title": "Talamh Seilge Sligeach (Coill)",
    "sound": "forest",
@@ -26253,8 +26242,8 @@
   },
   {
    "name": "talamh seilge athlone",
-   "x": 33789.9,
-   "y": 32458.6,
+   "x": 33892.1,
+   "y": 34121.1,
    "r": 320.0,
    "title": "Talamh Seilge Baile Átha Luain",
    "sound": "forest",
@@ -26262,8 +26251,8 @@
   },
   {
    "name": "talamh seilge athlone thiar",
-   "x": 33892.1,
-   "y": 34121.1,
+   "x": 36854.0,
+   "y": 30432.7,
    "r": 380.0,
    "title": "Talamh Seilge Baile Átha Luain Thiar",
    "sound": "forest",
@@ -26271,8 +26260,8 @@
   },
   {
    "name": "talamh seilge athlone coill",
-   "x": 30639.6,
-   "y": 33599.3,
+   "x": 30398.2,
+   "y": 36517.5,
    "r": 560.0,
    "title": "Talamh Seilge Baile Átha Luain (Coill)",
    "sound": "forest",
@@ -26280,8 +26269,8 @@
   },
   {
    "name": "talamh seilge dundalk",
-   "x": 45186.1,
-   "y": 23779.1,
+   "x": 44857.8,
+   "y": 25336.8,
    "r": 320.0,
    "title": "Talamh Seilge Dún Dealgan",
    "sound": "forest",
@@ -26289,8 +26278,8 @@
   },
   {
    "name": "talamh seilge dundalk thiar",
-   "x": 43637.4,
-   "y": 26242.6,
+   "x": 41965.3,
+   "y": 23125.9,
    "r": 380.0,
    "title": "Talamh Seilge Dún Dealgan Thiar",
    "sound": "forest",
@@ -26298,8 +26287,8 @@
   },
   {
    "name": "talamh seilge dundalk coill",
-   "x": 47559.2,
-   "y": 24704.1,
+   "x": 45527.4,
+   "y": 22064.4,
    "r": 560.0,
    "title": "Talamh Seilge Dún Dealgan (Coill)",
    "sound": "forest",
@@ -26307,8 +26296,8 @@
   },
   {
    "name": "talamh seilge kells",
-   "x": 40964.5,
-   "y": 28767.3,
+   "x": 40684.2,
+   "y": 29360.9,
    "r": 320.0,
    "title": "Talamh Seilge Ceanannas",
    "sound": "forest",
@@ -26316,8 +26305,8 @@
   },
   {
    "name": "talamh seilge kells thiar",
-   "x": 42179.0,
-   "y": 30971.4,
+   "x": 42975.5,
+   "y": 31667.5,
    "r": 380.0,
    "title": "Talamh Seilge Ceanannas Thiar",
    "sound": "forest",
@@ -26325,8 +26314,8 @@
   },
   {
    "name": "talamh seilge kells coill",
-   "x": 39880.6,
-   "y": 25971.4,
+   "x": 37744.0,
+   "y": 26442.5,
    "r": 560.0,
    "title": "Talamh Seilge Ceanannas (Coill)",
    "sound": "forest",
@@ -26343,8 +26332,8 @@
   },
   {
    "name": "talamh seilge clonmel thiar",
-   "x": 33271.0,
-   "y": 48500.2,
+   "x": 33190.1,
+   "y": 45117.4,
    "r": 380.0,
    "title": "Talamh Seilge Cluain Meala Thiar",
    "sound": "forest",
@@ -26352,8 +26341,8 @@
   },
   {
    "name": "talamh seilge clonmel coill",
-   "x": 33190.1,
-   "y": 45117.4,
+   "x": 39663.4,
+   "y": 47323.6,
    "r": 560.0,
    "title": "Talamh Seilge Cluain Meala (Coill)",
    "sound": "forest",
@@ -26370,8 +26359,8 @@
   },
   {
    "name": "talamh seilge tralee thiar",
-   "x": 20156.5,
-   "y": 50753.7,
+   "x": 21809.7,
+   "y": 48137.4,
    "r": 380.0,
    "title": "Talamh Seilge Trá Lí Thiar",
    "sound": "forest",
@@ -26379,8 +26368,8 @@
   },
   {
    "name": "talamh seilge tralee coill",
-   "x": 16685.6,
-   "y": 47571.4,
+   "x": 20183.1,
+   "y": 52257.3,
    "r": 560.0,
    "title": "Talamh Seilge Trá Lí (Coill)",
    "sound": "forest",
@@ -26388,8 +26377,8 @@
   },
   {
    "name": "talamh seilge downpatrick",
-   "x": 50970.4,
-   "y": 20381.3,
+   "x": 49695.2,
+   "y": 20518.8,
    "r": 320.0,
    "title": "Talamh Seilge Dún Pádraig",
    "sound": "forest",
@@ -26397,8 +26386,8 @@
   },
   {
    "name": "talamh seilge downpatrick thiar",
-   "x": 48504.9,
-   "y": 18595.6,
+   "x": 50310.3,
+   "y": 17363.0,
    "r": 380.0,
    "title": "Talamh Seilge Dún Pádraig Thiar",
    "sound": "forest",
@@ -26406,8 +26395,8 @@
   },
   {
    "name": "talamh seilge downpatrick coill",
-   "x": 51463.5,
-   "y": 17628.6,
+   "x": 52760.4,
+   "y": 19118.0,
    "r": 560.0,
    "title": "Talamh Seilge Dún Pádraig (Coill)",
    "sound": "forest",
@@ -26442,8 +26431,8 @@
   },
   {
    "name": "talamh seilge roscommon",
-   "x": 31612.8,
-   "y": 28578.2,
+   "x": 31844.9,
+   "y": 31029.6,
    "r": 320.0,
    "title": "Talamh Seilge Ros Comáin",
    "sound": "forest",
@@ -26451,8 +26440,8 @@
   },
   {
    "name": "talamh seilge roscommon thiar",
-   "x": 31346.9,
-   "y": 32291.5,
+   "x": 35087.5,
+   "y": 28562.4,
    "r": 380.0,
    "title": "Talamh Seilge Ros Comáin Thiar",
    "sound": "forest",
@@ -26460,8 +26449,8 @@
   },
   {
    "name": "talamh seilge roscommon coill",
-   "x": 33683.7,
-   "y": 30519.9,
+   "x": 28546.5,
+   "y": 33661.2,
    "r": 560.0,
    "title": "Talamh Seilge Ros Comáin (Coill)",
    "sound": "forest",
@@ -26487,8 +26476,8 @@
   },
   {
    "name": "talamh seilge kildare coill",
-   "x": 41076.9,
-   "y": 38021.0,
+   "x": 39159.6,
+   "y": 39662.2,
    "r": 560.0,
    "title": "Talamh Seilge Cill Dara (Coill)",
    "sound": "forest",
@@ -26496,8 +26485,8 @@
   },
   {
    "name": "talamh seilge carlow",
-   "x": 40903.8,
-   "y": 39893.5,
+   "x": 40585.9,
+   "y": 39594.0,
    "r": 320.0,
    "title": "Talamh Seilge Ceatharlach",
    "sound": "forest",
@@ -26505,8 +26494,8 @@
   },
   {
    "name": "talamh seilge carlow thiar",
-   "x": 38906.1,
-   "y": 41836.2,
+   "x": 42758.7,
+   "y": 36676.7,
    "r": 380.0,
    "title": "Talamh Seilge Ceatharlach Thiar",
    "sound": "forest",
@@ -26514,8 +26503,8 @@
   },
   {
    "name": "talamh seilge carlow coill",
-   "x": 43154.9,
-   "y": 39890.6,
+   "x": 38906.1,
+   "y": 41836.2,
    "r": 560.0,
    "title": "Talamh Seilge Ceatharlach (Coill)",
    "sound": "forest",
@@ -26523,8 +26512,8 @@
   },
   {
    "name": "talamh seilge monaghan",
-   "x": 41494.0,
-   "y": 21993.7,
+   "x": 39952.4,
+   "y": 22311.0,
    "r": 320.0,
    "title": "Talamh Seilge Muineachán",
    "sound": "forest",
@@ -26532,8 +26521,8 @@
   },
   {
    "name": "talamh seilge monaghan thiar",
-   "x": 38079.6,
-   "y": 21482.8,
+   "x": 42792.2,
+   "y": 24114.9,
    "r": 380.0,
    "title": "Talamh Seilge Muineachán Thiar",
    "sound": "forest",
@@ -26541,8 +26530,8 @@
   },
   {
    "name": "talamh seilge monaghan coill",
-   "x": 43565.5,
-   "y": 21281.9,
+   "x": 38269.7,
+   "y": 20394.1,
    "r": 560.0,
    "title": "Talamh Seilge Muineachán (Coill)",
    "sound": "forest",
@@ -26550,8 +26539,8 @@
   },
   {
    "name": "talamh seilge donegal",
-   "x": 31848.7,
-   "y": 16149.2,
+   "x": 31763.4,
+   "y": 15656.5,
    "r": 320.0,
    "title": "Talamh Seilge Dún na nGall",
    "sound": "forest",
@@ -26559,8 +26548,8 @@
   },
   {
    "name": "talamh seilge donegal thiar",
-   "x": 29520.0,
-   "y": 16359.4,
+   "x": 33256.7,
+   "y": 15647.0,
    "r": 380.0,
    "title": "Talamh Seilge Dún na nGall Thiar",
    "sound": "forest",
@@ -26568,8 +26557,8 @@
   },
   {
    "name": "talamh seilge donegal coill",
-   "x": 34159.6,
-   "y": 15566.3,
+   "x": 30259.2,
+   "y": 15065.6,
    "r": 560.0,
    "title": "Talamh Seilge Dún na nGall (Coill)",
    "sound": "forest",
@@ -26586,8 +26575,8 @@
   },
   {
    "name": "talamh seilge westport thiar",
-   "x": 20967.8,
-   "y": 28546.8,
+   "x": 21920.8,
+   "y": 29820.9,
    "r": 380.0,
    "title": "Talamh Seilge Cathair na Mart Thiar",
    "sound": "forest",
@@ -26604,8 +26593,8 @@
   },
   {
    "name": "talamh seilge lismore",
-   "x": 32446.9,
-   "y": 50141.5,
+   "x": 34007.9,
+   "y": 48805.7,
    "r": 320.0,
    "title": "Talamh Seilge Lios Mór",
    "sound": "forest",
@@ -26613,8 +26602,8 @@
   },
   {
    "name": "talamh seilge lismore thiar",
-   "x": 34007.9,
-   "y": 48805.7,
+   "x": 31471.1,
+   "y": 48270.7,
    "r": 380.0,
    "title": "Talamh Seilge Lios Mór Thiar",
    "sound": "forest",
@@ -26622,8 +26611,8 @@
   },
   {
    "name": "talamh seilge lismore coill",
-   "x": 36252.3,
-   "y": 51563.8,
+   "x": 29913.4,
+   "y": 50986.2,
    "r": 560.0,
    "title": "Talamh Seilge Lios Mór (Coill)",
    "sound": "forest",
@@ -26631,8 +26620,8 @@
   },
   {
    "name": "talamh seilge coleraine",
-   "x": 43005.9,
-   "y": 9363.4,
+   "x": 42922.2,
+   "y": 9440.6,
    "r": 320.0,
    "title": "Talamh Seilge Cúil Raithin",
    "sound": "forest",
@@ -26640,8 +26629,8 @@
   },
   {
    "name": "talamh seilge coleraine thiar",
-   "x": 40838.6,
-   "y": 8485.9,
+   "x": 44425.3,
+   "y": 9615.3,
    "r": 380.0,
    "title": "Talamh Seilge Cúil Raithin Thiar",
    "sound": "forest",
@@ -26649,8 +26638,8 @@
   },
   {
    "name": "talamh seilge coleraine coill",
-   "x": 45327.6,
-   "y": 9901.3,
+   "x": 41953.9,
+   "y": 8556.1,
    "r": 560.0,
    "title": "Talamh Seilge Cúil Raithin (Coill)",
    "sound": "forest",
@@ -26658,8 +26647,8 @@
   },
   {
    "name": "talamh seilge enniskillen",
-   "x": 34411.1,
-   "y": 18742.5,
+   "x": 36236.4,
+   "y": 21394.2,
    "r": 320.0,
    "title": "Talamh Seilge Inis Ceithleann",
    "sound": "forest",
@@ -26667,8 +26656,8 @@
   },
   {
    "name": "talamh seilge enniskillen thiar",
-   "x": 36236.4,
-   "y": 21394.2,
+   "x": 33364.1,
+   "y": 21852.8,
    "r": 380.0,
    "title": "Talamh Seilge Inis Ceithleann Thiar",
    "sound": "forest",
@@ -26676,8 +26665,8 @@
   },
   {
    "name": "talamh seilge enniskillen coill",
-   "x": 33364.1,
-   "y": 21852.8,
+   "x": 40258.1,
+   "y": 20329.1,
    "r": 560.0,
    "title": "Talamh Seilge Inis Ceithleann (Coill)",
    "sound": "forest",
@@ -26703,8 +26692,8 @@
   },
   {
    "name": "talamh seilge belfast coill",
-   "x": 50922.7,
-   "y": 17949.0,
+   "x": 47996.1,
+   "y": 15191.4,
    "r": 560.0,
    "title": "Talamh Seilge Béal Feirste (Coill)",
    "sound": "forest",
@@ -26721,8 +26710,8 @@
   },
   {
    "name": "talamh seilge mullingar thiar",
-   "x": 36830.0,
-   "y": 33713.9,
+   "x": 36224.5,
+   "y": 34442.0,
    "r": 380.0,
    "title": "Talamh Seilge An Muileann gCearr Thiar",
    "sound": "forest",
@@ -26730,8 +26719,8 @@
   },
   {
    "name": "talamh seilge mullingar coill",
-   "x": 39469.8,
-   "y": 31752.2,
+   "x": 41125.1,
+   "y": 33841.2,
    "r": 560.0,
    "title": "Talamh Seilge An Muileann gCearr (Coill)",
    "sound": "forest",
@@ -26739,8 +26728,8 @@
   },
   {
    "name": "talamh seilge thurles",
-   "x": 33559.7,
-   "y": 42334.8,
+   "x": 34213.9,
+   "y": 41053.6,
    "r": 320.0,
    "title": "Talamh Seilge Durlas",
    "sound": "forest",
@@ -26748,8 +26737,8 @@
   },
   {
    "name": "talamh seilge thurles thiar",
-   "x": 36038.7,
-   "y": 40697.3,
+   "x": 36720.4,
+   "y": 42409.6,
    "r": 380.0,
    "title": "Talamh Seilge Durlas Thiar",
    "sound": "forest",
@@ -26757,8 +26746,8 @@
   },
   {
    "name": "talamh seilge thurles coill",
-   "x": 36680.5,
-   "y": 44404.6,
+   "x": 30351.1,
+   "y": 41331.1,
    "r": 560.0,
    "title": "Talamh Seilge Durlas (Coill)",
    "sound": "forest",
@@ -26775,8 +26764,8 @@
   },
   {
    "name": "talamh seilge killarney thiar",
-   "x": 21595.0,
-   "y": 52488.3,
+   "x": 23764.5,
+   "y": 52361.8,
    "r": 380.0,
    "title": "Talamh Seilge Cill Airne Thiar",
    "sound": "forest",
@@ -26784,8 +26773,8 @@
   },
   {
    "name": "talamh seilge killarney coill",
-   "x": 16263.1,
-   "y": 50564.6,
+   "x": 16026.1,
+   "y": 49515.0,
    "r": 560.0,
    "title": "Talamh Seilge Cill Airne (Coill)",
    "sound": "forest",
@@ -26793,8 +26782,8 @@
   },
   {
    "name": "talamh seilge bantry",
-   "x": 19849.8,
-   "y": 55925.5,
+   "x": 20196.2,
+   "y": 55446.4,
    "r": 320.0,
    "title": "Talamh Seilge Beanntraí",
    "sound": "forest",
@@ -26802,8 +26791,8 @@
   },
   {
    "name": "talamh seilge bantry thiar",
-   "x": 22453.6,
-   "y": 56263.7,
+   "x": 23513.9,
+   "y": 56101.3,
    "r": 380.0,
    "title": "Talamh Seilge Beanntraí Thiar",
    "sound": "forest",
@@ -26811,8 +26800,8 @@
   },
   {
    "name": "talamh seilge bantry coill",
-   "x": 21434.6,
-   "y": 58658.2,
+   "x": 15851.0,
+   "y": 54523.6,
    "r": 560.0,
    "title": "Talamh Seilge Beanntraí (Coill)",
    "sound": "forest",
@@ -26829,8 +26818,8 @@
   },
   {
    "name": "talamh seilge youghal thiar",
-   "x": 31797.8,
-   "y": 51091.8,
+   "x": 31005.8,
+   "y": 49636.7,
    "r": 380.0,
    "title": "Talamh Seilge Eochaill Thiar",
    "sound": "forest",
@@ -26838,8 +26827,8 @@
   },
   {
    "name": "talamh seilge youghal coill",
-   "x": 31678.8,
-   "y": 54190.0,
+   "x": 32050.8,
+   "y": 53537.8,
    "r": 560.0,
    "title": "Talamh Seilge Eochaill (Coill)",
    "sound": "forest",
@@ -26856,8 +26845,8 @@
   },
   {
    "name": "talamh seilge kinsale thiar",
-   "x": 25513.7,
-   "y": 55817.0,
+   "x": 25100.8,
+   "y": 54483.4,
    "r": 380.0,
    "title": "Talamh Seilge Cionn tSáile Thiar",
    "sound": "forest",
@@ -26865,8 +26854,8 @@
   },
   {
    "name": "talamh seilge kinsale coill",
-   "x": 26669.9,
-   "y": 58167.9,
+   "x": 25928.2,
+   "y": 57593.7,
    "r": 560.0,
    "title": "Talamh Seilge Cionn tSáile (Coill)",
    "sound": "forest",
@@ -26910,8 +26899,8 @@
   },
   {
    "name": "talamh seilge listowel thiar",
-   "x": 21513.4,
-   "y": 47106.5,
+   "x": 23163.2,
+   "y": 47644.5,
    "r": 380.0,
    "title": "Talamh Seilge Lios Tuathail Thiar",
    "sound": "forest",
@@ -26919,8 +26908,8 @@
   },
   {
    "name": "talamh seilge listowel coill",
-   "x": 19251.4,
-   "y": 49163.7,
+   "x": 20054.2,
+   "y": 50807.1,
    "r": 560.0,
    "title": "Talamh Seilge Lios Tuathail (Coill)",
    "sound": "forest",
@@ -35826,7 +35815,8 @@
   "newcomer_secs": 2400.0,
   "plea_pct": 40.0,
   "season_days": 3.0,
-  "season_shift": 0.0
+  "season_shift": 0.0,
+  "exit_dwell_secs": 2.0
  },
  "starter": [
   {

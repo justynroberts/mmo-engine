@@ -542,12 +542,25 @@ mod tests {
         let (sx, sy) = (s.places[start].x, s.places[start].y);
         let me = s.spawn(0).unwrap();
         s.give_starter(me);
+        // The purse: what is bought is paid for, and what a foe drops of coin (on the average) is picked up.
+        let coin = s.currency.expect("a currency");
+        let coin_name = s.items[coin].name.clone();
+        let mut coin_owed = 0.0f32;
+        let mut coin_from = |s: &mut Sim, a: usize, kills: u32| {
+            let per: f32 = s.archs[a].drops.iter().filter(|d| d.item == coin).map(|d| d.chance_pct / 100.0 * (d.min as f32 + d.max as f32) / 2.0).sum();
+            coin_owed += per * kills as f32;
+            let whole = coin_owed.floor();
+            coin_owed -= whole;
+            s.give_or_drop(me, coin, whole as u32);
+        };
+        let mut short: Vec<String> = Vec::new();
         let arch_of = |s: &Sim, n: &str| s.archs.iter().position(|a| a.name == n);
         let dist = |s: &Sim, h: usize| (s.places[h].x - sx).hypot(s.places[h].y - sy);
         // How far from the start the nearest of a kind lives (or its dungeon's door); None for nowhere in particular.
         let lair = |s: &Sim, a: usize| -> Option<f32> {
-            let d = s.archs[a].homes.iter().map(|&h| dist(s, h)).fold(None, |m: Option<f32>, d| Some(m.map_or(d, |m| m.min(d))));
-            d.or_else(|| s.realm.dungeons.iter().find(|dg| dg.bots.iter().any(|&(b, _)| b == a)).map(|dg| dist(s, dg.place)))
+            // A dungeon's foes by its door (their home is its rooms, out at sea).
+            let door = s.realm.dungeons.iter().find(|dg| dg.bots.iter().any(|&(b, _)| b == a)).map(|dg| dist(s, dg.place));
+            door.or_else(|| s.archs[a].homes.iter().map(|&h| dist(s, h)).fold(None, |m: Option<f32>, d| Some(m.map_or(d, |m| m.min(d)))))
         };
         // One of each kind, kept beside the player in the start place (and living there, for town-only quests).
         let mut folk: std::collections::HashMap<usize, usize> = Default::default();
@@ -568,7 +581,17 @@ mod tests {
         };
         let mut log: Vec<String> = Vec::new();
         let mut stuck: Vec<String> = Vec::new();
+        // More levels than this above the player and the fight is not one a player of that level should be sent to.
+        const HARD_FIGHT: i32 = 3;
+        let mut hard: Vec<String> = Vec::new();
         let mut taken_at: std::collections::HashMap<String, (u8, f32, u32)> = Default::default();
+        // The strongest foe each quest has the player beat, against the player's level then.
+        let mut foe: std::collections::HashMap<String, i32> = Default::default();
+        let note_foe = |foe: &mut std::collections::HashMap<String, i32>, name: &str, s: &Sim, a: usize| {
+            let gap = s.archs[a].level as i32 - s.ents.level[me] as i32;
+            let e = foe.entry(name.to_string()).or_insert(i32::MIN);
+            *e = (*e).max(gap);
+        };
         for _round in 0..400 {
             let mut moved = false;
             // Take everything offered.
@@ -602,12 +625,14 @@ mod tests {
                         QuestStep::Kill { archetype, count } => {
                             let Some(a) = arch_of(&s, archetype) else { stuck.push(format!("{}: no {archetype}", q.name)); break };
                             walk = far(&s, lair(&s, a));
+                            note_foe(&mut foe, &q.name, &s, a);
                             for _ in run.count..*count {
                                 s.quest_kill(archetype, sx, sy, &[me]);
                                 let xp = s.archs[a].xp;
                                 s.award(me, xp, None);
                                 kills += 1;
                             }
+                            coin_from(&mut s, a, kills);
                         }
                         QuestStep::Visit { place } => {
                             let Some(h) = s.places.iter().position(|p| &p.name == place) else { stuck.push(format!("{}: no place {place}", q.name)); break };
@@ -638,33 +663,51 @@ mod tests {
                                 .filter_map(|a| s.archs[a].drops.iter().find(|d| d.item == it).map(|d| (a, d.chance_pct / 100.0 * (d.min as f32 + d.max as f32) / 2.0)))
                                 .filter_map(|(a, per)| lair(&s, a).map(|d| (a, per, d)))
                                 .min_by(|x, y| x.2.total_cmp(&y.2));
-                            let sold = s.archs.iter().any(|a| a.shop.iter().any(|&(k, _)| k == it) && a.homes.contains(&start));
+                            // The cheapest in the start place's shops.
+                            let price = s.archs.iter().filter(|a| a.homes.contains(&start)).flat_map(|a| a.shop.iter()).filter(|&&(k, _)| k == it).map(|&(_, p)| p as u32).min();
                             let grown = s.realm.crops.iter().any(|c| c.yields == it) || s.realm.recipes.iter().any(|r| r.makes == it);
                             let from_quest = s.quests.iter().any(|o| o.name != q.name && o.reward.iter().any(|r| &r.item == item));
-                            match dropper {
-                                Some((a, per, d)) if !sold && !grown => {
-                                    walk = d;
-                                    kills = ((*count as f32) / per.max(0.01)).ceil() as u32;
-                                    let xp = s.archs[a].xp;
-                                    for _ in 0..kills {
-                                        s.award(me, xp, None);
-                                    }
+                            let need = (*count as u32).saturating_sub(s.carried(me, item));
+                            let mut hunt = |s: &mut Sim, (a, per, d): (usize, f32, f32), walk: &mut f32, kills: &mut u32| {
+                                *walk = d;
+                                note_foe(&mut foe, &q.name, s, a);
+                                *kills = ((need as f32) / per.max(0.01)).ceil() as u32;
+                                let xp = s.archs[a].xp;
+                                for _ in 0..*kills {
+                                    s.award(me, xp, None);
                                 }
-                                None if !sold && !grown && !from_quest => {
+                                coin_from(s, a, *kills);
+                            };
+                            // A beast near enough to hunt, a crop to grow, the shop if the purse runs to it, else far.
+                            match (dropper, price) {
+                                (Some(dr), _) if dr.2 <= 3000.0 => hunt(&mut s, dr, &mut walk, &mut kills),
+                                _ if grown => {}
+                                (_, Some(p)) if s.carried(me, &coin_name) >= p * need => s.take(me, &coin_name, p * need),
+                                (Some(dr), _) => hunt(&mut s, dr, &mut walk, &mut kills),
+                                (None, Some(p)) => short.push(format!("{} at level {}: {need} {item} at {p} each, {} in the purse", q.name, s.ents.level[me], s.carried(me, &coin_name))),
+                                (None, None) if from_quest => {}
+                                (None, None) => {
                                     stuck.push(format!("{}: nowhere to get {item}", q.name));
                                     break;
                                 }
-                                _ => {}
                             }
                             // Sold or banked: what the quests in hand do not ask for (rewards fill a bag).
                             let wanted: Vec<u8> = s.ents.quests[me].iter().filter(|r| r.state != QUEST_DONE).filter_map(|r| s.quests.iter().find(|q| q.name == r.name)).flat_map(|q| q.steps.iter()).filter_map(|st| match st {
                                 QuestStep::Collect { item, .. } => s.items.iter().position(|i| &i.name == item).map(|k| k as u8 + 1),
                                 _ => None,
                             }).collect();
+                            let mut sold = 0u32;
                             for b in s.inv[me].iter_mut() {
-                                if !wanted.contains(&b.0) {
+                                if b.0 != 0 && b.0 as usize - 1 != coin && !wanted.contains(&b.0) {
+                                    sold += s.items[b.0 as usize - 1].value as u32 * b.1 as u32;
                                     *b = (0, 0);
                                 }
+                            }
+                            s.give_or_drop(me, coin, sold);
+                            // Banked past a few hundred (a bag of coin would leave no room for what is asked).
+                            let purse = s.carried(me, &coin_name);
+                            if purse > 300 {
+                                s.take(me, &coin_name, purse - 300);
                             }
                             s.give_or_drop(me, it, *count as u32);
                             s.system_quests();
@@ -705,7 +748,12 @@ mod tests {
                 }
                 if s.ents.quests[me][i].state == QUEST_DONE {
                     let (lvl, walk, kills) = taken_at.get(&q.name).copied().unwrap_or_default();
-                    log.push(format!("{:>3} {:>3} {:>6.1} km {:>4} kills  {:34} -> level {}", q.level, lvl, walk / 1000.0, kills, q.name, s.ents.level[me]));
+                    let gap = foe.get(&q.name).copied().filter(|&g| g > i32::MIN);
+                    let gap_text = gap.map_or(String::from("    "), |g| format!("{g:+4}"));
+                    log.push(format!("{:>3} {:>3} {:>6.1} km {:>4} kills {gap_text}  {:34} -> level {}", q.level, lvl, walk / 1000.0, kills, q.name, s.ents.level[me]));
+                    if gap.is_some_and(|g| g > HARD_FIGHT) {
+                        hard.push(format!("{} (a foe {} levels up)", q.name, gap.unwrap()));
+                    }
                     moved = true;
                 } else {
                     stuck.push(format!("{}: could not hand in", q.name));
@@ -717,14 +765,18 @@ mod tests {
                 break;
             }
         }
-        println!("lvl took  farthest  kills  quest -> level after");
+        println!("lvl took  farthest  kills  foe  quest -> level after (foe: its level less the player's)");
         for l in &log {
             println!("{l}");
         }
         let done: std::collections::HashSet<&str> = s.ents.quests[me].iter().filter(|r| r.state == QUEST_DONE).map(|r| r.name.as_str()).collect();
         let left: Vec<String> = s.quests.iter().filter(|q| !done.contains(q.name.as_str()) && q.offered_at.as_deref().is_none_or(|p| s.places[start].name == p)).map(|q| format!("{} (level {}, from {})", q.name, q.level, q.giver)).collect();
         println!("{} done, level {} ({} xp); not done from here: {}", log.len(), s.ents.level[me], s.ents.xp[me], left.join(", "));
+        short.dedup();
+        println!("purse at the end: {}", s.carried(me, &coin_name));
         assert!(stuck.is_empty(), "stuck: {stuck:#?}");
+        assert!(short.is_empty(), "could not pay for what is asked: {short:#?}");
+        assert!(hard.is_empty(), "fights too hard for the level the quest is taken at: {hard:#?}");
         assert!(s.ents.level[me] >= 15, "only level {} from the quests", s.ents.level[me]);
     }
 }

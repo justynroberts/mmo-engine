@@ -23,6 +23,7 @@ var _offer := -1
 var _step_labels: Array = []            # the tracker's "what next" line per quest in _mine order (null for none)
 var homes_all: Dictionary = {}          # /play/info "homes_all": every home of the kinds quests send players to
 var here := Vector2.INF                 # where we are, for the nearest of those
+var seen: Dictionary = {}               # kind -> where the nearest one in sight is: pointed to before any home
 
 func _ready() -> void:
 	layer = 6
@@ -207,6 +208,16 @@ func _goal(m: Dictionary, homes: Dictionary) -> Array:
 func nearest_home(kinds: Array, homes: Dictionary):
 	var best = null
 	var best_d := INF
+	# One of them in sight: there, not where they live (a seed trader at their stall, not the middle of the town).
+	for k in kinds:
+		if seen.has(k):
+			var p: Vector2 = seen[k]
+			var d := 0.0 if here == Vector2.INF else here.distance_squared_to(p)
+			if d < best_d:
+				best_d = d
+				best = [p.x, p.y, 2.0]
+	if best != null:
+		return best
 	for k in kinds:
 		var list: Array = homes_all[k] if homes_all.get(k) is Array else ([homes[k]] if homes.get(k) is Array else [])
 		for h in list:
@@ -217,6 +228,27 @@ func nearest_home(kinds: Array, homes: Dictionary):
 				best_d = d
 				best = h
 	return best
+
+## The kinds our quests want found now: whom to speak to or hand in to, and what to beat or what drops what is to be
+## brought (for `seen`).
+func wanted_kinds() -> Dictionary:
+	var out := {}
+	for m in _mine:
+		var qi := int(m["quest"])
+		if qi >= _quests.size():
+			continue
+		var q: Dictionary = _quests[qi]
+		if int(m["state"]) == 1:
+			out[String(q.get("turn_in", ""))] = true
+		elif int(m["state"]) == 0:
+			var steps: Array = q.get("steps", [])
+			if int(m["step"]) < steps.size():
+				var st: Dictionary = steps[int(m["step"])]
+				if st.has("who"):
+					out[String(st["who"])] = true
+				for k in (st["kinds"] if st.get("kinds") is Array else []):
+					out[String(k)] = true
+	return out
 
 ## The tracker's lines with how far and which way each goal is from `me` (called a couple of times a second).
 func update_distances(me: Vector2, homes: Dictionary) -> void:

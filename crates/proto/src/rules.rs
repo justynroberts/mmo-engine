@@ -106,6 +106,9 @@ pub struct Rules {
     /// winter").
     pub season_days: f32,
     pub season_shift: f32,
+    /// Seconds a player stands in a place with an exit (a travel stone) before it carries them; 0: at once. More
+    /// than 0, they are told where it goes as they step on, and walking across one takes nobody anywhere.
+    pub exit_dwell_secs: f32,
 }
 
 impl Default for Rules {
@@ -160,6 +163,7 @@ impl Default for Rules {
             plea_pct: 0.0,
             season_days: 0.0,
             season_shift: 0.0,
+            exit_dwell_secs: 0.0,
         }
     }
 }
@@ -208,6 +212,7 @@ impl Rules {
             ("wander_linger_secs", self.wander_linger_secs),
             ("remark_pause_secs", self.remark_pause_secs),
             ("newcomer_secs", self.newcomer_secs),
+            ("exit_dwell_secs", self.exit_dwell_secs),
         ];
         for (name, v) in secs {
             if !(v.is_finite() && (0.0..=86_400.0).contains(&v)) {

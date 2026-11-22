@@ -7,7 +7,7 @@ extends Node3D
 ## Run:  godot --path godot -- --host 127.0.0.1 --udp 7777 --web 127.0.0.1:8081 (without --host it asks: scripts/join.gd)
 ## Test: add --smoke --admin 127.0.0.1:8080 to run a scripted session headless and exit 0 on success.
 ## Class: --class knight (default), barbarian, mage or rogue. --guest plays a throwaway character, not this machine's own.
-## Screenshots: --say TEXT says it (or runs a "/" command) five seconds in, --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --map opens the world map (--map_zoom N zoomed in on you), --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits.
+## Screenshots: --say TEXT says it (or runs a "/" command) five seconds in, --blueprint N lays blueprint N out beside you in build mode, --breaking holds the break button (build mode), --zoom N sets the camera distance, --walk X,Y (or near) steers to that world point (or beside the nearest building) first, --build starts in build mode, --map opens the world map (--map_zoom N zoomed in on you), --fpv in first person (--pitch R to look up or down), --open bag|auction (--open_after S) opens that window, --time 0..1 pins the time of day (0.25 noon, 0.58 sunset, 0.75 midnight), --shot FILE --shot_after SECONDS saves a frame and quits. --autoplay SECONDS plays as a new player would (quests, fights, rising) and prints what happened (AUTO lines, scripts/autoplay.gd).
 
 const HudScript := preload("res://scripts/hud.gd")
 const WorldData := preload("res://scripts/world_data.gd")
@@ -177,6 +177,7 @@ var actions_by_id := {}
 var spellfx: Node3D
 var my_level := 0          # our level (0 when the game has none)
 var _progress := {}        # the server's last word on our level and experience: {level, xp, at, next}
+var _autoplay: RefCounted = null # --autoplay: scripts/autoplay.gd playing for us
 var my_held := 0           # how we are held (proto::game::HoldKind), 0 when free
 var title_music: AudioStreamPlayer
 var _title_on := false     # the title theme is up: the game's own music waits
@@ -784,6 +785,9 @@ func _start() -> void:
 		net.set_display_name(String(args["name"]))
 	if smoke:
 		_smoke()
+	if args.has("autoplay"): # --autoplay SECONDS: play as a new player would and report (scripts/autoplay.gd)
+		_autoplay = (load("res://scripts/autoplay.gd") as GDScript).new()
+		_autoplay.run(self, float(args["autoplay"]) if String(args["autoplay"]).is_valid_float() else 600.0)
 	if args.has("map"):
 		_toggle_map.call_deferred()
 		if args.has("map_zoom"): # --map_zoom N: zoom the map N times on where we stand (with --shot)
@@ -1157,6 +1161,17 @@ func _process(delta: float) -> void:
 	finderui.wait_secs = _rule("finder_wait_secs", 60.0)
 	finderui.tick(delta)
 	var homes: Dictionary = info.get("homes", {}) if info.get("homes") is Dictionary else {}
+	# Whom our quests want, where one is in sight: the tracker and the map point to them, not to their home.
+	var want: Dictionary = questui.wanted_kinds()
+	var sighted := {}
+	if not want.is_empty():
+		for e in list:
+			if e["id"] == self_id:
+				continue
+			var k := _name(e["id"]).get_slice("|", 0)
+			if want.has(k) and (not sighted.has(k) or me_pos.distance_squared_to(e["position"]) < me_pos.distance_squared_to(sighted[k])):
+				sighted[k] = e["position"]
+	questui.seen = sighted
 	hud.minimap.goals = questui.goals(homes).filter(func(g): return not g.is_empty())
 	_show_goal(hud.minimap.goals)
 	_goal_in -= delta
@@ -2758,7 +2773,7 @@ func _camera() -> void:
 	cam.look_at(c)
 
 func _drive() -> void:
-	if smoke:
+	if smoke or _autoplay != null:
 		return # the scripted session steers
 	if _loading or my_held in [1, 2, 3] or fallen.down:
 		net.set_move(Vector2.ZERO) # held or fallen: the server would refuse the steps anyway

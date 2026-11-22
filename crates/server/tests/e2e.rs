@@ -1385,6 +1385,32 @@ fn an_exit_on_the_same_map_moves_anyone_and_a_guest_cannot_leave_the_map() {
     walk_to(&mut g, 100.0, 200.0, |c| (c.pos().0 - 400.0).hypot(c.pos().1 - 400.0) < 1.0);
 }
 
+/// With `rules.exit_dwell_secs` a stone tells a player who steps on it where it goes and carries them only once they
+/// have stood there that long, so walking across one takes nobody anywhere.
+#[test]
+fn a_travel_stone_with_a_wait_carries_only_those_who_stand_on_it() {
+    let zs = start_zone_lines();
+    let (_, mut game) = json(&zs.z[0], "GET", "/api/game", "");
+    game["rules"]["exit_dwell_secs"] = 1.5.into();
+    let (s, body) = http(&zs.z[0], "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{body}");
+    let mut g = connect(&zs.z[0]);
+    g.send_input(0, 0);
+    g.pump(200);
+    walk_to(&mut g, 100.0, 200.0, |c| c.heard.iter().any(|m| m.from == 0 && m.text.contains("stand on it")));
+    g.send_input(0, 0);
+    let t = Instant::now();
+    g.pump(10);
+    let away = |c: &Client| (c.pos().0 - 400.0).hypot(c.pos().1 - 400.0) > 1.0;
+    assert!(away(&g), "not carried the moment they step on");
+    while away(&g) {
+        assert!(t.elapsed() < Duration::from_secs(6), "standing on it never carried them: at {:?}", g.pos());
+        g.send_input(0, 0);
+        g.pump(20);
+    }
+    assert!(t.elapsed() >= Duration::from_millis(1200), "carried after {:?}, before the wait", t.elapsed());
+}
+
 fn bot_xs(srv: &Srv) -> Vec<f64> {
     state(srv)["e"].as_array().unwrap().iter().filter(|r| r[4] == 0).map(|r| r[1].as_f64().unwrap()).collect()
 }
@@ -3307,6 +3333,18 @@ fn a_bot_type_given_new_homes_moves_into_them_and_quests_point_to_every_home() {
     let place = |n: &str| game["places"].as_array().unwrap().iter().find(|p| p["name"] == n).unwrap().clone();
     let (p, m) = (place("plaza"), place("market"));
     wait_until("the bots at the plaza", || bots_of(&srv, 0) == 4 && near(p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap(), p["r"].as_f64().unwrap()));
+
+    // An edit that changes nothing about the bots leaves every one of them where it is, the same entity.
+    let bots_now = || {
+        let mut v: Vec<String> = state(&srv)["e"].as_array().unwrap().iter().filter(|e| e[4] == 0).map(|e| format!("{} {} {}", e[0], e[1], e[2])).collect();
+        v.sort();
+        v
+    };
+    let before = bots_now();
+    game["quests"][0]["text"] = "t2".into();
+    assert_eq!(http(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    assert_eq!(bots_now().len(), before.len());
+    assert_eq!(bots_now().iter().map(|b| b.split(' ').next().unwrap().to_string()).collect::<Vec<_>>(), before.iter().map(|b| b.split(' ').next().unwrap().to_string()).collect::<Vec<_>>(), "the same bots");
 
     game["archetypes"][0]["home"] = "market".into();
     let (s, body) = http(&srv, "PUT", "/api/game", &game.to_string());

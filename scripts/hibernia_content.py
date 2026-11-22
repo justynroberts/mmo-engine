@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Hibernia's second wave of content: three times the people, gear and work of the first.
 
-    scripts/hibernia_content.py IN.json OUT.json
+    scripts/hibernia_content.py IN.json OUT.json [WORLD.json]
+
+With the world file (the live one is /play/world) the hunting grounds by each town go only where the land is dry
+and not steep; without it they go by farms and villages inland of each town.
 
 Reads a game file (the live one, from /api/game, or deploy/hibernia-65536/game.json) and writes it back with:
   - new kinds of folk in the towns and villages (smiths, bakers, herb-wives, druids, storytellers, priests,
@@ -105,7 +108,8 @@ def main():
             a["homes"] = (a.get("homes") or []) + [n for n in pool if n not in have]
 
     # ---- hunting grounds by every town, for the beasts new players are sent after
-    hunting_grounds(g, towns, TOWN_TITLES)
+    terrain = Terrain(sys.argv[3]) if len(sys.argv) > 3 else None
+    hunting_grounds(g, towns, TOWN_TITLES, terrain)
     for p_ in g["places"]:
         if p_["name"] in towns:
             p_["safe"] = True  # a player who falls rises in the nearest safe place: their own town's, not a far one
@@ -166,6 +170,9 @@ def main():
     # The curve fitted to the quests (the cap once came from the first wave's quests alone): see LEVEL_CURVE.
     if g.get("levels"):
         g["levels"].update(LEVEL_CURVE)
+    # The travel stones stand in the middle of Áth Cliath's square: crossing it carried newcomers across the country.
+    # They carry a player who stands on one for two seconds (and say where they go), not one walking past.
+    g.setdefault("rules", {})["exit_dwell_secs"] = 2.0
     # A new character comes with a blade and a tunic, not only coin and bread: the boars outside the gates are
     # level four.
     have = {s_["item"] for s_ in g.get("starter", [])}
@@ -173,6 +180,8 @@ def main():
     for name, fix in ARCH_FIXES.items():
         if name in arch:
             arch[name].update(fix)
+    clear_towns(g, towns)
+    move_stones(g, terrain)
 
     # ---- achievements
     have = {a["name"] for a in g.get("achievements", [])}
@@ -726,11 +735,62 @@ GROUNDS = [
 GROUND_FAR = GROUNDS[1][4]
 
 
-def hunting_grounds(g, towns, titles):
-    """The GROUNDS by each town, round a farm or village (so on dry land), inland (towards the middle of the towns,
-    away from the sea) and each at least sixty degrees round from the ones before it. Where no farm or village
-    is near the distance wanted the range is widened a little, and failing that the ground is put inland at that
-    distance. Made the same way every run."""
+class Terrain:
+    """The ground of a world file (`/play/world`): heights, the sea and the lakes, to keep hunting grounds dry."""
+
+    def __init__(self, path):
+        import array, ast, base64
+        w = json.load(open(path))
+        h = w["heights"]
+        self.cell, self.n, self.x0, self.y0 = float(h["cell"]), int(h["w"]), float(h["x0"]), float(h["y0"])
+        lo, hi = float(h["lo"]), float(h["hi"])
+        a = array.array("H")
+        a.frombytes(base64.b64decode(h["u16le"]))
+        self.h = [lo + (hi - lo) * v / 65535.0 for v in a]
+        water = w.get("water", {})
+        read = lambda v: ast.literal_eval(v) if isinstance(v, str) else v
+        self.sea = float(read(water.get("sea", {"level": 0.0}))["level"])
+        # Buildings (their boxes), for keeping what is placed out of walls.
+        self.buildings = [o["b"] for o in w.get("objects", []) if o.get("b") and o.get("t") in ("house", "tower", "castle", "keep", "wall")]
+        # The lakes by 1,024-unit square, so a point looks at those near it, not all of them.
+        self.lakes = {}
+        for l in read(water.get("lakes", [])):
+            b = l["b"]
+            for cy in range(int(b[1] // 1024), int(b[3] // 1024) + 1):
+                for cx in range(int(b[0] // 1024), int(b[2] // 1024) + 1):
+                    self.lakes.setdefault((cx, cy), []).append(b)
+
+    def height(self, x, y):
+        i = min(self.n - 1, max(0, int(round((x - self.x0) / self.cell))))
+        j = min(self.n - 1, max(0, int(round((y - self.y0) / self.cell))))
+        return self.h[j * self.n + i]
+
+    def wet(self, x, y):
+        near = self.lakes.get((int(x // 1024), int(y // 1024)), ())
+        return self.height(x, y) <= self.sea + 0.5 or any(b[0] <= x <= b[2] and b[1] <= y <= b[3] for b in near)
+
+    def in_building(self, x, y, pad=2.0):
+        return any(b[0] - pad <= x <= b[2] + pad and b[1] - pad <= y <= b[3] + pad for b in self.buildings)
+
+    def ground(self, x, y, r, k=7):
+        """(share of a disc that is dry land, its mean rise per unit between neighbouring samples)."""
+        pts = [(x + r * u / k, y + r * v / k) for u in range(-k, k + 1) for v in range(-k, k + 1) if u * u + v * v <= k * k]
+        dry = [p for p in pts if not self.wet(*p)]
+        step = r / k
+        rises = [abs(self.height(px + step, py) - self.height(px, py)) / step for px, py in dry]
+        return len(dry) / len(pts), (sum(rises) / len(rises) if rises else 9.0)
+
+
+# A hunting ground is good enough with this much of it dry land and no steeper than this on the whole.
+GROUND_DRY = 0.92
+GROUND_STEEP = 0.2
+
+
+def hunting_grounds(g, towns, titles, terrain=None):
+    """The GROUNDS by each town, inland (towards the middle of the towns, away from the sea) and each at least
+    sixty degrees round from the ones before it: by a farm or village at about the distance wanted where there is
+    one, else in open country. With the world's `terrain`, only where it is dry and not steep (the driest found
+    otherwise). Made the same way every run."""
     pos = {p["name"]: p for p in g["places"]}
     spots = [p for p in g["places"] if p["name"].startswith(("feirm ", "sraidbhaile "))]
     keep = [p for p in g["places"] if not p["name"].startswith("talamh seilge ")]
@@ -746,27 +806,27 @@ def hunting_grounds(g, towns, titles):
         tt = titles.get(t, t.title())
         taken = []
         for k, (suffix, title, (lo, hi), r, _) in enumerate(GROUNDS):
-            pick = None
-            for widen in (1.0, 1.25, 1.5):
-                ok = [p for p in spots if lo / widen <= dist(p) <= hi * widen and all(cos(p, q["x"] - tx, q["y"] - ty) < 0.5 for q in taken)]
-                if ok:
-                    pick = max(ok, key=inland)
-                    break
-            if pick is None:
-                # No farm or village near (the far north has none for miles): inland at the distance wanted, turned
-                # round from the ones before so they do not overlap.
-                ix, iy = mid[0] - tx, mid[1] - ty
-                n = max(1.0, (ix * ix + iy * iy) ** 0.5)
-                turn = (0.0, 1.2, -1.2)[k % 3]
-                c_, s_ = math.cos(turn), math.sin(turn)
-                want = (lo + hi) / 2
-                pick = {"x": tx + (ix * c_ - iy * s_) / n * want, "y": ty + (ix * s_ + iy * c_) / n * want}
+            # Pushed out past a village or farm, away from the town, so its folk are at the edge of it; or a ring
+            # of open country at the distances wanted.
+            near = []
+            for p in spots:
+                d = dist(p)
+                if lo / 1.5 <= d <= hi * 1.5:
+                    near.append({"x": p["x"] + (p["x"] - tx) / d * 150.0, "y": p["y"] + (p["y"] - ty) / d * 150.0, "spot": 1})
+            ring = [{"x": tx + math.cos(a / 36 * math.tau) * d, "y": ty + math.sin(a / 36 * math.tau) * d, "spot": 0}
+                    for a in range(36) for d in range(int(lo), int(hi) + 1, 300)]
+            apart = [c for c in near + ring if all(cos(c, q["x"] - tx, q["y"] - ty) < 0.5 for q in taken)] or near + ring
+            if terrain is not None:
+                for c in apart:
+                    c["dry"], c["steep"] = terrain.ground(c["x"], c["y"], r)
+                good = [c for c in apart if c["dry"] >= GROUND_DRY and c["steep"] <= GROUND_STEEP]
+                pick = max(good, key=lambda c: (c["spot"], inland(c))) if good else max(apart, key=lambda c: (c["dry"], -c["steep"]))
+            else:
+                in_range = [c for c in near if lo <= dist(c) - 150.0 <= hi]
+                pick = max(in_range or near or ring, key=lambda c: (c["spot"], inland(c)))
             taken.append(pick)
-            # Pushed out past the village or farm, away from the town, so its folk are at the edge of it.
-            d = max(1.0, dist(pick))
-            x, y = pick["x"] + (pick["x"] - tx) / d * 150.0, pick["y"] + (pick["y"] - ty) / d * 150.0
             name = f"talamh seilge {t}{suffix}"
-            keep.append({"name": name, "x": round(x, 1), "y": round(y, 1), "r": r,
+            keep.append({"name": name, "x": round(pick["x"], 1), "y": round(pick["y"], 1), "r": r,
                          "title": f"Talamh Seilge {tt}{title}", "sound": "forest", "music": "explore"})
             made[k].append(name)
     g["places"] = keep
@@ -777,6 +837,60 @@ def hunting_grounds(g, towns, titles):
                 arch[n]["home"], arch[n]["homes"] = grounds[0], grounds[1:]
                 arch[n]["leash"] = 120.0
                 arch[n]["count"] = max(len(grounds), arch[n]["count"] // len(grounds) * len(grounds))
+
+
+# How far from a town's edge a hostile beast may not have a home (beyond its own): binn ghulbain was put 88 units
+# from Sligeach's square, so the level-13 gruagach, the bear and the puca lived in the town.
+TOWN_CLEAR = 200.0
+
+
+def clear_towns(g, towns):
+    """Hostile beasts (chasers) lose the homes that sit on a town, where they have others. The great regions of the
+    north (thousands of units across) are left: they are meant to be dangerous country, towns and all."""
+    pos = {p["name"]: p for p in g["places"]}
+    ts = [pos[t] for t in towns if t in pos]
+    def on_town(h):
+        p = pos.get(h)
+        return p is not None and p["r"] < 1000 and any(((p["x"] - t["x"]) ** 2 + (p["y"] - t["y"]) ** 2) ** 0.5 - p["r"] - t["r"] < TOWN_CLEAR for t in ts)
+    for a in g["archetypes"]:
+        hostile = a.get("behaviour") == "chase" or any(r.get("then", {}).get("kind") == "chase" for r in a.get("rules", []))
+        if not hostile:
+            continue
+        homes = [h for h in [a.get("home")] + (a.get("homes") or []) if h]
+        keep = [h for h in homes if not on_town(h)]
+        if keep and len(keep) < len(homes):
+            a["home"], a["homes"] = keep[0], keep[1:]
+
+
+# Where Áth Cliath's travel stones stand: near the edge of its square (144 across, a castle in the middle), each on
+# the side of the town it goes to. They were round the castle's walls, where the market folk stand and everyone
+# passes, and a player stopping to buy was carried off across the country.
+STONE_RING = 62.0
+STONE_GAP = 8.0
+
+
+def move_stones(g, terrain=None):
+    """The stones out of the start place (places with an exit, `cloch <town>`) set on a ring round its middle, in the
+    direction of where each leads, at least STONE_GAP apart and (with the world's terrain) out of buildings. Their
+    return stones' exits land beside the castle, out of the way of them all."""
+    pos = {p["name"]: p for p in g["places"]}
+    start = pos.get(g.get("start_place") or "")
+    if start is None:
+        return
+    sx, sy = start["x"], start["y"]
+    stones = [p for p in g["places"] if p.get("exit") and p["name"].startswith("cloch ") and not p["name"].endswith(" home")
+              and ((p["x"] - sx) ** 2 + (p["y"] - sy) ** 2) ** 0.5 < start["r"]]
+    stones.sort(key=lambda p: math.atan2(p["exit"]["y"] - sy, p["exit"]["x"] - sx))
+    placed = []
+    for p in stones:
+        want = math.atan2(p["exit"]["y"] - sy, p["exit"]["x"] - sx)
+        for turn in [0.0] + [d * k for k in range(1, 40) for d in (0.05, -0.05)]:
+            a = want + turn
+            x, y = sx + math.cos(a) * STONE_RING, sy + math.sin(a) * STONE_RING
+            if all(((x - q[0]) ** 2 + (y - q[1]) ** 2) ** 0.5 >= STONE_GAP for q in placed) and not (terrain and terrain.in_building(x, y)):
+                break
+        placed.append((x, y))
+        p["x"], p["y"] = round(x, 1), round(y, 1)
 
 
 def town_errands(towns, places, g):

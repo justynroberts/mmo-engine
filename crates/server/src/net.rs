@@ -46,6 +46,9 @@ pub struct Client {
     /// takes you when you walk into it, not when you sign in or arrive standing in one.
     pub exit_in: Option<u16>,
     pub exit_seen: bool,
+    /// When they stepped into `exit_in` (a tick), and whether it will carry them (walked into, not arrived in).
+    pub exit_since: u32,
+    pub exit_armed: bool,
     pub addr: SocketAddrV4,
     /// Where the player really is: differs from `addr` for web players, whose packets are relayed from this machine.
     pub ip: [u8; 4],
@@ -412,6 +415,8 @@ fn on_connect(
         zstate: ZState::Here,
         exit_in: None,
         exit_seen: false,
+        exit_since: 0,
+        exit_armed: false,
         addr,
         ip: hs.ip_of(&addr),
         session,
@@ -779,16 +784,29 @@ pub fn exits(sim: &mut Sim, clients: &mut Clients, zone: Option<&crate::zone::Zo
     if !sim.places.iter().any(|p| p.exit.is_some()) {
         return;
     }
+    // How long a player stands on one before it carries them, in ticks (0: at once).
+    let dwell = (sim.rules.exit_dwell_secs * sim.tick_hz as f32).round() as u32;
     for c in clients.slab.iter_mut().flatten() {
         // Not before sign-in is done: until then the entity stands where it spawned, not where the character is.
         if !c.proven || !matches!(c.zstate, ZState::Here) {
             continue;
         }
         let now = exit_at(&sim.places, sim.ents.x[c.slot], sim.ents.y[c.slot]);
-        let entered = c.exit_seen && now.is_some() && now != c.exit_in;
+        if now != c.exit_in {
+            // Walked into it (not arrived inside it): it will carry them, once they have stood there long enough.
+            c.exit_armed = c.exit_seen && now.is_some();
+            c.exit_since = sim.tick;
+            c.exit_in = now;
+            if let (true, Some(i)) = (c.exit_armed && dwell > 0, now) {
+                let p = &sim.places[i as usize];
+                let name = if p.title.is_empty() { p.name.as_str() } else { p.title.as_str() };
+                c.chat.deliver(0, proto::chat::channel::SAY, &format!("{name}: stand on it a moment to travel."));
+            }
+        }
         c.exit_seen = true;
-        c.exit_in = now;
-        let Some(e) = now.filter(|_| entered).and_then(|i| sim.places[i as usize].exit.clone()) else { continue };
+        let ready = c.exit_armed && sim.tick.saturating_sub(c.exit_since) >= dwell;
+        let Some(e) = now.filter(|_| ready).and_then(|i| sim.places[i as usize].exit.clone()) else { continue };
+        c.exit_armed = false;
         let shared = zone.map(|z| &z.shared);
         let this_map = e.zone.is_empty() || shared.and_then(|z| z.named(&e.zone)) == shared.map(|z| z.index);
         let fail = if this_map {
@@ -1450,6 +1468,8 @@ mod tests {
                 zstate: ZState::Here,
         exit_in: None,
         exit_seen: false,
+        exit_since: 0,
+        exit_armed: false,
                 addr: dest,
                 ip: dest.ip().octets(),
                 session,

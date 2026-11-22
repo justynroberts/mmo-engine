@@ -133,6 +133,7 @@ const RULE_FIELDS: [string, [keyof Rules, string][]][] = [
   ['Fights', [['sneak_sight', 'Sneak sight ×'], ['chase_give_up_secs', 'Chase gives up s'], ['pvp_quiet_secs', 'PvP calm s'], ['kill_credit_secs', 'Kill credit s']]],
   ['Falling', [['fall_xp_loss_pct', 'XP lost %'], ['fall_coin_loss_pct', 'Coin lost %'], ['fall_drop_pct', 'Bag dropped %'], ['rise_delay_secs', 'Rise after s']]],
   ['Hailing', [['hail_reach', 'Hail reach'], ['hail_secs', 'Stands for s']]],
+  ['Travel', [['exit_dwell_secs', 'Stand on a stone s (0 at once)']]],
   ['Wandering', [['wander_linger_secs', 'Lingers s'], ['wander_range', 'Range (no home)'], ['remark_pause_secs', 'Stops to talk s']]],
   ['The dark', [['night_sight', 'Fighters see ×'], ['night_ambush_pct', 'Ambush % a minute'], ['night_pack', 'Most in a pack']]],
   ['Town life', [['brawl_pct', 'Brawl % a minute'], ['lift_pct', 'Cutpurse % a second'], ['inn_pct', 'To the inn % an evening'], ['newcomer_secs', 'Newcomer after (s, 0 = none)'], ['plea_pct', 'Asks for help % a minute']]],

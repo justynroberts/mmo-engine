@@ -1501,6 +1501,31 @@ impl Sim {
         self.populate_bots_with(Some(saved));
     }
 
+    /// After a live edit that kept the bot types as they were: the bots of `kinds` go and come back anew (their
+    /// count or homes changed), every other bot stays where it is, and each type is topped up to its count.
+    pub fn repopulate(&mut self, kinds: &[u8]) {
+        let mut have = vec![0u32; self.archs.len()];
+        for s in 0..self.ents.high {
+            if !self.ents.alive[s] || self.ents.arch[s] == NO_ARCH || self.ents.owner[s] < DRIVEN {
+                continue;
+            }
+            if kinds.contains(&self.ents.arch[s]) {
+                self.ents.despawn(s);
+            } else if !self.ents.fleeting[s] {
+                if let Some(h) = have.get_mut(self.ents.arch[s] as usize) {
+                    *h += 1;
+                }
+            }
+        }
+        for a in 0..self.archs.len() {
+            for _ in have[a]..self.archs[a].count {
+                if self.spawn_as(NONE, a as u8, None).is_none() {
+                    return;
+                }
+            }
+        }
+    }
+
     /// Replace the bot population with what the archetypes ask for.
     pub fn populate_bots(&mut self) {
         self.populate_bots_with(None);
