@@ -1,6 +1,6 @@
 extends CanvasLayer
-## A first walk through the game for a new character: a few short steps (move, pick a target, strike, cast, talk
-## to someone with a quest, the keys worth knowing), each ticked off as soon as the player does it. Shown once on
+## A first walk through the game for a new character: a few short steps (move, pick a target, talk to someone with a
+## quest, strike a beast out of town, cast, the keys worth knowing), each ticked off as soon as the player does it. Shown once on
 ## this machine (user://tutorial.cfg), and skippable. main.gd tells it what the player has done.
 
 const HUD := preload("res://scripts/hud.gd")
@@ -8,9 +8,9 @@ const SAVED := "user://tutorial.cfg"
 const STEPS := [
 	["Walk", "Walk with W A S D or the arrow keys. Q and E turn the view; the mouse wheel zooms."],
 	["Pick a target", "Click someone, or press Tab for whoever is nearest. Their name and health show at the top."],
-	["Strike", "Space strikes your target. Hold it to keep swinging."],
-	["Cast a spell", "Your spells are on the bar above the others, on R T Y and the rest. Hover one to read it, then try it."],
 	["Find work", "Someone with a gold ! over their head has a quest for you. Walk up close and press F."],
+	["Strike", "Space strikes your target. Strike a beast out past the walls, not the townsfolk: the town and its watch take that badly."],
+	["Cast a spell", "Your spells are on the bar above the others, on R T Y and the rest. Hover one to read it, then try it."],
 	["The rest", "M is the map, F2 your spells, F3 your quests, F1 every key, Esc the menu. Ádh mór ort!"],
 ]
 
@@ -83,12 +83,12 @@ func _show() -> void:
 	panel.modulate.a = 0.0
 	create_tween().tween_property(panel, "modulate:a", 1.0, 0.3)
 
-## The player did something: if it is what this step asks ("walk", "target", "strike", "cast", "talk"), on to
+## The player did something: if it is what this step asks ("walk", "target", "talk", "strike", "cast"), on to
 ## the next.
 func did(what: String) -> void:
 	if step < 0 or step >= STEPS.size() - 1:
 		return
-	var want: String = ["walk", "target", "strike", "cast", "talk"][step]
+	var want: String = ["walk", "target", "talk", "strike", "cast"][step]
 	if what == want:
 		step += 1
 		_last_for = 0.0
