@@ -25,7 +25,8 @@ done
 tag="client-$version"
 commit=$(git rev-parse HEAD)
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git tag "$tag" "$commit"
-git push -q origin "$tag"
+# gh's credential helper: the system one can sit waiting for a prompt nobody sees.
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -q origin "$tag"
 args=(--verify-tag --title "Clients $version" $pre)
 if [ -n "$notes" ]; then args+=(--notes-file "$notes"); else args+=(--notes "Clients built from $commit."); fi
 gh release create "$tag" "${assets[@]}" "${args[@]}"
