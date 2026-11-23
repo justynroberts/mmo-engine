@@ -100,7 +100,7 @@ func run(main: Node, secs: float) -> void:
 			_xp_was = xp
 			_xp_moved = now()
 		if now() - _xp_moved > 180.0 and now() > _hunt_until:
-			_hunt_until = now() + 150.0
+			_start_hunt()
 			_xp_moved = now()
 			say("nothing earned in three minutes: hunting a while")
 		if _rest():
@@ -239,6 +239,12 @@ func _rest() -> bool:
 	if _resting:
 		m.net.set_move(Vector2.ZERO)
 	return _resting
+
+## A hunt: till three are beaten or eight minutes are up (the hunting grounds are a walk out of town).
+var _hunt_kills := 0
+func _start_hunt() -> void:
+	_hunt_until = now() + 480.0
+	_hunt_kills = kills + 3
 
 ## Nothing near to do: a beast about our level in sight (not a trader, not three over us, not townsfolk), else out
 ## to the nearest hunting ground and round it.
@@ -382,6 +388,9 @@ func _talk_to_giver() -> bool:
 
 ## On to the goal of the quest in hand (the tracker's), or failing one, to the nearest "!" on the map.
 func _follow_goal() -> void:
+	if now() < _hunt_until and kills >= _hunt_kills:
+		_hunt_until = 0.0
+		say("three beaten: back to the quests")
 	if now() < _hunt_until:
 		_hunt()
 		return
@@ -424,7 +433,7 @@ func _follow_goal() -> void:
 	if key.begins_with("giver@") and now() - _goal_since > 90.0:
 		say("no giver found at %s: hunting a while" % key)
 		_given_up[key] = true
-		_hunt_until = now() + 240.0
+		_start_hunt()
 		return
 	if now() - _goal_since > GOAL_SECS:
 		say("gave up on %s, still %d m off" % [key, int(m.me_pos.distance_to(to))])

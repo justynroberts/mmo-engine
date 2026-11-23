@@ -995,6 +995,13 @@ ARCH_FIXES = {
     # The seed trader keeps a stall on the square (a newcomer's first errand is to speak to them), not out in the
     # fields where nobody could find them.
     "tuathanach": {"work": "square"},
+    # Prey runs from a player but tires: a little slower than someone on foot, so a chase ends in a catch (foxes ran
+    # at 1.2 and hares 1.4, and quests asked for five foxes and three deer from players who strike at arm's length).
+    "sionnach": {"speed_mult": 0.9},
+    "giorria": {"speed_mult": 0.95},
+    "fia": {"speed_mult": 0.9},
+    "damh": {"speed_mult": 0.95},
+    "broc": {"speed_mult": 0.75},
     "bean si": {"home": "rathcroghan", "homes": ["dun ailinne", "loch neathach", "loch coirib", "loch measca", "loch deirgeirt"]},
 }
 
