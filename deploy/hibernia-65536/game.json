@@ -981,7 +981,7 @@
     "ardee",
     "listowel"
    ],
-   "work": "fields"
+   "work": "square"
   },
   {
    "name": "ceannai",
@@ -2112,7 +2112,7 @@
      "max": 2
     }
    ],
-   "xp": 8,
+   "xp": 10,
    "level": 1,
    "leash": 120.0,
    "skill": "fiach",
@@ -2174,7 +2174,7 @@
      "max": 1
     }
    ],
-   "xp": 20,
+   "xp": 28,
    "level": 2,
    "loot": "creach iseal",
    "skill": "fiach",
@@ -2206,7 +2206,7 @@
      "max": 1
     }
    ],
-   "xp": 35,
+   "xp": 80,
    "level": 4,
    "loot": "creach iseal",
    "ambush": true
@@ -2243,7 +2243,7 @@
      "max": 1
     }
    ],
-   "xp": 60,
+   "xp": 226,
    "level": 8
   },
   {
@@ -2277,7 +2277,7 @@
      "max": 1
     }
    ],
-   "xp": 50,
+   "xp": 147,
    "level": 6,
    "ambush": true
   },
@@ -3218,7 +3218,7 @@
      "max": 4
     }
    ],
-   "xp": 30,
+   "xp": 80,
    "level": 4,
    "loot": "creach iseal"
   },
@@ -3554,7 +3554,7 @@
      }
     }
    ],
-   "xp": 60,
+   "xp": 185,
    "level": 7,
    "lasts_secs": 1200,
    "beast": "ghost"
@@ -3579,7 +3579,7 @@
      "max": 2
     }
    ],
-   "xp": 28,
+   "xp": 52,
    "level": 3,
    "skill": "fiach"
   },
@@ -3603,7 +3603,7 @@
      "max": 2
     }
    ],
-   "xp": 28,
+   "xp": 52,
    "level": 3,
    "skill": "fiach"
   },
@@ -9422,7 +9422,7 @@
      "max": 2
     }
    ],
-   "xp": 70,
+   "xp": 469,
    "level": 13,
    "loot": "creach mheanach",
    "beast": "ghost_skull"
@@ -9701,7 +9701,7 @@
      "max": 2
     }
    ],
-   "xp": 80,
+   "xp": 640,
    "level": 16,
    "loot": "creach ard"
   },
@@ -10313,7 +10313,7 @@
      "max": 3
     }
    ],
-   "xp": 12,
+   "xp": 28,
    "level": 2,
    "leash": 120.0,
    "skill": "fiach",
@@ -10386,7 +10386,7 @@
      "max": 1
     }
    ],
-   "xp": 5,
+   "xp": 10,
    "level": 1,
    "leash": 120.0,
    "skill": "fiach",
@@ -10451,7 +10451,7 @@
      }
     }
    ],
-   "xp": 4,
+   "xp": 10,
    "level": 1,
    "skill": "fiach"
   },
@@ -10488,7 +10488,7 @@
      "max": 2
     }
    ],
-   "xp": 2,
+   "xp": 10,
    "level": 1,
    "skill": "fiach",
    "homes": [
@@ -11127,7 +11127,7 @@
      "max": 1
     }
    ],
-   "xp": 1,
+   "xp": 10,
    "level": 1,
    "skill": "fiach",
    "homes": [
@@ -11184,7 +11184,7 @@
      "max": 1
     }
    ],
-   "xp": 14,
+   "xp": 52,
    "level": 3,
    "loot": "creach iseal"
   },
@@ -11227,7 +11227,7 @@
      "max": 1
     }
    ],
-   "xp": 160,
+   "xp": 316,
    "level": 10,
    "loot": "creach ard"
   },
@@ -11276,7 +11276,7 @@
      "max": 1
     }
    ],
-   "xp": 60,
+   "xp": 226,
    "level": 8,
    "loot": "creach mheanach",
    "homes": [
@@ -11326,7 +11326,7 @@
      "max": 1
     }
    ],
-   "xp": 55,
+   "xp": 270,
    "level": 9,
    "loot": "creach mheanach",
    "homes": [
@@ -11381,7 +11381,7 @@
      "max": 2
     }
    ],
-   "xp": 80,
+   "xp": 365,
    "level": 11,
    "loot": "creach ard",
    "homes": [
@@ -11448,7 +11448,7 @@
      "max": 3
     }
    ],
-   "xp": 260,
+   "xp": 581,
    "level": 15,
    "loot": "creach eipiciuil",
    "homes": [
@@ -11493,7 +11493,7 @@
      "max": 2
     }
    ],
-   "xp": 2,
+   "xp": 10,
    "level": 1,
    "skill": "fiach",
    "homes": [
@@ -11829,7 +11829,7 @@
      "max": 2
     }
    ],
-   "xp": 22,
+   "xp": 80,
    "level": 4,
    "leash": 120.0,
    "loot": "creach iseal",
@@ -16406,7 +16406,7 @@
      "max": 1
     }
    ],
-   "xp": 40,
+   "xp": 147,
    "level": 6,
    "leash": 60.0,
    "loot": "creach iseal",
@@ -16620,7 +16620,7 @@
      "max": 3
     }
    ],
-   "xp": 34,
+   "xp": 112,
    "level": 5,
    "leash": 120.0,
    "skill": "fiach",
@@ -16685,7 +16685,7 @@
      "max": 4
     }
    ],
-   "xp": 46,
+   "xp": 185,
    "level": 7,
    "leash": 80.0,
    "loot": "creach mheanach",
@@ -16732,7 +16732,7 @@
      "max": 1
     }
    ],
-   "xp": 76,
+   "xp": 416,
    "level": 12,
    "leash": 40.0,
    "loot": "creach ard",
@@ -16767,7 +16767,7 @@
      "max": 12
     }
    ],
-   "xp": 88,
+   "xp": 524,
    "level": 14,
    "leash": 120.0,
    "loot": "creach ard",
@@ -16811,7 +16811,7 @@
      "max": 2
     }
    ],
-   "xp": 82,
+   "xp": 469,
    "level": 13,
    "leash": 60.0,
    "loot": "creach ard",
@@ -16849,7 +16849,7 @@
      "max": 2
     }
    ],
-   "xp": 40,
+   "xp": 147,
    "level": 6,
    "leash": 70.0,
    "loot": "creach iseal",
@@ -16901,7 +16901,7 @@
      "max": 1
     }
    ],
-   "xp": 58,
+   "xp": 270,
    "level": 9,
    "leash": 80.0,
    "loot": "creach mheanach",
@@ -16934,7 +16934,7 @@
      "max": 2
     }
    ],
-   "xp": 28,
+   "xp": 80,
    "level": 4,
    "leash": 60.0,
    "loot": "creach iseal",
@@ -16982,7 +16982,7 @@
      "max": 2
     }
    ],
-   "xp": 46,
+   "xp": 185,
    "level": 7,
    "leash": 50.0,
    "loot": "creach mheanach",
@@ -17041,7 +17041,7 @@
      "max": 8
     }
    ],
-   "xp": 34,
+   "xp": 112,
    "level": 5,
    "homes": [
     "sleibhte chill mhantain",
@@ -17092,7 +17092,7 @@
      "max": 1
     }
    ],
-   "xp": 22,
+   "xp": 52,
    "level": 3,
    "homes": [
     "loch neathach",
@@ -17126,7 +17126,7 @@
      "max": 2
     }
    ],
-   "xp": 100,
+   "xp": 640,
    "level": 16,
    "leash": 100.0,
    "loot": "creach eipiciuil",
@@ -31242,7 +31242,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 10
+     "count": 11
     }
    ]
   },
@@ -31531,7 +31531,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 5
+     "count": 11
     },
     {
      "item": "siol cruithneachta",
@@ -31557,7 +31557,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 15
+     "count": 20
     }
    ]
   },
@@ -31917,7 +31917,7 @@
     },
     {
      "item": "pingin airgid",
-     "count": 2
+     "count": 7
     }
    ],
    "daily": true
@@ -32106,7 +32106,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 6
+     "count": 20
     },
     {
      "item": "tua bheag",
@@ -32134,6 +32134,10 @@
     {
      "item": "claiomh iarainn",
      "count": 1
+    },
+    {
+     "item": "pingin airgid",
+     "count": 29
     }
    ]
   },
@@ -32334,7 +32338,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 5
+     "count": 17
     }
    ]
   },
@@ -32454,6 +32458,10 @@
     {
      "item": "deoch leighis",
      "count": 3
+    },
+    {
+     "item": "pingin airgid",
+     "count": 26
     }
    ]
   },
@@ -32477,6 +32485,10 @@
     {
      "item": "deoch leighis mhor",
      "count": 2
+    },
+    {
+     "item": "pingin airgid",
+     "count": 17
     }
    ]
   },
@@ -32580,6 +32592,10 @@
     {
      "item": "seaicead leathair",
      "count": 1
+    },
+    {
+     "item": "pingin airgid",
+     "count": 26
     }
    ]
   },
@@ -32689,6 +32705,10 @@
     {
      "item": "cais",
      "count": 1
+    },
+    {
+     "item": "pingin airgid",
+     "count": 20
     }
    ]
   },
@@ -32716,6 +32736,10 @@
     {
      "item": "caca meala",
      "count": 3
+    },
+    {
+     "item": "pingin airgid",
+     "count": 14
     }
    ]
   },
@@ -32762,7 +32786,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 6
+     "count": 32
     },
     {
      "item": "cais",
@@ -32788,6 +32812,10 @@
     {
      "item": "ionar olla",
      "count": 1
+    },
+    {
+     "item": "pingin airgid",
+     "count": 17
     }
    ]
   },
@@ -32840,7 +32868,7 @@
     },
     {
      "item": "pingin airgid",
-     "count": 4
+     "count": 20
     }
    ]
   },
@@ -33126,7 +33154,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 9
+     "count": 32
     }
    ]
   },
@@ -33330,7 +33358,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 7
+     "count": 40
     }
    ]
   },
@@ -33432,7 +33460,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 8
+     "count": 32
     }
    ]
   },
@@ -33636,7 +33664,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 7
+     "count": 40
     }
    ]
   },
@@ -33738,7 +33766,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 9
+     "count": 32
     }
    ]
   },
@@ -33851,11 +33879,11 @@
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
    "offered_at": "killarney",
-   "level": 3,
+   "level": 5,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "solas si",
+     "archetype": "bear",
      "count": 8
     },
     {
@@ -33863,11 +33891,11 @@
      "place": "killarney"
     }
    ],
-   "xp": 360,
+   "xp": 440,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 12
+     "count": 14
     },
     {
      "item": "deoch leighis",
@@ -33942,7 +33970,7 @@
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 7
+     "count": 40
     }
    ]
   },
@@ -33953,11 +33981,11 @@
    "done_text": "The road's open. The carters will thank you.",
    "giver": "watchman",
    "offered_at": "ardee",
-   "level": 5,
+   "level": 3,
    "steps": [
     {
      "kind": "kill",
-     "archetype": "bear",
+     "archetype": "torc",
      "count": 8
     },
     {
@@ -33965,11 +33993,11 @@
      "place": "ardee"
     }
    ],
-   "xp": 440,
+   "xp": 360,
    "reward": [
     {
      "item": "pingin airgid",
-     "count": 14
+     "count": 12
     },
     {
      "item": "deoch leighis",
@@ -34019,6 +34047,10 @@
     {
      "item": "capaillin",
      "count": 1
+    },
+    {
+     "item": "pingin airgid",
+     "count": 20
     }
    ]
   }
@@ -34082,8 +34114,8 @@
  },
  "levels": {
   "cap": 20,
-  "base": 500.0,
-  "exponent": 1.6,
+  "base": 250.0,
+  "exponent": 1.9,
   "might": 0.06,
   "toughness": 0.05,
   "discover_xp": 10,
@@ -35825,7 +35857,7 @@
  "starter": [
   {
    "item": "pingin airgid",
-   "count": 10
+   "count": 40
   },
   {
    "item": "aran",
