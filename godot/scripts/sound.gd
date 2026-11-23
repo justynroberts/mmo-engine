@@ -12,7 +12,10 @@ extends Node
 
 const AMBIENCE := ["sea", "shore", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy",
 	"battle", "tavern", "fair"]
-const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern"]
+const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern", "sea", "storm", "dawn"]
+## Short pieces played once over whatever is on (sounds/music/<name>.ogg): a fight won, and falling.
+const STINGS := ["victory", "fallen"]
+const STING_DB := -7.0
 ## How loud each layer is at full strength, in dB, so they sit together.
 const AMB_DB := {"sea": -11.0, "shore": -10.0, "river": -12.0, "forest": -9.0, "night": -8.0, "wind": -16.0, "rain": -10.0,
 	"fire": -6.0, "town": -15.0, "market": -11.0, "crypt": -5.0, "holy": -9.0, "battle": -10.0, "tavern": -9.0, "fair": -7.0}
@@ -25,9 +28,9 @@ const MUSIC_FADE := 5.0    # seconds to cross over when the mood changes
 const TRACK_FADE := 4.0    # seconds of overlap when one piece of a mood runs into the next
 ## Silence (seconds, min..max) between pieces for the quieter moods; the others run straight on with a crossfade.
 const MUSIC_GAP := {"city": Vector2(8.0, 20.0), "capital": Vector2(8.0, 20.0), "explore": Vector2(4.0, 18.0), "night": Vector2(6.0, 20.0), "holy": Vector2(3.0, 10.0),
-	"eerie": Vector2(5.0, 16.0)}
+	"eerie": Vector2(5.0, 16.0), "sea": Vector2(10.0, 30.0), "storm": Vector2(8.0, 24.0), "dawn": Vector2(20.0, 45.0)}
 ## Pieces made for this game, picked twice as often as the others of their mood.
-const MUSIC_FAVOURED := {"explore_2": 2.0, "explore_3": 2.0, "eerie_5": 2.0, "eerie_6": 2.0, "battle_5": 2.0, "holy_6": 2.0}
+const MUSIC_FAVOURED := {"explore_2": 2.0, "explore_3": 2.0, "eerie_5": 2.0, "eerie_6": 2.0, "battle_5": 2.0, "holy_6": 2.0, "sea_3": 3.0}
 ## Fights start suddenly: battle music comes up this fast (it still fades out over MUSIC_FADE when the fight ends).
 const BATTLE_IN := 1.5
 const MUSIC_MAX_TAKES := 24
@@ -73,6 +76,7 @@ var _next_voice := 0
 var _streams := {}         # path -> AudioStream (or null when missing)
 var _takes := {}           # effect -> how many takes it has (name_1, name_2, ...)
 var _inc: AudioStreamPlayer
+var _sting: AudioStreamPlayer
 var _inc_buses: Array[StringName] = []
 var _inc_wait := 0.0       # seconds before the next incidental may start
 var _inc_off := INF        # seconds since `incidental` was last set
@@ -125,6 +129,8 @@ func _ready() -> void:
 		_inc_buses.append(bus)
 	_inc = AudioStreamPlayer.new()
 	add_child(_inc)
+	_sting = AudioStreamPlayer.new()
+	add_child(_sting)
 
 func _loop(path: String) -> AudioStream:
 	var s := _stream(path)
@@ -326,6 +332,21 @@ func _music_pick(mood: String) -> String:
 
 func _music_weight(path: String) -> float:
 	return float(MUSIC_FAVOURED.get(path.get_file().get_basename(), 1.0))
+
+## Play a sting once, over the music (it is music: silent with music off). A new one replaces one still sounding.
+func sting(name: String) -> void:
+	if log_heard:
+		heard["sting_" + name] = int(heard.get("sting_" + name, 0)) + 1
+	if mode != 0:
+		return
+	var s := _stream("res://sounds/music/%s.ogg" % name)
+	if s == null:
+		return
+	if s is AudioStreamOggVorbis:
+		(s as AudioStreamOggVorbis).loop = false
+	_sting.stream = s
+	_sting.volume_db = STING_DB + float(gain["music"])
+	_sting.play()
 
 ## Play an effect (a random take of it, if it has several) at `db` from its usual loudness, pitched a little at random.
 func play(name: String, db := 0.0, spread := 0.06) -> void:

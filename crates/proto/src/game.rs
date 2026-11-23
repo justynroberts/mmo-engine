@@ -286,7 +286,7 @@ pub struct Place {
 }
 /// The ambiences a place may have, and its music (the client's sounds: godot/sounds, made by scripts/make_audio.py).
 pub const SOUNDS: [&str; 12] = ["sea", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy", "battle"];
-pub const MUSIC: [&str; 10] = ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern", "none"];
+pub const MUSIC: [&str; 13] = ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern", "sea", "storm", "dawn", "none"];
 fn d_place_r() -> f32 {
     12.0
 }

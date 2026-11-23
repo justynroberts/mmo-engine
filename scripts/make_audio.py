@@ -40,6 +40,8 @@ RECORDED = {f'ambience/{n}.ogg' for n in ('sea', 'shore', 'river', 'forest', 'ni
 RECORDED |= {f'sfx/{n}.ogg' for n in ('hurt', 'pickup', 'drop', 'place', 'break', 'horn', 'chime', 'splash', 'click', 'bell')}
 RECORDED |= {f'sfx/{n}_{i}.ogg' for n, k in (('step_grass', 6), ('step_road', 4), ('step_stone', 6), ('step_water', 6),
                                              ('swing', 3), ('hit', 4)) for i in range(1, k + 1)}
+# Music made for the game by its owner (godot/sounds/music/CREDITS.md): never written either.
+RECORDED |= {f'music/{n}.ogg' for n in ('battle', 'night', 'explore', 'eerie', 'holy', 'town')}
 SR = 32000  # ambience and effects
 MR = 44100  # music
 

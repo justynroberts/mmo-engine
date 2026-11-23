@@ -75,6 +75,10 @@ var _music_since := 0.0
 var _fetch_pile := 0       # a pile of loot clicked, which we walk to and pick up (its ground id; 0 none)
 var _fetch_until := 0.0
 var _fight_at := -100.0   # when we last struck or were struck: the music turns to battle for a while after
+var _fight_from := -1.0    # when the fight now on began (-1: none)
+var _fight_kill := false   # something fell in it
+var _fell_at := -100.0     # when we last fell
+var _won_at := -100.0      # when the victory call last sounded
 var _step_from := Vector2.INF
 var _step_dist := 0.0
 var _surface := ""
@@ -1032,6 +1036,9 @@ func _process(delta: float) -> void:
 			var t: Dictionary = track.get(id, {})
 			if t.get("hp", 1.0) < 0.35 and t_total - t.get("hit_at", -100.0) < 3.0 and ents[id].has_method("set_dead"):
 				_corpse(ents[id])
+				var fell: Vector3 = (ents[id] as Node3D).position
+				if _fight_from >= 0.0 and Vector2(fell.x, fell.z).distance_to(me_pos) < action_range + 6.0:
+					_fight_kill = true
 			else:
 				ents[id].queue_free()
 			ents.erase(id)
@@ -2004,6 +2011,8 @@ func _animate(id: int, node: Node3D, np: Vector3, hp: float, mine: bool, delta: 
 			_corpse(body)
 			if mine:
 				hud.say("[color=#ff8a70]You rise again, whole, somewhere safe.[/color]")
+				_fell_at = t_total
+				sound.sting("fallen")
 				node.set_dead(true)
 				node.set_dead(false) # plays the stand-up
 		t["vel"] = Vector3.ZERO
@@ -2249,18 +2258,45 @@ func _listen(delta: float) -> void:
 	# Now and then a smith, a dog, a cow or a rooster (sound.gd INCIDENTAL): a town has houses all round, a farm a few.
 	sound.daylight = 1.0 - dark
 	sound.incidental = "" if fighting or own != "" else ("town" if houses >= 6 else ("farm" if houses >= 1 else ""))
+	# A fight won: something fell in it, it lasted a while, and we did not fall. Not after every boar.
+	if fighting and _fight_from < 0.0:
+		_fight_from = t_total
+		_fight_kill = false
+	elif not fighting and _fight_from >= 0.0:
+		if _fight_kill and t_total - _fight_from >= VICTORY_FIGHT_SECS and _fell_at < _fight_from and t_total - _won_at > VICTORY_EVERY_SECS:
+			_won_at = t_total
+			sound.sting("victory")
+		_fight_from = -1.0
 	if fighting:
 		m = "battle"
 	elif inn_d < TAVERN_MUSIC_NEAR and m in ["", "town", "city", "capital"]:
 		m = "tavern"
 	elif m == "":
-		m = "town" if houses >= 6 else ("night" if dark > 0.55 else "explore")
+		# The open land: a storm first, then a town, the water's edge, the sun coming up, the night, the day.
+		var phase: float = theme.day_phase()
+		if kind == "storm":
+			m = "storm"
+		elif houses >= 6:
+			m = "town"
+		elif shore > 0.45 or sea > 0.6:
+			m = "sea"
+		elif phase > 1.0 - DAWN_BEFORE or phase < DAWN_AFTER:
+			m = "dawn"
+		else:
+			m = "night" if dark > 0.55 else "explore"
 	if m != _music_pick:
 		_music_pick = m
 		_music_since = t_total
 	# A change of mood waits a few seconds (passing a house is not a town); the first pick does not.
 	if fighting or t_total - _music_since > 3.0 or (sound.music_for == "" and not _title_on):
 		sound.music_for = "" if _title_on else _music_pick
+
+## The victory call: only after a fight at least this long, and no oftener than this.
+const VICTORY_FIGHT_SECS := 10.0
+const VICTORY_EVERY_SECS := 90.0
+## Dawn's music: this share of the day before sunrise (day_phase 0) and after it.
+const DAWN_BEFORE := 0.02
+const DAWN_AFTER := 0.05
 
 ## How near a lit inn (an inn of an evening) its music takes over from the town's.
 const TAVERN_MUSIC_NEAR := 22.0
@@ -4448,7 +4484,7 @@ func _smoke() -> void:
 	for n in SoundScript.AMBIENCE:
 		if not ResourceLoader.exists("res://sounds/ambience/%s.ogg" % n):
 			missing.append(n)
-	for n in SoundScript.MUSIC:
+	for n in SoundScript.MUSIC + SoundScript.STINGS:
 		if not ResourceLoader.exists("res://sounds/music/%s.ogg" % n):
 			missing.append(n)
 	for fx in SpellFx.COLORS:

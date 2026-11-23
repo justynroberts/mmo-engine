@@ -246,7 +246,7 @@ export interface Place {
 }
 /** What a place's sound and music may be (proto::game::SOUNDS, MUSIC). */
 export const SOUNDS = ['sea', 'river', 'forest', 'night', 'wind', 'rain', 'fire', 'town', 'market', 'crypt', 'holy', 'battle'] as const
-export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'city', 'capital', 'tavern', 'none'] as const
+export const MUSIC = ['explore', 'town', 'night', 'battle', 'eerie', 'holy', 'city', 'capital', 'tavern', 'sea', 'storm', 'dawn', 'none'] as const
 export interface Route {
   name: string
   points: [number, number][]

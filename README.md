@@ -204,12 +204,11 @@ empty body clears everything.
 
 ## Sound and music
 
-Everything the Godot client plays is made by `scripts/make_audio.py` (numpy, scipy and ffmpeg; no samples, nothing to
-license) into `godot/sounds`: twelve seamless ambience loops, the effects, and six pieces of music in the old Irish
-modes (a slow air for the open land, a jig for towns, a night piece, a battle piece, the eerie and the holy), played on
-a plucked harp, a low whistle, a fiddle, drones and a bodhrán.
+`scripts/make_audio.py` (numpy, scipy and ffmpeg) makes the synthesised effects and ambience in `godot/sounds`; the
+recordings it lists in `RECORDED` are never written. No music is synthesised any more: every mood's own piece
+(`godot/sounds/music/<mood>.ogg`) was made for the game by the project owner.
 
-Each mood also has more music beside its synthesised piece (`godot/sounds/music/<mood>_N.ogg`): pieces made for the
+Each mood has more music beside it (`godot/sounds/music/<mood>_N.ogg`): pieces made for the
 game by the project owner (the "Mist over the Isles" airs, "Cavernous Dissonance", "Modal March" and the "Ar Aghaidh"
 title theme) and Celtic and medieval pieces by Kevin MacLeod (incompetech.com, CC BY 4.0). Every track, its source and
 licence are listed in `godot/sounds/music/CREDITS.md`; keep that file complete when adding music. The client plays a
@@ -219,9 +218,12 @@ and crosses over when the mood changes.
 The client listens to the land as you move (`scripts/sound.gd`, fed by `main.gd`): how much sea is round you, how near
 a river is, the trees, the houses, the nearest fire, how high you stand, the weather and the hour, and blends the sea,
 river, birdsong or crickets and owls, wind, rain, fire and town murmur to match, easing between them. Music follows the
-moment: a fight (struck or striking) turns it to battle, a town to the jig, nightfall to the night piece. A place can
+moment: a fight (struck or striking) turns it to battle, a storm on open land to the storm piece, a town to the jig,
+the water's edge to the sea pieces, sunrise to the dawn piece, nightfall to the night piece. Two short stings play
+once over it: a call when a fight is won (something fell, it lasted ten seconds, at most every ninety) and a bell on
+falling. A place can
 have its own `sound` (sea, river, forest, night, wind, rain, fire, town, market, crypt, holy, battle) and `music`
-(explore, town, night, battle, eerie, holy, city, none): inside it, its sound comes up over the land's and its music plays.
+(explore, town, night, battle, eerie, holy, city, capital, tavern, sea, storm, dawn, none): inside it, its sound comes up over the land's and its music plays.
 Set them in the console's place editor or through the MCP. Effects: footsteps by what is underfoot (grass, road,
 cobbles, water), a splash wading in, swings and hits, pickups and drops, placing and breaking blocks, a horn under
 event banners and a chime walking into a named place. N cycles sound and music, music off, and silence.
