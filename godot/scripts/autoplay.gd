@@ -187,7 +187,7 @@ func _fight() -> bool:
 				return _strike(kept)
 		var best := 60.0
 		for n in near:
-			if want.has(n[1]) and not _deadly(n[0]) and not _chased(n[0]) and m.me_pos.distance_to(n[2]) < best:
+			if want.has(n[1]) and not _deadly(n[0]) and not _chased(n[0]) and not _in_pack(n, near) and m.me_pos.distance_to(n[2]) < best:
 				best = m.me_pos.distance_to(n[2])
 				foe = n[0]
 	if foe == 0:
@@ -220,6 +220,18 @@ func _keep_chasing(near: Array) -> int:
 			return _chase_id
 	_chase_id = 0
 	return 0
+
+## Two or more of its kind about it (within the reach a beast calls for help in): a pull that brings the pack.
+## Something a level or more under us is fine to take on in company.
+func _in_pack(n: Array, near: Array) -> bool:
+	if _level_of(n[0]) < m.my_level:
+		return false
+	var reach: float = m._rule("assist_reach", 25.0)
+	var others := 0
+	for o in near:
+		if o[0] != n[0] and o[1] == n[1] and Vector2(o[2]).distance_to(n[2]) < reach + 3.0:
+			others += 1
+	return others >= 2
 
 func _chased(id: int) -> bool:
 	return _let_go.has(id) and now() < float(_let_go[id])
@@ -294,9 +306,10 @@ func _hunt() -> void:
 	if foe != 0:
 		_strike(foe)
 		return
-	for n in _near():
+	var all_near := _near()
+	for n in all_near:
 		var lv := _level_of(n[0])
-		if lv < 1 or _chased(n[0]) or not game.has(n[1]) or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
+		if lv < 1 or _chased(n[0]) or _in_pack(n, all_near) or not game.has(n[1]) or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
 			continue
 		if m.me_pos.distance_to(n[2]) < best:
 			best = m.me_pos.distance_to(n[2])
