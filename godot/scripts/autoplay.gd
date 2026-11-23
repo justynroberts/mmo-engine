@@ -598,29 +598,37 @@ func _clear(a: Vector2, b: Vector2, boxes: Array) -> bool:
 const PLAN_REACH := 500.0
 const PLAN_CELL := 4.0
 func _plan(to: Vector2) -> Array:
+	# Round a long wall the way in may be far off to the side: look wider when nothing is found near.
+	for margin in [150.0, 450.0, 900.0]:
+		var path := _plan_in(to, margin, PLAN_CELL)
+		if not path.is_empty():
+			return path
+	return []
+
+func _plan_in(to: Vector2, margin: float, cell: float) -> Array:
 	var a: Vector2 = m.me_pos
 	var goal := to
 	if a.distance_to(goal) > PLAN_REACH:
 		goal = a + (to - a).normalized() * PLAN_REACH
-	var lo := Vector2(minf(a.x, goal.x), minf(a.y, goal.y)) - Vector2(150, 150)
-	var hi := Vector2(maxf(a.x, goal.x), maxf(a.y, goal.y)) + Vector2(150, 150)
+	var lo := Vector2(minf(a.x, goal.x), minf(a.y, goal.y)) - Vector2(margin, margin)
+	var hi := Vector2(maxf(a.x, goal.x), maxf(a.y, goal.y)) + Vector2(margin, margin)
 	var g := AStarGrid2D.new()
-	g.region = Rect2i(0, 0, int(ceil((hi.x - lo.x) / PLAN_CELL)), int(ceil((hi.y - lo.y) / PLAN_CELL)))
-	g.cell_size = Vector2(PLAN_CELL, PLAN_CELL)
+	g.region = Rect2i(0, 0, int(ceil((hi.x - lo.x) / cell)), int(ceil((hi.y - lo.y) / cell)))
+	g.cell_size = Vector2(cell, cell)
 	g.offset = lo
 	g.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	g.update()
 	var centre := (lo + hi) / 2.0
 	for b in _solid_near(centre, centre.distance_to(hi) + 50.0):
-		var i0 := maxi(int(floor((float(b[0]) - 1.5 - lo.x) / PLAN_CELL)), 0)
-		var j0 := maxi(int(floor((float(b[1]) - 1.5 - lo.y) / PLAN_CELL)), 0)
-		var i1 := mini(int(floor((float(b[2]) + 1.5 - lo.x) / PLAN_CELL)), g.region.size.x - 1)
-		var j1 := mini(int(floor((float(b[3]) + 1.5 - lo.y) / PLAN_CELL)), g.region.size.y - 1)
+		var i0 := maxi(int(floor((float(b[0]) - 1.5 - lo.x) / cell)), 0)
+		var j0 := maxi(int(floor((float(b[1]) - 1.5 - lo.y) / cell)), 0)
+		var i1 := mini(int(floor((float(b[2]) + 1.5 - lo.x) / cell)), g.region.size.x - 1)
+		var j1 := mini(int(floor((float(b[3]) + 1.5 - lo.y) / cell)), g.region.size.y - 1)
 		for i in range(i0, i1 + 1):
 			for j in range(j0, j1 + 1):
 				g.set_point_solid(Vector2i(i, j))
-	var from := Vector2i(int((a.x - lo.x) / PLAN_CELL), int((a.y - lo.y) / PLAN_CELL))
-	var dest := Vector2i(int((goal.x - lo.x) / PLAN_CELL), int((goal.y - lo.y) / PLAN_CELL))
+	var from := Vector2i(int((a.x - lo.x) / cell), int((a.y - lo.y) / cell))
+	var dest := Vector2i(int((goal.x - lo.x) / cell), int((goal.y - lo.y) / cell))
 	g.set_point_solid(from, false)
 	if g.is_point_solid(dest):
 		# The goal is in a footprint (someone indoors): the nearest open cell to it.
@@ -640,8 +648,8 @@ func _plan(to: Vector2) -> Array:
 	# Every few cells is enough to steer by.
 	var out := []
 	for k in range(2, pts.size(), 3):
-		out.append(pts[k] + Vector2(PLAN_CELL, PLAN_CELL) / 2.0)
-	out.append(pts[pts.size() - 1] + Vector2(PLAN_CELL, PLAN_CELL) / 2.0)
+		out.append(pts[k] + Vector2(cell, cell) / 2.0)
+	out.append(pts[pts.size() - 1] + Vector2(cell, cell) / 2.0)
 	return out
 
 ## Against a wall on the way to `to`: back off a step, then look along it either side for the nearest place a
