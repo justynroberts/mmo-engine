@@ -189,6 +189,7 @@ def main():
     economy(g)
     clear_towns(g, towns)
     move_stones(g, terrain)
+    gate_stones(g)
 
     # ---- achievements
     have = {a["name"] for a in g.get("achievements", [])}
@@ -918,6 +919,37 @@ def move_stones(g, terrain=None):
         p["x"], p["y"] = round(x, 1), round(y, 1)
 
 
+# A stone leads to dangerous country when beasts of this level or more live within STONE_DANGER_R of where it puts
+# a player; it then carries only those within STONE_GATE levels of the strongest of them.
+STONE_DANGER = 10
+STONE_DANGER_R = 600.0
+STONE_GATE = 6
+
+
+def gate_stones(g):
+    """Travel stones to dangerous country want a level: Doire stands in the north's great regions,
+    where Fomorian champions (16) and snow trolls (11) live, and a newcomer was carried there with one step."""
+    pos = {p["name"]: p for p in g["places"]}
+    def chases(a):
+        return a.get("behaviour") == "chase" or any((r.get("then") or {}).get("kind") == "chase" for r in a.get("rules", []))
+    hostile = [a for a in g["archetypes"] if a.get("attack") and chases(a) and a.get("level", 0) > 0 and not a.get("boss")]
+    for p in g["places"]:
+        e = p.get("exit")
+        if not e or e.get("zone"):
+            continue
+        top = 0
+        for a in hostile:
+            for h in [a.get("home")] + (a.get("homes") or []):
+                q = pos.get(h)
+                if q and math.hypot(q["x"] - e["x"], q["y"] - e["y"]) < STONE_DANGER_R + q["r"]:
+                    top = max(top, a["level"])
+                    break
+        if top >= STONE_DANGER:
+            e["level"] = top - STONE_GATE
+        else:
+            e.pop("level", None)
+
+
 def town_errands(towns, places, g):
     """An errand for every big town, given there by its own folk: word carried to its nearest neighbour, supplies
     for it brought from that neighbour, or the road cleared of whatever hostile lives nearest it."""
@@ -1024,6 +1056,11 @@ ARCH_FIXES = {
 }
 
 QUEST_FIXES = {
+    # The Answerer and The Stone That Roars both took Crom Dubh's heart, a boss's spoils once a week: the second
+    # waited a week. The Answerer takes a Fomorian champion's bone now (the champions drop them, 80 in 100).
+    "the answerer": {"text": "There was a sword once, Fragarach, that no armour could stop. Manannán's own, from the sea. "
+                     "Bring me a bone of a Fomorian champion, of the old sea-raiders, and the tooth of a great wyrm, and I'll try to make it again.",
+                     "steps": [{"kind": "collect", "item": "cnamh fomhorach", "count": 1}, {"kind": "collect", "item": "fiacail peiste", "count": 1}]},
     # The wolves are a day's walk from Áth Cliath: the fold is troubled by foxes, and the watch by boars on the roads.
     "wolves at the fold": {"title": "Foxes at the Fold", "text": "The foxes have taken three lambs this week. Drive them off before they take the rest: kill five of them, and I'll see you're fed.",
                            "steps": [{"kind": "kill", "archetype": "sionnach", "count": 5}]},

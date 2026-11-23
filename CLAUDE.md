@@ -62,7 +62,7 @@ When renaming/deleting an attribute, place, route, bot type or weather, the code
 
 **Items ride the input action byte**: `200 + slot` uses, `216 + slot` drops, `250` picks up. Game action ids must stay below 200.
 
-**Travel stones** are places with an `exit` (`net::exits`): walking in carries a player there, at once or, with `rules.exit_dwell_secs`, after standing on it that long (told where it goes as they step on). Hibernia's stand in Áth Cliath's square (`cloch <town>`, and `cloch <town> home` back) with a 2 s wait.
+**Travel stones** are places with an `exit` (`net::exits`): walking in carries a player there, at once or, with `rules.exit_dwell_secs`, after standing on it that long (told where it goes as they step on). An exit's `level` carries only players of that level (a stone to dangerous country; told so as they step on). Hibernia's stand in Áth Cliath's square (`cloch <town>`, and `cloch <town> home` back) with a 2 s wait; the content script's `gate_stones` sets the level of one leading where beasts of level 10 and more live (Doire: 10).
 
 **Saved state is keyed by name**, not index (attributes, archetypes, items), so editing the game file never scrambles saved characters or bags.
 

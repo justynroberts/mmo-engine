@@ -797,6 +797,14 @@ pub fn exits(sim: &mut Sim, clients: &mut Clients, zone: Option<&crate::zone::Zo
             c.exit_armed = c.exit_seen && now.is_some();
             c.exit_since = sim.tick;
             c.exit_in = now;
+            // A stone to dangerous country carries only those of its level (a god anywhere).
+            let need = now.and_then(|i| sim.places[i as usize].exit.as_ref()).map_or(0, |e| e.level);
+            if c.exit_armed && need > sim.ents.level[c.slot] && !sim.ents.god[c.slot] {
+                c.exit_armed = false;
+                let p = &sim.places[now.unwrap_or(0) as usize];
+                let name = if p.title.is_empty() { p.name.as_str() } else { p.title.as_str() };
+                c.chat.deliver(0, proto::chat::channel::SAY, &format!("{name} stays cold under you: the way it goes is for those of level {need} and over."));
+            }
             if let (true, Some(i)) = (c.exit_armed && dwell > 0, now) {
                 let p = &sim.places[i as usize];
                 let name = if p.title.is_empty() { p.name.as_str() } else { p.title.as_str() };

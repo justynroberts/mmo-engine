@@ -300,6 +300,9 @@ pub struct Exit {
     pub zone: String,
     pub x: f32,
     pub y: f32,
+    /// The level a player must have to be carried (a stone to dangerous country); 0 for anyone.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub level: u8,
 }
 
 /// A named path bots can walk. `looped` wraps from the last point to the first; otherwise they turn around.
@@ -3461,8 +3464,8 @@ mod tests {
             ("r 1..8192", Box::new(|g| g.places[0].r = 0.0)),
             ("a title is at most", Box::new(|g| g.places[0].title = "x".repeat(41))),
             ("a title is at most", Box::new(|g| g.places[0].title = " Market".into())),
-            ("an exit goes to", Box::new(|g| g.places[0].exit = Some(Exit { zone: String::new(), x: -1.0, y: 5.0 }))),
-            ("outside the place itself", Box::new(|g| { let (x, y) = (g.places[0].x, g.places[0].y); g.places[0].exit = Some(Exit { zone: String::new(), x, y }); })),
+            ("an exit goes to", Box::new(|g| g.places[0].exit = Some(Exit { zone: String::new(), x: -1.0, y: 5.0, level: 0 }))),
+            ("outside the place itself", Box::new(|g| { let (x, y) = (g.places[0].x, g.places[0].y); g.places[0].exit = Some(Exit { zone: String::new(), x, y, level: 0 }); })),
             ("needs 2", Box::new(|g| g.routes[0].points.truncate(1))),
             ("points must be", Box::new(|g| g.routes[0].points[0] = [-5.0, 1.0])),
         ];

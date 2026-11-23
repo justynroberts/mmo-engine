@@ -1290,7 +1290,7 @@ fn start_zone_lines() -> Zones {
         y,
         r,
         title: String::new(),
-        exit: exit.map(|(zone, x, y)| proto::game::Exit { zone: zone.into(), x, y }),
+        exit: exit.map(|(zone, x, y)| proto::game::Exit { zone: zone.into(), x, y, level: 0 }),
         sound: String::new(),
         music: String::new(),
         safe: false,
@@ -1409,6 +1409,30 @@ fn a_travel_stone_with_a_wait_carries_only_those_who_stand_on_it() {
         g.pump(20);
     }
     assert!(t.elapsed() >= Duration::from_millis(1200), "carried after {:?}, before the wait", t.elapsed());
+}
+
+#[test]
+fn a_travel_stone_to_dangerous_country_carries_only_those_of_its_level() {
+    let zs = start_zone_lines();
+    let (_, mut game) = json(&zs.z[0], "GET", "/api/game", "");
+    game["rules"]["exit_dwell_secs"] = 0.5.into();
+    for p in game["places"].as_array_mut().unwrap() {
+        if p.get("exit").is_some_and(|e| !e.is_null()) {
+            p["exit"]["level"] = 5.into();
+        }
+    }
+    let (s, body) = http(&zs.z[0], "PUT", "/api/game", &game.to_string());
+    assert_eq!(s, 200, "{body}");
+    let mut g = connect(&zs.z[0]);
+    g.send_input(0, 0);
+    g.pump(200);
+    walk_to(&mut g, 100.0, 200.0, |c| c.heard.iter().any(|m| m.from == 0 && m.text.contains("level 5")));
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(2) {
+        g.send_input(0, 0);
+        g.pump(20);
+    }
+    assert!((g.pos().0 - 400.0).hypot(g.pos().1 - 400.0) > 1.0, "a level-1 player stays where they are: {:?}", g.pos());
 }
 
 fn bot_xs(srv: &Srv) -> Vec<f64> {

@@ -27,13 +27,6 @@ first.
   by tile the client already has (`/play/tiles`).
 
 ### Content
-3. **Two Hibernia quests want the one weekly heart.** "The Stone that Roars" and "The Answerer" both take Crom
-   Dubh's heart (boss spoils, once a week), so the second waits a week more; two quests take troll hides as well.
-   Give one of each pair a different trophy.
-4. **The north is dangerous country, towns and all.** Doire, Cúil Raithin and Béal Feirste sit inside the
-   north's great regions (8 km across), where fomorians, snow trolls and white wolves (levels 3-16) live; a
-   newcomer carried there by a stone meets them in the hunting grounds. Keep the hunting grounds clear of them, or
-   the stones to the north for higher levels.
 5. **Characters saved before 2026-11-22 under older curves** were not given their level back (saves only now keep
    the level). Only test characters are affected.
 
@@ -51,6 +44,11 @@ first.
    with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
 ## Done
+
+- 2026-11-23 — The Answerer takes a Fomorian champion's bone instead of Crom Dubh's heart (both it and The Stone
+  That Roars wanted the one weekly heart; troll hides and wyrm teeth drop from ordinary beasts, so sharing them
+  is fine). Travel stones can want a level (`exit.level`); the one to Doire, in the north's great region of
+  Fomorian champions and snow trolls, wants 10 (`gate_stones`).
 
 - 2026-11-23 — Hunting made a player a villain: every bot with a home and no weapon counted as a townsperson, so
   each fox, hare or deer beaten was a murder in its hunting ground (which counts as a town, farm buildings in it),

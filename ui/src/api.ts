@@ -232,7 +232,7 @@ export interface Place {
   /** What players see as they walk in and out; empty or missing for a place that is not a location. */
   title?: string
   /** A zone line: walking in takes a player to (x, y) in `zone` (a zone's name), or on this map if `zone` is empty. */
-  exit?: { zone?: string; x: number; y: number }
+  exit?: { zone?: string; x: number; y: number; level?: number }
   /** The ambience a client plays inside it over the land's own sounds (one of SOUNDS). */
   sound?: string
   /** The music a client plays inside it (one of MUSIC). */
