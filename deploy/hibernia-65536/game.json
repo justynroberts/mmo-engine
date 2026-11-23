@@ -18042,7 +18042,8 @@
    "title": "Cloch go Doire",
    "exit": {
     "x": 38074.5,
-    "y": 10084.7
+    "y": 10084.7,
+    "level": 10
    }
   },
   {
@@ -32195,7 +32196,7 @@
   {
    "name": "the answerer",
    "title": "The Answerer",
-   "text": "There was a sword once, Fragarach, that no armour could stop. Manannán's own. Bring me the heart of Crom Dubh and the tooth of a great wyrm, and I'll try to make it again.",
+   "text": "There was a sword once, Fragarach, that no armour could stop. Manannán's own, from the sea. Bring me a bone of a Fomorian champion, of the old sea-raiders, and the tooth of a great wyrm, and I'll try to make it again.",
    "done_text": "It answers. God help whoever asks it a question.",
    "giver": "gabha",
    "level": 19,
@@ -32203,7 +32204,7 @@
    "steps": [
     {
      "kind": "collect",
-     "item": "croi chrom dubh",
+     "item": "cnamh fomhorach",
      "count": 1
     },
     {

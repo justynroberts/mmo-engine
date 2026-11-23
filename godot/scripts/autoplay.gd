@@ -519,6 +519,57 @@ func _clear(a: Vector2, b: Vector2, boxes: Array) -> bool:
 				return false
 	return true
 
+## A path round what is solid towards `to` (at most PLAN_REACH ahead), on a grid over the world file's
+## footprints (walls, towers, houses): the points to walk through, or [] when there is none.
+const PLAN_REACH := 500.0
+const PLAN_CELL := 4.0
+func _plan(to: Vector2) -> Array:
+	var a: Vector2 = m.me_pos
+	var goal := to
+	if a.distance_to(goal) > PLAN_REACH:
+		goal = a + (to - a).normalized() * PLAN_REACH
+	var lo := Vector2(minf(a.x, goal.x), minf(a.y, goal.y)) - Vector2(150, 150)
+	var hi := Vector2(maxf(a.x, goal.x), maxf(a.y, goal.y)) + Vector2(150, 150)
+	var g := AStarGrid2D.new()
+	g.region = Rect2i(0, 0, int(ceil((hi.x - lo.x) / PLAN_CELL)), int(ceil((hi.y - lo.y) / PLAN_CELL)))
+	g.cell_size = Vector2(PLAN_CELL, PLAN_CELL)
+	g.offset = lo
+	g.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	g.update()
+	var centre := (lo + hi) / 2.0
+	for b in _solid_near(centre, centre.distance_to(hi) + 50.0):
+		var i0 := maxi(int(floor((float(b[0]) - 1.5 - lo.x) / PLAN_CELL)), 0)
+		var j0 := maxi(int(floor((float(b[1]) - 1.5 - lo.y) / PLAN_CELL)), 0)
+		var i1 := mini(int(floor((float(b[2]) + 1.5 - lo.x) / PLAN_CELL)), g.region.size.x - 1)
+		var j1 := mini(int(floor((float(b[3]) + 1.5 - lo.y) / PLAN_CELL)), g.region.size.y - 1)
+		for i in range(i0, i1 + 1):
+			for j in range(j0, j1 + 1):
+				g.set_point_solid(Vector2i(i, j))
+	var from := Vector2i(int((a.x - lo.x) / PLAN_CELL), int((a.y - lo.y) / PLAN_CELL))
+	var dest := Vector2i(int((goal.x - lo.x) / PLAN_CELL), int((goal.y - lo.y) / PLAN_CELL))
+	g.set_point_solid(from, false)
+	if g.is_point_solid(dest):
+		# The goal is in a footprint (someone indoors): the nearest open cell to it.
+		var best := dest
+		for r in range(1, 12):
+			for d in [Vector2i(r, 0), Vector2i(-r, 0), Vector2i(0, r), Vector2i(0, -r)]:
+				var c: Vector2i = dest + d
+				if g.is_in_boundsv(c) and not g.is_point_solid(c):
+					best = c
+					break
+			if best != dest:
+				break
+		dest = best
+	var pts := g.get_point_path(from, dest, true)
+	if pts.size() < 2:
+		return []
+	# Every few cells is enough to steer by.
+	var out := []
+	for k in range(2, pts.size(), 3):
+		out.append(pts[k] + Vector2(PLAN_CELL, PLAN_CELL) / 2.0)
+	out.append(pts[pts.size() - 1] + Vector2(PLAN_CELL, PLAN_CELL) / 2.0)
+	return out
+
 ## Against a wall on the way to `to`: back off a step, then look along it either side for the nearest place a
 ## straight walk on gets through (a gate, the wall's end); the path [along to it, through], or [] for none.
 func _find_gap(to: Vector2) -> Array:
@@ -542,23 +593,29 @@ func _steer(to: Vector2) -> void:
 			_dodge_until = now() + 1.5
 			_side = -_side
 			_stalls += 1
-			if _stalls >= 4 and _detour == Vector2.INF:
+			if _detour != Vector2.INF and _stalls >= 6:
+				_detour = Vector2.INF # stuck on the path too: plan again from here
+				_detour_path = []
+				_stalls = 3
+			if _stalls >= 3 and _detour == Vector2.INF:
 				var along: Vector2 = (to - m.me_pos).normalized()
-				var gap := _find_gap(to)
+				var gap := _plan(to)
+				if gap.is_empty():
+					gap = _find_gap(to)
 				if gap.is_empty():
 					var reach := 40.0 + 30.0 * float(_stalls - 4)
 					_detour_path = [m.me_pos + along.orthogonal() * _side * reach - along * 10.0]
 				else:
 					_detour_path = gap
-					say("a wall in the way: through the gap at %d, %d" % [int(gap[0].x), int(gap[0].y)])
+					say("in the way: a path of %d steps round it" % gap.size())
 				_detour = _detour_path.pop_front()
-				_detour_until = now() + 25.0
+				_detour_until = now() + 60.0
 		elif _from != Vector2.INF and m.me_pos.distance_to(_from) > 4.0 and _detour == Vector2.INF:
 			_stalls = maxi(_stalls - 1, 0)
 		_from = m.me_pos
 		_check_at = now()
 	if _detour != Vector2.INF:
-		if m.me_pos.distance_to(_detour) < 3.0 and not _detour_path.is_empty():
+		if m.me_pos.distance_to(_detour) < 2.5 and not _detour_path.is_empty():
 			_detour = _detour_path.pop_front()
 		elif m.me_pos.distance_to(_detour) < 3.0 or now() > _detour_until:
 			_detour = Vector2.INF
