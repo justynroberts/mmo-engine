@@ -1,0 +1,27 @@
+{
+  "name": "god",
+  "productName": "God",
+  "version": "0.1.0",
+  "description": "A live control desk for an mmo-engine world: the map, the sky, spawning, events and the server's own voice.",
+  "license": "MIT",
+  "author": "FintonLabs",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --mac dir"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.0.0"
+  },
+  "dependencies": {
+    "@fontsource/b612-mono": "^5.2.5"
+  },
+  "build": {
+    "appId": "com.fintonlabs.god",
+    "productName": "God",
+    "files": ["main.js", "preload.js", "world.js", "renderer/**", "node_modules/@fontsource/b612-mono/files/b612-mono-latin-*-normal.woff2"],
+    "mac": { "category": "public.app-category.developer-tools", "target": "dir" }
+  }
+}

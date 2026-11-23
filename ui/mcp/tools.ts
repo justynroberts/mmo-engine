@@ -719,10 +719,18 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'say',
-    description: 'Make a bot say something in chat (nearby, or shouted to everyone). For a message to every player, use an event with an announce step.',
+    description: 'Make a bot say something in chat (nearby, or shouted to everyone). For a message to every player from the server itself, use announce.',
     input: { id: z.number().int(), text: z.string(), shout: z.boolean().optional() },
     async run({ id, text, shout }, ctx) {
       return ok(ctx, '/api/say', 'POST', { id, text, shout: !!shout })
+    },
+  },
+  {
+    name: 'announce',
+    description: 'A message from the server to every player now: a line in chat, or with banner a line across the screen.',
+    input: { text: z.string(), banner: z.boolean().optional() },
+    async run({ text, banner }, ctx) {
+      return ok(ctx, '/api/announce', 'POST', { text, banner: !!banner })
     },
   },
   {

@@ -721,6 +721,14 @@ fn admin_can_make_a_bot_speak_and_read_the_chat_log() {
     let (_, log) = json(&srv, "GET", "/api/chat", "");
     assert_eq!(log["lines"][0][3], "beep boop");
     assert_eq!(json(&srv, "POST", "/api/say", r#"{"id":1,"text":"   "}"#).0, 400);
+    // The server's own voice: every player hears it, from nobody (id 0), and it is in the log.
+    let (code, said) = json(&srv, "POST", "/api/announce", r#"{"text":"the   gates close at dusk","banner":true}"#);
+    assert_eq!((code, said["told"].as_u64()), (200, Some(1)));
+    for _ in 0..10 {
+        p.tick();
+    }
+    assert_eq!(p.heard.last().map(|m| (m.from, m.text.as_str())), Some((0, "the gates close at dusk")));
+    assert_eq!(json(&srv, "POST", "/api/announce", r#"{"text":"  "}"#).0, 400);
 }
 
 #[test]

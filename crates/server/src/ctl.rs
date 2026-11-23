@@ -37,6 +37,7 @@ pub enum Cmd {
     Release { id: u32 },
     ChatLog,
     Say(SayReq),
+    Announce(AnnounceReq),
     SetWeather(WeatherReq),
     FireEvent(FireReq),
     StopEvent(FireReq),
@@ -188,6 +189,14 @@ pub struct SayReq {
     #[serde(default)]
     pub shout: bool,
     pub text: String,
+}
+
+/// A message from the server to every player: a line in chat, or a banner across the screen.
+#[derive(Deserialize)]
+pub struct AnnounceReq {
+    pub text: String,
+    #[serde(default)]
+    pub banner: bool,
 }
 
 #[derive(Deserialize)]
@@ -831,6 +840,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
         }
         ("GET", "/api/chat") => Some(Cmd::ChatLog),
         ("POST", "/api/say") => serde_json::from_slice(&req.body).ok().map(Cmd::Say),
+        ("POST", "/api/announce") => serde_json::from_slice(&req.body).ok().map(Cmd::Announce),
         ("POST", "/api/weather") => serde_json::from_slice(&req.body).ok().map(Cmd::SetWeather),
         ("POST", "/api/zone") => {
             #[derive(Deserialize)]
@@ -861,7 +871,7 @@ fn serve(mut conn: TcpStream, tx: &Sender<Request>, ui: Option<&Path>, gen: &Gen
     if req.path.starts_with("/api/") {
         let known = matches!(
             req.path.as_str(),
-            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear" | "/api/blocks/restore" | "/api/ground/clear" | "/api/daylight" | "/api/zone" | "/api/events/fire" | "/api/events/stop"
+            "/api/info" | "/api/world" | "/api/game" | "/api/state" | "/api/spawn" | "/api/kill" | "/api/drive" | "/api/release" | "/api/chat" | "/api/say" | "/api/announce" | "/api/give" | "/api/ground" | "/api/inventory" | "/api/god" | "/api/worldfile" | "/api/world/reload" | "/api/world/apply" | "/api/blocks" | "/api/blocks/clear" | "/api/blocks/restore" | "/api/ground/clear" | "/api/daylight" | "/api/zone" | "/api/events/fire" | "/api/events/stop"
         );
         return if known {
             respond(&mut conn, 400, "application/json", br#"{"error":"bad request body or method"}"#)
@@ -1128,6 +1138,12 @@ fn handle(cmd: Cmd, c: &mut Ctl) -> (u16, String) {
             let ch = if r.shout { proto::chat::channel::SHOUT } else { proto::chat::channel::SAY };
             crate::net::say_from(c.sim, c.clients, s, ch, &text);
             (200, json!({ "ok": true, "text": text }).to_string())
+        }
+        Cmd::Announce(r) => {
+            let Some(text) = proto::chat::sanitize(&r.text) else { return err(400, "empty message") };
+            let ch = if r.banner { proto::chat::channel::BANNER } else { proto::chat::channel::SHOUT };
+            let told = crate::director::tell(c.sim, c.clients, &text, ch, None);
+            (200, json!({ "ok": true, "text": text, "told": told }).to_string())
         }
         Cmd::SetWeather(r) => match c.director.set_weather(c.sim, r.name.as_deref(), r.duration_secs.min(86_400)) {
             Ok(()) => {

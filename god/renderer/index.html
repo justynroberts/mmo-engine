@@ -1,0 +1,177 @@
+<!doctype html>
+<!-- MIT License - Copyright (c) fintonlabs.com -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>God</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Connect: shown until a server has answered. -->
+    <main id="connect" class="connect" hidden>
+      <h1>God</h1>
+      <p class="note">A live desk for one world. Reaches the server's admin interface, which listens on Tailscale only.</p>
+      <form id="connect-form" autocomplete="off">
+        <label for="c-server">Server</label>
+        <input id="c-server" name="server" type="text" spellcheck="false" required />
+        <label for="c-secret">Admin password</label>
+        <input id="c-secret" name="secret" type="password" />
+        <label class="check"><input id="c-remember" type="checkbox" checked /> Keep it in this Mac's keychain</label>
+        <button type="submit" class="key wide">Connect</button>
+        <p id="c-error" class="said" role="alert"></p>
+      </form>
+    </main>
+
+    <div id="desk" class="desk" hidden>
+      <header class="strip" aria-label="Server">
+        <span class="mark">GOD</span>
+        <span class="cell"><span class="lab">Link</span> <span id="s-link">waiting</span></span>
+        <span class="cell"><span class="lab">Server</span> <span id="s-server"></span></span>
+        <span class="cell"><span class="lab">Players</span> <span id="s-players" class="num">0</span></span>
+        <span class="cell"><span class="lab">Alive</span> <span id="s-live" class="num">0</span></span>
+        <span class="cell"><span class="lab">Tick</span> <span id="s-tick" class="num">0</span></span>
+        <span class="cell"><span class="lab">p99</span> <span id="s-p99" class="num">0</span> ms</span>
+        <span class="cell"><span class="lab">Day</span> <span id="s-day"></span></span>
+        <span class="cell"><span class="lab">Sky</span> <span id="s-sky"></span></span>
+        <button id="about-open" class="key small end" type="button" aria-label="About this app">i</button>
+      </header>
+
+      <section class="mapwrap" aria-label="Map">
+        <canvas id="map" tabindex="0" aria-label="The world. Drag to move, scroll to zoom, click a creature to select it. Arrow keys move, plus and minus zoom."></canvas>
+        <div class="maptext">
+          <span id="m-armed" class="armed" hidden></span>
+          <span id="m-at"></span>
+          <span id="m-note"></span>
+        </div>
+        <div class="mapkeys">
+          <button id="m-fit" class="key small" type="button">Fit</button>
+          <button id="m-in" class="key small" type="button" aria-label="Zoom in">+</button>
+          <button id="m-out" class="key small" type="button" aria-label="Zoom out">-</button>
+        </div>
+      </section>
+
+      <section class="tape" aria-label="Chat and director log">
+        <div class="col">
+          <h2>Chat</h2>
+          <ol id="chat" class="lines"></ol>
+        </div>
+        <div class="col">
+          <h2>Director</h2>
+          <ol id="log" class="lines"></ol>
+        </div>
+      </section>
+
+      <aside class="rack" aria-label="Controls">
+        <section>
+          <h2>Sky</h2>
+          <div class="row">
+            <span id="sky-now" class="readout">-</span>
+            <span id="sky-word" class="dim"></span>
+          </div>
+          <label class="lab" for="sky-phase">Time of day</label>
+          <input id="sky-phase" type="range" min="0" max="0.999" step="0.001" />
+          <div class="pads four" id="sky-moments"></div>
+          <div class="row split">
+            <span class="lab">Weather</span>
+            <label class="lab" for="wx-for">Lasts</label>
+            <select id="wx-for">
+              <option value="0">until changed</option>
+              <option value="300">5 min</option>
+              <option value="900">15 min</option>
+              <option value="3600">1 hour</option>
+            </select>
+          </div>
+          <div class="pads two" id="wx-pads"></div>
+          <details id="zones">
+            <summary class="lab" id="zones-lab">Weather zones</summary>
+            <ul id="zone-list" class="rows"></ul>
+          </details>
+        </section>
+
+        <section>
+          <h2>Spawn</h2>
+          <label class="lab" for="sp-find">Creature</label>
+          <input id="sp-find" type="search" placeholder="filter" spellcheck="false" />
+          <select id="sp-list" size="6" aria-label="Creature type"></select>
+          <div class="row fields">
+            <label class="lab" for="sp-count">Count</label>
+            <input id="sp-count" type="number" min="1" max="200" value="1" />
+            <label class="lab" for="sp-radius">Scatter</label>
+            <input id="sp-radius" type="number" min="0" max="500" value="6" />
+            <span id="sp-live" class="dim"></span>
+          </div>
+          <div class="pads three">
+            <button id="sp-arm" class="key" type="button" aria-pressed="false">Arm map</button>
+            <button id="sp-centre" class="key" type="button">At centre</button>
+            <button id="sp-selected" class="key" type="button">At selected</button>
+          </div>
+          <button id="kill-all" class="key wide" type="button">Kill all bots</button>
+        </section>
+
+        <section>
+          <h2>Voice</h2>
+          <label class="lab" for="say-text">To every player</label>
+          <textarea id="say-text" rows="2" maxlength="200" spellcheck="true"></textarea>
+          <div class="pads three">
+            <button id="say-banner" class="key" type="button" aria-pressed="true">Banner</button>
+            <button id="say-chat" class="key" type="button" aria-pressed="false">Chat line</button>
+            <button id="say-send" class="key" type="button">Send</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Events</h2>
+          <ul id="events" class="rows"></ul>
+        </section>
+
+        <section>
+          <h2>Players</h2>
+          <ul id="players" class="rows"></ul>
+        </section>
+
+        <section>
+          <h2>Selected</h2>
+          <div id="sel-none" class="dim">Nothing selected. Click a creature on the map, or a player above.</div>
+          <div id="sel" hidden>
+            <div id="sel-name" class="title"></div>
+            <div id="sel-kind" class="dim"></div>
+            <dl id="sel-attrs" class="attrs"></dl>
+            <div class="pads three">
+              <button id="sel-follow" class="key" type="button" aria-pressed="false">Follow</button>
+              <button id="sel-god" class="key" type="button">God mode</button>
+              <button id="sel-kill" class="key" type="button">Kill</button>
+            </div>
+            <div class="row fields">
+              <label class="lab" for="give-item">Give</label>
+              <select id="give-item"></select>
+              <input id="give-count" type="number" min="1" max="999" value="1" aria-label="How many" />
+              <button id="give-go" class="key small" type="button">Give</button>
+            </div>
+            <div class="row fields">
+              <label class="lab" for="as-text">Say as</label>
+              <input id="as-text" type="text" maxlength="200" />
+              <label class="check"><input id="as-shout" type="checkbox" /> shout</label>
+              <button id="as-go" class="key small" type="button">Say</button>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <footer class="last" aria-live="polite"><span class="lab">Last</span> <span id="last">-</span></footer>
+    </div>
+
+    <dialog id="about" aria-labelledby="about-name">
+      <h2 id="about-name">God</h2>
+      <p id="about-version" class="dim"></p>
+      <p>Made by <a href="https://fintonlabs.com" target="_blank" rel="noopener">FintonLabs</a></p>
+      <div class="pads three">
+        <button id="about-forget" class="key" type="button">Forget password</button>
+        <button id="about-close" class="key" type="button">Close</button>
+      </div>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>
