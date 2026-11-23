@@ -626,7 +626,8 @@ func _plan_in(to: Vector2, margin: float, cell: float) -> Array:
 	g.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	g.update()
 	var centre := (lo + hi) / 2.0
-	for b in _solid_near(centre, centre.distance_to(hi) + 50.0):
+	var boxes := _solid_near(centre, centre.distance_to(hi) + 50.0)
+	for b in boxes:
 		var i0 := maxi(int(floor((float(b[0]) - PAD - lo.x) / cell)), 0)
 		var j0 := maxi(int(floor((float(b[1]) - PAD - lo.y) / cell)), 0)
 		var i1 := mini(int(floor((float(b[2]) + PAD - lo.x) / cell)), g.region.size.x - 1)
@@ -641,8 +642,19 @@ func _plan_in(to: Vector2, margin: float, cell: float) -> Array:
 	for di in range(-near_r, near_r + 1):
 		for dj in range(-near_r, near_r + 1):
 			var c := from + Vector2i(di, dj)
-			if g.is_in_boundsv(c):
+			if not g.is_in_boundsv(c):
+				continue
+			# Only the padding: a cell whose middle is inside a wall itself stays shut (or a path goes through
+			# the join where a castle meets its tower).
+			var mid := lo + (Vector2(c) + Vector2(0.5, 0.5)) * cell
+			var inside := false
+			for b in boxes:
+				if mid.x > float(b[0]) and mid.x < float(b[2]) and mid.y > float(b[1]) and mid.y < float(b[3]):
+					inside = true
+					break
+			if not inside:
 				g.set_point_solid(c, false)
+	g.set_point_solid(from, false) # where we stand, whatever the grid makes of it
 	if g.is_point_solid(dest):
 		# The goal is in a footprint (someone indoors): the nearest open cell to it.
 		var best := dest
