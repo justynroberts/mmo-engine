@@ -39,8 +39,10 @@ var _hunt_at := Vector2.INF     # the hunting ground we are roaming
 var _xp_was := -1
 var _xp_moved := 0.0           # when our experience last went up
 var _hunt_until := 0.0         # stuck for experience: hunting till then
+var _walking_to := 0            # the one we are walking up to, and since when
+var _walking_since := 0.0
 
-const GOAL_SECS := 600.0       # this long on the way to one goal and it is given up
+const GOAL_SECS := 240.0       # this long on the way to one goal and it is given up (for a while)
 const TALK_AGAIN := 20.0       # seconds before talking to the same one again
 const HUNT_IF_FAR := 1200.0    # the nearest goal further than this: hunt instead, nearer home
 const REST_BELOW := 0.45       # out of a fight below this share of health: sit until whole
@@ -92,6 +94,15 @@ func run(main: Node, secs: float) -> void:
 		if now() - _xp_said > 60.0:
 			_xp_said = now()
 			say("%d xp, %d beaten so far" % [int(m._progress.get("xp", 0)), kills])
+		# Earning next to nothing (a point a minute for being about) for three minutes: hunt a while.
+		var xp := int(m._progress.get("xp", 0))
+		if _xp_was < 0 or xp - _xp_was >= 60:
+			_xp_was = xp
+			_xp_moved = now()
+		if now() - _xp_moved > 180.0 and now() > _hunt_until:
+			_hunt_until = now() + 150.0
+			_xp_moved = now()
+			say("nothing earned in three minutes: hunting a while")
 		if _rest():
 			continue
 		if _buy():
@@ -349,6 +360,15 @@ func _talk_to_giver() -> bool:
 	if who == 0:
 		return false
 	if best > m._rule("talk_reach", 8.0) - 1.5:
+		# Not reached in 45 s (indoors, round a wall we cannot find the way past): leave them a few minutes.
+		if who != _walking_to:
+			_walking_to = who
+			_walking_since = now()
+		elif now() - _walking_since > 45.0:
+			say("cannot reach the %s, %d m off: later" % [m._name(who).get_slice("|", 0), int(best)])
+			_talked[who] = now() + 180.0
+			_walking_to = 0
+			return false
 		_steer(at)
 		return true
 	m.net.set_move(Vector2.ZERO)
@@ -362,15 +382,6 @@ func _talk_to_giver() -> bool:
 
 ## On to the goal of the quest in hand (the tracker's), or failing one, to the nearest "!" on the map.
 func _follow_goal() -> void:
-	# Earning next to nothing (a point a minute for being about) for three minutes: hunt a while.
-	var xp := int(m._progress.get("xp", 0))
-	if _xp_was < 0 or xp - _xp_was >= 60:
-		_xp_was = xp
-		_xp_moved = now()
-	if now() - _xp_moved > 180.0 and now() > _hunt_until:
-		_hunt_until = now() + 150.0
-		_xp_moved = now()
-		say("nothing earned in three minutes: hunting a while")
 	if now() < _hunt_until:
 		_hunt()
 		return
