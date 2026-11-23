@@ -587,9 +587,27 @@ func _find_gap(to: Vector2) -> Array:
 	return []
 var _detour := Vector2.INF
 var _detour_until := 0.0
+## Progress towards the goal, not just movement: dodging left and right in front of something counts as moving,
+## so a walk that has come no nearer in PROGRESS_SECS is stuck too.
+const PROGRESS_SECS := 8.0
+var _aim := Vector2.INF
+var _best_d := INF
+var _best_t := 0.0
 func _steer(to: Vector2) -> void:
+	if _aim == Vector2.INF or _aim.distance_to(to) > 20.0:
+		_aim = to
+		_best_d = INF
+		_best_t = now()
+	var d: float = m.me_pos.distance_to(to)
+	if d < _best_d - 3.0 or d < 15.0 or _detour != Vector2.INF:
+		_best_d = minf(d, _best_d) # a detour may lead away a while; close by, walking about is the point
+		_best_t = now()
+	var no_nearer := now() - _best_t > PROGRESS_SECS
 	if now() - _check_at > 0.8:
-		if _from != Vector2.INF and m.me_pos.distance_to(_from) < 2.0:
+		if no_nearer and _detour == Vector2.INF:
+			_stalls = maxi(_stalls, 2) # going nowhere: plan round it now
+			_best_t = now()
+		if _from != Vector2.INF and (m.me_pos.distance_to(_from) < 2.0 or _stalls >= 2 and no_nearer):
 			_dodge_until = now() + 1.5
 			_side = -_side
 			_stalls += 1
