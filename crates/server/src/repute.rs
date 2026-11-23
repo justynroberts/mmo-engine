@@ -431,6 +431,25 @@ mod tests {
     }
 
     #[test]
+    fn game_living_by_a_town_is_hunted_not_murdered() {
+        let mut g = GameFile::default_game();
+        g.places.push(Place { name: "kells".into(), x: 500.0, y: 500.0, r: 60.0, title: String::new(), exit: None, sound: String::new(), music: String::new(), safe: false, hold: None, dock: false });
+        let mut deer = g.archetypes[0].clone();
+        (deer.name, deer.behaviour, deer.attack, deer.count, deer.home, deer.rules, deer.xp) = ("deer".into(), Behaviour::Idle, None, 0, Some("kells".into()), vec![], 10);
+        g.archetypes.push(deer);
+        let d = g.archetypes.len() as u8 - 1;
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(2048.0, 1, vec![]), 64, 20, 1);
+        s.terrain.houses = Arc::new(vec![Aabb { x0: 520.0, y0: 520.0, x1: 530.0, y1: 530.0 }]);
+        s.find_towns();
+        let t = s.spawn_as(NONE, d, Some((500.0, 500.0))).unwrap();
+        let p = s.spawn(0).unwrap();
+        assert!(!s.townsperson(t), "a deer pays experience: game");
+        s.struck_townsfolk(p, t, true);
+        let kells = s.places.iter().position(|x| x.name == "kells").unwrap();
+        assert_eq!(s.repute(p, kells), 0, "nobody minds");
+    }
+
+    #[test]
     fn a_townsperson_asks_for_help_with_a_wolf_and_pays_when_it_falls() {
         let (mut s, [folk, _, wolf, _]) = town();
         let coin = s.currency.unwrap_or(0);

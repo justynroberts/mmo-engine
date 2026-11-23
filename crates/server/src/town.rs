@@ -27,11 +27,13 @@ fn pick(sim: &mut Sim, s: usize, occasion: &str) -> Option<(usize, String)> {
 impl Sim {
     /// A bot with a home and no weapon, out and about: one of the townsfolk (not a dog, nor a stray).
     pub(crate) fn townsperson(&self, s: usize) -> bool {
+        // Not game: a bot type that pays experience to beat (deer, foxes, hares, the fae) is hunted, not a neighbour;
+        // counting it as one made every fox a murder that set the town's watch on the hunter, and had stags brawl.
         self.ents.alive[s]
             && self.ents.owner[s] == NONE
             && !self.ents.hidden[s]
             && !self.ents.fallen[s]
-            && self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.attack.is_none() && !a.thief && !a.pet && !a.stray && !a.homes.is_empty())
+            && self.archs.get(self.ents.arch[s] as usize).is_some_and(|a| a.attack.is_none() && a.xp == 0 && !a.thief && !a.pet && !a.stray && !a.homes.is_empty())
     }
 
     pub(crate) fn is_thief(&self, s: usize) -> bool {

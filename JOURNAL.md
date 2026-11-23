@@ -52,6 +52,12 @@ first.
 
 ## Done
 
+- 2026-11-23 — Hunting made a player a villain: every bot with a home and no weapon counted as a townsperson, so
+  each fox, hare or deer beaten was a murder in its hunting ground (which counts as a town, farm buildings in it),
+  carried to Áth Cliath at a third, and the watch came for the hunter (found by the play test: shunned in a dozen
+  places after "Foxes at the Fold"). Game (a bot type that pays experience) is not townsfolk now; stags no longer
+  brawl in villages either.
+
 - 2026-11-23 — Hunting grounds brought in: small game a median 500 units from its town (was 1,467; Áth Cliath's
   600, was 1,373), deer 800 (was 3,405), boars and bulls 1,100 (was 3,524), each the nearest dry, gentle ground
   clear of buildings. A console edit that moves a bot type's home places its bots again (only a change of name
