@@ -735,10 +735,14 @@ UNSAFE = ["coill na mac tire"]
 # near one, the deer and stags in a wood a little further, the boars and bulls further out.
 # (suffix, title suffix, distance from the town, radius, who lives there)
 GROUNDS = [
-    ("", "", (600, 1300), 320.0, ["sionnach", "giorria", "broc"]),
-    (" thiar", " Thiar", (1700, 3000), 380.0, ["torc", "tarbh fiain"]),
-    (" coill", " (Coill)", (1400, 3400), 560.0, ["fia", "damh"]),
+    # Small game a few minutes' walk out of the gate (it was 1.4 km out, three and a half minutes each way), deer
+    # further, boars and bulls (which fight back) further still. Each is taken as near its least distance as dry,
+    # gentle ground clear of buildings allows.
+    ("", "", (500, 1000), 260.0, ["sionnach", "giorria", "broc"]),
+    (" thiar", " Thiar", (1100, 2000), 380.0, ["torc", "tarbh fiain"]),
+    (" coill", " (Coill)", (800, 1600), 450.0, ["fia", "damh"]),
 ]
+GROUND_BUILT = 0.03  # at most this share of a hunting ground under buildings (a town's walls, its streets)
 GROUND_FAR = GROUNDS[1][4]
 
 
@@ -759,6 +763,12 @@ class Terrain:
         self.sea = float(read(water.get("sea", {"level": 0.0}))["level"])
         # Buildings (their boxes), for keeping what is placed out of walls.
         self.buildings = [o["b"] for o in w.get("objects", []) if o.get("b") and o.get("t") in ("house", "tower", "castle", "keep", "wall")]
+        # ...by 256-unit square, so a point looks only at those near it.
+        self.bcells = {}
+        for b in self.buildings:
+            for cy in range(int(b[1] // 256), int(b[3] // 256) + 1):
+                for cx in range(int(b[0] // 256), int(b[2] // 256) + 1):
+                    self.bcells.setdefault((cx, cy), []).append(b)
         # The lakes by 1,024-unit square, so a point looks at those near it, not all of them.
         self.lakes = {}
         for l in read(water.get("lakes", [])):
@@ -777,7 +787,13 @@ class Terrain:
         return self.height(x, y) <= self.sea + 0.5 or any(b[0] <= x <= b[2] and b[1] <= y <= b[3] for b in near)
 
     def in_building(self, x, y, pad=2.0):
-        return any(b[0] - pad <= x <= b[2] + pad and b[1] - pad <= y <= b[3] + pad for b in self.buildings)
+        near = self.bcells.get((int(x // 256), int(y // 256)), ())
+        return any(b[0] - pad <= x <= b[2] + pad and b[1] - pad <= y <= b[3] + pad for b in near)
+
+    def built(self, x, y, r, k=10):
+        """The share of a disc under buildings (with a few units round each)."""
+        pts = [(x + r * u / k, y + r * v / k) for u in range(-k, k + 1) for v in range(-k, k + 1) if u * u + v * v <= k * k]
+        return sum(1 for p in pts if self.in_building(*p, pad=6.0)) / len(pts)
 
     def ground(self, x, y, r, k=7):
         """(share of a disc that is dry land, its mean rise per unit between neighbouring samples)."""
@@ -821,13 +837,15 @@ def hunting_grounds(g, towns, titles, terrain=None):
                 if lo / 1.5 <= d <= hi * 1.5:
                     near.append({"x": p["x"] + (p["x"] - tx) / d * 150.0, "y": p["y"] + (p["y"] - ty) / d * 150.0, "spot": 1})
             ring = [{"x": tx + math.cos(a / 36 * math.tau) * d, "y": ty + math.sin(a / 36 * math.tau) * d, "spot": 0}
-                    for a in range(36) for d in range(int(lo), int(hi) + 1, 300)]
+                    for a in range(36) for d in range(int(lo), int(hi) + 1, 100)]
             apart = [c for c in near + ring if all(cos(c, q["x"] - tx, q["y"] - ty) < 0.5 for q in taken)] or near + ring
             if terrain is not None:
                 for c in apart:
                     c["dry"], c["steep"] = terrain.ground(c["x"], c["y"], r)
                 good = [c for c in apart if c["dry"] >= GROUND_DRY and c["steep"] <= GROUND_STEEP]
-                pick = max(good, key=lambda c: (c["spot"], inland(c))) if good else max(apart, key=lambda c: (c["dry"], -c["steep"]))
+                good = [c for c in good if terrain.built(c["x"], c["y"], r) <= GROUND_BUILT] or good
+                # The nearest to town (in 100-unit steps), inland first among those.
+                pick = min(good, key=lambda c: (round((dist(c) - lo) / 100.0), -inland(c))) if good else max(apart, key=lambda c: (c["dry"], -c["steep"]))
             else:
                 in_range = [c for c in near if lo <= dist(c) - 150.0 <= hi]
                 pick = max(in_range or near or ring, key=lambda c: (c["spot"], inland(c)))

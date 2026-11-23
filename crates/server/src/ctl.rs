@@ -1279,7 +1279,10 @@ pub fn apply_game(text: &str, note: &str, c: &mut Ctl) -> (u16, String) {
     // bots are not thrown away, removed archetypes are dropped and every archetype is topped up to its count.
     // An archetype whose count the edit changes starts again at its new count, so lowering a count removes bots;
     // so does one whose homes change (by place name), so its bots go to live in the new ones.
-    let homes_of = |homes: &[usize], places: &[proto::game::Place]| homes.iter().filter_map(|&h| places.get(h).map(|p| p.name.clone())).collect::<Vec<_>>();
+    // A home by name and where it is: a home moved (a hunting ground brought nearer town) places its bots again too.
+    let homes_of = |homes: &[usize], places: &[proto::game::Place]| {
+        homes.iter().filter_map(|&h| places.get(h).map(|p| (p.name.clone(), p.x.round() as i64, p.y.round() as i64, p.r.round() as i64))).collect::<Vec<_>>()
+    };
     let was = |name: &str| c.sim.archs.iter().find(|a| a.name == name).map(|a| (a.count, homes_of(&a.homes, &c.sim.places)));
     let recount: Vec<String> = game.archs.iter().filter(|a| was(&a.name) != Some((a.count, homes_of(&a.homes, &game.places)))).map(|a| a.name.clone()).collect();
     let reset = hash != c.hs.defs_hash;

@@ -20,10 +20,6 @@ first.
    for the Sick: 16 pennies of herbs, a 10-penny purse). Hold the craft errands behind "A New Arrival" and "The First
    Furrow", or give the first ones coin.
 
-- **The hunting grounds are a long walk from Áth Cliath.** The nearest (foxes, hares, badgers) is 1.4 km out, the
-  deer woods 1.4 and 2.6 km: three and a half minutes on foot each way, so a newcomer's first hunt is mostly
-  walking. Put a ring of small game within 500-800 m of each town (the content script's `hunting_grounds`), or give
-  the first quests a mount sooner.
 - **The autoplay cannot find its way.** It walks straight at a goal, sidesteps, and (since 2026-11-23) looks along
   a wall for a gap from the world file; it still loses minutes to the Smith in his forge, the Miller indoors and
   the city walls. 2026-11-23 runs reached level 2-3 in 30 minutes (the server play-through reaches level 10 at
@@ -55,6 +51,11 @@ first.
    with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
 ## Done
+
+- 2026-11-23 — Hunting grounds brought in: small game a median 500 units from its town (was 1,467; Áth Cliath's
+  600, was 1,373), deer 800 (was 3,405), boars and bulls 1,100 (was 3,524), each the nearest dry, gentle ground
+  clear of buildings. A console edit that moves a bot type's home places its bots again (only a change of name
+  did).
 
 - 2026-11-22 — A play test to level 10 (autoplay, live content and land). Found and fixed: a quest ready to hand in
   stayed "ready" after another quest's hand-in took its goods (the giver refused it for good; it goes back to the

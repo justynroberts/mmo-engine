@@ -3372,4 +3372,16 @@ fn a_bot_type_given_new_homes_moves_into_them_and_quests_point_to_every_home() {
     let homes = info["homes_all"][&shown].as_array().unwrap();
     assert_eq!(homes.len(), 2, "{homes:?}");
     assert_eq!((homes[0][0].clone(), homes[1][0].clone()), (m["x"].clone(), p["x"].clone()));
+
+    // A home moved (same name, somewhere else): its bots are placed again, in it.
+    game["archetypes"][0]["home"] = "plaza".into();
+    game["archetypes"][0]["homes"] = serde_json::json!([]);
+    assert_eq!(http(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    wait_until("the bots back at the plaza", || bots_of(&srv, 0) == 4 && near(p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap(), p["r"].as_f64().unwrap()));
+    let pi = game["places"].as_array().unwrap().iter().position(|q| q["name"] == "plaza").unwrap();
+    let (px, py) = (p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap());
+    let nx = if px > 512.0 { px - 150.0 } else { px + 150.0 };
+    game["places"][pi]["x"] = nx.into();
+    assert_eq!(http(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    wait_until("the bots in the moved plaza", || bots_of(&srv, 0) == 4 && near(nx, py, p["r"].as_f64().unwrap()));
 }
