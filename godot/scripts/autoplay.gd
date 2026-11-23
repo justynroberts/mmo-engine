@@ -714,8 +714,14 @@ func _steer(to: Vector2) -> void:
 				else:
 					_detour_path = gap
 					say("in the way: a path of %d steps round it" % gap.size())
+				# Time enough to walk it (a way round a city's walls is near a thousand units), and some over.
+				var length := 0.0
+				var prev: Vector2 = m.me_pos
+				for pt in _detour_path:
+					length += prev.distance_to(pt)
+					prev = pt
 				_detour = _detour_path.pop_front()
-				_detour_until = now() + 60.0
+				_detour_until = now() + 20.0 + length / 6.0
 		elif _from != Vector2.INF and m.me_pos.distance_to(_from) > 4.0 and _detour == Vector2.INF:
 			_stalls = maxi(_stalls - 1, 0)
 		_from = m.me_pos
