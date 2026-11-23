@@ -1188,8 +1188,8 @@ func _process(delta: float) -> void:
 		explored.tick(delta)
 	hud.update_minimap(me_pos, heading, others)
 	_local_map()
-	if Input.is_key_pressed(KEY_SPACE) and not building and not hud.typing() and not smoke:
-		_attack() # holding Space keeps swinging, at the action's cooldown
+	if Input.is_key_pressed(KEY_A) and not building and not hud.typing() and not smoke:
+		_attack() # holding A keeps swinging, at the action's cooldown (EverQuest's keys)
 	# The server sends only the nearest max_visible within interest_radius; say so when that is what you are seeing.
 	var cap := int(info.get("max_visible", 0))
 	var crowd := ", nearest %d shown" % cap if cap > 0 and list.size() >= cap else ""
@@ -2869,8 +2869,9 @@ func _drive() -> void:
 	var r := 0.0
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): f += 1.0
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): f -= 1.0
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): r += 1.0
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): r -= 1.0
+	# A is attack (EverQuest's keys): sideways steps are on the arrows.
+	if Input.is_key_pressed(KEY_RIGHT): r += 1.0
+	if Input.is_key_pressed(KEY_LEFT): r -= 1.0
 	if Input.is_key_pressed(KEY_Q): yaw -= 0.03
 	if Input.is_key_pressed(KEY_E): yaw += 0.03
 	# Camera relative: forward is away from the camera, in server coordinates (x east, y south).
@@ -2881,7 +2882,7 @@ func _drive() -> void:
 ## Going for a pile of loot that was clicked: walk to it and pick it up there. Any movement key, the pile going
 ## (someone else took it) or a long time trying gives it up. True while it is steering us.
 func _go_get_loot() -> bool:
-	var keys := [KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
+	var keys := [KEY_W, KEY_S, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
 	var at := Vector2.INF
 	for g in net.ground():
 		if g["id"] == _fetch_pile:
@@ -2970,7 +2971,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_cast(SPELL_KEYS.find(k))
 		elif k == HAIL_KEY and not building:
 			net.act(ACT_HAIL, target_id if target_id != 0 and not _players.has(target_id) else 0)
-		elif k == KEY_J:
+		elif k == KEY_SPACE or k == KEY_J:
 			net.act(ACT_JUMP, 0)
 		elif k == KEY_M:
 			_toggle_map()
@@ -3007,7 +3008,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 				journal.open_menu()
 			elif k == KEY_TAB:
 				_cycle_target(ev.shift_pressed)
-			elif k == KEY_SPACE:
+			elif k == KEY_A:
 				_attack()
 			elif k == KEY_F:
 				_talk_or_pickup()
@@ -4383,7 +4384,7 @@ func _pick(screen: Vector2) -> void:
 		hit = from + dir * t
 	# A pile of loot clicked: take it, walking over first when it is out of reach.
 	var pile := 0
-	var pile_d := 1.4
+	var pile_d := 2.5
 	for g in net.ground():
 		var d := (g["position"] as Vector2).distance_to(Vector2(hit.x, hit.z))
 		if d < pile_d:

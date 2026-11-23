@@ -6,10 +6,10 @@ extends CanvasLayer
 const HUD := preload("res://scripts/hud.gd")
 const SAVED := "user://tutorial.cfg"
 const STEPS := [
-	["Walk", "Walk with W A S D or the arrow keys. Q and E turn the view; the mouse wheel zooms."],
+	["Walk", "Walk with W and S (or the arrow keys); Q and E turn, Space jumps, the mouse wheel zooms."],
 	["Pick a target", "Click someone, or press Tab for whoever is nearest. Their name and health show at the top."],
-	["Find work", "Someone with a gold ! over their head has a quest for you. Walk up close and press F."],
-	["Strike", "Space strikes your target. Strike a beast out past the walls, not the townsfolk: the town and its watch take that badly."],
+	["Find work", "Someone with a gold ! over their head has a quest for you. Walk up close and press F. Click a pile on the ground to pick it up."],
+	["Strike", "A strikes your target. Strike a beast out past the walls, not the townsfolk: the town and its watch take that badly."],
 	["Cast a spell", "Your spells are on the bar above the others, on R T Y and the rest. Hover one to read it, then try it."],
 	["The rest", "M is the map, F2 your spells, F3 your quests, F1 every key, Esc the menu. Ádh mór ort!"],
 ]

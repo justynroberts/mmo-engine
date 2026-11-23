@@ -18,9 +18,9 @@ const EDGE := Color(0.79, 0.64, 0.36, 0.55)
 const TEXT := Color("f3ead2")
 const MUTED := Color(0.95, 0.92, 0.82, 0.55)
 const KEYS := ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", "]", "\\"]   # the keys that pick each material
-const HELP_ACTION := [["WASD", "move"], ["Q / E", "turn"], ["Mouse wheel", "zoom, in past the closest for first person"],
-	["V", "first person"], ["Click", "target"], ["Tab", "next target"], ["Space", "attack (hold to keep swinging)"],
-	["J", "jump"], ["R T Y U O P Z C ' , . ;", "spells, on the bar over the action bar"], ["H", "hail: a trader or the like stops for you"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "talk to someone near, trade with the player targeted, or pick up"], ["F3", "quests"], ["F5", "group finder: queue for a dungeon"], ["F6", "guild, letters and standing"], ["T (build mode)", "blueprints"], ["I or F4", "bag and bank"],
+const HELP_ACTION := [["W / S", "forward, back"], ["Q / E", "turn"], ["Left / Right", "step sideways"], ["Mouse wheel", "zoom, in past the closest for first person"],
+	["V", "first person"], ["Click", "target"], ["Tab", "next target"], ["A", "attack (hold to keep swinging)"],
+	["Space", "jump"], ["Click a pile", "walk over and pick it up"], ["R T Y U O P Z C ' , . ;", "spells, on the bar over the action bar"], ["H", "hail: a trader or the like stops for you"], ["L", "torch: auto, always, out"], ["1-8", "use an item"], ["Shift + 1-8", "drop it"], ["F", "talk to someone near, trade with the player targeted, or pick up"], ["F3", "quests"], ["F5", "group finder: queue for a dungeon"], ["F6", "guild, letters and standing"], ["T (build mode)", "blueprints"], ["I or F4", "bag and bank"],
 	["Enter", "chat, start with ! to shout"], ["M", "world map"], ["N", "sound: all, no music, off"], ["G", "god mode"], ["F11", "full screen"]]
 const HELP_BUILD := [["B", "build mode on and off (Esc leaves)"], ["1-0 - = [ ] \\", "pick a material (\\ is tilled soil: plant seeds beside it)"],
 	["Click", "place a block"], ["Hold right click, X or Shift+click", "break one of yours (sweep to keep going)"]]
@@ -251,7 +251,7 @@ func _ready() -> void:
 	bar.add_theme_constant_override("separation", 4)
 	bar.alignment = BoxContainer.ALIGNMENT_CENTER
 	root.add_child(bar)
-	for a in [["attack", "Attack", "Spc"], ["jump", "Jump", "J"], ["torch", "Torch", "L"]]:
+	for a in [["attack", "Attack", "A"], ["jump", "Jump", "Spc"], ["torch", "Torch", "L"]]:
 		_ability(a[0], a[1], a[2], bar)
 	bar.add_child(_gap())
 	for i in 8:
