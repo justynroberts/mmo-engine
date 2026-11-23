@@ -784,18 +784,19 @@ func _steer(to: Vector2) -> void:
 		_from = m.me_pos
 		_check_at = now()
 	if _detour != Vector2.INF:
-		if m.me_pos.distance_to(_detour) < 2.5 and not _detour_path.is_empty():
+		# Within reach of a point: on to the next (one reach for both, or a point passed at 2.5 to 3 units
+		# threw the rest of the way away).
+		while m.me_pos.distance_to(_detour) < 3.0 and not _detour_path.is_empty():
 			_detour = _detour_path.pop_front()
+		if m.me_pos.distance_to(_detour) >= 3.0 and now() <= _detour_until:
 			to = _detour
-		elif m.me_pos.distance_to(_detour) < 3.0 or now() > _detour_until:
+		else:
 			if now() > _detour_until:
 				say("gave up the way round at %.1f, %.1f (out of time), %d points left" % [m.me_pos.x, m.me_pos.y, _detour_path.size()])
 			_detour = Vector2.INF
 			_detour_path = []
 			if _stalls > 12:
 				_stalls = 4 # round again from near
-		else:
-			to = _detour
 	var dir: Vector2 = (to - m.me_pos).normalized()
 	if now() < _wriggle_until:
 		# Sweep round every way, slowly: sliding along the bushes finds the gap we came in by.
