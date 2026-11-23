@@ -556,6 +556,7 @@ func _in_town(p: Vector2) -> bool:
 var _stalls := 0
 var _detour_path: Array = []
 
+const LONGEST := 700.0 # the longest solid footprint looked for (a city's wall runs a side of it)
 ## The solid footprints (walls, towers, houses) within `r` of `c`, from the world file the client drew.
 func _solid_near(c: Vector2, r: float) -> Array:
 	var out := []
@@ -563,11 +564,16 @@ func _solid_near(c: Vector2, r: float) -> Array:
 	if w == null:
 		return out
 	var cell: float = w.CELL
-	for i in range(floori((c.x - r) / cell), floori((c.x + r) / cell) + 1):
-		for j in range(floori((c.y - r) / cell), floori((c.y + r) / cell) + 1):
+	# Objects are filed by their middle: a long wall's may be a few cells off, so look further and keep those
+	# whose footprint comes within reach.
+	var far := r + LONGEST / 2.0
+	for i in range(floori((c.x - far) / cell), floori((c.x + far) / cell) + 1):
+		for j in range(floori((c.y - far) / cell), floori((c.y + far) / cell) + 1):
 			for o in w.in_cell(i, j):
 				if o.has("b") and o.get("solid", false):
-					out.append(o["b"])
+					var b: Array = o["b"]
+					if float(b[2]) > c.x - r and float(b[0]) < c.x + r and float(b[3]) > c.y - r and float(b[1]) < c.y + r:
+						out.append(b)
 	# Built blocks too (a player's house of planks): a column two or more blocks high over its ground is a wall.
 	var bs := 2.0
 	if m.build is Dictionary and m.build.has("block"):
@@ -655,7 +661,22 @@ func _plan_in(to: Vector2, margin: float, cell: float) -> Array:
 					break
 			if not inside:
 				g.set_point_solid(c, false)
-	g.set_point_solid(from, false) # where we stand, whatever the grid makes of it
+	# Start from the nearest cell a body fits in (on a coarse grid the cell we stand in may be mostly wall, and
+	# opening it would let a path through the wall).
+	if g.is_point_solid(from):
+		var best_c := from
+		var best_d := INF
+		for di in range(-near_r - 1, near_r + 2):
+			for dj in range(-near_r - 1, near_r + 2):
+				var c := from + Vector2i(di, dj)
+				if g.is_in_boundsv(c) and not g.is_point_solid(c):
+					var mid := lo + (Vector2(c) + Vector2(0.5, 0.5)) * cell
+					if mid.distance_to(a) < best_d:
+						best_d = mid.distance_to(a)
+						best_c = c
+		if best_c == from:
+			g.set_point_solid(from, false) # nowhere better: where we stand
+		from = best_c
 	if g.is_point_solid(dest):
 		# The goal is in a footprint (someone indoors): the nearest open cell to it.
 		var best := dest
