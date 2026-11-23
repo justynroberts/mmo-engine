@@ -18,6 +18,7 @@ var kills := 0
 var _last := {}                # quest index -> "step/count/state" last printed
 var _talked := {}              # entity id -> when we last talked to them (seconds)
 var _goal_since := 0.0         # when we set out for the current goal
+var _goal_at := Vector2.INF
 var _goal_key := ""
 var _given_up := {}            # goal key -> true: not reached in time
 var _from := Vector2.INF       # for noticing we are stuck against something
@@ -180,15 +181,48 @@ func _fight() -> bool:
 	var foe: int = m._nearest_foe_in(40.0)
 	if foe == 0:
 		var want := _step_kinds()
+		var kept := _keep_chasing(near)
+		for n in near:
+			if n[0] == kept and want.has(n[1]):
+				return _strike(kept)
 		var best := 60.0
 		for n in near:
-			if want.has(n[1]) and not _deadly(n[0]) and m.me_pos.distance_to(n[2]) < best:
+			if want.has(n[1]) and not _deadly(n[0]) and not _chased(n[0]) and m.me_pos.distance_to(n[2]) < best:
 				best = m.me_pos.distance_to(n[2])
 				foe = n[0]
 	if foe == 0:
 		_struck = 0
 		return false
 	return _strike(foe)
+
+## The quarry already being chased, while it is still in sight and getting nearer: keep after it rather than turn
+## to whichever is nearest this moment (fleeing deer scatter, and chasing each in turn catches none). One not
+## caught up with in CHASE_SECS is let go a while.
+const CHASE_SECS := 30.0
+var _chase_id := 0
+var _chase_best := INF
+var _chase_t := 0.0
+var _let_go := {}
+func _keep_chasing(near: Array) -> int:
+	if _chase_id == 0:
+		return 0
+	for n in near:
+		if n[0] == _chase_id:
+			var d: float = m.me_pos.distance_to(n[2])
+			if d < _chase_best - 2.0:
+				_chase_best = d
+				_chase_t = now()
+			if now() - _chase_t > CHASE_SECS:
+				_let_go[_chase_id] = now() + 120.0
+				say("could not catch the %s: letting it go" % String(n[1]))
+				_chase_id = 0
+				return 0
+			return _chase_id
+	_chase_id = 0
+	return 0
+
+func _chased(id: int) -> bool:
+	return _let_go.has(id) and now() < float(_let_go[id])
 
 ## Go for `foe`: up to it, then blows (and now and then the first two spells of the bar).
 func _strike(foe: int) -> bool:
@@ -197,6 +231,10 @@ func _strike(foe: int) -> bool:
 	for n in near:
 		if n[0] == foe:
 			at = n[2]
+	if _chase_id != foe:
+		_chase_id = foe
+		_chase_best = INF
+		_chase_t = now()
 	if m.target_id != foe:
 		m.target_id = foe
 		say("going for a %s, %d m off" % [m._name(foe).get_slice("|", 0), int(m.me_pos.distance_to(at))])
@@ -252,10 +290,13 @@ func _hunt() -> void:
 	var shops: Dictionary = m.info.get("shops", {}) if m.info.get("shops") is Dictionary else {}
 	var game := _game_kinds()
 	var best := 90.0
-	var foe := 0
+	var foe := _keep_chasing(_near())
+	if foe != 0:
+		_strike(foe)
+		return
 	for n in _near():
 		var lv := _level_of(n[0])
-		if lv < 1 or not game.has(n[1]) or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
+		if lv < 1 or _chased(n[0]) or not game.has(n[1]) or shops.has(n[1]) or m._players.has(n[0]) or lv > m.my_level + 2 or lv < m.my_level - 4 or _in_town(n[2]):
 			continue
 		if m.me_pos.distance_to(n[2]) < best:
 			best = m.me_pos.distance_to(n[2])
@@ -432,7 +473,9 @@ func _follow_goal() -> void:
 	if to == Vector2.INF or m.me_pos.distance_to(to) > HUNT_IF_FAR:
 		_hunt()
 		return
-	if key != _goal_key:
+	# A goal whose point shifts a step (the nearest of a kind's homes as we walk) is the same goal.
+	if key != _goal_key and (key.get_slice("@", 0) != _goal_key.get_slice("@", 0) or to.distance_to(_goal_at) > 30.0):
+		_goal_at = to
 		_goal_key = key
 		_goal_since = now()
 		say("setting out for %s, %d m off" % [key, int(m.me_pos.distance_to(to))])
