@@ -43,6 +43,10 @@ first.
 7. **Load test from a cloud machine.** The home link loses snapshots past ~1,000 bots; the live server's ceiling
    with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
+- Hedgerow bushes (worldgen `fields.rs`) overlap into pockets narrower than a body: the autoplay walked into one
+  at 45059, 30358 and could not plan out (a player can, by retracing). Space hedge bushes so any gap is either
+  shut or at least a body and a half wide.
+
 ## Done
 
 - 2026-11-23 — Quest folk keep their posts: the Seed Trader (A New Arrival, Deer for the Pot, the Shepherd's

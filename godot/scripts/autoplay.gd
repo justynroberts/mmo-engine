@@ -594,7 +594,7 @@ func _clear(a: Vector2, b: Vector2, boxes: Array) -> bool:
 	for k in n + 1:
 		var p := a.lerp(b, float(k) / n)
 		for bx in boxes:
-			if p.x > float(bx[0]) - 1.5 and p.x < float(bx[2]) + 1.5 and p.y > float(bx[1]) - 1.5 and p.y < float(bx[3]) + 1.5:
+			if p.x > float(bx[0]) - PAD and p.x < float(bx[2]) + PAD and p.y > float(bx[1]) - PAD and p.y < float(bx[3]) + PAD:
 				return false
 	return true
 
@@ -602,10 +602,12 @@ func _clear(a: Vector2, b: Vector2, boxes: Array) -> bool:
 ## footprints (walls, towers, houses): the points to walk through, or [] when there is none.
 const PLAN_REACH := 500.0
 const PLAN_CELL := 4.0
+const PAD := 0.8 # a body's half width, and a little over
 func _plan(to: Vector2) -> Array:
 	# Round a long wall the way in may be far off to the side: look wider when nothing is found near.
 	for margin in [150.0, 450.0, 900.0]:
-		var path := _plan_in(to, margin, PLAN_CELL)
+		# Fine near (gaps between bushes in a hedge are a body wide), coarser further out.
+		var path := _plan_in(to, margin, 2.0 if margin < 200.0 else PLAN_CELL)
 		if not path.is_empty():
 			return path
 	return []
@@ -625,16 +627,22 @@ func _plan_in(to: Vector2, margin: float, cell: float) -> Array:
 	g.update()
 	var centre := (lo + hi) / 2.0
 	for b in _solid_near(centre, centre.distance_to(hi) + 50.0):
-		var i0 := maxi(int(floor((float(b[0]) - 1.5 - lo.x) / cell)), 0)
-		var j0 := maxi(int(floor((float(b[1]) - 1.5 - lo.y) / cell)), 0)
-		var i1 := mini(int(floor((float(b[2]) + 1.5 - lo.x) / cell)), g.region.size.x - 1)
-		var j1 := mini(int(floor((float(b[3]) + 1.5 - lo.y) / cell)), g.region.size.y - 1)
+		var i0 := maxi(int(floor((float(b[0]) - PAD - lo.x) / cell)), 0)
+		var j0 := maxi(int(floor((float(b[1]) - PAD - lo.y) / cell)), 0)
+		var i1 := mini(int(floor((float(b[2]) + PAD - lo.x) / cell)), g.region.size.x - 1)
+		var j1 := mini(int(floor((float(b[3]) + PAD - lo.y) / cell)), g.region.size.y - 1)
 		for i in range(i0, i1 + 1):
 			for j in range(j0, j1 + 1):
 				g.set_point_solid(Vector2i(i, j))
 	var from := Vector2i(int((a.x - lo.x) / cell), int((a.y - lo.y) / cell))
 	var dest := Vector2i(int((goal.x - lo.x) / cell), int((goal.y - lo.y) / cell))
-	g.set_point_solid(from, false)
+	# Where we stand is open, whatever the padding says (pressed into a hedge, every cell about us looks shut).
+	var near_r := maxi(int(ceil(1.5 / cell)), 1)
+	for di in range(-near_r, near_r + 1):
+		for dj in range(-near_r, near_r + 1):
+			var c := from + Vector2i(di, dj)
+			if g.is_in_boundsv(c):
+				g.set_point_solid(c, false)
 	if g.is_point_solid(dest):
 		# The goal is in a footprint (someone indoors): the nearest open cell to it.
 		var best := dest
@@ -674,6 +682,8 @@ func _find_gap(to: Vector2) -> Array:
 	return []
 var _detour := Vector2.INF
 var _detour_until := 0.0
+var _wedged_at := Vector2.INF
+var _wriggle_until := 0.0
 ## Progress towards the goal, not just movement: dodging left and right in front of something counts as moving,
 ## so a walk that has come no nearer in PROGRESS_SECS is stuck too.
 const PROGRESS_SECS := 8.0
@@ -700,6 +710,12 @@ func _steer(to: Vector2) -> void:
 			_side = -_side
 			_stalls += 1
 			if _detour != Vector2.INF and _stalls >= 6:
+				say("stuck on the way round at %d, %d heading for %d, %d" % [int(m.me_pos.x), int(m.me_pos.y), int(_detour.x), int(_detour.y)])
+				# Stuck twice in one spot: wedged (a pocket in a hedge narrower than the planner's grid sees).
+				if _wedged_at != Vector2.INF and m.me_pos.distance_to(_wedged_at) < 3.0:
+					_wriggle_until = now() + 8.0
+					say("wedged: wriggling out")
+				_wedged_at = m.me_pos
 				_detour = Vector2.INF # stuck on the path too: plan again from here
 				_detour_path = []
 				_stalls = 3
@@ -713,7 +729,10 @@ func _steer(to: Vector2) -> void:
 					_detour_path = [m.me_pos + along.orthogonal() * _side * reach - along * 10.0]
 				else:
 					_detour_path = gap
-					say("in the way: a path of %d steps round it" % gap.size())
+					var shown := []
+					for k in range(0, gap.size(), maxi(gap.size() / 6, 1)):
+						shown.append("%d,%d" % [int(gap[k].x), int(gap[k].y)])
+					say("in the way at %d, %d: a path of %d steps round it (%s)" % [int(m.me_pos.x), int(m.me_pos.y), gap.size(), " ".join(shown)])
 				# Time enough to walk it (a way round a city's walls is near a thousand units), and some over.
 				var length := 0.0
 				var prev: Vector2 = m.me_pos
@@ -737,6 +756,11 @@ func _steer(to: Vector2) -> void:
 		else:
 			to = _detour
 	var dir: Vector2 = (to - m.me_pos).normalized()
+	if now() < _wriggle_until:
+		# Sweep round every way, slowly: sliding along the bushes finds the gap we came in by.
+		var a := now() * 1.6
+		m.net.set_move(Vector2(cos(a), sin(a)))
+		return
 	if now() < _dodge_until and _detour == Vector2.INF:
 		dir = (dir.orthogonal() * _side + dir * 0.3).normalized()
 	m.net.set_move(dir)
