@@ -493,6 +493,47 @@ func _in_town(p: Vector2) -> bool:
 ## Walk towards `to`; when we stop getting anywhere (a wall, a tree), sidestep a moment, and stuck again and again
 ## (a long wall, a town's walls), walk to a point well off to one side first, further and on the other side each time.
 var _stalls := 0
+var _detour_path: Array = []
+
+## The solid footprints (walls, towers, houses) within `r` of `c`, from the world file the client drew.
+func _solid_near(c: Vector2, r: float) -> Array:
+	var out := []
+	var w = m.world
+	if w == null:
+		return out
+	var cell: float = w.CELL
+	for i in range(floori((c.x - r) / cell), floori((c.x + r) / cell) + 1):
+		for j in range(floori((c.y - r) / cell), floori((c.y + r) / cell) + 1):
+			for o in w.in_cell(i, j):
+				if o.has("b") and o.get("solid", false):
+					out.append(o["b"])
+	return out
+
+## Whether a walk from a to b keeps clear of every box (with a body's width to spare).
+func _clear(a: Vector2, b: Vector2, boxes: Array) -> bool:
+	var n := maxi(int(a.distance_to(b) / 2.0), 1)
+	for k in n + 1:
+		var p := a.lerp(b, float(k) / n)
+		for bx in boxes:
+			if p.x > float(bx[0]) - 1.5 and p.x < float(bx[2]) + 1.5 and p.y > float(bx[1]) - 1.5 and p.y < float(bx[3]) + 1.5:
+				return false
+	return true
+
+## Against a wall on the way to `to`: back off a step, then look along it either side for the nearest place a
+## straight walk on gets through (a gate, the wall's end); the path [along to it, through], or [] for none.
+func _find_gap(to: Vector2) -> Array:
+	var along: Vector2 = (to - m.me_pos).normalized()
+	var perp := along.orthogonal()
+	var boxes := _solid_near(m.me_pos, 500.0)
+	var base: Vector2 = m.me_pos - along * 6.0
+	if not _clear(m.me_pos, base, boxes):
+		base = m.me_pos
+	for d in range(0, 480, 4):
+		for side in [1.0, -1.0]:
+			var p: Vector2 = base + perp * side * float(d)
+			if _clear(p, p + along * 30.0, boxes) and _clear(base, p, boxes):
+				return [p, p + along * 30.0]
+	return []
 var _detour := Vector2.INF
 var _detour_until := 0.0
 func _steer(to: Vector2) -> void:
@@ -503,16 +544,25 @@ func _steer(to: Vector2) -> void:
 			_stalls += 1
 			if _stalls >= 4 and _detour == Vector2.INF:
 				var along: Vector2 = (to - m.me_pos).normalized()
-				var reach := 40.0 + 30.0 * float(_stalls - 4)
-				_detour = m.me_pos + along.orthogonal() * _side * reach - along * 10.0
-				_detour_until = now() + 10.0
+				var gap := _find_gap(to)
+				if gap.is_empty():
+					var reach := 40.0 + 30.0 * float(_stalls - 4)
+					_detour_path = [m.me_pos + along.orthogonal() * _side * reach - along * 10.0]
+				else:
+					_detour_path = gap
+					say("a wall in the way: through the gap at %d, %d" % [int(gap[0].x), int(gap[0].y)])
+				_detour = _detour_path.pop_front()
+				_detour_until = now() + 25.0
 		elif _from != Vector2.INF and m.me_pos.distance_to(_from) > 4.0 and _detour == Vector2.INF:
 			_stalls = maxi(_stalls - 1, 0)
 		_from = m.me_pos
 		_check_at = now()
 	if _detour != Vector2.INF:
-		if m.me_pos.distance_to(_detour) < 4.0 or now() > _detour_until:
+		if m.me_pos.distance_to(_detour) < 3.0 and not _detour_path.is_empty():
+			_detour = _detour_path.pop_front()
+		elif m.me_pos.distance_to(_detour) < 3.0 or now() > _detour_until:
 			_detour = Vector2.INF
+			_detour_path = []
 			if _stalls > 12:
 				_stalls = 4 # round again from near
 		else:

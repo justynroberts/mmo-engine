@@ -20,6 +20,16 @@ first.
    for the Sick: 16 pennies of herbs, a 10-penny purse). Hold the craft errands behind "A New Arrival" and "The First
    Furrow", or give the first ones coin.
 
+- **The hunting grounds are a long walk from Áth Cliath.** The nearest (foxes, hares, badgers) is 1.4 km out, the
+  deer woods 1.4 and 2.6 km: three and a half minutes on foot each way, so a newcomer's first hunt is mostly
+  walking. Put a ring of small game within 500-800 m of each town (the content script's `hunting_grounds`), or give
+  the first quests a mount sooner.
+- **The autoplay cannot find its way.** It walks straight at a goal, sidesteps, and (since 2026-11-23) looks along
+  a wall for a gap from the world file; it still loses minutes to the Smith in his forge, the Miller indoors and
+  the city walls. 2026-11-23 runs reached level 2-3 in 30 minutes (the server play-through reaches level 10 at
+  about the thirtieth quest). Give it a path: the flow fields the server builds for bots, or A* over the walls
+  by tile the client already has (`/play/tiles`).
+
 ### Content
 3. **Two Hibernia quests want the one weekly heart.** "The Stone that Roars" and "The Answerer" both take Crom
    Dubh's heart (boss spoils, once a week), so the second waits a week more; two quests take troll hides as well.
