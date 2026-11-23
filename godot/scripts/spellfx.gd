@@ -545,11 +545,11 @@ func _process(delta: float) -> void:
 	while i < _bolts.size():
 		var b: Dictionary = _bolts[i]
 		b["t"] += delta
-		var to: Node3D = b["to"]
+		var to = b["to"] # untyped: the target may be freed in flight (it fell, went out of sight)
 		var k := clampf(b["t"] / b["life"], 0.0, 1.0)
 		var node: Node3D = b["node"]
 		if is_instance_valid(to):
-			var end := to.position + Vector3(0, 1.1, 0)
+			var end: Vector3 = (to as Node3D).position + Vector3(0, 1.1, 0)
 			node.position = (b["from"] as Vector3).lerp(end, k) + Vector3(0, sin(k * PI) * 0.6, 0)
 		if k >= 1.0 or not is_instance_valid(to):
 			# The trail stays a moment where it was, so it fades rather than vanishing.

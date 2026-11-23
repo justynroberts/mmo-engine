@@ -322,8 +322,9 @@ func _buy() -> bool:
 				if String(stock[i]["item"]) == item:
 					# In sight: up to them (they wander their stall), then buy.
 					if m.me_pos.distance_to(n[2]) > m._rule("talk_reach", 8.0) - 1.5:
-						_steer(n[2])
-						return true
+						if now() - float(_talked.get(n[0], -999.0)) < 0.0:
+							continue # one we could not reach a moment ago
+						return _walk_up(n[0], n[2])
 					m.net.set_move(Vector2.ZERO)
 					m.net.buy(n[0], i)
 					_bought_at = now()
@@ -352,6 +353,22 @@ func _step_kinds() -> Array:
 					out.append(k)
 	return out
 
+## Up to someone to talk to or buy from; false (and they are left a few minutes) when not reached in 45 s:
+## indoors, or round a wall we cannot find the way past.
+var _walk_last := 0.0
+func _walk_up(who: int, at: Vector2) -> bool:
+	if who != _walking_to or now() - _walk_last > 3.0:
+		_walking_to = who
+		_walking_since = now()
+	_walk_last = now()
+	if now() - _walking_since > 45.0:
+		say("cannot reach the %s, %d m off: later" % [m._name(who).get_slice("|", 0), int(m.me_pos.distance_to(at))])
+		_talked[who] = now() + 180.0
+		_walking_to = 0
+		return false
+	_steer(at)
+	return true
+
 ## Someone in sight with a "!" or "?" for us: walk up and talk, and take what is offered.
 func _talk_to_giver() -> bool:
 	var marks: Dictionary = m.questui.marks(m.my_level, m.me_pos)
@@ -366,17 +383,7 @@ func _talk_to_giver() -> bool:
 	if who == 0:
 		return false
 	if best > m._rule("talk_reach", 8.0) - 1.5:
-		# Not reached in 45 s (indoors, round a wall we cannot find the way past): leave them a few minutes.
-		if who != _walking_to:
-			_walking_to = who
-			_walking_since = now()
-		elif now() - _walking_since > 45.0:
-			say("cannot reach the %s, %d m off: later" % [m._name(who).get_slice("|", 0), int(best)])
-			_talked[who] = now() + 180.0
-			_walking_to = 0
-			return false
-		_steer(at)
-		return true
+		return _walk_up(who, at)
 	m.net.set_move(Vector2.ZERO)
 	_talked[who] = now()
 	m.net.talk(who)
@@ -483,15 +490,34 @@ func _in_town(p: Vector2) -> bool:
 				return true
 	return false
 
-## Walk towards `to`; when we stop getting anywhere (a wall, a tree), sidestep for a moment.
+## Walk towards `to`; when we stop getting anywhere (a wall, a tree), sidestep a moment, and stuck again and again
+## (a long wall, a town's walls), walk to a point well off to one side first, further and on the other side each time.
+var _stalls := 0
+var _detour := Vector2.INF
+var _detour_until := 0.0
 func _steer(to: Vector2) -> void:
-	var dir: Vector2 = (to - m.me_pos).normalized()
 	if now() - _check_at > 0.8:
 		if _from != Vector2.INF and m.me_pos.distance_to(_from) < 2.0:
 			_dodge_until = now() + 1.5
 			_side = -_side
+			_stalls += 1
+			if _stalls >= 4 and _detour == Vector2.INF:
+				var along: Vector2 = (to - m.me_pos).normalized()
+				var reach := 40.0 + 30.0 * float(_stalls - 4)
+				_detour = m.me_pos + along.orthogonal() * _side * reach - along * 10.0
+				_detour_until = now() + 10.0
+		elif _from != Vector2.INF and m.me_pos.distance_to(_from) > 4.0 and _detour == Vector2.INF:
+			_stalls = maxi(_stalls - 1, 0)
 		_from = m.me_pos
 		_check_at = now()
-	if now() < _dodge_until:
+	if _detour != Vector2.INF:
+		if m.me_pos.distance_to(_detour) < 4.0 or now() > _detour_until:
+			_detour = Vector2.INF
+			if _stalls > 12:
+				_stalls = 4 # round again from near
+		else:
+			to = _detour
+	var dir: Vector2 = (to - m.me_pos).normalized()
+	if now() < _dodge_until and _detour == Vector2.INF:
 		dir = (dir.orthogonal() * _side + dir * 0.3).normalized()
 	m.net.set_move(dir)
