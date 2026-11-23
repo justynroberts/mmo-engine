@@ -26,6 +26,7 @@ var _check_at := 0.0
 var _side := 1.0
 var _dodge_until := 0.0
 var _hp_was := 1.0
+var _xp_struck := 0
 var _struck := 0               # what we went for last
 var _cast_at := 0.0
 var _bought_at := 0.0
@@ -176,7 +177,9 @@ func _near() -> Array:
 func _fight() -> bool:
 	var near := _near()
 	if _struck != 0 and not near.any(func(n): return n[0] == _struck):
-		kills += 1 # gone from sight while we were at it: down (or fled out of sight)
+		# Gone from sight while we were at it: down, if it paid (else fled out of sight).
+		if int(m._progress.get("xp", 0)) > _xp_struck:
+			kills += 1
 		_struck = 0
 	var foe: int = m._nearest_foe_in(40.0)
 	if foe == 0:
@@ -250,6 +253,8 @@ func _strike(foe: int) -> bool:
 	if m.target_id != foe:
 		m.target_id = foe
 		say("going for a %s, %d m off" % [m._name(foe).get_slice("|", 0), int(m.me_pos.distance_to(at))])
+	if _struck != foe:
+		_xp_struck = int(m._progress.get("xp", 0))
 	_struck = foe
 	if m.me_pos.distance_to(at) > m.action_range - 0.5:
 		_steer(at)
@@ -676,7 +681,8 @@ var _aim := Vector2.INF
 var _best_d := INF
 var _best_t := 0.0
 func _steer(to: Vector2) -> void:
-	if _aim == Vector2.INF or _aim.distance_to(to) > 20.0:
+	# A new goal, not the same one shifting (a deer in sight moves; the nearest of a kind's homes changes as we go).
+	if _aim == Vector2.INF or _aim.distance_to(to) > 150.0:
 		_aim = to
 		_best_d = INF
 		_best_t = now()
