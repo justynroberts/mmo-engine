@@ -649,7 +649,8 @@ func _plan_in(to: Vector2, margin: float, cell: float) -> Array:
 			var mid := lo + (Vector2(c) + Vector2(0.5, 0.5)) * cell
 			var inside := false
 			for b in boxes:
-				if mid.x > float(b[0]) and mid.x < float(b[2]) and mid.y > float(b[1]) and mid.y < float(b[3]):
+				# A body standing there would touch it (radius 0.5): shut.
+				if mid.x > float(b[0]) - 0.5 and mid.x < float(b[2]) + 0.5 and mid.y > float(b[1]) - 0.5 and mid.y < float(b[3]) + 0.5:
 					inside = true
 					break
 			if not inside:
@@ -722,7 +723,11 @@ func _steer(to: Vector2) -> void:
 			_side = -_side
 			_stalls += 1
 			if _detour != Vector2.INF and _stalls >= 6:
-				say("stuck on the way round at %d, %d heading for %d, %d" % [int(m.me_pos.x), int(m.me_pos.y), int(_detour.x), int(_detour.y)])
+				var seen_boxes := []
+				for b in _solid_near(m.me_pos, 40.0):
+					if m.me_pos.x > float(b[0]) - 6.0 and m.me_pos.x < float(b[2]) + 6.0 and m.me_pos.y > float(b[1]) - 6.0 and m.me_pos.y < float(b[3]) + 6.0:
+						seen_boxes.append("[%d,%d,%d,%d]" % [int(b[0]), int(b[1]), int(b[2]), int(b[3])])
+				say("stuck on the way round at %.1f, %.1f heading for %d, %d; solid near: %s" % [m.me_pos.x, m.me_pos.y, int(_detour.x), int(_detour.y), " ".join(seen_boxes)])
 				# Stuck twice in one spot: wedged (a pocket in a hedge narrower than the planner's grid sees).
 				if _wedged_at != Vector2.INF and m.me_pos.distance_to(_wedged_at) < 3.0:
 					_wriggle_until = now() + 8.0
@@ -760,7 +765,10 @@ func _steer(to: Vector2) -> void:
 	if _detour != Vector2.INF:
 		if m.me_pos.distance_to(_detour) < 2.5 and not _detour_path.is_empty():
 			_detour = _detour_path.pop_front()
+			to = _detour
 		elif m.me_pos.distance_to(_detour) < 3.0 or now() > _detour_until:
+			if now() > _detour_until:
+				say("gave up the way round at %.1f, %.1f (out of time), %d points left" % [m.me_pos.x, m.me_pos.y, _detour_path.size()])
 			_detour = Vector2.INF
 			_detour_path = []
 			if _stalls > 12:
