@@ -1069,7 +1069,7 @@ func _process(delta: float) -> void:
 	_footsteps()
 	_listen(delta)
 	t = theme.lap("listen", t)
-	_camera()
+	_camera(delta)
 	_weather(delta)
 	t = theme.lap("weather", t)
 	if world_map.visible:
@@ -2755,7 +2755,40 @@ func _sync_ground() -> void:
 			gems[id].queue_free()
 			gems.erase(id)
 
-func _camera() -> void:
+## How tall each kind of building stands above its ground, for keeping the camera out of them (roughly the
+## theme's: houses up to three floors and a roof, keeps one or two storeys, towers and the castle three).
+const CAM_TOPS := {"house": 11.0, "keep": 8.5, "tower": 14.0, "castle": 14.0, "wall": 9.0}
+var _cam_dist := -1.0   # how far out the camera is now (eased back out, pulled in at once)
+var _cam_pitch := 42.0  # and how steeply it looks down (tipped up over a roof in the way)
+
+## How far out along `dir` from `c` the camera can stand without going into a building or behind one: the line
+## from the character to it is walked, and the first point inside a footprint below its top stops it there.
+func _cam_reach(c: Vector3, dir: Vector3, want: float) -> float:
+	if world == null:
+		return want
+	var cell: float = world.CELL
+	var boxes := []
+	var cx := floori(c.x / cell)
+	var cz := floori(c.z / cell)
+	for i in range(cx - 1, cx + 2):
+		for j in range(cz - 1, cz + 2):
+			for o in world.in_cell(i, j):
+				var t := String(o.get("t", ""))
+				if CAM_TOPS.has(t) and o.has("b"):
+					var b: Array = o["b"]
+					boxes.append([float(b[0]) - 0.6, float(b[1]) - 0.6, float(b[2]) + 0.6, float(b[3]) + 0.6, float(o.get("y", 0.0)) + float(CAM_TOPS[t])])
+	if boxes.is_empty():
+		return want
+	var d := 1.5
+	while d < want:
+		var p := c + dir * d
+		for b in boxes:
+			if p.x > b[0] and p.x < b[2] and p.z > b[1] and p.z < b[3] and p.y < b[4]:
+				return maxf(d - 0.8, 2.0)
+		d += 0.5
+	return want
+
+func _camera(delta := 0.016) -> void:
 	var me: Node3D = ents.get(net.get_self_id())
 	if me:
 		me.visible = not fpv # our own body would fill the view
@@ -2772,8 +2805,27 @@ func _camera() -> void:
 		cam.look_at(eye + Vector3(-sin(yaw) * cos(look_pitch), sin(look_pitch), -cos(yaw) * cos(look_pitch)))
 		return
 	var c := Vector3(me_pos.x, (me.position.y if me else _height(me_pos.x, me_pos.y)) + 1.0, me_pos.y)
-	var pitch := deg_to_rad(42.0)
-	cam.position = c + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * zoom
+	# A building between us and the camera (or the camera in one): the camera tips up over its roof first, as
+	# little as clears it, and only comes in closer when even looking straight down does not. Up and in at once,
+	# back down and out eased, so walking past a corner does not jerk the view.
+	var want_pitch := 42.0
+	var reach := zoom
+	for deg in [42.0, 52.0, 62.0, 72.0, 80.0]:
+		var d := Vector3(sin(yaw) * cos(deg_to_rad(deg)), sin(deg_to_rad(deg)), cos(yaw) * cos(deg_to_rad(deg)))
+		reach = _cam_reach(c, d, zoom)
+		want_pitch = deg
+		if reach >= zoom:
+			break
+	var ease := clampf(delta * 2.5, 0.0, 1.0)
+	_cam_pitch = want_pitch if want_pitch > _cam_pitch else lerpf(_cam_pitch, want_pitch, ease)
+	var pitch := deg_to_rad(_cam_pitch)
+	var dir := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
+	reach = _cam_reach(c, dir, zoom)
+	if _cam_dist < 0.0 or reach < _cam_dist:
+		_cam_dist = reach
+	else:
+		_cam_dist = minf(lerpf(_cam_dist, reach, ease), zoom)
+	cam.position = c + dir * _cam_dist
 	cam.look_at(c)
 
 func _drive() -> void:
