@@ -461,6 +461,9 @@ pub struct Sim {
     pub progress_ver: Vec<u32>,
     /// The game's quests, and a version per player bumped when theirs change (`wire::kind::QUESTS`).
     pub quests: Vec<proto::game::QuestFile>,
+    /// Per bot type: whether players come to it (`keeps_post`), worked out again every few seconds.
+    posts: Vec<bool>,
+    posts_at: u32,
     pub quest_ver: Vec<u32>,
     /// Parties (`social.rs`): each player's party (0 for none), an invitation waiting (the inviter's id), who last
     /// whispered to them, and a version bumped when their party changes (`wire::kind::PARTY`).
@@ -711,6 +714,31 @@ fn seen_at(e: &Entities, lit: usize, t: usize, dim: f32) -> f32 {
 }
 
 impl Sim {
+    /// Whether players come to bots of type `a`: a quest's giver, the one it is handed in to or a step names to
+    /// speak to, or a trader. Kept per type, worked out again every five seconds (quests and types edit live).
+    pub(crate) fn keeps_post(&mut self, a: usize) -> bool {
+        if self.posts.len() != self.archs.len() || self.tick.wrapping_sub(self.posts_at) > 5 * self.tick_hz.max(1) {
+            let mut posts: Vec<bool> = self.archs.iter().map(|r| !r.shop.is_empty()).collect();
+            let at = |name: &str| self.archs.iter().position(|r| r.name == name);
+            for q in &self.quests {
+                let mut named = vec![q.giver.as_str(), q.turn_in.as_deref().unwrap_or(&q.giver)];
+                for st in &q.steps {
+                    if let proto::game::QuestStep::Talk { archetype } = st {
+                        named.push(archetype);
+                    }
+                }
+                for n in named {
+                    if let Some(i) = at(n) {
+                        posts[i] = true;
+                    }
+                }
+            }
+            self.posts = posts;
+            self.posts_at = self.tick;
+        }
+        self.posts.get(a).copied().unwrap_or(false)
+    }
+
     /// The `lit` attribute when sneaking is in play right now (a game that has one, at night).
     fn sneak(&self) -> Option<usize> {
         self.lit_attr.filter(|_| self.night)
@@ -779,6 +807,8 @@ impl Sim {
             tells: Vec::new(),
             progress_ver: vec![0; cap],
             quests,
+            posts: Vec::new(),
+            posts_at: 0,
             quest_ver: vec![0; cap],
             party: vec![0; cap],
             invite: vec![0; cap],
@@ -1955,6 +1985,11 @@ impl Sim {
                 },
             };
             if !hit {
+                continue;
+            }
+            // Those a player comes to (quest givers, those quests are handed in to or name to speak to, traders)
+            // keep their posts by night and in the rain: the next rule, or the bot type's own behaviour.
+            if matches!(then, ActRt::Indoors) && self.keeps_post(a) {
                 continue;
             }
             // A bot in a fight that can fight back does, whatever the rule says, unless it says to run.
@@ -4356,6 +4391,35 @@ mod tests {
             s.daypart = proto::game::DayPart::Day;
         }
         assert!(!s.ents.hidden[bot], "out again by day");
+    }
+
+    #[test]
+    fn quest_folk_keep_their_posts_by_night() {
+        let rules = vec![Rule { when: Cond::During { parts: vec![proto::game::DayPart::Dusk, proto::game::DayPart::Night] }, then: Act::Indoors }];
+        let mut s = sim_with(|g| {
+            g.places = vec![home_place()];
+            let mut giver = arch("giver", Behaviour::Idle, rules.clone());
+            giver.home = Some("home".into());
+            let mut folk = arch("folk", Behaviour::Idle, rules.clone());
+            folk.home = Some("home".into());
+            g.archetypes = vec![giver, folk];
+            g.quests.push(proto::game::QuestFile {
+                name: "errand".into(),
+                title: "Errand".into(),
+                giver: "giver".into(),
+                steps: vec![proto::game::QuestStep::Visit { place: "home".into() }],
+                ..Default::default()
+            });
+        });
+        let giver = s.spawn_as(NONE, 0, Some((280.0, 100.0))).unwrap();
+        let folk = s.spawn_as(NONE, 1, Some((280.0, 100.0))).unwrap();
+        s.tick_hz = 1000;
+        for _ in 0..600 {
+            s.daypart = proto::game::DayPart::Night;
+            s.step(&[]);
+        }
+        assert!(s.ents.hidden[folk], "the rest go in at night");
+        assert!(!s.ents.hidden[giver], "a quest giver stays where players can find them");
     }
 
     #[test]

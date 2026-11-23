@@ -45,6 +45,13 @@ first.
 
 ## Done
 
+- 2026-11-23 — Quest folk keep their posts: the Seed Trader (A New Arrival, Deer for the Pot, the Shepherd's
+  Errand all end with them) went indoors at dusk, by night and in the rain, out of sight, so half the newcomer
+  quests could not be finished after dark. Givers, those quests are handed in to or name to speak to, and traders
+  now skip `indoors` (`Sim::keeps_post`). The autoplay got its way about: progress towards a goal (not just
+  movement) decides it is stuck, a wider search round a long wall (the city's west wall is 300 units), built
+  blocks counted as walls, one quarry chased at a time, no pulls into a pack, kills counted only when they pay.
+
 - 2026-11-23 — The Answerer takes a Fomorian champion's bone instead of Crom Dubh's heart (both it and The Stone
   That Roars wanted the one weekly heart; troll hides and wyrm teeth drop from ordinary beasts, so sharing them
   is fine). Travel stones can want a level (`exit.level`); the one to Doire, in the north's great region of
