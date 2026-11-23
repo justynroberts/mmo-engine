@@ -94,7 +94,7 @@ func run(main: Node, secs: float) -> void:
 		_was_at = m.me_pos
 		if now() - _xp_said > 60.0:
 			_xp_said = now()
-			say("%d xp, %d beaten so far" % [int(m._progress.get("xp", 0)), kills])
+			say("%d xp, %d beaten so far, at %d, %d" % [int(m._progress.get("xp", 0)), kills, int(m.me_pos.x), int(m.me_pos.y)])
 		# Earning next to nothing (a point a minute for being about) for three minutes: hunt a while.
 		var xp := int(m._progress.get("xp", 0))
 		if _xp_was < 0 or xp - _xp_was >= 60:
@@ -550,6 +550,24 @@ func _solid_near(c: Vector2, r: float) -> Array:
 			for o in w.in_cell(i, j):
 				if o.has("b") and o.get("solid", false):
 					out.append(o["b"])
+	# Built blocks too (a player's house of planks): a column two or more blocks high over its ground is a wall.
+	var bs := 2.0
+	if m.build is Dictionary and m.build.has("block"):
+		bs = float(m.build["block"])
+	for key in m.blocks:
+		var cx: int = int(key) & 0x7fff
+		var cy: int = int(key) >> 15
+		var p := Vector2((cx + 0.5) * bs, (cy + 0.5) * bs)
+		if absf(p.x - c.x) > r or absf(p.y - c.y) > r:
+			continue
+		var col: Dictionary = m.blocks[key]
+		var gl: int = m.theme.block_layer(cx, cy) if m.theme else int(col["b"])
+		var high := 0
+		for z in range(gl, gl + 4):
+			if m._solid(cx, cy, z):
+				high += 1
+		if high >= 2:
+			out.append([cx * bs, cy * bs, (cx + 1) * bs, (cy + 1) * bs])
 	return out
 
 ## Whether a walk from a to b keeps clear of every box (with a body's width to spare).
