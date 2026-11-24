@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "dist": "electron-builder --mac dir"
+    "dist": "scripts/package.sh"
   },
   "devDependencies": {
     "electron": "^45.4.1",
@@ -21,7 +21,16 @@
   "build": {
     "appId": "com.fintonlabs.god",
     "productName": "God",
-    "files": ["main.js", "preload.js", "world.js", "renderer/**", "node_modules/@fontsource/b612-mono/files/b612-mono-latin-*-normal.woff2"],
-    "mac": { "category": "public.app-category.developer-tools", "target": "dir" }
+    "files": [
+      "main.js",
+      "preload.js",
+      "world.js",
+      "renderer/**",
+      "node_modules/@fontsource/b612-mono/files/b612-mono-latin-*-normal.woff2"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dir"
+    }
   }
 }

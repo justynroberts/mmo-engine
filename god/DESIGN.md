@@ -25,3 +25,19 @@ Foundry VTT and a flight-tracking map (what a live map of many moving things nee
 every control labelled in small caps, light only where something is active.
 
 **Info button:** the `i` key at the end of the top strip: name, version, Made by FintonLabs, forget password.
+
+## UX review (2026-11-24)
+
+Tasks walked: change the sky during play; spawn creatures by a player; say something to everybody. States forced:
+first run (connect form), a refused connection, the desk at 1440x900 and at its minimum 1100x700, a player
+selected, the link lost. All captures were dry runs (`GOD_DRY=1`), so no write was sent.
+
+Fixed: lists were rebuilt on every poll, which lost a click that straddled one (they are now rebuilt only when
+their rows change, and countdowns and positions are written in place); a double click sent a control twice;
+god mode could be turned on but not off; a player died on one press; the window was blank while a saved password
+was tried; a refused connection cleared what was typed; each arrow key on the time slider was its own request;
+weather keys carried numbers that were not shortcuts; the top strip could push the info key off a narrow window.
+
+Open: a creature that is not a player can only be selected with the pointer (players have a Go key); errors are
+said in the one "Last" line and not beside the control that failed, which is the desk's idea but is a walk for
+the eye; at the minimum height Voice, Events and Selected are below the fold of the rack.

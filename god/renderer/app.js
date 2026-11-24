@@ -49,8 +49,15 @@ function say(text, bad) {
   n.className = bad ? 'err' : ''
 }
 
+// One of each control at a time: a second press while the first is still on its way is dropped, so a double click
+// cannot spawn twice.
+const inFlight = new Set()
 async function post(path, body, done) {
+  if (inFlight.has(path)) return null
+  inFlight.add(path)
+  say('Sending…')
   const r = await window.desk.api('POST', path, body)
+  inFlight.delete(path)
   if (!r.ok) {
     say(r.error, true)
     return null
@@ -119,23 +126,41 @@ const rowOf = (id) => (S.st && id ? S.st.e.find((r) => r[0] === id) || null : nu
 async function boot() {
   const saved = await window.desk.saved()
   $('c-server').value = saved.server
+  $('connect').hidden = false
   if (saved.hasPassword) {
     $('c-secret').placeholder = 'saved'
-    const r = await window.desk.connect(saved.server, '', true)
+    const r = await connecting(() => window.desk.connect(saved.server, '', true))
     if (r.ok) return enter(r)
     $('c-error').textContent = r.error
   }
-  $('connect').hidden = false
   ;(saved.hasPassword ? $('c-server') : $('c-secret')).focus()
+}
+
+/** The form while an answer is awaited: it says so and cannot be sent twice. */
+async function connecting(ask) {
+  const b = $('c-go')
+  b.disabled = true
+  b.textContent = 'Connecting…'
+  $('c-error').textContent = ''
+  const r = await ask()
+  b.disabled = false
+  b.textContent = 'Connect'
+  return r
 }
 
 $('connect-form').addEventListener('submit', async (e) => {
   e.preventDefault()
-  $('c-error').textContent = ''
-  const r = await window.desk.connect($('c-server').value, $('c-secret').value, $('c-remember').checked)
-  $('c-secret').value = ''
-  if (r.ok) enter(r)
-  else $('c-error').textContent = r.error
+  if ($('c-go').disabled) return
+  const r = await connecting(() => window.desk.connect($('c-server').value, $('c-secret').value, $('c-remember').checked))
+  if (r.ok) {
+    $('c-secret').value = ''
+    return enter(r)
+  }
+  // What was typed is kept, and the field most likely at fault is the one to correct.
+  $('c-error').textContent = r.error
+  const field = /password/i.test(r.error) ? $('c-secret') : $('c-server')
+  field.focus()
+  field.select()
 })
 
 async function enter(r) {
@@ -174,6 +199,7 @@ async function pollState() {
   stateBusy = true
   const r = await window.desk.api('GET', '/api/state?limit=' + STATE_LIMIT)
   stateBusy = false
+  if (r.ok && S.st && !S.linkOk) say('The link is back.')
   S.linkOk = r.ok
   const link = $('s-link')
   link.textContent = r.ok ? 'ok' : 'lost'
@@ -548,12 +574,19 @@ $('sky-phase').addEventListener('input', () => {
   phaseHeld = true
   $('sky-now').textContent = dayWord(daylight(), Number($('sky-phase').value)).toUpperCase()
 })
-$('sky-phase').addEventListener('change', () => void setPhase(Number($('sky-phase').value)))
+// Sent once the slider has rested: the arrow keys change it a step at a time, and each step is not a request.
+let phaseTimer = 0
+$('sky-phase').addEventListener('change', () => {
+  clearTimeout(phaseTimer)
+  phaseTimer = setTimeout(() => void setPhase(Number($('sky-phase').value)), 500)
+})
 
 function drawWeather() {
   const d = (S.st && S.st.director) || { weathers: [], weather: null, zones: [] }
   const now = d.weather ? d.weather.name : null
-  const pads = [...(d.weathers || []), null].map((name, i) =>
+  const zoneList = (d.zones || []).map((z) => [z.name, !!z.on])
+  if (!changed($('wx-pads'), [d.weathers, now]) & !changed($('zone-list'), zoneList)) return
+  const pads = [...(d.weathers || []), null].map((name) =>
     el(
       'button',
       {
@@ -564,7 +597,6 @@ function drawWeather() {
         onclick: () =>
           post('/api/weather', { name, duration_secs: Number($('wx-for').value) }, name ? 'Weather: ' + name + ($('wx-for').value === '0' ? ', until changed.' : ' for ' + span(Number($('wx-for').value)) + '.') : 'Weather cleared.'),
       },
-      el('span', { class: 'n', text: name ? String(i + 1) : '0' }),
       name || 'clear',
     ),
   )
@@ -580,18 +612,26 @@ function drawWeather() {
   )
   $('zones').hidden = zones.length === 0
   $('zones-lab').textContent = 'Weather zones · ' + (d.zones || []).filter((z) => z.on).length + ' of ' + zones.length + ' on'
-  const list = $('zone-list')
-  const zat = [...list.querySelectorAll('button')].indexOf(document.activeElement)
-  list.replaceChildren(...zones)
-  const zagain = list.querySelectorAll('button')
-  if (zat >= 0 && zagain[zat]) zagain[zat].focus()
+  keep($('zone-list'), zones)
 }
 
-/** Replace a pad row's keys, keeping focus on the key that had it (the row is rebuilt on every poll). */
+/**
+ * True when a list has to be rebuilt: what it shows differs from last time. The state is polled every few seconds,
+ * and replacing a key between the press and the release of a click loses the click.
+ */
+const shown = new Map()
+function changed(box, what) {
+  const sig = JSON.stringify(what)
+  if (shown.get(box) === sig) return false
+  shown.set(box, sig)
+  return true
+}
+/** Replace a list's rows, keeping focus on the button that had it. */
 function keep(box, kids) {
-  const at = [...box.children].indexOf(document.activeElement)
+  const at = [...box.querySelectorAll('button')].indexOf(document.activeElement)
   box.replaceChildren(...kids)
-  if (at >= 0 && kids[at]) kids[at].focus()
+  const again = box.querySelectorAll('button')
+  if (at >= 0 && again[at]) again[at].focus()
 }
 
 // ---------------------------------------------------------------------------------------------- spawn
@@ -701,12 +741,22 @@ function drawEvents() {
   const d = (S.st && S.st.director) || { events: [], runs: [] }
   const running = new Map((d.runs || []).map((r) => [r.name, r]))
   const list = $('events')
-  const at = [...list.querySelectorAll('button')].indexOf(document.activeElement)
-  list.replaceChildren(
-    ...((d.events || []).length
+  const rowState = (ev) => {
+    const run = running.get(ev.name)
+    return run ? 'step ' + (run.step + 1) + '/' + run.of + (run.failing ? ' failing' : '') : ev.next_in_secs !== null && ev.next_in_secs !== undefined ? 'in ' + span(ev.next_in_secs) : 'by hand'
+  }
+  // Which rows there are and which are running decides a rebuild; a countdown is written into the row as it stands.
+  if (!changed(list, (d.events || []).map((ev) => [ev.name, running.has(ev.name)]))) {
+    const cells = list.querySelectorAll('.state')
+    ;(d.events || []).forEach((ev, i) => cells[i] && (cells[i].textContent = rowState(ev)))
+    return
+  }
+  keep(
+    list,
+    (d.events || []).length
       ? d.events.map((ev) => {
           const run = running.get(ev.name)
-          const state = run ? 'step ' + (run.step + 1) + '/' + run.of + (run.failing ? ' failing' : '') : ev.next_in_secs !== null && ev.next_in_secs !== undefined ? 'in ' + span(ev.next_in_secs) : 'by hand'
+          const state = rowState(ev)
           return el(
             'li',
             {},
@@ -717,10 +767,8 @@ function drawEvents() {
               : el('button', { class: 'key small', type: 'button', 'aria-label': 'Fire ' + ev.name, onclick: () => post('/api/events/fire', { name: ev.name }, 'Fired ' + ev.name + '.') }, 'Fire'),
           )
         })
-      : [el('li', {}, el('span', { class: 'empty', text: 'This game has no events.' }))]),
+      : [el('li', {}, el('span', { class: 'empty', text: 'This game has no events.' }))],
   )
-  const again = list.querySelectorAll('button')
-  if (at >= 0 && again[at]) again[at].focus()
 }
 
 function drawLog() {
@@ -735,9 +783,15 @@ function drawLog() {
 function drawPlayers() {
   const rows = S.st.e.filter(isPlayer)
   const list = $('players')
-  const at = [...list.querySelectorAll('button')].indexOf(document.activeElement)
-  list.replaceChildren(
-    ...(rows.length
+  // Who is on decides a rebuild; where they are is written into the row as it stands.
+  if (!changed(list, [rows.slice(0, 60).map((row) => [row[0], nameOf(row)]), S.selected, S.st.clients])) {
+    const cells = list.querySelectorAll('.state')
+    rows.slice(0, 60).forEach((row, i) => cells[i] && (cells[i].textContent = Math.round(row[1]) + ', ' + Math.round(row[2])))
+    return
+  }
+  keep(
+    list,
+    rows.length
       ? rows.slice(0, 60).map((row) =>
           el(
             'li',
@@ -747,10 +801,8 @@ function drawPlayers() {
             el('button', { class: 'key small' + (row[0] === S.selected ? ' on' : ''), type: 'button', 'aria-label': 'Go to ' + nameOf(row), onclick: () => goTo(row[0]) }, 'Go'),
           ),
         )
-      : [el('li', {}, el('span', { class: 'empty', text: S.st.clients ? S.st.clients + ' connected, none in the rows shown.' : 'Nobody is on.' }))]),
+      : [el('li', {}, el('span', { class: 'empty', text: S.st.clients ? S.st.clients + ' connected, none in the rows shown.' : 'Nobody is on.' }))],
   )
-  const again = list.querySelectorAll('button')
-  if (at >= 0 && again[at]) again[at].focus()
 }
 function goTo(id) {
   const row = rowOf(id)
@@ -775,6 +827,7 @@ function drawSelected() {
     if (S.selected && S.st) {
       S.selected = 0
       S.follow = false
+      say('What was selected is gone: dead, or out of the world.')
     }
     return
   }
@@ -783,7 +836,8 @@ function drawSelected() {
   $('sel-kind').textContent = (isPlayer(row) ? 'player' : row[4] === 2 ? 'driven bot' : 'bot') + (a && !isPlayer(row) ? ' · ' + a.name : '') + ' · id ' + row[0] + ' · ' + Math.round(row[1]) + ', ' + Math.round(row[2])
   $('sel-attrs').replaceChildren(...(S.st.attrs || []).flatMap((name, i) => [el('dt', { text: name }), el('dd', { text: String(Math.round((row[5 + i] ?? 0) * 10) / 10) })]))
   $('sel-follow').setAttribute('aria-pressed', String(S.follow))
-  $('sel-god').disabled = !isPlayer(row)
+  $('sel-god').disabled = $('sel-god-off').disabled = !isPlayer(row)
+  if (!isPlayer(row) || killFor !== row[0]) standDownKill()
 }
 $('sel-follow').addEventListener('click', () => {
   S.follow = !S.follow
@@ -795,14 +849,35 @@ $('sel-follow').addEventListener('click', () => {
   drawSelected()
   drawMap()
 })
+// A bot dies on one press; a player takes two, since somebody is playing that one.
+let killFor = 0
+let killTimer = 0
+function standDownKill() {
+  killFor = 0
+  clearTimeout(killTimer)
+  $('sel-kill').textContent = 'Kill'
+  $('sel-kill').classList.remove('on')
+}
 $('sel-kill').addEventListener('click', () => {
   const row = rowOf(S.selected)
-  if (row) void post('/api/kill', { id: row[0] }, 'Killed ' + nameOf(row) + '.')
+  if (!row) return
+  if (isPlayer(row) && killFor !== row[0]) {
+    killFor = row[0]
+    $('sel-kill').textContent = 'Press again'
+    $('sel-kill').classList.add('on')
+    say('Kill the player ' + nameOf(row) + '? Press again within 4 seconds.')
+    killTimer = setTimeout(standDownKill, 4000)
+    return
+  }
+  standDownKill()
+  void post('/api/kill', { id: row[0] }, 'Killed ' + nameOf(row) + '.')
 })
-$('sel-god').addEventListener('click', () => {
-  const row = rowOf(S.selected)
-  if (row) void post('/api/god', { id: row[0], on: true }, (d) => 'God mode for ' + nameOf(row) + (d && d.on === false ? ' is off.' : ' is on.'))
-})
+for (const [id, on] of [['sel-god', true], ['sel-god-off', false]]) {
+  $(id).addEventListener('click', () => {
+    const row = rowOf(S.selected)
+    if (row) void post('/api/god', { id: row[0], on }, 'God mode for ' + nameOf(row) + (on ? ' is on.' : ' is off.'))
+  })
+}
 function fillItems() {
   $('give-item').replaceChildren(...(S.game.items || []).map((i) => el('option', { value: i.name, text: (i.title ? i.title + ' · ' : '') + i.name })))
 }

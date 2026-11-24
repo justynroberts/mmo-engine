@@ -12,6 +12,12 @@ const DEFAULT_SERVER = 'http://100.91.37.32:7791'
 const TIMEOUT_MS = 15000
 const WORLD_TIMEOUT_MS = 120000
 
+// Test affordances, all from the environment: GOD_HOME (a different place for what is saved), GOD_SHOT_SIZE (WxH),
+// GOD_DROP_AFTER (ms after which every request fails as if the link were lost).
+if (process.env.GOD_HOME) app.setPath('userData', process.env.GOD_HOME)
+const SHOT_SIZE = (process.env.GOD_SHOT_SIZE || '').split('x').map(Number)
+const STARTED = Date.now()
+
 let win = null
 let server = ''
 let password = ''
@@ -61,6 +67,9 @@ async function call(method, apiPath, body, timeout = TIMEOUT_MS) {
     return { ok: false, status: 0, error: 'Only the admin interface can be called.' }
   }
   const m = String(method || 'GET').toUpperCase()
+  if (process.env.GOD_DROP_AFTER && Date.now() - STARTED > Number(process.env.GOD_DROP_AFTER)) {
+    return { ok: false, status: 0, error: 'Cannot reach ' + server + '. Is Tailscale up?' }
+  }
   if (process.env.GOD_TRACE) console.log('TRACE', m, apiPath, m === 'POST' ? JSON.stringify(body) : '')
   // GOD_DRY=1: look, do not touch. Every write is refused here and never leaves the machine.
   if (process.env.GOD_DRY && m !== 'GET') return { ok: false, status: 0, error: 'Dry run: ' + apiPath + ' was not sent.' }
@@ -142,8 +151,8 @@ ipcMain.handle('desk:about', () => ({ name: app.getName(), version: app.getVersi
 
 function open() {
   win = new BrowserWindow({
-    width: 1480,
-    height: 940,
+    width: SHOT_SIZE[0] || 1480,
+    height: SHOT_SIZE[1] || 940,
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: '#0b0c0e',
@@ -161,7 +170,11 @@ function open() {
   if (process.env.GOD_SHOT) {
     win.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
-        if (process.env.GOD_SHOT_JS) await win.webContents.executeJavaScript(process.env.GOD_SHOT_JS, true).catch(() => {})
+        if (process.env.GOD_SHOT_JS) {
+          // What the script returns is written beside the picture, for measuring the page as drawn.
+          const out = await win.webContents.executeJavaScript(process.env.GOD_SHOT_JS, true).catch((e) => ({ error: String(e) }))
+          if (out !== undefined) fs.writeFileSync(process.env.GOD_SHOT + '.json', JSON.stringify(out, null, 1))
+        }
         await new Promise((r) => setTimeout(r, 600))
         const img = await win.webContents.capturePage()
         fs.writeFileSync(process.env.GOD_SHOT, img.toPNG())

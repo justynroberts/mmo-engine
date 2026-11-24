@@ -19,7 +19,7 @@
         <label for="c-secret">Admin password</label>
         <input id="c-secret" name="secret" type="password" />
         <label class="check"><input id="c-remember" type="checkbox" checked /> Keep it in this Mac's keychain</label>
-        <button type="submit" class="key wide">Connect</button>
+        <button id="c-go" type="submit" class="key wide">Connect</button>
         <p id="c-error" class="said" role="alert"></p>
       </form>
     </main>
@@ -31,7 +31,7 @@
         <span class="cell"><span class="lab">Server</span> <span id="s-server"></span></span>
         <span class="cell"><span class="lab">Players</span> <span id="s-players" class="num">0</span></span>
         <span class="cell"><span class="lab">Alive</span> <span id="s-live" class="num">0</span></span>
-        <span class="cell"><span class="lab">Tick</span> <span id="s-tick" class="num">0</span></span>
+        <span class="cell tick"><span class="lab">Tick</span> <span id="s-tick" class="num">0</span></span>
         <span class="cell"><span class="lab">p99</span> <span id="s-p99" class="num">0</span> ms</span>
         <span class="cell"><span class="lab">Day</span> <span id="s-day"></span></span>
         <span class="cell"><span class="lab">Sky</span> <span id="s-sky"></span></span>
@@ -138,9 +138,10 @@
             <div id="sel-name" class="title"></div>
             <div id="sel-kind" class="dim"></div>
             <dl id="sel-attrs" class="attrs"></dl>
-            <div class="pads three">
+            <div class="pads four">
               <button id="sel-follow" class="key" type="button" aria-pressed="false">Follow</button>
-              <button id="sel-god" class="key" type="button">God mode</button>
+              <button id="sel-god" class="key" type="button" title="Cannot be hurt. Players only.">God on</button>
+              <button id="sel-god-off" class="key" type="button">God off</button>
               <button id="sel-kill" class="key" type="button">Kill</button>
             </div>
             <div class="row fields">

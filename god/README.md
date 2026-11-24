@@ -35,3 +35,14 @@ desk, saves a picture and quits.
 
 The map is the world file cut down in the main process (`world.js`) to a 768-cell picture of the land, the roads,
 rivers and settlements; creatures come from `/api/state` every 2.5 s (up to 20,000 rows).
+
+## Building it
+
+`npm run dist` (`scripts/package.sh`) runs the tests, builds `dist/mac-arm64/God.app`, signs it with the Developer
+ID in the keychain, notarises and staples it, and checks a quarantined copy with Gatekeeper. It leaves
+`dist/God-<version>-mac.zip` and publishes nothing. The icon is `build/icon.svg`; `build/icon.icns` is made from it
+with `rsvg-convert` and `iconutil`.
+
+For checking a build: `GOD_SHOT_SIZE=1100x700` sets the window, `GOD_SHOT_JS` runs a script in the page before the
+picture and writes what it returns to `<picture>.json`, `GOD_HOME` keeps what is saved somewhere else, and
+`GOD_DROP_AFTER=ms` loses the link after that long.

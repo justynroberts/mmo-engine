@@ -1,0 +1,14 @@
+<!-- MIT License - Copyright (c) fintonlabs.com -->
+<!-- God's icon: the desk's own map reticle on its near-black panel, with the one amber mark a player has. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#0b0c0e" stroke="#3a3e45" stroke-width="6"/>
+  <g fill="none" stroke="#24272c" stroke-width="4">
+    <path d="M306 106V918M512 106V918M718 106V918M106 306H918M106 512H918M106 718H918"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="none" stroke="#3a3e45" stroke-width="6"/>
+  <circle cx="512" cy="512" r="232" fill="#0b0c0e" stroke="#a3a7ae" stroke-width="14"/>
+  <g stroke="#dcdee1" stroke-width="14" stroke-linecap="square">
+    <path d="M512 214V330M512 694V810M214 512H330M694 512H810"/>
+  </g>
+  <rect x="464" y="464" width="96" height="96" fill="#f2a900"/>
+</svg>

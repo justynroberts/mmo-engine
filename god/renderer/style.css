@@ -249,6 +249,10 @@ input[type='checkbox'] {
   display: block;
   margin: 16px 0 4px;
 }
+.connect label.check {
+  min-height: 24px;
+  display: flex;
+}
 .connect label:not(.check) {
   font-size: var(--small);
   letter-spacing: 0.14em;
@@ -295,6 +299,18 @@ input[type='checkbox'] {
 }
 .strip .end {
   margin-left: auto;
+}
+/* The strip never pushes its last key off the panel: cells give way first, and the tick goes at narrow widths. */
+.strip .cell {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1280px) {
+  .strip .tick {
+    display: none;
+  }
 }
 .strip .lost {
   color: var(--accent);
