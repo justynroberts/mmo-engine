@@ -15,11 +15,6 @@ first.
    and network, but it cannot farm (crops for the bring-N quests), build, or choose quests as a person would, so a
    15-minute session does a handful of quests. Teach it to plant from the bag and harvest, lay the plot blueprint,
    sell what it carries, and take on fewer quests at once.
-2. **A newcomer is offered 11 quests in a minute.** In Áth Cliath's square the watch, the traders and the craftsfolk
-   all have work at once, most of it bring-N of crops the player cannot grow yet or goods they cannot afford (Herbs
-   for the Sick: 16 pennies of herbs, a 10-penny purse). Hold the craft errands behind "A New Arrival" and "The First
-   Furrow", or give the first ones coin.
-
 - **The autoplay cannot find its way.** It walks straight at a goal, sidesteps, and (since 2026-11-23) looks along
   a wall for a gap from the world file; it still loses minutes to the Smith in his forge, the Miller indoors and
   the city walls. 2026-11-23 runs reached level 2-3 in 30 minutes (the server play-through reaches level 10 at
@@ -31,15 +26,9 @@ first.
    the level). Only test characters are affected.
 
 ### Client
-- **Windows: an install only an administrator can read fails as "not designed to run on Windows".** A player's copy
-  ran only as admin (the folder extracted or updated elevated, or under Program Files), and the self-update copies
-  into the folder the game runs from. On start, check the folder can be written and its files read, and if not say
-  to move it to the user's own folder (`%LOCALAPPDATA%`) or reset its permissions (`icacls <dir> /reset /T`).
 6. **Windows client is unsigned**, so Windows warns before running it.
 
 ### Server and performance
-- **`a_player_on_a_road_covers_more_ground_than_one_on_grass` fails when the machine is busy** (it measures ground
-  covered in real time); it passes alone. Measure in server ticks instead.
 7. **Load test from a cloud machine.** The home link loses snapshots past ~1,000 bots; the live server's ceiling
    with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
@@ -48,6 +37,17 @@ first.
   shut or at least a body and a half wide.
 
 ## Done
+
+- 2026-11-26 — A newcomer's first minute: the watch's welcome comes first, The First Furrow follows it (it gives the
+  wheat seed that quest asks for), and the craftsfolk's bring-N errands wait behind the Seed Trader's two lessons
+  (the farm goods behind The First Furrow, ore, salmon, herbs, wool and iron bars behind A Plot of Your Own). In
+  `QUEST_FIXES` (`scripts/hibernia_content.py`) and the game file, seed version 23. The road test measures ground
+  for each server tick between two snapshots at full stride, so a busy machine cannot fail it. Windows: the join
+  screen says when the game's folder cannot be written to and how to put it right (`join.gd` `folder_trouble`,
+  `tools/check_folder.gd`), refuses an update there instead of failing part way, and the update gives the copied
+  files the folder's own permissions (`icacls /reset`), so an update run as an administrator no longer leaves a
+  copy only an administrator can open. Not tried on a Windows machine. God: Enter and the square brackets select
+  creatures from the keyboard, a refusal is marked on the control that sent it, and the rack's sections fold.
 
 - 2026-11-23 — Quest folk keep their posts: the Seed Trader (A New Arrival, Deer for the Pot, the Shepherd's
   Errand all end with them) went indoors at dusk, by night and in the rain, out of sight, so half the newcomer

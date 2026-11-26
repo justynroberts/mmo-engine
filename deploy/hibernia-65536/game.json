@@ -31521,6 +31521,7 @@
    "text": "Grow me three sheaves of wheat. Buy wheat seed from me, lay soil in build mode (B, then \\), plant the seed beside it, and break the ripe crop to bring it in.",
    "done_text": "Good wheat. You have the knack of it.",
    "giver": "tuathanach",
+   "after": "a new arrival",
    "steps": [
     {
      "kind": "collect",
@@ -31568,6 +31569,7 @@
    "text": "The fair is coming and I have nothing fresh to sell. Bring me five carrots.",
    "done_text": "Fine carrots. Here is your share.",
    "giver": "ceannai",
+   "after": "the first furrow",
    "steps": [
     {
      "kind": "collect",
@@ -31589,6 +31591,7 @@
    "text": "The abbot has a fondness for cabbage, and our garden failed. Two heads, grown by your own hand.",
    "done_text": "He will be pleased. Bless you.",
    "giver": "manach",
+   "after": "the first furrow",
    "steps": [
     {
      "kind": "collect",
@@ -31903,6 +31906,7 @@
    "text": "The poor come to the abbey door every morning. Bring us three loaves and we'll see they're fed.",
    "done_text": "God keep you. They'll eat tonight.",
    "giver": "manach",
+   "after": "the first furrow",
    "steps": [
     {
      "kind": "collect",
@@ -32096,6 +32100,7 @@
    "text": "The forge eats iron faster than the carters bring it. The kern up in the hills carry ore they've robbed off the miners. Bring me six lumps, from them or anywhere.",
    "done_text": "Good ore. You'll make a smith yet.",
    "giver": "gabha",
+   "after": "a plot of your own",
    "steps": [
     {
      "kind": "collect",
@@ -32328,6 +32333,7 @@
    "text": "Fionn burnt his thumb on the Salmon of Knowledge and knew everything after. I'm not asking for that one. Any salmon will do: bring me two, and I'll tell you the rest.",
    "done_text": "...and that's why he sucked his thumb before every battle. Thank you, child.",
    "giver": "seanchai",
+   "after": "a plot of your own",
    "steps": [
     {
      "kind": "collect",
@@ -32447,6 +32453,7 @@
    "text": "Half the village is coughing. Bring me eight bundles of herbs: the frogs in the lochs and the shroomlings both carry them.",
    "done_text": "That'll do them. God bless you.",
    "giver": "bean feasa",
+   "after": "a plot of your own",
    "steps": [
     {
      "kind": "collect",
@@ -32690,6 +32697,7 @@
    "text": "The miller's late again. Bring me six sheaves of wheat and I'll bake for the whole street.",
    "done_text": "Smell that! Take a loaf or three.",
    "giver": "baicear",
+   "after": "the first furrow",
    "steps": [
     {
      "kind": "collect",
@@ -32776,6 +32784,7 @@
    "text": "Bring me oats, ten sheaves, and I'll grind them for the baker. She pays me in cake.",
    "done_text": "She'll pay you in cake too, if you ask.",
    "giver": "muilleoir",
+   "after": "the first furrow",
    "steps": [
     {
      "kind": "collect",
@@ -32801,6 +32810,7 @@
    "text": "Five fleeces from the farms. The sheep won't mind, much.",
    "done_text": "Lovely and soft. Here, a tunic for your trouble.",
    "giver": "figheadoir",
+   "after": "a plot of your own",
    "steps": [
     {
      "kind": "collect",
@@ -32854,6 +32864,7 @@
    "text": "I need a little iron for the mending. Two bars, and I'll give you a brooch I found on the road.",
    "done_text": "Found on the road, I said. Don't ask where.",
    "giver": "tinceir",
+   "after": "a plot of your own",
    "steps": [
     {
      "kind": "collect",

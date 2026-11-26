@@ -109,6 +109,7 @@ func _ready() -> void:
 	update_btn.pressed.connect(_start_update)
 	col.add_child(update_btn)
 	_check_update.call_deferred()
+	_check_folder.call_deferred()
 	server_in.text_submitted.connect(func(_t): name_in.grab_focus())
 	name_in.text_submitted.connect(func(_t): _go())
 	(name_in if server_in.text != "" else server_in).grab_focus.call_deferred()
@@ -311,8 +312,43 @@ func _check_update() -> void:
 	update_btn.visible = true
 	note.text = "A newer version of the game is out (on %s)." % String(m.get("from", "the server"))
 
+## What is wrong with the folder the game runs from, in words for the player; "" when nothing is. A file is written
+## there and read back: the update copies the new build into this folder, and a copy unpacked or updated as an
+## administrator (or put under Program Files) ran only as one, failing for the player with Windows' own "not
+## designed to run on Windows".
+static func folder_trouble(dir: String) -> String:
+	var probe := dir.path_join(".can-write-%d" % OS.get_process_id())
+	var f := FileAccess.open(probe, FileAccess.WRITE)
+	var ok := f != null
+	if ok:
+		f.store_string("ok")
+		f.close()
+		ok = FileAccess.get_file_as_string(probe) == "ok"
+		DirAccess.remove_absolute(probe)
+	if ok:
+		return ""
+	var shown := dir.replace("/", "\\") if OS.get_name() == "Windows" else dir
+	var fix := "move the whole game folder into your own folder (Documents, or %LOCALAPPDATA%)" if OS.get_name() == "Windows" else "move the game somewhere of your own"
+	var reset := ', or run this once as an administrator: icacls "%s" /reset /T' % shown if OS.get_name() == "Windows" else ""
+	return "The game's folder cannot be written to (%s), so it cannot update itself and may only start for an administrator. To put it right, %s%s." % [shown, fix, reset]
+
+## Only the Windows build lives in a folder it writes its own updates into (the macOS app is replaced whole).
+func _folder() -> String:
+	if platform() != "windows" or not OS.has_feature("template"):
+		return ""
+	return folder_trouble(OS.get_executable_path().get_base_dir())
+
+func _check_folder() -> void:
+	var why := _folder()
+	if why != "":
+		note.text = why
+
 func _start_update() -> void:
 	if _dl != null or _update.is_empty():
+		return
+	var why := _folder()
+	if why != "":
+		note.text = why
 		return
 	update_btn.disabled = true
 	_dl = HTTPRequest.new()
@@ -381,8 +417,8 @@ open "$app"
 	get_tree().quit()
 
 ## Windows: a small batch file waits for this process to end, unpacks the new build beside the old (PowerShell's
-## Expand-Archive), copies it over the folder the game runs from and starts it again; it leaves the old files be if
-## the copy fails.
+## Expand-Archive), copies it over the folder the game runs from, gives the files the folder's own permissions and
+## starts it again; it leaves the old files be if the copy fails.
 func _install_windows() -> void:
 	var dir := OS.get_executable_path().get_base_dir()
 	var exe := OS.get_executable_path().get_file()
@@ -400,6 +436,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force -L
 for /d %%d in ("%work%\\*") do set "new=%%d"
 if not defined new set "new=%work%"
 robocopy "%new%" "%dir%" /E /NFL /NDL /NJH /NJS /R:3 /W:1 >nul
+rem Files copied by an administrator are the administrator's alone: give them the folder's own permissions back,
+rem so whoever could open the game before the update can open it after.
+icacls "%dir%" /reset /T /C /Q >nul 2>&1
 :start
 del "%zip%" 2>nul
 rmdir /s /q "%work%" 2>nul

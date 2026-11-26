@@ -52,14 +52,34 @@ function say(text, bad) {
 // One of each control at a time: a second press while the first is still on its way is dropped, so a double click
 // cannot spawn twice.
 const inFlight = new Set()
+// A refusal is also shown on the control that sent it (its outline breaks, and it carries the reason), until the
+// next thing is sent: the "Last" line alone is a walk for the eye from the far end of the rack.
+let failed = null
+function markFailed(n, why) {
+  if (failed) {
+    failed.classList.remove('failed')
+    failed.removeAttribute('aria-invalid')
+    if (failed.dataset.title !== undefined) failed.title = failed.dataset.title
+    delete failed.dataset.title
+  }
+  failed = n && n.closest && n.closest('.desk') && n.matches('.key, input, select, textarea') ? n : null
+  if (!failed) return
+  failed.dataset.title = failed.title
+  failed.title = why
+  failed.classList.add('failed')
+  failed.setAttribute('aria-invalid', 'true')
+}
 async function post(path, body, done) {
   if (inFlight.has(path)) return null
   inFlight.add(path)
+  const from = document.activeElement
+  markFailed(null)
   say('Sending…')
   const r = await window.desk.api('POST', path, body)
   inFlight.delete(path)
   if (!r.ok) {
     say(r.error, true)
+    markFailed(from, r.error)
     return null
   }
   say(typeof done === 'function' ? done(r.data) : done)
@@ -122,6 +142,35 @@ function nameOf(row) {
 const rowOf = (id) => (S.st && id ? S.st.e.find((r) => r[0] === id) || null : null)
 
 // ---------------------------------------------------------------------------------------------- connect
+
+// The rack holds more than a short window shows: each section folds to its heading (a key in the heading, its
+// state kept for next time), so what is wanted now can be brought up beside the map.
+function foldable() {
+  let kept = {}
+  try {
+    kept = JSON.parse(localStorage.getItem('god.folded') || '{}')
+  } catch {}
+  for (const sec of document.querySelectorAll('.rack > section')) {
+    const h = sec.querySelector('h2')
+    const name = h.textContent
+    const key = el('button', { type: 'button', class: 'fold', 'aria-expanded': 'true' }, name)
+    h.textContent = ''
+    h.append(key)
+    const set = (folded) => {
+      sec.classList.toggle('folded', folded)
+      key.setAttribute('aria-expanded', String(!folded))
+    }
+    set(!!kept[name])
+    key.addEventListener('click', () => {
+      kept[name] = !sec.classList.contains('folded')
+      set(kept[name])
+      try {
+        localStorage.setItem('god.folded', JSON.stringify(kept))
+      } catch {}
+    })
+  }
+}
+foldable()
 
 async function boot() {
   const saved = await window.desk.saved()
@@ -455,6 +504,23 @@ function zoom(factor, sx, sy) {
   drawMap()
 }
 
+// The keyboard's way to a creature: those in view, nearest the middle first. Enter takes the nearest; ] and [ step
+// outwards and back from the one selected.
+function pickByKey(step) {
+  const r = map.getBoundingClientRect()
+  const hw = r.width / 2 / S.view.k
+  const hh = r.height / 2 / S.view.k
+  const rows = ((S.st && S.st.e) || [])
+    .filter((row) => Math.abs(row[1] - S.view.x) <= hw && Math.abs(row[2] - S.view.y) <= hh)
+    .map((row) => [Math.hypot(row[1] - S.view.x, row[2] - S.view.y), row])
+    .sort((a, b) => a[0] - b[0] || a[1][0] - b[1][0])
+  if (!rows.length) return say('Nothing in view to select.')
+  const at = rows.findIndex((x) => x[1][0] === S.selected)
+  const row = rows[step === 0 || at < 0 ? 0 : mod(at + step, rows.length)][1]
+  select(row[0])
+  say('Selected ' + nameOf(row) + ', ' + (rows.length - 1) + ' more in view.')
+}
+
 let drag = null
 map.addEventListener('pointerdown', (e) => {
   map.setPointerCapture(e.pointerId)
@@ -516,6 +582,9 @@ map.addEventListener('keydown', (e) => {
   } else if (e.key === '+' || e.key === '=') zoom(1.4)
   else if (e.key === '-' || e.key === '_') zoom(1 / 1.4)
   else if (e.key === 'Enter' && S.armed) void spawnAt(S.view.x, S.view.y)
+  else if (e.key === 'Enter') pickByKey(0)
+  else if (e.key === ']') pickByKey(1)
+  else if (e.key === '[') pickByKey(-1)
   else return
   e.preventDefault()
 })

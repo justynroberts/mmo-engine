@@ -38,6 +38,8 @@ god mode could be turned on but not off; a player died on one press; the window 
 was tried; a refused connection cleared what was typed; each arrow key on the time slider was its own request;
 weather keys carried numbers that were not shortcuts; the top strip could push the info key off a narrow window.
 
-Open: a creature that is not a player can only be selected with the pointer (players have a Go key); errors are
-said in the one "Last" line and not beside the control that failed, which is the desk's idea but is a walk for
-the eye; at the minimum height Voice, Events and Selected are below the fold of the rack.
+Closed 2026-11-26: with the map focused, Enter selects the creature nearest the middle and `]` / `[` step to the
+next and the one before, among those in view; a refusal breaks the outline of the control that sent it (dashed,
+ink, never the accent) and puts the reason in its tooltip, until the next thing is sent; each section of the rack
+folds to its heading (kept for next time) and the events list shows seven and scrolls, so on a short window Voice
+or Selected can be brought up beside the map.

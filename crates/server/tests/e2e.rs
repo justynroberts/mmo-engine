@@ -2343,18 +2343,19 @@ fn a_player_on_a_road_covers_more_ground_than_one_on_grass() {
             c.send_input(0, 0);
             c.pump(40);
         }
-        let x0 = c.pos().0;
+        // Ground covered for each tick of the server, between two snapshots taken at full stride: a busy machine
+        // stretches the wall clock (and once failed this test), never the distance a tick moves a player.
+        walk(c, 8);
+        let (x0, t0) = (c.pos().0, c.view.last_tick);
         walk(c, 30);
-        for _ in 0..6 {
-            c.send_input(0, 0);
-            c.pump(40);
-        }
-        c.pos().0 - x0
+        let (x1, t1) = (c.pos().0, c.view.last_tick);
+        assert!(t1 > t0, "no snapshot while walking");
+        (x1 - x0) / (t1 - t0) as f32
     };
     let road = run(&mut c, 300.0);
     let grass = run(&mut c, 500.0);
     let k = road / grass;
-    assert!((1.3..1.7).contains(&k), "road {road}, grass {grass}: {k} times as far");
+    assert!((1.45..1.55).contains(&k), "road {road} a tick, grass {grass}: {k} times as far");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

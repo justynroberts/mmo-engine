@@ -1072,6 +1072,14 @@ QUEST_FIXES = {
                        "steps": [{"kind": "collect", "item": "craiceann sionnaigh", "count": 3}]},
     # Given by the watch in every town, so not "the market in Áth Cliath".
     "a new arrival": {"text": "New to these parts? You'll want a trade and a roof before the nights draw in. The Seed Trader at the market here sets up newcomers. Go and speak to them."},
+    # A newcomer in Áth Cliath's square was offered eleven quests in a minute, most of them for crops not yet grown or
+    # goods not yet affordable. The watch's welcome comes first; the Seed Trader's two lessons (a first crop, a plot)
+    # each open half of the craftsfolk's errands.
+    "the first furrow": {"after": "a new arrival"},
+    "carrots for the fair": {"after": "the first furrow"}, "a cabbage for the abbot": {"after": "the first furrow"}, "bread for the poor": {"after": "the first furrow"},
+    "flour for the oven": {"after": "the first furrow"}, "grist for the mill": {"after": "the first furrow"},
+    "ore for the forge": {"after": "a plot of your own"}, "the salmon of knowledge": {"after": "a plot of your own"}, "herbs for the sick": {"after": "a plot of your own"},
+    "wool from the hills": {"after": "a plot of your own"}, "a pot to mend": {"after": "a plot of your own"},
     # Shepherds keep farms all over the country.
     "the shepherds errand": {"text": "Go into the town and ask a seed trader if they have any seed to spare for a shepherd."},
     # Journeys from Áth Cliath: Teamhair is a short walk from it and half the country from elsewhere.

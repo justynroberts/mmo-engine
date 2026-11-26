@@ -163,6 +163,12 @@ input[type='checkbox'] {
   border-color: var(--line);
   cursor: default;
 }
+/* What the server refused: the outline breaks. Not the accent, which is for what is live or armed. */
+.failed,
+.key.failed {
+  border-style: dashed;
+  border-color: var(--ink);
+}
 .key.small {
   min-height: 24px;
   min-width: 24px;
@@ -414,6 +420,51 @@ input[type='checkbox'] {
 .rack h2 {
   margin-bottom: var(--u);
   color: var(--ink-2);
+}
+/* A section's heading is the key that folds it; the mark at its end says which way it is. */
+.fold {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.fold::after {
+  content: '-';
+  color: var(--ink-3);
+}
+.fold[aria-expanded='false']::after {
+  content: '+';
+}
+.fold:hover {
+  color: var(--ink);
+}
+.rack > section.folded {
+  padding-bottom: 4px;
+}
+.rack > section.folded h2 {
+  margin-bottom: 0;
+}
+.rack > section.folded > :not(h2) {
+  display: none;
+}
+/* Events are many: seven show, the rest scroll inside the section. */
+#events {
+  max-height: 196px;
+  overflow-y: auto;
+}
+@media (max-height: 800px) {
+  select[size] {
+    height: 60px;
+  }
 }
 .rack .lab {
   display: block;
