@@ -78,6 +78,8 @@ var _fight_at := -100.0   # when we last struck or were struck: the music turns 
 var _fight_from := -1.0    # when the fight now on began (-1: none)
 var _fight_kill := false   # something fell in it
 var _fell_at := -100.0     # when we last fell
+var _boss_at := -100.0     # when a boss last marked the ground near us: the fight's music is the boss's for a while
+var _fair_near := 0.0      # 0..1: how near a fair's traders are (its music, in a town)
 var _won_at := -100.0      # when the victory call last sounded
 var _step_from := Vector2.INF
 var _step_dist := 0.0
@@ -124,6 +126,10 @@ const CARTERS := ["Ceannai Taistil", "Fear Cairte", "Travelling Merchant", "Cart
 const FIRES := ["Tine", "Fire"]
 const LANTERNS := ["Lochran", "Lóchrann", "Lantern"]
 const MUSICIANS := ["Musician", "Ceoltóir", "Ceoltoir"]
+## A fair's travelling traders (the game file's `ceannai aonaigh`): where they stand, the music is the fair's.
+const FAIR_FOLK := ["Fair Trader", "Ceannaí Aonaigh", "Ceannai Aonaigh"]
+## How long after a boss's last mark on the ground a fight keeps its music.
+const BOSS_MUSIC_SECS := 45.0
 const BeastScript := preload("res://scripts/beast.gd")
 const AnimalScript := preload("res://scripts/animal.gd")
 ## The lit windows round us (proto::chat::channel::LIT): "x,y" of a house's middle -> [who is in, an inn].
@@ -2236,10 +2242,17 @@ func _listen(delta: float) -> void:
 		w["tavern"] *= 0.35
 	# A fair night's musicians on the square: their reel, out in the open, louder the nearer.
 	var fair := 0.0
+	_fair_near = 0.0
 	for eid in ents:
-		if _name(eid).get_slice("|", 0) in MUSICIANS:
+		var who := _name(eid).get_slice("|", 0)
+		if who in MUSICIANS:
 			var md := Vector2(ents[eid].position.x, ents[eid].position.z).distance_to(p)
 			fair = maxf(fair, 1.0 - smoothstep(6.0, 45.0, md))
+		elif who in FAIR_FOLK:
+			_fair_near = maxf(_fair_near, 1.0 - smoothstep(20.0, 60.0, Vector2(ents[eid].position.x, ents[eid].position.z).distance_to(p)))
+	# With the fair's own music playing, the musicians' reel gives way to it (two tunes at once is a din).
+	if _music_pick == "fair":
+		fair *= 0.25
 	w["fair"] = fair
 	# A town with the sickness: the church bell tolls for the dead, slowly, while we are in it.
 	for t in plague_towns:
@@ -2268,9 +2281,12 @@ func _listen(delta: float) -> void:
 			sound.sting("victory")
 		_fight_from = -1.0
 	if fighting:
-		m = "battle"
+		# A boss marks the ground it is about to strike: while it does, the fight is its own.
+		m = "boss" if t_total - _boss_at < BOSS_MUSIC_SECS else "battle"
 	elif inn_d < TAVERN_MUSIC_NEAR and m in ["", "town", "city", "capital"]:
 		m = "tavern"
+	elif _fair_near > 0.5 and m in ["", "town", "city", "capital"]:
+		m = "fair" # a market day or the fair: its traders are on the square
 	elif m == "":
 		# The open land: a storm first, then a town, the water's edge, the sun coming up, the night, the day.
 		var phase: float = theme.day_phase()
@@ -2600,6 +2616,7 @@ func _boss_mark(text: String) -> void:
 		return
 	if f.size() < 7 or f[0] != "T":
 		return
+	_boss_at = t_total
 	var x := float(f[2])
 	var y := float(f[3])
 	var secs := float(f[5])

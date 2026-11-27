@@ -12,8 +12,9 @@ extends Node
 
 const AMBIENCE := ["sea", "shore", "river", "forest", "night", "wind", "rain", "fire", "town", "market", "crypt", "holy",
 	"battle", "tavern", "fair"]
-const MUSIC := ["explore", "town", "night", "battle", "eerie", "holy", "city", "capital", "tavern", "sea", "storm", "dawn"]
-## Short pieces played once over whatever is on (sounds/music/<name>.ogg): a fight won, and falling.
+const MUSIC := ["explore", "town", "night", "battle", "boss", "eerie", "holy", "city", "capital", "tavern", "fair", "sea", "storm", "dawn"]
+## Short pieces played once over whatever is on (sounds/music/<name>.ogg, one of it and any <name>_N.ogg beside it):
+## a fight won, and falling.
 const STINGS := ["victory", "fallen"]
 const STING_DB := -7.0
 ## How loud each layer is at full strength, in dB, so they sit together.
@@ -21,7 +22,7 @@ const AMB_DB := {"sea": -11.0, "shore": -10.0, "river": -12.0, "forest": -9.0, "
 	"fire": -6.0, "town": -15.0, "market": -11.0, "crypt": -5.0, "holy": -9.0, "battle": -10.0, "tavern": -9.0, "fair": -7.0}
 const MUSIC_DB := -13.0
 ## Moods that play louder (or softer) than MUSIC_DB, in dB: a fight should be heard over the din.
-const MUSIC_MOOD_DB := {"battle": 6.0}
+const MUSIC_MOOD_DB := {"battle": 6.0, "boss": 6.0}
 const SFX_DB := -8.0
 const FADE := 0.6          # ambience: share of the way to what is wanted, per second
 const MUSIC_FADE := 5.0    # seconds to cross over when the mood changes
@@ -30,7 +31,8 @@ const TRACK_FADE := 4.0    # seconds of overlap when one piece of a mood runs in
 const MUSIC_GAP := {"city": Vector2(8.0, 20.0), "capital": Vector2(8.0, 20.0), "explore": Vector2(4.0, 18.0), "night": Vector2(6.0, 20.0), "holy": Vector2(3.0, 10.0),
 	"eerie": Vector2(5.0, 16.0), "sea": Vector2(10.0, 30.0), "storm": Vector2(8.0, 24.0), "dawn": Vector2(20.0, 45.0)}
 ## Pieces made for this game, picked twice as often as the others of their mood.
-const MUSIC_FAVOURED := {"explore_2": 2.0, "explore_3": 2.0, "eerie_5": 2.0, "eerie_6": 2.0, "battle_5": 2.0, "holy_6": 2.0, "sea_3": 3.0}
+const MUSIC_FAVOURED := {"explore_2": 2.0, "explore_3": 2.0, "eerie_5": 2.0, "eerie_6": 2.0, "battle_5": 2.0, "battle_6": 2.0, "holy_6": 2.0, "sea_3": 3.0,
+	"storm_2": 4.0} # (the first storm piece is twenty seconds)
 ## Fights start suddenly: battle music comes up this fast (it still fades out over MUSIC_FADE when the fight ends).
 const BATTLE_IN := 1.5
 const MUSIC_MAX_TAKES := 24
@@ -252,7 +254,7 @@ func _music_step(delta: float, piece: String) -> void:
 		_music_wait = -1.0
 		_fade_out(_music_cur, MUSIC_FADE)
 		if piece != "":
-			_music_start(BATTLE_IN if piece == "battle" else MUSIC_FADE)
+			_music_start(BATTLE_IN if piece in ["battle", "boss"] else MUSIC_FADE)
 	elif piece != "":
 		var p := _music[_music_cur]
 		var left := 0.0
@@ -339,9 +341,12 @@ func sting(name: String) -> void:
 		heard["sting_" + name] = int(heard.get("sting_" + name, 0)) + 1
 	if mode != 0:
 		return
-	var s := _stream("res://sounds/music/%s.ogg" % name)
+	# One of its takes (the music's own picking: never the same twice running when there is a choice).
+	var path := _music_pick(name)
+	var s := _stream(path) if path != "" else null
 	if s == null:
 		return
+	_music_last[name] = path
 	if s is AudioStreamOggVorbis:
 		(s as AudioStreamOggVorbis).loop = false
 	_sting.stream = s

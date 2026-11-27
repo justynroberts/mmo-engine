@@ -271,6 +271,9 @@ impl Director {
                 continue;
             }
             self.next_due[i] = now + e.every_secs * sim.tick_hz;
+            if e.needs_players > 0 && (players(sim, clients, None).len() as u32) < e.needs_players {
+                continue; // nobody to hear of it: it waits for its next turn
+            }
             if sim.rng.f32() * 100.0 < e.chance_pct {
                 self.start(i, sim, clients, "on its timer");
             }
@@ -328,6 +331,8 @@ impl Director {
                 }).map(|(n, ok)| format!("after '{n}' {}", if *ok { "succeeded" } else { "failed" })),
                 _ => None,
             };
+            // Its moment came with too few online to hear of it: let it pass (the cooldown is not spent).
+            let why = why.filter(|_| self.events[i].needs_players == 0 || players(sim, clients, None).len() as u32 >= self.events[i].needs_players);
             if let Some(why) = why {
                 self.when_at.insert(name, now);
                 self.start(i, sim, clients, &why);
@@ -784,6 +789,21 @@ mod tests {
         assert_eq!(d.fired, vec![1, 0]);
         step(&mut s, &mut d, &mut c, 100);
         assert_eq!(s.ents.live, base + 4);
+    }
+
+    #[test]
+    fn an_event_that_needs_players_waits_while_nobody_is_online_but_runs_by_hand() {
+        let steps = vec![Step::Spawn { archetype: "drifter".into(), count: 2, place: None, name: None }];
+        let (mut s, mut d, mut c, _) = setup(|g| {
+            g.archetypes[0].name = "drifter".into();
+            g.events.push(EventDef { name: "raid".into(), every_secs: 5, chance_pct: 100.0, needs_players: 1, steps: steps.clone(), ..EventDef::default() });
+        });
+        let base = s.ents.live;
+        step(&mut s, &mut d, &mut c, 320);
+        assert_eq!((s.ents.live, d.fired.clone()), (base, vec![0]), "three turns came and went with nobody online");
+        d.fire("raid").unwrap();
+        step(&mut s, &mut d, &mut c, 2);
+        assert_eq!((s.ents.live, d.fired.clone()), (base + 2, vec![1]));
     }
 
     #[test]

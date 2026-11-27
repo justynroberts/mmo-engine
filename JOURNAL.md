@@ -22,12 +22,6 @@ first.
   by tile the client already has (`/play/tiles`).
 
 ### Content
-- **A lone beast kills in about eight seconds.** A level 5 Kern fell to one level 3 White Wolf (2026-11-27): a bot's
-  plain blow (`buille`, 10 a blow) lands twice a second, about 18 health a second against a player of 140, while
-  the player needs four seconds of unbroken blows to win. Any pause (out of reach, a slow spell, armour left in the
-  bag) loses the fight. Slow beasts' blows (a cooldown of their own, or one a second), or scale their harm by the
-  gap in levels, and say on the HUD when better armour sits unworn in the bag (a Mail Shirt did here).
-
 5. **Characters saved before 2026-11-22 under older curves** were not given their level back (saves only now keep
    the level). Only test characters are affected.
 
@@ -38,11 +32,18 @@ first.
 7. **Load test from a cloud machine.** The home link loses snapshots past ~1,000 bots; the live server's ceiling
    with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
-- Hedgerow bushes (worldgen `fields.rs`) overlap into pockets narrower than a body: the autoplay walked into one
-  at 45059, 30358 and could not plan out (a player can, by retracing). Space hedge bushes so any gap is either
-  shut or at least a body and a half wide.
-
 ## Done
+
+- 2026-11-27 — Fights a player can read and survive. A beast's own blow comes no faster than `rules.bot_blow_secs`
+  (1 in Hibernia; a level 3 White Wolf's two blows a second had brought a level 5 Kern down in eight seconds);
+  bosses keep their pace. Falling says what did it ("White Wolf (level 3) did 142 harm in 8 seconds.", or the foes
+  counted with the worst first: `Sim::harm`, `fell_to`), and falling or gaining a level with better gear lying
+  unworn in the bag says so (`better_in_bag`; a Mail Shirt was carried to that death). White Wolves and the Norse
+  raiders have loot tables. A raid to be beaten off starts only while somebody is online (`needs_players` on an
+  event; the wolves had come down on Cill Dara 33 times and the Norse on Loch Garman 20, all lost to an empty
+  world). Hedge plants are settled so no two leave a way narrower than a body and a half (`hedge_halves`: a crack
+  is shut, a squeeze opened, else the bush is walked through); `relief_rev` 3 makes the live world again. Seed
+  version 24.
 
 - 2026-11-26 — A newcomer's first minute: the watch's welcome comes first, The First Furrow follows it (it gives the
   wheat seed that quest asks for), and the craftsfolk's bring-N errands wait behind the Seed Trader's two lessons

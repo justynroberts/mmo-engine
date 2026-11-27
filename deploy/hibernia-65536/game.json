@@ -2244,7 +2244,8 @@
     }
    ],
    "xp": 226,
-   "level": 8
+   "level": 8,
+   "loot": "creach mheanach"
   },
   {
    "name": "sluagh",
@@ -3581,7 +3582,8 @@
    ],
    "xp": 52,
    "level": 3,
-   "skill": "fiach"
+   "skill": "fiach",
+   "loot": "creach iseal"
   },
   {
    "name": "mac tire ban thiar",
@@ -3605,7 +3607,8 @@
    ],
    "xp": 52,
    "level": 3,
-   "skill": "fiach"
+   "skill": "fiach",
+   "loot": "creach iseal"
   },
   {
    "name": "villager",
@@ -30402,6 +30405,7 @@
    "cooldown_secs": 600,
    "place": "wexford",
    "limit_secs": 300,
+   "needs_players": 1,
    "steps": [
     {
      "kind": "announce",
@@ -30500,6 +30504,7 @@
    "cooldown_secs": 1800,
    "place": "kildare",
    "limit_secs": 300,
+   "needs_players": 1,
    "steps": [
     {
      "kind": "announce",
@@ -30763,6 +30768,7 @@
    "cooldown_secs": 7200,
    "place": "bru na boinne",
    "limit_secs": 900,
+   "needs_players": 1,
    "steps": [
     {
      "kind": "announce",
@@ -31112,6 +31118,7 @@
    "cooldown_secs": 3600,
    "place": "wexford",
    "limit_secs": 300,
+   "needs_players": 1,
    "steps": [
     {
      "kind": "announce",
@@ -35864,7 +35871,8 @@
   "calm_levels": 5,
   "rest_after_secs": 6.0,
   "rest_pct": 2.5,
-  "rest_sit_x": 2.0
+  "rest_sit_x": 2.0,
+  "bot_blow_secs": 1.0
  },
  "starter": [
   {

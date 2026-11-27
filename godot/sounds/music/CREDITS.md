@@ -18,6 +18,15 @@ fades; the music itself is unchanged.
 | `sea_2.ogg` | Waves Against the Cliffs (the water's edge; 20 s, -18 LUFS) | made for this game by the project owner | owned by the project |
 | `storm.ogg` | Storm Surge (a storm on open land; 20 s, -16.5 LUFS) | made for this game by the project owner | owned by the project |
 | `dawn.ogg` | Nocturnal Dawn (the sun coming up; 18 s, -18 LUFS) | made for this game by the project owner | owned by the project |
+| `storm_2.ogg` | The Dorian Gale (a storm on open land; 3 min 23 s, -16.5 LUFS; picked four times as often as the twenty-second first piece; added 2026-11-27 with the eight below) | made for this game by the project owner | owned by the project |
+| `battle_6.ogg` | The Open Field (a fight; 3 min 13 s, -16.5 LUFS like the other battle pieces; picked twice as often) | made for this game by the project owner | owned by the project |
+| `boss.ogg` | The War-Call (a boss's fight, while it marks the ground it will strike: a mood of its own, `boss`; 2 min 34 s, -16.5 LUFS) | made for this game by the project owner | owned by the project |
+| `boss_2.ogg` | The Horn of the Field (a boss's fight; 2 min 28 s, -16.5 LUFS) | made for this game by the project owner | owned by the project |
+| `capital_2.ogg` | The King's Welcome (the capital's own, Áth Cliath; 2 min 50 s, -15.7 LUFS like `capital.ogg`) | made for this game by the project owner | owned by the project |
+| `capital_3.ogg` | The City-Gate Song (the capital's own; 2 min 4 s, -15.7 LUFS) | made for this game by the project owner | owned by the project |
+| `fair.ogg` | The Market Fair (a market day or the fair, where its traders stand in a town: a mood of its own, `fair`; 2 min, -16.5 LUFS like the town pieces) | made for this game by the project owner | owned by the project |
+| `fair_2.ogg` | Village Square Dance (a market day or the fair; 2 min 14 s, -16.5 LUFS) | made for this game by the project owner | owned by the project |
+| `fallen_2.ogg` | The Last Whistle (a sting, played once on falling, turn about with The Tolling Bell; 9 s, -16 LUFS) | made for this game by the project owner | owned by the project |
 | `victory.ogg` | Triumphal Call (a sting, played once when a fight is won; 5 s, -16 LUFS) | made for this game by the project owner | owned by the project |
 | `fallen.ogg` | The Tolling Bell (a sting, played once on falling; 10 s, -16 LUFS) | made for this game by the project owner | owned by the project |
 | `explore_2.ogg` | Mist over the Isles (take 1) | made for this game by the project owner with Suno | owned by the project |

@@ -1864,6 +1864,10 @@ pub struct EventDef {
     /// messages may say `{place}`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub roams: bool,
+    /// Its timer and its `when` start it only while at least this many players are online (0: always). A raid
+    /// nobody is there to hear of is lost every time; fired by hand it runs regardless.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub needs_players: u32,
     #[serde(default)]
     pub steps: Vec<Step>,
     /// What happens instead if it fails: a `Defeat` or the time limit ran out.
@@ -1876,7 +1880,7 @@ fn d_cooldown() -> u32 {
 
 impl Default for EventDef {
     fn default() -> Self {
-        EventDef { name: String::new(), every_secs: 0, chance_pct: 100.0, when: None, cooldown_secs: d_cooldown(), place: None, limit_secs: 0, roams: false, steps: Vec::new(), fail_steps: Vec::new() }
+        EventDef { name: String::new(), every_secs: 0, chance_pct: 100.0, when: None, cooldown_secs: d_cooldown(), place: None, limit_secs: 0, roams: false, needs_players: 0, steps: Vec::new(), fail_steps: Vec::new() }
     }
 }
 

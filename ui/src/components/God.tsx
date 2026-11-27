@@ -450,6 +450,11 @@ function EventEditor({
           }
         />
         <NumField label="Time limit (s, 0 = none)" value={e.limit_secs ?? 0} onCommit={(n) => set({ ...e, limit_secs: clamp(Math.round(n), 0, 86400) })} />
+        <NumField
+          label="Players online to start (0 = any)"
+          value={e.needs_players ?? 0}
+          onCommit={(n) => set({ ...e, needs_players: clamp(Math.round(n), 0, 1000) || undefined })}
+        />
       </div>
       <div className="grid grid-cols-3 gap-2 pt-1">
         {start === 'timer' && (

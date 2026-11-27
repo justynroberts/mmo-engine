@@ -179,6 +179,16 @@ def main():
     # Out of a fight a player (and a beast) gets health and mana back: whole in about 40 s, 20 s sitting.
     g["rules"]["rest_pct"] = 2.5
     g["rules"]["rest_after_secs"] = 6.0
+    # A beast's plain blow landed twice a second: a level 3 wolf brought a level 5 player down in eight seconds, with
+    # four of them needed to win. One blow a second leaves a fight time to be read and answered.
+    g["rules"]["bot_blow_secs"] = 1.0
+    # A raid to be beaten off is started only when somebody is online to hear of it (the wolves had come down on Cill
+    # Dara 33 times and the Norse on Loch Garman 20, every one lost to an empty world); those with a player count of
+    # their own keep it.
+    for e in g.get("events", []):
+        counted = (e.get("when") or {}).get("kind") == "players"
+        if any(st.get("kind") == "defeat" for st in e.get("steps", [])) and not counted and e.get("every_secs", 0) + bool(e.get("when")) > 0:
+            e["needs_players"] = 1
     # A new character comes with a blade and a tunic, not only coin and bread: the boars outside the gates are
     # level four.
     have = {s_["item"] for s_ in g.get("starter", [])}
@@ -615,7 +625,7 @@ LOOT = [
         {"item": "capall cogaidh", "weight": 1}, {"item": "bonn oir", "weight": 6, "min": 2, "max": 5}]},
 ]
 LOOT_OF = {
-    "mac tire": "creach iseal", "dibheirgeach": "creach iseal", "meirleach": "creach iseal", "torc": "creach iseal", "beacanan": "creach iseal",
+    "mac tire": "creach iseal", "mac tire ban": "creach iseal", "mac tire ban thiar": "creach iseal", "lochlannach": "creach mheanach", "dibheirgeach": "creach iseal", "meirleach": "creach iseal", "torc": "creach iseal", "beacanan": "creach iseal",
     "solas si": "creach iseal", "ceithearnach": "creach iseal", "puca": "creach mheanach", "bear": "creach iseal",
     "fomhorach": "creach mheanach", "troll cnoic": "creach mheanach", "creachadoir": "creach mheanach", "damhan alla mor": "creach mheanach",
     "troll sneachta": "creach ard", "bean si": "creach ard", "gruagach": "creach ard", "dubhlachan": "creach ard", "ri na mbeacan": "creach ard",

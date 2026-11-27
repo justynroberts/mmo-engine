@@ -984,6 +984,52 @@ fn base64(bytes: &[u8]) -> String {
 /// `BUSHES`, in its order), at scale 1: a bush is solid a little inside its leaves.
 const BUSH_HALF: [f32; 22] = [0.12, 0.36, 0.6, 0.78, 0.66, 0.94, 0.87, 0.26, 0.43, 0.66, 0.51, 1.0, 0.8, 0.52, 0.84, 1.25, 0.29, 0.5, 0.79, 0.64, 1.14, 1.07];
 
+/// The least way between two hedge plants that a body walks through freely: a body and a half (bodies are 1 across).
+/// A narrower one is a pocket to wedge in.
+const HEDGE_WAY: f32 = 1.5;
+/// A way this narrow is shut, by letting the bush's footprint out to its neighbour (no further than a leaf's edge).
+const HEDGE_SHUT: f32 = 0.4;
+
+/// The open way between two square footprints (centre and half side): 0 or less when they touch or overlap.
+fn way_between(a: (f32, f32, f32), b: (f32, f32, f32)) -> f32 {
+    let (gx, gy) = ((a.0 - b.0).abs() - a.2 - b.2, (a.1 - b.1).abs() - a.2 - b.2);
+    if gx > 0.0 && gy > 0.0 { gx.hypot(gy) } else { gx.max(gy) }
+}
+
+/// The solid half side of each hedge plant (kind, x, y, the half its model gives it), settled so that no two of
+/// them stand a way apart that is open and narrower than `HEDGE_WAY`: a bush is let out to shut a crack, drawn in
+/// to open a squeeze, and left to be walked through (None) when neither will do. Trees keep their trunks.
+fn hedge_halves(plants: &[(&str, f32, f32, Option<f32>)]) -> Vec<Option<f32>> {
+    const CELL: f32 = 8.0;
+    let cell = |x: f32, y: f32| ((x / CELL).floor() as i32, (y / CELL).floor() as i32);
+    let mut out: Vec<Option<f32>> = plants.iter().map(|p| p.3).collect();
+    let mut placed: HashMap<(i32, i32), Vec<(f32, f32, f32)>> = HashMap::new();
+    // Trees first: they are what the bushes give way to.
+    let order = (0..plants.len()).filter(|&k| plants[k].0 != "bush").chain((0..plants.len()).filter(|&k| plants[k].0 == "bush"));
+    for k in order {
+        let (t, x, y, Some(mut h)) = plants[k] else { continue };
+        let (ci, cj) = cell(x, y);
+        let near: Vec<(f32, f32, f32)> = (-1..=1).flat_map(|dj| (-1..=1).map(move |di| (ci + di, cj + dj))).filter_map(|c| placed.get(&c)).flatten().copied().collect();
+        let tight = |h: f32| near.iter().map(|&n| way_between((x, y, h), n)).filter(|&w| w > 0.0 && w < HEDGE_WAY).fold(None, |m: Option<f32>, w| Some(m.map_or(w, |m| m.min(w))));
+        if t == "bush" {
+            for _ in 0..4 {
+                let Some(w) = tight(h) else { break };
+                h = if w <= HEDGE_SHUT { h + w + 0.01 } else { h - (HEDGE_WAY - w) - 0.01 };
+                if h < 0.25 {
+                    break;
+                }
+            }
+            if h < 0.25 || tight(h).is_some() {
+                out[k] = None;
+                continue;
+            }
+            out[k] = Some(h);
+        }
+        placed.entry((ci, cj)).or_default().push((x, y, h));
+    }
+    out
+}
+
 fn scenery_half(t: &str, s: f32, v: u32) -> Option<f32> {
     match t {
         "tree" | "tree_bare" => Some(0.3 * s),
@@ -1601,10 +1647,12 @@ pub fn build(p: &Params) -> Generated {
         objects.push(json!({ "t": "field", "p": [r1(cx), r1(cy)], "q": q, "k": f.kind, "r": r2(f.furrow), "v": (cx.to_bits() ^ cy.to_bits().rotate_left(7)) }).to_string());
     }
     let mut hrng = Rng(p.seed ^ 0x4ED6);
-    for &(t, x, y, s) in &farms.hedges {
-        let (turn, v) = (hrng.range(0.0, std::f32::consts::TAU), hrng.v());
+    let drawn: Vec<(f32, u32)> = farms.hedges.iter().map(|_| (hrng.range(0.0, std::f32::consts::TAU), hrng.v())).collect();
+    let halves = hedge_halves(&farms.hedges.iter().zip(&drawn).map(|(&(t, x, y, s), &(_, v))| (t, x, y, scenery_half(t, s, v))).collect::<Vec<_>>());
+    for (k, &(t, x, y, s)) in farms.hedges.iter().enumerate() {
+        let (turn, v) = drawn[k];
         let mut o = json!({ "t": t, "p": [r1(x), r1(y)], "s": r2(s), "r": r2(turn), "v": v });
-        if let Some(h) = scenery_half(t, s, v) {
+        if let Some(h) = halves[k] {
             let (x0, y0, x1, y1) = (r2(x - h), r2(y - h), r2(x + h), r2(y + h));
             o["solid"] = true.into();
             o["scenery"] = true.into();
@@ -2090,6 +2138,52 @@ mod tests {
         let n = g.write(&mut out).unwrap();
         assert_eq!((String::from_utf8(out).unwrap(), n), (g.to_value().to_string(), g.to_value().to_string().len()));
         assert_eq!(g.solid, g.to_value()["objects"].as_array().unwrap().iter().filter(|o| o["solid"] == true).count());
+    }
+
+    #[test]
+    fn no_two_hedge_plants_leave_a_way_too_narrow_for_a_body() {
+        // By hand: a crack is shut, a squeeze is opened, and a bush that can be neither is walked through.
+        let h = hedge_halves(&[("bush", 0.0, 0.0, Some(1.0)), ("bush", 2.2, 0.0, Some(1.0)), ("bush", 10.0, 0.0, Some(1.0)), ("bush", 13.0, 0.0, Some(1.0)), ("tree", 20.0, 0.0, Some(0.4)), ("bush", 21.3, 0.0, Some(0.3))]);
+        assert_eq!(h[0], Some(1.0));
+        assert!(h[1].unwrap() > 1.2, "let out to its neighbour: {:?}", h[1]);
+        assert!(h[3].unwrap() < 0.6, "drawn in to leave a way: {:?}", h[3]);
+        assert_eq!((h[4], h[5]), (Some(0.4), None), "a small bush by a trunk is walked through");
+        // And along hedges laid as the fields lay them (a plant every 3.5 to 5.5, off the line by up to 0.6, bushes
+        // of every model and size, a tree now and then, two hedges crossing): no pair is left with a pocket.
+        let mut rng = Rng(7);
+        let mut plants: Vec<(&str, f32, f32, Option<f32>)> = Vec::new();
+        for line in 0..40 {
+            let mut t = 0.0;
+            while t < 400.0 {
+                let (x, y) = if line % 2 == 0 { (t, line as f32 * 9.0) } else { (line as f32 * 9.0, t) };
+                if rng.f() < 0.045 {
+                    plants.push(("tree", x, y, scenery_half("tree", rng.range(1.2, 1.7), 0)));
+                } else {
+                    plants.push(("bush", x + rng.range(-0.6, 0.6), y + rng.range(-0.6, 0.6), scenery_half("bush", rng.range(1.8, 2.8), rng.v())));
+                }
+                t += rng.range(3.5, 5.5);
+            }
+        }
+        let was: usize = pockets(&plants.iter().filter_map(|p| p.3.map(|h| (p.1, p.2, h))).collect::<Vec<_>>());
+        let halves = hedge_halves(&plants);
+        let now: Vec<(f32, f32, f32)> = plants.iter().zip(&halves).filter_map(|(p, h)| h.map(|h| (p.1, p.2, h))).collect();
+        assert!(was > 50, "the hedges as first laid had pockets to mend: {was}");
+        assert_eq!(pockets(&now), 0);
+        assert!(now.len() * 10 > plants.len() * 9, "nearly every plant is still solid: {} of {}", now.len(), plants.len());
+    }
+
+    /// Pairs of footprints with an open way between them narrower than a body and a half.
+    fn pockets(solid: &[(f32, f32, f32)]) -> usize {
+        let mut n = 0;
+        for (i, a) in solid.iter().enumerate() {
+            for b in &solid[i + 1..] {
+                let way = way_between(*a, *b);
+                if way > 0.0 && way < HEDGE_WAY {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     #[test]

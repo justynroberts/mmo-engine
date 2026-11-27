@@ -155,6 +155,24 @@ impl Sim {
     }
 
     /// What a player's gear adds to their might and toughness.
+    /// The gear in player `s`'s bag that would serve better than what is worn in its slot (more might and
+    /// toughness together, and of a level they may wear): the best such piece, by name. A newcomer carried a mail
+    /// shirt to their death with nothing on.
+    pub(crate) fn better_in_bag(&self, s: usize) -> Option<String> {
+        let worth = |tag: u8| self.items.get((tag as usize).wrapping_sub(1)).and_then(|d| d.equip.as_ref()).map_or(0.0, |e| e.might + e.toughness);
+        self.inv[s]
+            .iter()
+            .filter(|&&(t, _)| t != 0)
+            .filter_map(|&(t, _)| {
+                let d = self.items.get(t as usize - 1)?;
+                let e = d.equip.as_ref()?;
+                let gain = e.might + e.toughness - worth(self.gear[s][e.slot as usize]);
+                ((self.levels.is_none() || e.level <= self.ents.level[s]) && gain > 1e-4).then(|| (gain, d.shown().to_string()))
+            })
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|x| x.1)
+    }
+
     pub fn gear_bonus(&self, s: usize) -> (f32, f32) {
         self.gear[s].iter().filter(|&&t| t != 0).filter_map(|&t| self.items.get(t as usize - 1)?.equip.as_ref()).fold((0.0, 0.0), |a, e| (a.0 + e.might, a.1 + e.toughness))
     }
@@ -328,9 +346,13 @@ mod tests {
         let at = s.inv[p].iter().position(|b| b.0 as usize == plate + 1).unwrap();
         assert!(!s.equip(p, at), "too young for it");
         assert_eq!(s.gear[p][1], 0);
+        assert_eq!(s.better_in_bag(p), None, "not something they can wear yet");
         assert!(s.tells.iter().any(|(to, t)| *to == p && t.contains("level 5")));
         s.ents.level[p] = 5;
+        // Old enough now, and it lies unworn in the bag: they are told so (and no more once it is on).
+        assert_eq!(s.better_in_bag(p).as_deref(), Some("plate"));
         assert!(s.equip(p, at));
         assert_eq!(s.gear[p][1] as usize, plate + 1);
+        assert_eq!(s.better_in_bag(p), None);
     }
 }

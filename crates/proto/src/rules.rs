@@ -15,6 +15,9 @@ pub struct Rules {
     pub global_cooldown_secs: f32,
     /// Seconds between using two items (potion pacing).
     pub item_cooldown_secs: f32,
+    /// The least seconds between two blows of a bot's own attack (0: the action's own cooldown, as a player's).
+    /// Bosses keep their own pace.
+    pub bot_blow_secs: f32,
     /// Seconds a dropped item or loot pile lies before it fades.
     pub ground_item_secs: f32,
     /// How well a bot sees an unlit player at night, as a share of its sight.
@@ -131,6 +134,7 @@ impl Default for Rules {
             pickup_reach: 3.0,
             global_cooldown_secs: 0.5,
             item_cooldown_secs: 0.25,
+            bot_blow_secs: 0.0,
             ground_item_secs: 300.0,
             sneak_sight: 0.35,
             chase_give_up_secs: 10.0,
@@ -216,6 +220,7 @@ impl Rules {
         let secs = [
             ("global_cooldown_secs", self.global_cooldown_secs),
             ("item_cooldown_secs", self.item_cooldown_secs),
+            ("bot_blow_secs", self.bot_blow_secs),
             ("ground_item_secs", self.ground_item_secs),
             ("chase_give_up_secs", self.chase_give_up_secs),
             ("pvp_quiet_secs", self.pvp_quiet_secs),

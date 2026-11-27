@@ -547,6 +547,8 @@ export interface EventDef {
   limit_secs?: number
   /** It comes to a town picked each time (one with players at it first), not to `place`. */
   roams?: boolean
+  /** Its timer and its `when` start it only while at least this many players are online (0 or absent: always). */
+  needs_players?: number
   steps: Step[]
   /** What happens instead if it fails. */
   fail_steps?: Step[]
@@ -821,6 +823,8 @@ export interface Rules {
   global_cooldown_secs: number
   /** Between using two items. */
   item_cooldown_secs: number
+  /** Least seconds between two blows of a bot's own attack (0: the action's own cooldown). */
+  bot_blow_secs: number
   /** How long a dropped item or loot pile lies before it fades. */
   ground_item_secs: number
   /** How well a bot sees an unlit player at night, as a share of its sight (0..1). */
@@ -915,6 +919,7 @@ export const RULE_DEFAULTS: Rules = {
   pickup_reach: 3,
   global_cooldown_secs: 0.5,
   item_cooldown_secs: 0.25,
+  bot_blow_secs: 0,
   ground_item_secs: 300,
   sneak_sight: 0.35,
   chase_give_up_secs: 10,

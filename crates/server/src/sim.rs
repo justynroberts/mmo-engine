@@ -323,6 +323,20 @@ struct Undo {
 pub const CAST_TICKS: u32 = 3;
 
 
+/// Seconds without a blow after which what harmed a player is forgotten (`Sim::harm`).
+pub const HARM_QUIET_SECS: u32 = 30;
+
+/// One source of the harm done to a player in a fight (`Sim::harm`).
+#[derive(Clone, Copy, Debug)]
+pub struct Harm {
+    pub id: u32,
+    pub arch: Option<u8>,
+    pub level: u8,
+    pub harm: f32,
+    pub first: u32,
+    pub last: u32,
+}
+
 pub struct PendingAction {
     pub slot: usize,
     pub action: u8,
@@ -600,6 +614,10 @@ pub struct Sim {
     pub last_hit: Vec<Option<u32>>,
     /// The tick each slot last lost health to someone (`system_rest` waits `rules.rest_after_secs` from it).
     pub hurt_at: Vec<u32>,
+    /// What has harmed each player in the fight they are in, for the line said when they fall (`fell_to`): who (an
+    /// id; 0 for nothing that can be named), their type if a bot and their level, the harm done, and the first and
+    /// last ticks of it. Forgotten after `HARM_QUIET_SECS` without a blow, on rising and on leaving.
+    pub harm: Vec<Vec<Harm>>,
     /// A home given to one bot over its type's (a roaming fair's traders live in the town it came to).
     pub home_over: Vec<Option<usize>>,
     /// The sickness (`plague.rs`): when each slot's case runs its course (0: well), who has had it and is over it,
@@ -890,6 +908,7 @@ impl Sim {
             foe: vec![None; cap],
             last_hit: vec![None; cap],
             hurt_at: vec![0; cap],
+            harm: vec![Vec::new(); cap],
             home_over: vec![None; cap],
             sick: vec![0; cap],
             immune: vec![false; cap],
@@ -1015,6 +1034,7 @@ impl Sim {
         self.foe[slot] = None;
         self.last_hit[slot] = None;
         self.hurt_at[slot] = 0;
+        self.harm[slot].clear();
         self.home_over[slot] = None;
         (self.sick[slot], self.immune[slot], self.plague_sent[slot]) = (0, false, 0);
         self.standing[slot].clear();
@@ -2597,7 +2617,14 @@ impl Sim {
         }
         let gcd = (self.rules.global_cooldown_secs * self.tick_hz as f32).round() as u32;
         self.ents.cooldown_until[p.slot] = self.tick + (cooldown as u32).min(gcd);
-        self.ents.ready_at[own] = self.tick + cooldown as u32;
+        // A bot's own attack comes no faster than `rules.bot_blow_secs` (a beast's plain blow twice a second left a
+        // player eight seconds to live); a boss keeps its own pace.
+        let slow = if self.rules.bot_blow_secs > 0.0 && self.is_bot(p.slot) && self.archs.get(self.ents.arch[p.slot] as usize).is_some_and(|a| a.boss.is_none() && a.attack == Some(p.action)) {
+            proto::rules::Rules::ticks(self.rules.bot_blow_secs, self.tick_hz)
+        } else {
+            0
+        };
+        self.ents.ready_at[own] = self.tick + (cooldown as u32).max(slow);
         self.cast_seq = self.cast_seq.wrapping_add(1);
         let target = if at != p.slot { self.ents.id_of(at) } else { 0 };
         let cast = proto::wire::Cast { seq: self.cast_seq, caster: self.ents.id_of(p.slot), target, action: p.action };
@@ -2717,6 +2744,9 @@ impl Sim {
                 self.meter_add(by, -changed.min(0.0), changed.max(0.0));
             }
         }
+        if attr == proto::defs::ATTR_HEALTH as usize && delta < 0.0 && self.ents.owner[s] < DRIVEN {
+            self.note_harm(s, src, was - self.ents.attrs[attr][s]);
+        }
         if attr == proto::defs::ATTR_HEALTH as usize && delta < 0.0 {
             if self.ents.held[s] == proto::game::HoldKind::Mez as u8 {
                 self.ents.held[s] = 0;
@@ -2814,6 +2844,12 @@ impl Sim {
         if self.ents.owner[s] < DRIVEN && now >= 3 && now / 3 > before / 3 {
             let who = self.name_of(s).to_string();
             self.tell_news("news_level", who, String::new(), self.ents.x[s], self.ents.y[s]);
+        }
+        // Gear carried for the day it could be worn: that day has come.
+        if self.ents.owner[s] < DRIVEN && now > before {
+            if let Some(better) = self.better_in_bag(s) {
+                self.tells.push((s, format!("The {better} in your bag is better than what you wear: put it on.")));
+            }
         }
         let Some(l) = self.levels.as_ref() else { return };
         let due: Vec<proto::game::LevelReward> = l.rewards.iter().filter(|r| r.level > before && r.level <= now).cloned().collect();
@@ -3008,7 +3044,11 @@ impl Sim {
                         e.held[s] = 0;
                         e.lift_until[s] = 0;
                         self.mounted[s] = 0.0;
-                        self.tells.push((s, "You have fallen.".into()));
+                        let how = self.fell_to(s);
+                        self.tells.push((s, format!("You have fallen. {how}").trim_end().to_string()));
+                        if let Some(better) = self.better_in_bag(s) {
+                            self.tells.push((s, format!("The {better} in your bag is better than what you wear: put it on.")));
+                        }
                         let who = self.name_of(s).to_string();
                         self.tell_news("news_fell", who, String::new(), self.ents.x[s], self.ents.y[s]);
                         self.fall_cost(s);
@@ -3139,6 +3179,54 @@ impl Sim {
 
     /// A fallen player rises (`ACT_RISE`): whole again, in the safe place nearest where they fell (anywhere free,
     /// in a game with no safe places).
+    /// Harm done to player `s` by `src` (an id, 0 for none), kept for `fell_to`.
+    fn note_harm(&mut self, s: usize, src: u32, harm: f32) {
+        if harm <= 0.0 {
+            return;
+        }
+        let quiet = self.tick.saturating_sub(HARM_QUIET_SECS * self.tick_hz);
+        let by = self.ents.resolve(src).filter(|&b| b != s);
+        let (id, arch, level) = match by {
+            Some(b) => (src, self.is_bot(b).then(|| self.ents.arch[b]), self.ents.level[b]),
+            None => (0, None, 0),
+        };
+        let list = &mut self.harm[s];
+        if list.iter().all(|h| h.last < quiet) {
+            list.clear(); // the last fight is over: this is a new one
+        }
+        let tick = self.tick;
+        if let Some(h) = list.iter_mut().find(|h| h.id == id) {
+            h.harm += harm;
+            h.last = tick;
+        } else if list.len() < 16 {
+            list.push(Harm { id, arch, level, harm, first: tick, last: tick });
+        }
+    }
+
+    /// What brought player `s` down, in a sentence: who did the harm, how much and over how long ("" when nothing
+    /// is known). One foe is named with its level; several are counted, the worst of them first.
+    pub(crate) fn fell_to(&self, s: usize) -> String {
+        let list = &self.harm[s];
+        let Some(first) = list.iter().map(|h| h.first).min() else { return String::new() };
+        let total: f32 = list.iter().map(|h| h.harm).sum();
+        let secs = (self.tick.saturating_sub(first) as f32 / self.tick_hz as f32).round().max(1.0) as u32;
+        let name = |h: &Harm| match h.arch {
+            Some(a) => self.archs.get(a as usize).map_or_else(|| "something".to_string(), |r| r.shown().to_string()),
+            None if h.id == 0 => "something unseen".to_string(),
+            None => self.ents.resolve(h.id).map_or_else(|| "someone".to_string(), |b| self.name_of(b).to_string()),
+        };
+        let mut by: Vec<&Harm> = list.iter().collect();
+        by.sort_by(|a, b| b.harm.total_cmp(&a.harm));
+        let over = if secs == 1 { "a second".to_string() } else { format!("{secs} seconds") };
+        if let [h] = by[..] {
+            let level = if h.level > 0 && self.levels.is_some() { format!(" (level {})", h.level) } else { String::new() };
+            return format!("{}{level} did {} harm in {over}.", name(h), total.round() as u32);
+        }
+        let named: Vec<String> = by.iter().take(3).map(|h| format!("{} {}", name(h), h.harm.round() as u32)).collect();
+        let more = if by.len() > 3 { format!(", and {} more", by.len() - 3) } else { String::new() };
+        format!("{} foes did {} harm in {over}: {}{more}.", by.len(), total.round() as u32, named.join(", "))
+    }
+
     pub fn rise(&mut self, s: usize) -> bool {
         if !self.ents.fallen[s] {
             return false;
@@ -4220,6 +4308,40 @@ mod tests {
         place(&mut s, wolf, 300.0, 300.0);
         run(&mut s, 40);
         assert!(s.ents.x[wolf] < 290.0, "back towards the den: {}", s.ents.x[wolf]);
+    }
+
+    #[test]
+    fn a_beasts_blows_keep_to_the_rules_pace_and_a_fallen_player_is_told_what_did_it() {
+        let fight = |secs: f32| {
+            let mut s = sim_with(|g| {
+                let mut wolf = arch("wolf", Behaviour::Chase, vec![]);
+                (wolf.sight, wolf.attack) = (60.0, Some(g.actions[0].name.clone()));
+                g.archetypes = vec![wolf];
+                g.rules.bot_blow_secs = secs;
+            });
+            let p = s.spawn(0).unwrap();
+            place(&mut s, p, 200.0, 200.0);
+            s.spawn_as(NONE, 0, Some((203.0, 200.0))).unwrap();
+            run(&mut s, 100);
+            let lost = 100.0 - s.ents.attrs[ATTR_HEALTH as usize][p];
+            (s, p, lost)
+        };
+        let (_, _, fast) = fight(0.0);
+        let (mut s, p, slow) = fight(2.0);
+        assert!(slow > 0.0 && fast >= slow * 2.0, "blows two seconds apart do less in the same time: {slow} against {fast}");
+        // It goes on to the end, and the player is told who did it, how much and for how long.
+        for _ in 0..4000 {
+            if s.ents.fallen[p] {
+                break;
+            }
+            run(&mut s, 1);
+        }
+        assert!(s.ents.fallen[p]);
+        let said = s.tells.iter().find(|(t, m)| *t == p && m.starts_with("You have fallen.")).map(|(_, m)| m.clone()).expect("told of the fall");
+        assert!(said.starts_with("You have fallen. Wolf did 100 harm in ") && said.ends_with(" seconds."), "{said}");
+        // Risen and hurt by nothing that can be named, long after: the old fight is not counted in.
+        s.harm[p].clear();
+        assert_eq!(s.fell_to(p), "");
     }
 
     #[test]

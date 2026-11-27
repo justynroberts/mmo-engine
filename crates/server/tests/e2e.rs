@@ -2314,6 +2314,25 @@ fn a_world_file_supplies_the_walls_is_served_as_is_and_reloads_live() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An event that needs players is not started for an empty world (a raid nobody hears of is only ever lost), and
+/// is once somebody is online.
+#[test]
+fn an_event_that_needs_players_starts_only_once_somebody_is_online() {
+    let srv = start(&[]);
+    let (_, mut game) = json(&srv, "GET", "/api/game", "");
+    game["events"] = serde_json::json!([{"name":"raid","every_secs":5,"needs_players":1,"steps":[{"kind":"announce","text":"Raiders!","banner":true}]}]);
+    assert_eq!(json(&srv, "PUT", "/api/game", &game.to_string()).0, 200);
+    assert_eq!(json(&srv, "GET", "/api/game", "").1["events"][0]["needs_players"], 1);
+    std::thread::sleep(Duration::from_secs(12));
+    assert_eq!(state(&srv)["director"]["events"][0]["fired"], 0, "two turns passed with nobody online");
+    let mut c = connect(&srv);
+    let t = Instant::now();
+    while state(&srv)["director"]["events"][0]["fired"] == 0 {
+        assert!(t.elapsed() < Duration::from_secs(20), "never started with a player online");
+        c.tick();
+    }
+}
+
 /// Roads in a world file are faster underfoot: the server moves a player on one `road_speed` times as far, and tells
 /// clients the road cells (with the tiles) and the speed (in the join info) so prediction agrees.
 #[test]
