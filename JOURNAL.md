@@ -22,6 +22,12 @@ first.
   by tile the client already has (`/play/tiles`).
 
 ### Content
+- **A lone beast kills in about eight seconds.** A level 5 Kern fell to one level 3 White Wolf (2026-11-27): a bot's
+  plain blow (`buille`, 10 a blow) lands twice a second, about 18 health a second against a player of 140, while
+  the player needs four seconds of unbroken blows to win. Any pause (out of reach, a slow spell, armour left in the
+  bag) loses the fight. Slow beasts' blows (a cooldown of their own, or one a second), or scale their harm by the
+  gap in levels, and say on the HUD when better armour sits unworn in the bag (a Mail Shirt did here).
+
 5. **Characters saved before 2026-11-22 under older curves** were not given their level back (saves only now keep
    the level). Only test characters are affected.
 
