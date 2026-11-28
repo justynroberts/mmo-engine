@@ -720,6 +720,11 @@ func _start() -> void:
 				god = false
 				_notice(text)
 			_dungeon_line(text)
+			# What brought us down, and what in the bag would have helped: on the fallen screen too.
+			if text.begins_with("You have fallen."):
+				fallen.set_cause(text.trim_prefix("You have fallen.").strip_edges())
+			elif text.ends_with("in your bag is better than what you wear: put it on."):
+				fallen.set_advice(text)
 			if text.begins_with("Achievement earned: "):
 				hud.announce(text.trim_prefix("Achievement earned: ").get_slice(".", 0), Color("ffd27a"))
 				sound.play("horn", -6.0, 0.0)
@@ -3297,7 +3302,10 @@ func _social_frame(list: Array, self_id: int) -> void:
 	# Fallen: our health held at nothing by the server until we choose to rise.
 	if not me_now.is_empty() and health_idx != "" and not smoke:
 		fallen.wait_secs = _rule("rise_delay_secs", 0.0)
-		fallen.set_down(float(me_now.get(health_idx, 1.0)) <= 0.001 or args.has("fallen")) # --fallen: to look at it
+		if args.has("fallen") and not fallen.down: # --fallen: to look at it, with something said
+			fallen.set_cause("White Wolf (level 3) did 142 harm in 8 seconds.")
+			fallen.set_advice("The Mail Shirt in your bag is better than what you wear: put it on.")
+		fallen.set_down(float(me_now.get(health_idx, 1.0)) <= 0.001 or args.has("fallen"))
 	var c := int(round(float(me_now.get("class", 0.0))))
 	if c != my_class:
 		my_class = c

@@ -335,6 +335,24 @@ mod tests {
     }
 
     #[test]
+    fn a_new_character_wears_what_of_the_starter_kit_can_be_worn() {
+        let mut g = GameFile::default_game();
+        g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });
+        g.items.push(item("bread", 1));
+        g.items.push(ItemDef { equip: Some(EquipFile { slot: GearSlot::Weapon, might: 0.1, toughness: 0.0, level: 1 }), ..item("sword", 4) });
+        g.items.push(ItemDef { equip: Some(EquipFile { slot: GearSlot::Armour, might: 0.0, toughness: 0.1, level: 1 }), ..item("tunic", 3) });
+        g.items.push(ItemDef { equip: Some(EquipFile { slot: GearSlot::Armour, might: 0.0, toughness: 0.3, level: 5 }), ..item("plate", 9) });
+        g.starter = ["bread", "sword", "tunic", "plate"].iter().map(|n| proto::realm::Stack { item: n.to_string(), count: if *n == "bread" { 3 } else { 1 } }).collect();
+        let mut s = Sim::new(g.build().unwrap(), World::from_boxes(512.0, 1, vec![]), 64, 20, 1);
+        let at = |s: &Sim, n: &str| s.items.iter().position(|i| i.name == n).unwrap() as u8 + 1;
+        let p = s.spawn(0).unwrap();
+        s.give_starter(p);
+        assert_eq!((s.gear[p][0], s.gear[p][1]), (at(&s, "sword"), at(&s, "tunic")), "the sword and the tunic are on");
+        let bag: Vec<u8> = s.inv[p].iter().filter(|b| b.0 != 0).map(|b| b.0).collect();
+        assert_eq!(bag, vec![at(&s, "bread"), at(&s, "plate")], "the bread, and the plate they are too young for, stay in the bag");
+    }
+
+    #[test]
     fn gear_waits_for_its_level() {
         let mut g = GameFile::default_game();
         g.levels = Some(proto::game::LevelsFile { cap: 10, base: 1000.0, exponent: 1.0, might: 0.0, toughness: 0.0, discover_xp: 0, life: Default::default(), rewards: vec![], grow: Default::default() });

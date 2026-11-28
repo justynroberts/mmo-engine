@@ -15,6 +15,8 @@ const LINES := [
 var _dim := ColorRect.new()
 var _panel := VBoxContainer.new()
 var _quip := Label.new()
+var _cause := Label.new()   # what did it, from the server ("White Wolf (level 3) did 142 harm in 8 seconds.")
+var _advice := Label.new()  # better gear lying unworn in the bag, if the server says so
 var _button := Button.new()
 var down := false
 ## Seconds the server makes us wait before rising (`rules.rise_delay_secs`), set by main from /play/info.
@@ -32,7 +34,7 @@ func _ready() -> void:
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_panel.offset_left = -260
 	_panel.offset_right = 260
-	_panel.offset_top = -90
+	_panel.offset_top = -130
 	_panel.alignment = BoxContainer.ALIGNMENT_CENTER
 	_panel.add_theme_constant_override("separation", 14)
 	_panel.visible = false
@@ -46,10 +48,21 @@ func _ready() -> void:
 	t.add_theme_constant_override("outline_size", 8)
 	t.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	_panel.add_child(t)
+	for l in [_cause, _advice]:
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.add_theme_constant_override("outline_size", 4)
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+		l.visible = false
+	_cause.add_theme_color_override("font_color", HUD.TEXT)
+	_cause.add_theme_font_size_override("font_size", 17)
+	_advice.add_theme_color_override("font_color", HUD.ACCENT)
+	_panel.add_child(_cause)
 	_quip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_quip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_quip.add_theme_color_override("font_color", HUD.TEXT)
 	_panel.add_child(_quip)
+	_panel.add_child(_advice)
 	var b := _button
 	b.text = "Rise again"
 	b.focus_mode = Control.FOCUS_NONE
@@ -64,6 +77,16 @@ func _ready() -> void:
 	hint.add_theme_color_override("font_color", HUD.MUTED)
 	_panel.add_child(hint)
 
+## What the server says did it (it comes in the same moment as the fall, either side of it), and what in the bag
+## would have helped. Both are forgotten on rising.
+func set_cause(text: String) -> void:
+	_cause.text = text
+	_cause.visible = text != ""
+
+func set_advice(text: String) -> void:
+	_advice.text = text
+	_advice.visible = text != ""
+
 ## Down or up, from our health each frame.
 func set_down(on: bool) -> void:
 	if on == down:
@@ -73,6 +96,9 @@ func set_down(on: bool) -> void:
 		_quip.text = LINES[randi() % LINES.size()]
 		_left = wait_secs
 		_count()
+	else:
+		set_cause("")
+		set_advice("")
 	_dim.visible = on
 	_panel.visible = on
 	if on:

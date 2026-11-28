@@ -11,10 +11,11 @@ first.
 ## Open
 
 ### Play-testing reach
-1. **Make the autoplay a better player.** `--autoplay` (Godot, `scripts/autoplay.gd`) plays through the real client
-   and network, but it cannot farm (crops for the bring-N quests), build, or choose quests as a person would, so a
-   15-minute session does a handful of quests. Teach it to plant from the bag and harvest, lay the plot blueprint,
-   sell what it carries, and take on fewer quests at once.
+1. **The autoplay walks to the Miller for a crop it has in the ground.** With a field planted for a "Bring N" step it
+   still follows the tracker to whoever sells the crop; it should wait on the field (or hunt near it). It has not
+   sold anything in a run yet either (`_sell` is untried: no spoils beside a trader in 11 minutes), and fleeing deer
+   still outrun it.
+
 - **The autoplay cannot find its way.** It walks straight at a goal, sidesteps, and (since 2026-11-23) looks along
   a wall for a gap from the world file; it still loses minutes to the Smith in his forge, the Miller indoors and
   the city walls. 2026-11-23 runs reached level 2-3 in 30 minutes (the server play-through reaches level 10 at
@@ -33,6 +34,13 @@ first.
    with 4 lanes is unmeasured past 2,000. Costs a cloud machine for an hour: ask first.
 
 ## Done
+
+- 2026-11-28 — The fallen screen says what did it and what unworn gear would have helped (`fallen.gd` `set_cause`,
+  `set_advice`, from the server's two lines). A new character puts on what of the starter kit can be worn (the
+  sword and the tunic lay in the bag: `Sim::give_starter`). The autoplay farms: out of town with seeds or soil to
+  lay it tills a row, plants, and comes back to break the ripe crop (`_farm`); it sells spoils beside a trader
+  (`_sell`) and takes on no more than five quests at once. An 11-minute run on a local server (2026-11-28): The
+  First Furrow and A New Arrival handed in, A Plot of Your Own's soil laid, 8 planted, 4 harvested, level 2, no falls.
 
 - 2026-11-27 — Fights a player can read and survive. A beast's own blow comes no faster than `rules.bot_blow_secs`
   (1 in Hibernia; a level 3 White Wolf's two blows a second had brought a level 5 Kern down in eight seconds);

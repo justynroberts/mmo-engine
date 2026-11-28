@@ -348,7 +348,8 @@ fn hello_flood_allocates_nothing_and_never_amplifies() {
     let before = state(&srv)["live"].as_u64().unwrap();
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     sock.connect(srv.udp).unwrap();
-    sock.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    // (A busy machine can sit on one answer for longer than 200 ms: it failed once in three runs beside a game.)
+    sock.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let mut buf = [0u8; 2048];
     let t0 = Instant::now();
     for i in 0..500 {

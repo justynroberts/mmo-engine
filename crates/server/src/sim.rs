@@ -1475,10 +1475,22 @@ impl Sim {
         Ok(())
     }
 
-    /// A new character's starter kit, into their bag (what does not fit lands at their feet).
+    /// A new character's starter kit, into their bag (what does not fit lands at their feet), and what of it can
+    /// be worn, put on: a newcomer walked out of the gates with the sword and the tunic still in the bag.
     pub fn give_starter(&mut self, slot: usize) {
         for (item, n) in self.starter.clone() {
             self.give_or_drop(slot, item, n as u32);
+        }
+        for _ in 0..proto::game::GEAR_SLOTS {
+            let wear = (0..self.inv[slot].len()).find(|&i| {
+                let tag = self.inv[slot][i].0;
+                tag != 0
+                    && self.items.get(tag as usize - 1).and_then(|d| d.equip.as_ref()).is_some_and(|e| self.gear[slot][e.slot as usize] == 0 && (self.levels.is_none() || e.level <= self.ents.level[slot]))
+            });
+            match wear {
+                Some(i) if self.equip(slot, i) => {}
+                _ => break,
+            }
         }
     }
 

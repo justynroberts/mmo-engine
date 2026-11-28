@@ -4,7 +4,10 @@ extends RefCounted
 ## talks and takes what it is offered, follows the tracker to each step's goal, strikes what the step names there
 ## (and whatever is fighting it), rises after falling, and hands in at the "?". With nothing it can do near (no goal
 ## within HUNT_IF_FAR), it hunts beasts about its level in sight or out on the nearest hunting ground; hurt and out
-## of a fight it sits until whole; it leaves alone what is three levels over it unless that comes for it. Every change of quest, level and
+## of a fight it sits until whole; it leaves alone what is three levels over it unless that comes for it. Out of
+## town with seeds in the bag (or soil to lay for a quest) it tills a row, plants, and comes back to harvest when the
+## crop is ripe; beside a trader it sells the spoils no quest in hand asks for; and with FULL_HANDS quests in hand it
+## takes on no more until one is handed in. Every change of quest, level and
 ## fall is printed as an AUTO line, and a summary at the end (AUTO DONE), then the client quits. For finding where a
 ## player gets stuck: a goal not reached, a beast that cannot be caught, a fight lost.
 ##   godot --path godot -- --guest --host H --udp U --web H:W --autoplay 900
@@ -48,6 +51,7 @@ const GOAL_SECS := 240.0       # this long on the way to one goal and it is give
 const TALK_AGAIN := 20.0       # seconds before talking to the same one again
 const HUNT_IF_FAR := 1200.0    # the nearest goal further than this: hunt instead, nearer home
 const REST_BELOW := 0.45       # out of a fight below this share of health: sit until whole
+const FULL_HANDS := 5           # quests in hand at which no more are taken on (a newcomer was offered eleven)
 
 func now() -> float:
 	return Time.get_ticks_msec() / 1000.0 - started
@@ -111,7 +115,11 @@ func run(main: Node, secs: float) -> void:
 			continue
 		if _fight():
 			continue
+		if _sell():
+			continue
 		if _talk_to_giver():
+			continue
+		if _farm():
 			continue
 		_follow_goal()
 	m.net.set_move(Vector2.ZERO)
@@ -119,7 +127,7 @@ func run(main: Node, secs: float) -> void:
 	for q in m.questui._mine:
 		if int(q["state"]) != 2:
 			held.append("%s (%s)" % [_title(q), m.questui.next_step(q)])
-	say("DONE after %d s: %d quests taken, %d done, %d beaten, %d falls, %d xp; in hand: %s" % [int(now()), took, done, kills, falls, int(m._progress.get("xp", 0)), ", ".join(held)])
+	say("DONE after %d s: %d quests taken, %d done, %d beaten, %d falls, %d xp, %d planted, %d harvested, %d sold; in hand: %s" % [int(now()), took, done, kills, falls, int(m._progress.get("xp", 0)), planted, harvested, sold, ", ".join(held)])
 	print("AUTO DONE level %d quests %d/%d falls %d" % [m.my_level, done, took, falls])
 	m.get_tree().quit(0)
 
@@ -434,7 +442,14 @@ func _talk_to_giver() -> bool:
 	var best := 120.0
 	var who := 0
 	var at := Vector2.ZERO
+	# Hands full: only those we have something for (a "?"), until one is handed in.
+	var in_hand := 0
+	for q in m.questui._mine:
+		if int(q["state"]) != 2:
+			in_hand += 1
 	for n in _near():
+		if in_hand >= FULL_HANDS and String(marks.get(n[1], "")) != "?":
+			continue
 		if marks.has(n[1]) and now() - float(_talked.get(n[0], -999.0)) > TALK_AGAIN and m.me_pos.distance_to(n[2]) < best:
 			best = m.me_pos.distance_to(n[2])
 			who = n[0]
@@ -536,11 +551,247 @@ func _can_do(q: Dictionary) -> bool:
 		return false
 	var text := String(steps[int(q["step"])].get("text", ""))
 	if text.begins_with("Build "):
-		return false
+		return not m.build.is_empty() # laid where we farm (`_farm`)
+	if text.begins_with("Bring ") and _grown(text) != "":
+		return true # something we grow: `_farm` sees to it
 	if text.begins_with("Bring "):
 		# Not one we tried to buy and could not (out of coin): there is nothing to go to it for.
 		return steps[int(q["step"])].get("kinds") is Array and int(_buy_tries.get(text, 0)) <= int(steps[int(q["step"])].get("need", 1)) + 4
 	return true
+
+## What a "Bring N Title" step asks for, as an item's name ("" when it is not that kind of step).
+func _asked(text: String) -> String:
+	if not text.begins_with("Bring "):
+		return ""
+	var shown := text.get_slice(" ", 2)
+	for w in range(3, text.get_slice_count(" ")):
+		shown += " " + text.get_slice(" ", w)
+	for it in m.info.get("items", []):
+		if String(it.get("title", it["name"])) == shown:
+			return String(it["name"])
+	return ""
+
+## The crops of this world: [{name, seed, yields, grow_secs}, ...] (/play/info realm).
+func _crops() -> Array:
+	var realm = m.info.get("realm", {})
+	return realm.get("crops", []) if realm is Dictionary and realm.get("crops") is Array else []
+
+## The seed that grows what a "Bring N Title" step asks for, when we carry it or have it in the ground ("" else).
+func _grown(text: String) -> String:
+	var item := _asked(text)
+	for c in _crops():
+		if String(c["yields"]) == item and (_bag_slot(String(c["seed"])) >= 0 or not _field.is_empty()):
+			return String(c["seed"])
+	return ""
+
+## Where an item lies in the bag (-1 when we have none).
+func _bag_slot(item: String) -> int:
+	var bag: Array = m.net.bag()
+	for i in bag.size():
+		if bag[i] is Dictionary and String(bag[i].get("item", "")) == item and int(bag[i].get("count", 0)) > 0:
+			return i
+	return -1
+
+## The steps in hand, as [text, need, count].
+func _steps_in_hand() -> Array:
+	var out := []
+	for q in m.questui._mine:
+		if int(q["state"]) != 0 or int(q["quest"]) >= m.questui._quests.size():
+			continue
+		var steps: Array = m.questui._quests[int(q["quest"])].get("steps", [])
+		if int(q["step"]) < steps.size():
+			out.append([String(steps[int(q["step"])].get("text", "")), int(steps[int(q["step"])].get("need", 1)), int(q["count"])])
+	return out
+
+## Farming, as the Seed Trader teaches it: out of town, with seeds in the bag or soil to lay for a quest, till a row
+## of soil beside us and plant a seed by each; go about our business; come back when the crop is ripe and break it
+## for the harvest. One field at a time.
+const FIELD_ROW := 5            # soil blocks in a row, two blocks off (planting reaches two blocks)
+const FARM_PACE := 0.7          # seconds between two things done at the field (the server's pause is half a second)
+var planted := 0
+var harvested := 0
+var _field: Array = []          # the soil we laid: [Vector3i(cell x, cell y, layer), ...]
+var _field_at := Vector2.INF    # where we stood to lay it
+var _ripe_at := 0.0
+var _farm_at := 0.0
+var _farm_said := ""
+var _plant_tries := 0
+var _field_done := false        # laid and planted: nothing more to do there until it is ripe
+func _farm() -> bool:
+	if m.build.is_empty():
+		return false
+	var soil := int(m.build.get("soil", 0))
+	if soil == 0:
+		return false
+	# What we carry to plant, and soil a quest wants laid.
+	var seed_slot := -1
+	var seeds := 0
+	var grow := 0.0
+	var bag: Array = m.net.bag()
+	for c in _crops():
+		for i in bag.size():
+			if bag[i] is Dictionary and String(bag[i].get("item", "")) == String(c["seed"]) and int(bag[i].get("count", 0)) > 0:
+				if seed_slot < 0:
+					seed_slot = i
+				seeds += int(bag[i]["count"])
+				grow = maxf(grow, float(c.get("grow_secs", 240.0)))
+	var to_lay := 0
+	for st in _steps_in_hand():
+		if String(st[0]).begins_with("Build "):
+			to_lay = maxi(to_lay, int(st[1]) - int(st[2]))
+	# A field in the ground: back to it when it is ripe, and break each ripe crop.
+	if _field_done:
+		if now() < _ripe_at:
+			return false
+		if m.me_pos.distance_to(_field_at) > 3.0:
+			_farm_say("back to the field at %d, %d" % [int(_field_at.x), int(_field_at.y)])
+			_steer(_field_at)
+			return true
+		m.net.set_move(Vector2.ZERO)
+		if now() - _farm_at < FARM_PACE:
+			return true
+		_farm_at = now()
+		var growing := 0
+		for c in _field:
+			var k: int = m._kind_at(Vector3i(c.x, c.y, c.z + 1))
+			if k == m.CROP_RIPE:
+				m.net.act_arg(int(m.build["act_break"]), c.x | c.y << 15, m._build_arg(c.z + 1, 0))
+				m.blocks_poll = 0.2
+				harvested += 1
+				return true
+			if k == m.CROP_SPROUT:
+				growing += 1
+		if growing > 0:
+			_ripe_at = now() + 20.0 # not ripe yet (a slow season): look again shortly
+			_farm_say("%d still growing: waiting by the field" % growing)
+			return true
+		say("harvested the field (%d crops so far)" % harvested)
+		_field.clear()
+		_field_done = false
+		_farm_said = ""
+		return false
+	if seeds == 0 and to_lay == 0:
+		return false
+	if not m.net.encounter().is_empty():
+		return false
+	# Not in a town's streets: out past its edge first, the way we are facing the country.
+	if _field.is_empty() and _in_town(m.me_pos):
+		var out := _out_of_town(m.me_pos)
+		_farm_say("out of town to till")
+		_steer(out)
+		return true
+	m.net.set_move(Vector2.ZERO)
+	if now() - _farm_at < FARM_PACE:
+		return true
+	_farm_at = now()
+	var bs := float(m.build["block"])
+	if _field.is_empty():
+		# The row: two blocks east of us (west if that is taken), where a walk to it is clear and nothing is built.
+		var me := Vector2i(int(floor(m.me_pos.x / bs)), int(floor(m.me_pos.y / bs)))
+		var want := clampi(maxi(seeds, to_lay), 1, FIELD_ROW)
+		for dx in [2, -2]:
+			var row := []
+			for dy in range(-2, 3):
+				var cx: int = me.x + dx
+				var cy: int = me.y + dy
+				var mid := Vector2((cx + 0.5) * bs, (cy + 0.5) * bs)
+				if not m.blocks.has(cy << 15 | cx) and m._path_clear(m.me_pos, mid) and row.size() < want:
+					row.append(Vector3i(cx, cy, m._col_base(cx, cy)))
+			if row.size() >= want:
+				_field = row
+				break
+		if _field.is_empty():
+			# No room here (a wall, a tree, somebody's building): a few steps on and try again.
+			_steer(m.me_pos + Vector2(12.0, 0.0).rotated(randf() * TAU))
+			return true
+		_field_at = m.me_pos
+		_plant_tries = 0
+		say("tilling %d soil at %d, %d" % [_field.size(), int(m.me_pos.x), int(m.me_pos.y)])
+		return true
+	# Lay what is not laid yet, one a turn.
+	for c in _field:
+		if not m._solid(c.x, c.y, c.z):
+			m.net.act_arg(int(m.build["act_build"]), c.x | c.y << 15, m._build_arg(c.z, soil))
+			m.blocks_poll = 0.2
+			_plant_tries += 1
+			if _plant_tries > _field.size() * 4 + 6:
+				say("could not lay the soil here: trying elsewhere")
+				_field.clear()
+				_steer(m.me_pos + Vector2(20.0, 0.0).rotated(randf() * TAU))
+			return true
+	# Plant: a seed goes into the nearest tilled soil with room on top, so one use a turn until each has a crop.
+	var sprouts := 0
+	for c in _field:
+		if m._kind_at(Vector3i(c.x, c.y, c.z + 1)) in [m.CROP_SPROUT, m.CROP_RIPE]:
+			sprouts += 1
+	if seed_slot >= 0 and sprouts < _field.size() and _plant_tries < _field.size() * 6 + 12:
+		m.net.use_slot(seed_slot)
+		m.blocks_poll = 0.2
+		_plant_tries += 1
+		return true
+	planted += sprouts
+	if sprouts == 0:
+		say("laid %d soil (nothing to plant in it)" % _field.size())
+		_field.clear()
+		return false
+	_field_done = true
+	_ripe_at = now() + grow + 10.0
+	say("planted %d of %d: ripe in about %d s" % [sprouts, _field.size(), int(grow)])
+	return false
+
+func _farm_say(what: String) -> void:
+	if what != _farm_said:
+		_farm_said = what
+		say(what)
+
+## A point just outside the town `p` is in: straight out from its middle, a little past its edge.
+func _out_of_town(p: Vector2) -> Vector2:
+	for l in m.locations:
+		var c := Vector2(float(l["x"]), float(l["y"]))
+		var r := float(l.get("r", 0.0))
+		if r >= 60.0 and r < 400.0 and p.distance_to(c) <= r and not String(l.get("title", "")).begins_with("Talamh Seilge"):
+			var dir := (p - c).normalized() if p.distance_to(c) > 1.0 else Vector2.RIGHT
+			return c + dir * (r + 25.0)
+	return p
+
+## Beside a trader: sell the spoils no step in hand asks for (hides, teeth, trophies), one a turn. Never coin, food,
+## draughts, seeds, gear or mounts, nor a crop.
+var sold := 0
+var _sold_at := 0.0
+func _sell() -> bool:
+	if now() - _sold_at < 0.8:
+		return false
+	var shops: Dictionary = m.info.get("shops", {}) if m.info.get("shops") is Dictionary else {}
+	var trader := 0
+	for n in _near():
+		if shops.has(n[1]) and m.me_pos.distance_to(n[2]) <= m._rule("talk_reach", 8.0) - 1.0:
+			trader = n[0]
+			break
+	if trader == 0:
+		return false
+	var keep := {String(m.info.get("currency", "")): true}
+	for st in _steps_in_hand():
+		keep[_asked(String(st[0]))] = true
+	for c in _crops():
+		keep[String(c["seed"])] = true
+		keep[String(c["yields"])] = true
+	var facts := {}
+	for it in m.info.get("items", []):
+		facts[String(it["name"])] = it
+	var bag: Array = m.net.bag()
+	for i in bag.size():
+		if not (bag[i] is Dictionary) or int(bag[i].get("count", 0)) <= 0:
+			continue
+		var name := String(bag[i].get("item", ""))
+		var f: Dictionary = facts.get(name, {})
+		if name == "" or keep.has(name) or f.is_empty() or bool(f.get("usable", false)) or f.has("equip") or f.has("mount") or f.has("potion") or int(f.get("value", 0)) <= 0:
+			continue
+		m.net.sell(trader, i)
+		_sold_at = now()
+		sold += 1
+		say("sold %s" % String(f.get("title", name)))
+		return true
+	return false
 
 ## Whether a point is in a town: a titled place (/play/info locations) the size of a village or town, not a
 ## hunting ground.
